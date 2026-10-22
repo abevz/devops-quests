@@ -1,0 +1,327 @@
+heading: '7.4. Адреса: перенос в модуль, переименование и прекращение управления'
+text: '### 7.4. Адреса: перенос в модуль, переименование и прекращение управления
+
+
+  **Коротко**
+
+  - Адрес включает путь к модулю.
+
+  - Перенос кода меняет адрес даже при том же содержимом.
+
+  - Цепочка moved может сохранять историю переименований.
+
+
+  **Короткий сценарий**
+
+
+  Ресурс был terraform_data.this. Его перенесли внутрь module.worker, получив module.worker.terraform_data.this. State ещё хранит старый адрес.
+
+
+  **Предскажи:** Поймёт ли движок перенос только по одинаковому input?
+
+
+  > [!question]- Ответ
+
+  > Нет. Без moved это разные адреса: старый исчез, новый появился. Полная последовательность из шести шагов сохранена ниже; её исходные файлы не меняются.
+
+
+  > [!info]- Глубже
+
+  > **Откуда стартует раздел.** Примеры §7.3 с `for_each` и `count` здесь не продолжаются. Первые два абзаца — только чтение адресов, запускать нечего. Практика начинается с «Переноса ресурса в модуль» и идёт с пустого state: после §7.3 выполни `tofu destroy`, затем иди по шагам 1–6; `modules/worker/` остаётся прежним.
+
+  >
+
+  > У одиночного вызова из §7.1 `tofu state list` показал:
+
+  >
+
+  > ```text
+
+  > module.worker.terraform_data.this
+
+  > ```
+
+  >
+
+  > Адрес читается так: `module.worker` — путь к вызову; `terraform_data` — тип; `this` — имя ресурса внутри него. У вызова с `for_each` появляется ключ: `module.worker["a"].terraform_data.this`. Вложенные модули добавляют ещё один сегмент `module.<имя>`.
+
+  >
+
+  > **Перенос ресурса в модуль.** Все шесть шагов идут в одном каталоге и одном файле — корневом `main.tf`; `modules/worker/` из §7.1 не меняется. Каждый блок ниже — файл целиком. Между шагами `tofu destroy` не выполняй: смысл опыта в том, что state остаётся от предыдущего шага.
+
+  >
+
+  > **Шаг 1. Корневой `main.tf` целиком — ресурс лежит прямо в корне.** Начни с пустого state, затем `tofu init`, `tofu apply`:
+
+  >
+
+  > ```hcl
+
+  > resource "terraform_data" "this" {
+
+  >   input = { name = "worker-a", port = 8080, labels = {} }
+
+  > }
+
+  > ```
+
+  >
+
+  > **Шаг 2. Корневой `main.tf` целиком — ресурс заменён вызовом модуля.** `tofu init`, `tofu plan`; не применяй:
+
+  >
+
+  > ```hcl
+
+  > module "worker" {
+
+  >   source = "./modules/worker"
+
+  >   name   = "worker-a"
+
+  > }
+
+  > ```
+
+  >
+
+  > ```text
+
+  > # terraform_data.this will be destroyed
+
+  >
+
+  >   # module.worker.terraform_data.this will be created
+
+  > Plan: 1 to add, 0 to change, 1 to destroy.
+
+  > ```
+
+  >
+
+  > Terraform сравнивает адреса, а не похожесть содержимого.
+
+  >
+
+  > **Шаг 3. Корневой `main.tf` целиком — к вызову добавлен `moved`.** `tofu plan`, `tofu apply`:
+
+  >
+
+  > ```hcl
+
+  > module "worker" {
+
+  >   source = "./modules/worker"
+
+  >   name   = "worker-a"
+
+  > }
+
+  >
+
+  > moved {
+
+  >   from = terraform_data.this
+
+  >   to   = module.worker.terraform_data.this
+
+  > }
+
+  > ```
+
+  >
+
+  > ```text
+
+  > # module.worker.terraform_data.this will be updated in-place
+
+  > Plan: 0 to add, 1 to change, 0 to destroy.
+
+  > ```
+
+  >
+
+  > Объект сохранён: удаления и создания нет, адрес в state теперь `module.worker.terraform_data.this`.
+
+  >
+
+  > **Шаг 4. Корневой `main.tf` целиком — вызов переименован: `worker` → `agent`, больше ничего не изменено.** `tofu init`, `tofu plan`; не применяй:
+
+  >
+
+  > ```hcl
+
+  > module "agent" {
+
+  >   source = "./modules/worker"
+
+  >   name   = "worker-a"
+
+  > }
+
+  >
+
+  > moved {
+
+  >   from = terraform_data.this
+
+  >   to   = module.worker.terraform_data.this
+
+  > }
+
+  > ```
+
+  >
+
+  > **Предскажи:** После переноса в модуль меняется только имя вызова с `worker` на `agent`. Что покажет план без нового `moved`?
+
+  >
+
+  > > [!question]- Ответ
+
+  > > ```text
+
+  > >   # module.agent.terraform_data.this will be created
+
+  > >   # module.worker.terraform_data.this will be destroyed
+
+  > > Plan: 1 to add, 0 to change, 1 to destroy.
+
+  > > ```
+
+  > > Новое имя вызова меняет адрес всех ресурсов под ним. Совпадение входов не сохраняет привязку.
+
+  >
+
+  > **Шаг 5. Корневой `main.tf` целиком — добавлен второй `moved`, для всего модуля.** Первый блок `moved` остаётся: цепочка из двух перемещений допустима. `tofu plan`, `tofu apply`:
+
+  >
+
+  > ```hcl
+
+  > module "agent" {
+
+  >   source = "./modules/worker"
+
+  >   name   = "worker-a"
+
+  > }
+
+  >
+
+  > moved {
+
+  >   from = terraform_data.this
+
+  >   to   = module.worker.terraform_data.this
+
+  > }
+
+  >
+
+  > moved {
+
+  >   from = module.worker
+
+  >   to   = module.agent
+
+  > }
+
+  > ```
+
+  >
+
+  > ```text
+
+  > # module.worker.terraform_data.this has moved to module.agent.terraform_data.this
+
+  >
+
+  > Plan: 0 to add, 0 to change, 0 to destroy.
+
+  > ```
+
+  >
+
+  > **Шаг 6. `removed` для одиночного экземпляра модуля. Корневой `main.tf` целиком — вызов и оба `moved` удалены.** `tofu plan`, `tofu apply`:
+
+  >
+
+  > ```hcl
+
+  > removed {
+
+  >   from = module.agent
+
+  >   lifecycle {
+
+  >     destroy = false
+
+  >   }
+
+  > }
+
+  > ```
+
+  >
+
+  > ```text
+
+  > # module.agent.terraform_data.this will be removed from the OpenTofu state but will not be destroyed
+
+  >
+
+  > Plan: 0 to add, 0 to change, 0 to destroy, 1 to forget.
+
+  > Warning: Resource will be removed from the state
+
+  > ```
+
+  >
+
+  > *(шаги 1–6 с полными файлами проверены 08.10.2026: OpenTofu 1.12.6, один каталог, планы совпали с приведёнными)*.
+
+  >
+
+  > После `apply` вывод `tofu state list` пуст. Это прекращение управления, а не удаление объекта. Для синтетического `terraform_data` внешний объект отсутствует; смысл оставления реального объекта иллюстрирует механизм, а не этот ресурс.
+
+  >
+
+  > **Граница версии:** выборочный адрес с ключом в `removed` на OpenTofu 1.12.6 отвергается. В отдельном корне создали ключи `aaa` и `bbb`, убрали `aaa` из `for_each` и добавили:
+
+  >
+
+  > **Корневой `main.tf` в отдельном каталоге — добавить к вызову с `for_each`:**
+
+  >
+
+  > ```hcl
+
+  > removed {
+
+  >   from = module.worker["aaa"]
+
+  >   lifecycle { destroy = false }
+
+  > }
+
+  > ```
+
+  >
+
+  > ```text
+
+  > Error: Module instance address with keys is not allowed
+
+  > Module address cannot be a module instance (e.g. "module.a[0]"), it must be a
+
+  > module instead (e.g. "module.a").
+
+  > ```
+
+  >
+
+  > Не заменяй его на `from = module.worker`, если хочешь забыть только один ключ: это адрес всего модуля. Для выборочного прекращения управления в этой версии нужен отдельно согласованный `state rm` конкретного адреса и удаление того же экземпляра из конфигурации. *(проверено: OpenTofu 1.12.6, планы до/после `moved`, применение двух переносов, удаление привязки и отказ адреса с ключом)*. [Перемещение адресов](https://developer.hashicorp.com/terraform/language/modules/develop/refactoring).
+
+  '
+source_hash: 5d7b6207d4be66298c4efc243c6dad1fb9ed97e042deb71b059054ace44f4a10

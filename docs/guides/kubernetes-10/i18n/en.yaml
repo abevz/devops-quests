@@ -1,0 +1,394 @@
+heading: '10. Networking: from a Service name to a ready pod address'
+text: '## 10. Networking: from a Service name to a ready pod address
+
+
+  **At a glance**
+
+  - A Service provides a stable access point
+
+  - A selector selects Pods by labels
+
+  - EndpointSlice describes the actual recipients.
+
+
+  **Mini-example:** only in the disposable kind cluster prepared above. Create the namespace with `kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig --context kind-guides-order-rest create namespace guide-mini-29`. Save the listing as `mini.sh`; run it with `bash -e mini.sh`.
+
+
+  ```bash
+
+  k() { kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig --context kind-guides-order-rest -n guide-mini-29 "$@"; }
+
+  k create deployment web --image=nginx:1.29-alpine
+
+  k rollout status deployment/web --timeout=90s
+
+  k expose deployment web --port=80
+
+  k get service web -o jsonpath=''{.spec.selector.app}{"\n"}''
+
+  ```
+
+
+  **Predict:** What will the last command show after the preceding commands finish?
+
+
+  > [!question]- Answer
+
+  > Actual command stdout:
+
+  >
+
+  > ```text
+
+  > deployment.apps/web created
+
+  > Waiting for deployment "web" rollout to finish: 0 of 1 updated replicas are available...
+
+  > deployment "web" successfully rolled out
+
+  > service/web exposed
+
+  > web
+
+  > ```
+
+  >
+
+  > Exit code: 0.
+
+
+  The Service received selector app=web. This demonstrates the selection relationship; HTTP delivery is not separately tested here.
+
+
+  A Pod receives an address from the network implementation; a Service provides a stable entry point to selected pods.
+
+  ClusterIP is an internal virtual address, NodePort a port on nodes, and LoadBalancer a request for an external load balancer.
+
+  kube-proxy configures kernel forwarding; an eBPF implementation may replace that mechanism.
+
+  Complete address and packet mechanics: [[Networking-Visual-Guide#19. Kubernetes: адрес пода, виртуальный Service и реальные получатели|pod addresses, virtual Services and actual backends]].
+
+  *(according to documentation)* — [Service](https://kubernetes.io/docs/concepts/services-networking/service/).
+
+
+  ### Why a Service exists with no application behind it
+
+
+  **At a glance**
+
+  - A Service object can exist without matching Pods
+
+  - Its selector must match labels
+
+  - A Service address does not prove an application exists.
+
+
+  **Mini-example:** only in the disposable kind cluster prepared above. Create the namespace with `kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig --context kind-guides-order-rest create namespace guide-mini-30`. Save the listing as `mini.sh`; run it with `bash -e mini.sh`.
+
+
+  ```bash
+
+  k() { kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig --context kind-guides-order-rest -n guide-mini-30 "$@"; }
+
+  k create service clusterip lonely --tcp=80:80
+
+  k get service lonely -o jsonpath=''{.spec.selector.app}{"\n"}''
+
+  k get pods -l app=lonely --no-headers
+
+  k get pods -l app=lonely -o jsonpath=''{.items}{"\n"}''
+
+  ```
+
+
+  **Predict:** What will the last command show after the preceding commands finish?
+
+
+  > [!question]- Answer
+
+  > Actual command stdout:
+
+  >
+
+  > ```text
+
+  > service/lonely created
+
+  > lonely
+
+  > []
+
+  > ```
+
+  >
+
+  > Exit code: 0.
+
+
+  The selector looks for app=lonely, but no Pod was created in the namespace. The last command returns an empty list.
+
+
+  A ready EndpointSlice does not prove the application listens on `targetPort` or a policy permits the path.
+
+  `publishNotReadyAddresses: true` changes readiness publication semantics; this is a special setting,
+
+  not a repair for an incorrect readiness probe. *(according to documentation)* —
+
+  [EndpointSlice](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/).
+
+
+  **`service.yaml` in `/tmp/vg-k8s-work`: a complete, deliberately incorrect selector:**
+
+
+  1. A Service defines a selector and a `port`/`targetPort` pair: the first is the Service port; the second is the backend port.
+
+  2. The EndpointSlice controller selects matching pods **within the Service namespace**.
+
+  3. Addresses and their readiness conditions are recorded in the API.
+
+  4. The network component watches Service/EndpointSlice and updates paths to eligible addresses.
+
+  5. A client connects to the Service; the connection is forwarded to one backend.
+
+
+  > [!info]- Deeper explanation
+
+  > ```yaml
+
+  > apiVersion: v1
+
+  > kind: Service
+
+  > metadata:
+
+  >   name: web
+
+  >   namespace: vg-k8s
+
+  > spec:
+
+  >   type: ClusterIP
+
+  >   selector:
+
+  >     app: typo
+
+  >   ports:
+
+  >     - port: 80
+
+  >       targetPort: 80
+
+  > ```
+
+  >
+
+  > **Command from any directory: inspect addresses and readiness separately from the Service:**
+
+  >
+
+  > ```bash
+
+  > kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \
+
+  >   -n vg-k8s get endpointslices -l kubernetes.io/service-name=web -o json \
+
+  >   | jq ''[.items[].endpoints[]? | {ip: .addresses[0], ready: .conditions.ready}]''
+
+  > ```
+
+  >
+
+  > **Output from a fresh run: an example to read:**
+
+  >
+
+  > ```text
+
+  > []
+
+  > ```
+
+  >
+
+  > Matching the selector `app: web` produced addresses. The unready replica from the broken rollout
+
+  > has `ready: false`; the old ready replicas have `true`. *(verified)*.
+
+  >
+
+  > **`service.yaml` in `/tmp/vg-k8s-work`: the complete corrected file:**
+
+  >
+
+  > ```yaml
+
+  > apiVersion: v1
+
+  > kind: Service
+
+  > metadata:
+
+  >   name: web
+
+  >   namespace: vg-k8s
+
+  > spec:
+
+  >   type: ClusterIP
+
+  >   selector:
+
+  >     app: web
+
+  >   ports:
+
+  >     - port: 80
+
+  >       targetPort: 80
+
+  > ```
+
+  >
+
+  > **Old client output: a recorded 1.33.0/Cilium run to read:**
+
+  >
+
+  > ```text
+
+  > wget: can''t connect to remote host (10.106.189.46): Operation not permitted
+
+  > ```
+
+  >
+
+  > This is a **recorded run** from [[Kubernetes-Coding-Drills-Solutions#2 — Сервис не отвечает|2 — Service does not respond]].
+
+  > It is not a universal error for a Service without backends: Cilium replacing kube-proxy could
+
+  > reject at the socket. The exact client message on the new kind cluster was not checked in this experiment. *(not verified)*.
+
+
+  ### DNS and the number of dots
+
+
+  **At a glance**
+
+  - DNS resolves the name first
+
+  - Search rules expand a short name
+
+  - Successful DNS does not prove port availability.
+
+
+  **Short scenario**
+
+
+  The name web resolved to a ClusterIP. The subsequent HTTP request timed out.
+
+
+  **Predict:** Does this prove a DNS error?
+
+
+  > [!question]- Answer
+
+  > Analysis of the given conditions: No: DNS already returned an address. Next check recipients, the port, the route and policy.
+
+
+  Ordinary Service DNS returns its ClusterIP; a headless Service returns selected pod addresses.
+
+  A short name such as `web` is searched with namespace/cluster suffixes.
+
+  `ndots:5` in a typical `resolv.conf` means a name with fewer than five dots is first tried
+
+  with search suffixes. This can add queries even for an external name.
+
+  A fully qualified name with a trailing dot, such as `web.vg-k8s.svc.cluster.local.`, is absolute;
+
+  the actual cluster domain is configurable. *(according to documentation)* —
+
+  [DNS](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/).
+
+
+  ### Policies, incoming HTTP and ownership boundaries
+
+
+  **At a glance**
+
+  - Policy restricts connections for selected Pods
+
+  - An HTTP route separately selects a backend
+
+  - Ready recipients are required regardless of whether rules exist.
+
+
+  **Short scenario**
+
+
+  HTTPRoute points to a Service with no ready endpoints.
+
+
+  **Predict:** Does an HTTPRoute rule itself create ready Pods?
+
+
+  > [!question]- Answer
+
+  > Analysis of the given conditions: No. It describes a route; other mechanisms provide readiness and the number of recipients.
+
+
+  NetworkPolicy controls ingress/egress connections for selected pods; policies are additive,
+
+  and two isolated endpoints need permission on both sides. The object works only with CNI support.
+
+  Ingress defines HTTP routing through a separate controller; Gateway API separates GatewayClass/Gateway
+
+  infrastructure from HTTPRoute routes. HTTPRoute reports attachment in `status.parents`.
+
+  Complete detailed examples: [[Networking-Visual-Guide#20. Политики, Ingress, Gateway API и service mesh|policies, Ingress, Gateway API and service mesh]].
+
+  *(according to documentation)* — [NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/),
+
+  [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/),
+
+  [Gateway API](https://gateway-api.sigs.k8s.io/concepts/api-overview/).
+
+
+  > [!info]- Deeper explanation
+
+  > In exercise 26, 90/10 weights describe a probability distribution, not a guarantee of 90 requests out of every 100.
+
+  > Header routing and a reference into another namespace require permitted attachment and, when applicable,
+
+  > a ReferenceGrant. Creating only HTTPRoute cannot fix a missing Gateway implementation or its CRDs.
+
+  > Gateway API, mesh and NetworkPolicy were not installed here. *(not verified)* — a new network run;
+
+  > role explanations are *(according to documentation)* — the Gateway API source above.
+
+  >
+
+  > **Predict:** names resolve, the Service exists, and EndpointSlice contains only `ready: false`.
+
+  >
+
+  > > [!question]- Answer
+
+  > > DNS works, but an ordinary Service has no ready backends. Check readiness and the application.
+
+  > > Fixing DNS or broadening NetworkPolicy will not make the pod ready.
+
+  > > *(according to documentation)* — the EndpointSlice source above.
+
+  >
+
+  > **Short answer in English:**
+
+  >
+
+  > > A Service selects Pods and exposes a stable address. EndpointSlices hold the backend addresses and readiness.
+
+  > > DNS resolution does not prove that a ready backend exists. I check selection, readiness, the target port and policies.
+
+  '
+source_hash: 10465c0ed2471e036c3646147c775646216118b0b9e6331b9f6c4fd37d834832

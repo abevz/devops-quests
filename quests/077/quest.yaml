@@ -1,0 +1,78 @@
+id: 77
+title: title
+track: Kubernetes
+difficulty: complex
+brief: brief
+stages:
+- brief: stages.0.brief
+  objectives:
+  - text: stages.0.objectives.0.text
+    check: 'kubectl get pdb board-budget -o json | jq -e ''.spec.minAvailable==1 and .spec.selector.matchLabels=={app:"board"}
+      and .status.currentHealthy==2 and .status.desiredHealthy==1 and .status.disruptionsAllowed==1''
+      >/dev/null
+
+      kubectl get deployment board -o json | jq -e ''.spec.replicas==2 and .status.readyReplicas==2''
+      >/dev/null
+
+      test "$(kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080)" = north-77
+
+      jq -e --slurpfile original /run/dq/facts/0/original-pod-uids.json --arg ns "$DQ_NAMESPACE" ''.apiVersion=="policy/v1"
+      and .kind=="Eviction" and .metadata.namespace==$ns and (.deleteOptions.preconditions.uid as $u |
+      $original[0]|index($u)!=null)'' eviction.json >/dev/null
+
+      kubectl get pods -l app=board -o json | jq -e --slurpfile original /run/dq/facts/0/original-pod-uids.json
+      --arg uid "$(jq -er .deleteOptions.preconditions.uid eviction.json)" ''([.items[].metadata.uid]|index($uid))==null
+      and ([.items[].metadata.uid as $u|select($original[0]|index($u)!=null)]|length)==1'' >/dev/null
+
+      jq -e --arg uid "$(jq -er .deleteOptions.preconditions.uid eviction.json)" ''index($uid)!=null''
+      /run/dq/observations/evictions.json >/dev/null
+
+      test "$(kubectl auth can-i patch pods --subresource=status)" = no'
+hints:
+- text: hints.0.text
+  guide: kubernetes-20
+- text: hints.1.text
+  guide: kubernetes-20
+- text: hints.2.text
+  guide: kubernetes-20
+debrief: debrief
+phrases:
+- phrases.0
+- phrases.1
+- phrases.2
+questions:
+- prompt: questions.0.prompt
+  points:
+  - questions.0.points.0
+  - questions.0.points.1
+  - questions.0.points.2
+- prompt: questions.1.prompt
+  points:
+  - questions.1.points.0
+  - questions.1.points.1
+  - questions.1.points.2
+facts:
+  environment:
+  - DQ_NAMESPACE
+  - DQ_APP_IMAGE
+  - KUBECONFIG
+  - TF_CLI_CONFIG_FILE
+  files:
+  - board.json
+  - service.json
+  - client.json
+  - pdb.json
+  - evict-one.sh
+  - eviction.json
+  - original-pod-uids.json
+  services: []
+book:
+  chapter: 15
+  section: Disruption budgets and maintenance
+  topics:
+  - pdb
+  - eviction
+  - availability
+immutable:
+  0:
+  - original-pod-uids.json

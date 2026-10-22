@@ -1,0 +1,47 @@
+- name: Observe delegation
+  hosts: web1
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Execute on web2, store the result on web1
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/printf
+          - '%s\n'
+          - 'owner={{ inventory_hostname }} arg_host={{ ansible_host }} delegate_host={{ hostvars.web2.ansible_host }} source={{ hostvars[inventory_hostname].role_label }}'
+      delegate_to: web2
+      register: probe
+      changed_when: false
+    - name: Attach a fact to the original host
+      ansible.builtin.set_fact:
+        original_fact: kept-on-web1
+      delegate_to: web2
+    - name: Attach a fact to the delegate
+      ansible.builtin.set_fact:
+        delegated_fact: kept-on-web2
+      delegate_to: web2
+      delegate_facts: true
+    - name: Show ownership
+      ansible.builtin.debug:
+        msg:
+          - '{{ probe.stdout }}'
+          - 'web1.register={{ hostvars.web1.probe is defined }} web2.register={{ hostvars.web2.probe is defined }}'
+          - 'web1.fact={{ hostvars.web1.original_fact }} web2.fact={{ hostvars.web2.delegated_fact }}'
+
+- name: Observe run_once per serial batch
+  hosts: lab
+  gather_facts: false
+  become: false
+  strategy: linear
+  serial: 1
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: This action runs once in EACH batch
+      ansible.builtin.command:
+        argv: [/usr/bin/printf, '%s\n', 'batch={{ inventory_hostname }}']
+      run_once: true
+      register: batch
+      changed_when: false
+    - ansible.builtin.debug:
+        var: batch.stdout

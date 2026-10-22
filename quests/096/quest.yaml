@@ -1,0 +1,71 @@
+id: 96
+title: title
+track: Ansible
+difficulty: expert
+brief: brief
+stages:
+- brief: stages.0.brief
+  objectives:
+  - text: stages.0.objectives.0.text
+    check: 'test "$(sha256sum recovery.tar | cut -d'' '' -f1)" = "$(cat /run/dq/facts/0/artifact.sha256)"
+
+      python3 - <<''VERIFY''
+
+      from pathlib import Path
+
+      import yaml
+
+      p=yaml.safe_load(Path(''rollout.yml'').read_text())[0]
+
+      assert p[''vars''][''expected_sha256'']==Path(''/run/dq/facts/0/artifact.sha256'').read_text().strip()
+
+      t=p[''tasks''];assert t[0][''ansible.builtin.stat''][''checksum_algorithm'']==''sha256''
+
+      assert t[1][''ansible.builtin.assert''][''that'']==[''artifact.stat.checksum == expected_sha256'']
+
+      assert t[2][''ansible.builtin.unarchive'']=={''src'':''recovery.tar'',''dest'':''/srv/site'',''owner'':''root'',''group'':''root'',''mode'':''0644''}
+
+      assert t[2][''notify'']==''Reload station'' and p[''serial'']==1
+
+      VERIFY
+
+      ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" ''set -eu; test "$(cat /srv/site/message)"
+      = north-96; test "$(stat -c %a /srv/site/message)" = 644; test "$(stat -c %u:%g /srv/site/message)"
+      = 0:0''
+
+      ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" ''set -eu; test "$(cat /srv/site/message)"
+      = north-96; test "$(stat -c %a /srv/site/message)" = 644; test "$(stat -c %u:%g /srv/site/message)"
+      = 0:0''
+
+      ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" ''set -eu; test "$(cat /srv/site/message)"
+      = north-96; test "$(stat -c %a /srv/site/message)" = 644; test "$(stat -c %u:%g /srv/site/message)"
+      = 0:0''
+
+      for n in 1 2 3; do test "$(curl -fsS "http://app$n-${DQ_NAMESPACE#dq-}:8080")" = north-96; done'
+hints:
+- text: hints.0.text
+  guide: ansible-11
+- text: hints.1.text
+  guide: ansible-11
+- text: hints.2.text
+  guide: ansible-11
+debrief: debrief
+phrases:
+- phrases.0
+- phrases.1
+- phrases.2
+questions: []
+facts:
+  environment:
+  - DQ_NAMESPACE
+  - DQ_APP_IMAGE
+  - KUBECONFIG
+  - TF_CLI_CONFIG_FILE
+  files:
+  - recovery.tar
+  - artifact.sha256
+  - rollout.yml
+  services: []
+immutable:
+  0:
+  - artifact.sha256

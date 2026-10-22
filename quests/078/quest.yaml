@@ -1,0 +1,78 @@
+id: 78
+title: title
+track: Platform
+difficulty: complex
+brief: brief
+stages:
+- brief: stages.0.brief
+  objectives:
+  - text: stages.0.objectives.0.text
+    check: 'source platform.env
+
+      jq -e ''.=={action:"start"}'' registry-repair.json >/dev/null
+
+      endpoint=$(jq -er .endpoint /run/dq/facts/0/registry-target.json)
+
+      curl -fsS --max-time 3 --cacert registry-ca.crt -u "$REGISTRY_USER:$REGISTRY_PASSWORD" "https://$endpoint/v2/"
+      >/dev/null'
+- brief: stages.1.brief
+  objectives:
+  - text: stages.1.objectives.0.text
+    check: 'source platform.env
+
+      jq -e ''.=={action:"start"}'' registry-repair.json >/dev/null
+
+      endpoint=$(jq -er .endpoint /run/dq/facts/0/registry-target.json)
+
+      curl -fsS --max-time 3 --cacert registry-ca.crt -u "$REGISTRY_USER:$REGISTRY_PASSWORD" "https://$endpoint/v2/"
+      >/dev/null
+
+      image=$(jq -er .image /run/dq/facts/0/registry-target.json)
+
+      kubectl get deployment board -o json | jq -e --arg image "$image" ''.spec.replicas==1 and .spec.template.spec.containers[0].image==$image
+      and .spec.template.spec.containers[0].imagePullPolicy=="Always" and .spec.template.spec.imagePullSecrets==[{name:"registry-pull"}]''
+      >/dev/null
+
+      kubectl rollout status deployment/board --timeout=3s >/dev/null
+
+      digest=$(printf %s "$image" | cut -d@ -f2)
+
+      kubectl get pods -l app=board -o json | jq -e --arg digest "$digest" ''any(.items[];.metadata.deletionTimestamp==null
+      and any(.status.containerStatuses[]?;.ready==true and (.imageID|contains($digest))))'' >/dev/null
+
+      test "$(kubectl exec deployment/board -- wget -qO- -T 3 http://127.0.0.1:8080)" = north-78'
+hints:
+- text: hints.0.text
+  guide: kubernetes-20
+- text: hints.1.text
+  guide: kubernetes-20
+- text: hints.2.text
+  guide: kubernetes-20
+debrief: debrief
+phrases:
+- phrases.0
+- phrases.1
+- phrases.2
+questions: []
+facts:
+  environment:
+  - DQ_NAMESPACE
+  - DQ_APP_IMAGE
+  - KUBECONFIG
+  - TF_CLI_CONFIG_FILE
+  - DOCKER_HOST
+  - DOCKER_TLS_VERIFY
+  - DOCKER_CERT_PATH
+  files:
+  - platform.env
+  - registry-ca.crt
+  - registry-target.json
+  - registry-repair.json
+  - registry-agent-status.json
+  - registry-pull.json
+  - board.json
+  services: []
+immutable:
+  0:
+  - registry-target.json
+  - registry-ca.crt

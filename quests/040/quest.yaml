@@ -1,0 +1,80 @@
+id: 40
+title: title
+track: Boss
+difficulty: medium
+brief: brief
+stages:
+- brief: stages.0.brief
+  objectives:
+  - text: stages.0.objectives.0.text
+    check: 'ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" ''set -eu; test "$(cat /srv/site/maintenance.txt)"
+      = north-40''
+
+      ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" ''set -eu; test "$(cat /srv/site/maintenance.txt)"
+      = north-40''
+
+      ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" ''set -eu; test "$(cat /srv/site/maintenance.txt)"
+      = north-40''
+
+      python3 - <<''DQ_SERIAL''
+
+      import yaml
+
+      plays=yaml.safe_load(open(''rollout.yml''))
+
+      assert plays and all(p.get(''serial'')==1 for p in plays), ''Keep serial: 1 for every maintenance
+      play''
+
+      DQ_SERIAL'
+- brief: stages.1.brief
+  objectives:
+  - text: stages.1.objectives.0.text
+    check: "kubectl rollout status deployment/board --timeout=3s\nkubectl get deployment board -o json\
+      \ | jq -e '.spec.replicas==2 and .spec.strategy.rollingUpdate.maxUnavailable==0 and .spec.strategy.rollingUpdate.maxSurge==1\
+      \ and .status.availableReplicas==2' >/dev/null\nfor pod in $(kubectl get pods -l app=board -o json\
+      \ | jq -r '.items[]|select(.metadata.deletionTimestamp==null and .status.phase==\"Running\")|.metadata.name'\
+      \ ); do\n test \"$(kubectl exec \"$pod\" -- wget -qO- http://board:8080)\" = north-40\ndone\nkubectl\
+      \ get service board -o json | jq -e '.spec.selector=={\"app\":\"board\"} and .spec.ports[0].port==8080\
+      \ and .spec.ports[0].targetPort==8080' >/dev/null"
+hints:
+- text: hints.0.text
+  guide: kubernetes-20
+- text: hints.1.text
+  guide: kubernetes-20
+- text: hints.2.text
+  guide: kubernetes-20
+debrief: debrief
+phrases:
+- phrases.0
+- phrases.1
+- phrases.2
+questions:
+- prompt: questions.0.prompt
+  points:
+  - questions.0.points.0
+  - questions.0.points.1
+  - questions.0.points.2
+- prompt: questions.1.prompt
+  points:
+  - questions.1.points.0
+  - questions.1.points.1
+  - questions.1.points.2
+facts:
+  environment:
+  - DQ_NAMESPACE
+  - DQ_APP_IMAGE
+  - KUBECONFIG
+  - TF_CLI_CONFIG_FILE
+  files:
+  - inventory.ini
+  - ansible.cfg
+  - rollout.yml
+  - board.json
+  - service.json
+  services: []
+book:
+  chapter: 3
+  section: Controlled rolling updates
+  topics:
+  - rolling-update
+  - availability
