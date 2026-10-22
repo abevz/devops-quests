@@ -31,6 +31,8 @@ def build(version, output):
     commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
     ).strip()
+    if subprocess.run(["git", "diff", "--quiet", "HEAD", "--"], cwd=ROOT).returncode:
+        raise ValueError("Release source must match the committed tree")
     archive = output / ("devops-quests-" + version + ".tar.gz")
     files = {}
     with tarfile.open(archive, "w:gz", format=tarfile.PAX_FORMAT) as tar:

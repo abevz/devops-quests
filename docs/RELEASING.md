@@ -20,6 +20,13 @@ Lab images to GHCR, and records exact `image@sha256:...` references in the relea
 `release-images.lock.json`. The lock includes the source commit and linux/amd64 platform.
 Source builds continue to use the upstream digest locks as an alternative.
 
+First publication also requires the owner to check each newly created GHCR package's
+visibility and set it to **Public**, then verify every locked digest can be pulled without
+Docker credentials. GitHub defaults new personal-account container packages to private;
+creating a public source repository does not prove anonymous image access. This one-time
+owner step follows the first tag build and precedes announcing the release or qualifying
+GHCR installation. See [GitHub's package visibility instructions](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility).
+
 The workflow builds local web bundles, Python wheel/sdist, a complete runtime/source
 tarball and SHA256SUMS, then attaches them to GitHub Release. The tarball's RELEASE.json
 records the commit and every contained file hash. Wheel resources are installed under

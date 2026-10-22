@@ -43,6 +43,10 @@ def test_release_excludes_untracked_files_and_records_executable_bits(
         manifest = json.load(tar.extractfile("RELEASE.json"))
         assert manifest["files"]["run.sh"]["executable"]
         assert not manifest["files"]["web/vendor/terminal.js"]["executable"]
+    (tmp_path / "run.sh").write_text("#!/bin/sh\nfalse\n")
+    with pytest.raises(ValueError, match="committed tree"):
+        build_release.build("v1.0.0", tmp_path / "dist")
+    (tmp_path / "run.sh").write_text("#!/bin/sh\ntrue\n")
     (tmp_path / "release-images.lock.json").write_text(
         json.dumps({"version": "v0.0.0"})
     )
