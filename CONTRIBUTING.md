@@ -4,7 +4,7 @@ Use a topic branch and a pull request. Run `make install`, the unit/JS tests, Ru
 `scripts/validate_i18n.py`. Default CI needs no credentials and creates no Docker sandboxes.
 
 To add a level, append its stable ID in `levels.yaml`, add `quests/<id>/quest.yaml`,
-original English/Russian resources, scoped check scripts and a solution under `solutions/`.
+original localized resources, scoped check scripts and a solution under `solutions/`.
 Checks must verify the requested behavior, not only search command history. Declare the
 actual dependencies and cleanup only positively owned resources. Add meaningful content
 and boundary tests. Never renumber existing IDs or copy book prose/questions.
@@ -14,7 +14,7 @@ Run real integration only on an isolated Linux host with disposable synthetic st
 Stop the app first; the fixture intentionally holds its runtime lock. Changes to levels
 require only their affected matrix. Do not use your live learning profile for tests.
 
-Guides are curated in `docs/guide-lessons.yaml`, `docs/guide-topics.yaml` and bilingual
+Guides are curated in `docs/guide-lessons.yaml`, `docs/guide-topics.yaml` and localized
 snapshots under `docs/guides/`. Reconcile source hashes when editing original snapshots;
 translations must preserve operational code. Diagrams render locally with strict SVG
 handling. Screenshots use a synthetic `demo` account and must not reveal passwords or keys.

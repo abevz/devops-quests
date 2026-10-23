@@ -9,6 +9,7 @@ from urllib.parse import quote, urlsplit
 from aiohttp import web
 
 from .catalog import TRACKS
+from .release_info import BuildInfo, UpdateChecker
 from .scoring import POLICY
 from .terminal import TerminalHub
 
@@ -23,9 +24,13 @@ def make_app(
     hosts=("127.0.0.1", "localhost"),
     public_origin=None,
     labs=None,
+    build=None,
+    updates=None,
 ):
     base = "/" + base.strip("/") + "/" if base.strip("/") else "/"
     prefix = base.rstrip("/")
+    build = build or BuildInfo.read(catalog.root)
+    updates = updates or UpdateChecker.from_environment(store.path.parent)
 
     if public_origin:
         public = urlsplit(public_origin)
@@ -151,6 +156,7 @@ def make_app(
             "styles.css",
             "terminal.js",
             "controls.mjs",
+            "navigation.mjs",
             "play.mjs",
             "reference.mjs",
             "locale.mjs",
@@ -234,6 +240,7 @@ def make_app(
         result = {
             "user": {"name": user["name"], "admin": bool(user["admin"])},
             "csrf": user["csrf"],
+            "build": build.payload(),
             "levels": levels,
             "progress": progress,
             "exams": store.exams(user["user_id"]),
@@ -266,6 +273,11 @@ def make_app(
                 run["mode"] == "exam",
             )
         return web.json_response(result)
+
+    async def update_notice(request):
+        if not request["session"]["admin"]:
+            raise PermissionError("error.admin")
+        return web.json_response({"update": updates.notice(build)})
 
     async def interview(request):
         completed = {
@@ -495,6 +507,7 @@ def make_app(
     app.router.add_get(prefix + "/api/briefing/{number:\\d+}", briefing)
     app.router.add_post(prefix + "/api/briefing/{number:\\d+}/hint", briefing_hint)
     app.router.add_get(prefix + "/api/locales", locales)
+    app.router.add_get(prefix + "/api/updates", update_notice)
     for path, method, handler in [
         ("login", "POST", login),
         ("logout", "POST", logout),
@@ -521,7 +534,11 @@ def make_app(
         if labs:
             await labs.recover()
         task = asyncio.create_task(engine.background())
+        update_task = asyncio.create_task(updates.run())
         yield
+        update_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await update_task
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task

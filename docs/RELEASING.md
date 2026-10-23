@@ -8,7 +8,7 @@ this repository. Do not move release tags or rebuild an already published versio
 Always: green CI and smoke after deploy. Schema changes require rollback rehearsal and
 progress-hash comparison. UI changes require headed screenshots of affected screens with
 synthetic users. Level changes require the affected level matrix, not every sandbox.
-Default PR/push CI runs unit tests, Ruff, JS tests (including diagrams), bilingual excerpt
+Default PR/push CI runs unit tests, Ruff, JS tests (including diagrams), localized excerpt
 and operational-code validators, bundle checksum validation, packaging and public hygiene.
 No sandbox is started and no user secret is required by that CI.
 
@@ -101,3 +101,24 @@ source inputs and loaded image IDs before reusing this cache. This is a local qu
 path; normal release installs fetch their pinned GHCR references automatically.
 Creating the public repository, pushing, creating the first tag and merging deployment PRs are
 owner actions. Do not perform them as part of local preparation.
+
+## Verify the running version
+
+After signing in, read the version and short commit at the bottom of the menu or
+in Profile / Settings. They come from the server's installed `RELEASE.json`, not
+a client-side version constant. A source install shows its Python package version
+and checkout commit, or `dev`. Anonymous requests do not receive build metadata.
+
+## Enable release notices
+
+The feature is off by default. Explicitly set `DQ_UPDATE_CHECK=1` to allow the
+background GitHub Releases API check; configure `DQ_UPDATE_REPO` and choose
+`DQ_UPDATE_HINT=deploy|compose|none` for the installation. See
+[installation settings](INSTALL.md#optional-admin-release-notice).
+
+An admin notice links to release notes and optionally supplies a copyable operator
+command or Compose update instructions. Only a newer stable semantic version is
+offered; drafts and pre-releases are ignored. Attempts are persisted and limited
+to one per 24 hours for the configured repository. Network failures stay in logs
+and never block the app. There is no root operation or self-upgrade endpoint in
+the web process: release, deployment and rollback remain operator actions.
