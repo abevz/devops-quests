@@ -4,8 +4,6 @@
 
 A self-hosted hobby project for practising DevOps incidents in real, isolated sandboxes, with 130 quests, Guides and persistent Labs. No cloud account is required.
 
-Designed and operated by [Aleksey Bevz](https://www.linkedin.com/in/aleksey-bevz/). See [About and authorship](#about-and-authorship) for the development method.
-
 **Security:** The web terminal is a remote shell inside sandboxes. Run locally or on a trusted network behind TLS and authentication. The backend controls Docker with host-administrator privileges; this is not a public multi-tenant service.
 
 ![Level map from a clean Linux installation with a synthetic demo account](docs/screenshots/level-map.png)
