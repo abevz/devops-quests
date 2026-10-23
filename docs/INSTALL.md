@@ -107,8 +107,69 @@ first; `reset` removes only Training Bay resources, not saved Labs. After confir
 no saved data is needed, remove this installation's `.state/` and image cache. Do not use
 global Docker prune commands: another installation may share the daemon.
 
+## Updates
+
+For a native systemd installation whose unit is `devops-quests.service`, persist
+these application settings in a drop-in (the operator's deployment JSON is a
+different configuration file):
+
+```ini
+# /etc/systemd/system/devops-quests.service.d/update-notice.conf
+[Service]
+Environment=DQ_UPDATE_CHECK=1
+Environment=DQ_UPDATE_HINT=deploy
+```
+
+Create the directory/file as root, then run `sudo systemctl daemon-reload` before
+the next normal deployment. The deployment restarts the application and picks up
+the settings. Do not restart an active sandbox just to enable a notice. With an
+operator installed under `/opt/devops-quests/operator`, the default command shown
+in the UI is `sudo /opt/devops-quests/operator/deploy.sh vX.Y.Z`.
+
 Updates use a new immutable tag and verified assets. Stop active attempts/Labs and resolve
 pending briefing hints first, back up all persistent data, and follow the rollback checks
 in [RELEASING.md](RELEASING.md). Keep the old release and images until restoration is
 verified. Saved Labs pin their runtime asset version; incompatible versions fail closed.
 
+
+### Optional admin release notice
+
+The menu and Profile / Settings show the installed release version and short commit
+only after sign-in. `RELEASE.json` is authoritative for release installs; source
+checkouts use the installed Python package version and Git commit, or `dev`.
+
+Update checks are **off by default**. To opt in, set `DQ_UPDATE_CHECK=1` in the
+installation environment. The backend checks the configured repository's latest
+stable GitHub release in the background, with a five-second timeout and at most one
+attempt per 24 hours. Attempts and results are cached in `update-check-*.json` in
+the server state directory, including failed attempts. Network errors do not interrupt
+gameplay. No GitHub token is required or sent.
+
+- `DQ_UPDATE_REPO=abevz/devops-quests` selects the source repository; a fork can be
+  selected explicitly as `owner/repository`.
+- `DQ_UPDATE_HINT=none` shows release notes without installation advice.
+- `DQ_UPDATE_HINT=compose` also links to this update section.
+- `DQ_UPDATE_HINT=deploy` also provides a command to copy; the default prefix is
+  `sudo /opt/devops-quests/operator/deploy.sh`. Set `DQ_UPDATE_DEPLOY_COMMAND` if
+  your separately maintained release operator has a different location.
+
+For Compose, put the chosen settings in `.env` and recreate the backend with
+`docker compose up -d`. For source installs, export them before `make up`. For
+systemd, put them in the service's environment/drop-in and reload the unit before
+the next operator-managed restart. See the private operator's installation guide
+for that host's configuration paths. Do not put these app settings into its
+separate deployment/smoke-credential JSON file.
+
+Only administrators receive the notice and its command/documentation hint; ordinary
+accounts cannot fetch that information. Copying a command never executes it. The
+web UI has no upgrade operation, and a notice does not install or restart anything.
+
+### Navigation layout
+
+On desktop, the menu button switches between the full menu and a 64 px icon rail.
+Labels remain available on hover and keyboard focus; the compact logo's tooltip
+includes the build identity and any admin update notice. The setting is stored
+locally per account and installation base path. If browser storage is unavailable,
+the menu stays expanded. The terminal is fitted again when its available width
+changes. Narrow screens keep an overlay menu, closed by default, independent of
+the desktop rail preference.

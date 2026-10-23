@@ -1,6 +1,7 @@
+import { storageGet, storageSet, sidebarKey, readCollapsed, saveCollapsed, installNavigationIcons } from "./navigation.mjs";
 import { renderDiagrams } from "./diagrams.mjs";
 import { referenceParts } from "./reference.mjs";
-import { canRun, filterLevels, narrative } from "./play.mjs";
+import { attemptState, canRun, filterLevels, narrative } from "./play.mjs";
 import { keySequence } from "./controls.mjs";
 import { scoreBreakdown } from "./score-preview.mjs";
 import { loadI18n, languageControls } from "./vendor/locale.js";
@@ -26,6 +27,9 @@ let readingTranslation = false,
 const tracks = ["Kubernetes", "Ansible", "OpenTofu", "Platform", "Boss"];
 const filters = { mode: "normal", path: "Kubernetes", track: "", difficulty: "", status: "", search: "" };
 const shownAnswers = new Set();
+let updateInfo = null, updateRequest = false, buildSignature, layoutUser, tooltipItem;
+let themeMode = storageGet("dq-theme") ?? "system";
+installNavigationIcons();
 let routing = true;
 let guidesData, guideData, labData, selectedLab, selectedProfile;
 let terminalKind = "quest",
@@ -84,8 +88,8 @@ function applyLanguage() {
       i18n.setLanguages(primary, translation);
       readingTranslation = false;
       if (state) state.preferences = { primary, translation };
-      localStorage.setItem("dq-primary-language", primary);
-      localStorage.setItem("dq-translation-language", translation);
+      storageSet("dq-primary-language", primary);
+      storageSet("dq-translation-language", translation);
       applyLanguage();
       if (state) {
         renderMap();
@@ -121,7 +125,7 @@ function applyLanguage() {
     }
     select.value = value || (all ? "" : filters.path);
   }
-  theme(localStorage.getItem("dq-theme") ?? "system");
+  theme(themeMode);
   for (const tab of terminals) {
     tab.button.textContent = t("terminal.tab", { number: tab.id });
     tab.label.querySelector(".close-terminal").setAttribute("aria-label", t("terminal.close", { number: tab.id }));
@@ -132,6 +136,8 @@ function applyLanguage() {
   if (guidesData) renderGuides();
   if (guideData && !$("guide-reader").hidden) renderGuide();
   if (labData) renderLabs();
+  renderBuildInfo();
+  renderSidebar();
 }
 function notify(text) {
   $("notice").textContent = text;
@@ -214,16 +220,18 @@ function screen(id) {
   }
 }
 function theme(mode) {
-  localStorage.setItem("dq-theme", mode);
+  themeMode = mode;
+  storageSet("dq-theme", mode);
   document.documentElement.dataset.theme =
     mode === "system" ? (matchMedia("(prefers-color-scheme:dark)").matches ? "dark" : "light") : mode;
-  $("theme").textContent = "◐ " + t("theme." + mode);
+  $("theme").querySelector(".nav-label").textContent = t("theme." + mode);
+  $("theme").setAttribute("aria-label", t("theme." + mode));
 }
-theme(localStorage.getItem("dq-theme") ?? "system");
+theme(themeMode);
 $("theme").onclick = () =>
-  theme(["system", "dark", "light"][(["system", "dark", "light"].indexOf(localStorage.getItem("dq-theme")) + 1) % 3]);
+  theme(["system", "dark", "light"][(["system", "dark", "light"].indexOf(themeMode) + 1) % 3]);
 matchMedia("(prefers-color-scheme:dark)").addEventListener("change", () => {
-  if (localStorage.getItem("dq-theme") === "system") theme("system");
+  if (themeMode === "system") theme("system");
 });
 $("login-form").onsubmit = (e) => {
   e.preventDefault();
@@ -238,6 +246,9 @@ $("logout").onclick = () =>
   action(async () => {
     await api("logout", {});
     state = null;
+    updateInfo = null;
+    renderBuildInfo();
+    renderSidebar();
     preferencesUser = null;
     interviewData = interviewSignature = usersData = preview = guidesData = guideData = labData = selectedLab = null;
     readingTranslation = false;
@@ -273,7 +284,7 @@ navigate("guides-nav", async () => {
   screen("guides");
 });
 navigate("map-tab", () => screen("map"));
-navigate("quest-tab", () => screen(state?.run ? "bay" : "map"));
+navigate("quest-tab", () => screen("bay"));
 navigate("active-workspace", async () => {
   if (state?.run?.status === "active") screen("bay");
   else {
@@ -329,7 +340,7 @@ async function route() {
     const path = location.pathname.slice(base.pathname.length);
     if (fragment.has("guide")) await openGuide(fragment.get("guide"));
     else if (fragment.has("briefing")) await openBriefing(Number(fragment.get("briefing")));
-    else if (location.hash === "#quest") screen(state.run ? "bay" : "map");
+    else if (location.hash === "#quest") screen("bay");
     else if (path === "labs" || fragment.has("lab")) {
       selectedLab = state.labs.find((lab) => lab.id === fragment.get("lab"))?.id;
       await loadLabs();
@@ -433,12 +444,12 @@ $("cancel-password-reset").onclick = () => {
   $("reset-password-form").reset();
   $("reset-password-form").hidden = true;
 };
-async function openBriefing(number, mode = filters.mode) {
+async function openBriefing(number, mode = filters.mode, track = filters.path) {
   try {
     preview = {
       quest: await api("briefing/" + number),
       mode,
-      track: filters.path,
+      track,
       minutes: Number($("exam-minutes").value),
     };
     readingTranslation = false;
@@ -563,7 +574,7 @@ $("stop").onclick = async () => {
   if (!confirm(t("quest.stop_confirm"))) return;
   if (await action(() => api("stop", {}))) {
     disposeTerminals();
-    screen("map");
+    screen("bay");
   }
 };
 for (const [id, key] of [
@@ -749,8 +760,34 @@ function renderMap() {
 function renderQuest() {
   const r = state.run,
     q = state.quest;
+  const view = attemptState(r);
+  $("bay-summary").hidden = view.active || view.preparing;
+  $("bay-grid").hidden = !view.active && !view.preparing;
+  $("bay-title").hidden = !r || !q;
+  $("stop").hidden = !view.showStop;
+  $("bay-replay").hidden = !view.showReplay;
+  $("bay-last-attempt").hidden = !view.finished;
+  $("bay-finished-message").hidden = !view.finished;
+  $("bay-breakdown").hidden = !r?.score_details;
+  $("bay-last-attempt").textContent = view.finished
+    ? t("quest.last_attempt", { level: r.level, status: t("status." + r.status), score: r.score })
+    : "";
+  const finishedMessage = view.finished
+    ? t("quest.attempt_finished", { status: t("status." + r.status) })
+    : "";
+  if ($("bay-finished-message").textContent !== finishedMessage)
+    $("bay-finished-message").textContent = finishedMessage;
+  $("bay-breakdown").textContent = r?.score_details ? t("scoring.breakdown", r.score_details) : "";
+  $("bay-replay").onclick = () => openBriefing(r.level, r.mode, r.route || q.track);
+  for (const id of ["check", "reset", "stop"]) $(id).disabled = !view.active;
+  if (!view.active) {
+    $("topology").replaceChildren();
+    if (terminalKind === "quest") disposeTerminals();
+  }
+  if (terminalKind === "quest") $("shared-terminal").hidden = !view.showTerminal;
+  $("debrief").hidden = r?.status !== "passed";
   if (!r || !q) return;
-  const active = r.status === "active" && !r.preparing;
+  const active = view.active;
   $("hint-status").hidden = !r.hints;
   $("hint-status").textContent = t("hint.used", { count: r.hints });
   $("quest-tag").textContent = t("quest.tag", {
@@ -818,7 +855,6 @@ function renderQuest() {
     for (const name of earned) $("debrief").append(el("span", name, "badge"));
     const details = r.score_details;
     if (details) {
-      $("debrief").append(el("p", t("scoring.breakdown", details)));
       if (details.floor_adjustment)
         $("debrief").append(
           el("p", t("scoring.floor", { minimum: state.scoring.minimum, adjustment: details.floor_adjustment })),
@@ -863,6 +899,7 @@ function renderQuest() {
   renderCheckFeedback(r, q);
   tick();
 }
+$("bay-back").onclick = () => screen("map");
 function renderFacts(facts, node = $("bay-facts")) {
   node.replaceChildren(
     el("p", t("facts.network")),
@@ -922,11 +959,14 @@ function tick() {
   const elapsed = Math.max(0, (r.status === "active" ? Date.now() / 1000 : (r.ended ?? Date.now() / 1000)) - r.started);
   $("live-score").textContent = r.preparing
     ? t("scoring.preparing")
-    : t("scoring.current", { score: scoreBreakdown(state.scoring, elapsed, r.hints, r.resets).score });
+    : t(r.status === "active" ? "scoring.current" : "quest.final_score", {
+        score: r.status === "active" ? scoreBreakdown(state.scoring, elapsed, r.hints, r.resets).score : r.score,
+      });
 }
 function connectTerminal(r, kind = "quest") {
   const destination = $(kind === "lab" ? "lab-workbench" : "bay-workbench");
   if ($("shared-terminal").parentElement !== destination) destination.append($("shared-terminal"));
+  $("shared-terminal").hidden = false;
   if (terminalRun === r.id && terminalKind === kind) return;
   disposeTerminals();
   terminalRun = r.id;
@@ -1116,7 +1156,9 @@ async function topology() {
   )
     return;
   try {
+    const runId = state.run.id;
     const data = await api("topology");
+    if (state?.run?.id !== runId || state.run.status !== "active" || state.run.preparing) return;
     const svg = $("topology");
     svg.replaceChildren();
     const nodes = data.nodes.slice(0, 12),
@@ -1161,6 +1203,9 @@ async function topology() {
 async function refresh() {
   try {
     state = await api("state");
+    renderBuildInfo();
+    renderSidebar();
+    void refreshUpdateNotice();
     $("logout").hidden = false;
     const activeLab = state.labs?.find((lab) => lab.slot);
     $("active-workspace").hidden = state.run?.status !== "active" && !activeLab;
@@ -1182,6 +1227,9 @@ async function refresh() {
   } catch (e) {
     if (!state || e.status === 401) {
       state = null;
+      updateInfo = null;
+      renderBuildInfo();
+      renderSidebar();
       usersData = null;
       readingTranslation = false;
       $("user-list").replaceChildren();
@@ -1198,6 +1246,145 @@ async function refresh() {
     } else notify(e.message);
   }
 }
+function buildLabel() {
+  const build = state?.build;
+  if (!build) return "";
+  return build.version === "dev" && build.commit === "dev" ? "dev" : `${build.version} · ${build.commit}`;
+}
+function renderBuildInfo() {
+  const label = buildLabel(),
+    adminUpdate = state?.user.admin ? updateInfo : null;
+  const signature = JSON.stringify([label, adminUpdate, Boolean(state?.user.admin), i18n.language]);
+  if (signature === buildSignature) return;
+  buildSignature = signature;
+  $("sidebar-build-info").hidden = $("profile-build-info").hidden = !label;
+  $("sidebar-build").textContent = $("profile-build").textContent = label;
+  for (const id of ["sidebar-update", "profile-update"]) {
+    const container = $(id);
+    container.replaceChildren();
+    container.hidden = !adminUpdate;
+    if (!adminUpdate) continue;
+    const notes = el("a", t("update.available", { version: adminUpdate.version }), "update-link");
+    notes.href = adminUpdate.release_url;
+    notes.target = "_blank";
+    notes.rel = "noopener noreferrer";
+    notes.setAttribute("aria-label", t("update.release_notes", { version: adminUpdate.version }));
+    container.append(notes);
+    if (adminUpdate.command) {
+      const command = el("code", adminUpdate.command),
+        copy = el("button", t("update.copy"));
+      copy.type = "button";
+      copy.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(adminUpdate.command);
+          notify(t("update.copied"));
+        } catch {
+          notify(t("update.copy_failed"));
+        }
+      };
+      container.append(command, copy);
+    }
+    if (adminUpdate.documentation_url) {
+      const docs = el("a", t("update.instructions"));
+      docs.href = adminUpdate.documentation_url;
+      docs.target = "_blank";
+      docs.rel = "noopener noreferrer";
+      container.append(docs);
+    }
+  }
+  renderSidebar();
+}
+async function refreshUpdateNotice() {
+  if (!state?.user.admin) {
+    updateInfo = null;
+    renderBuildInfo();
+    return;
+  }
+  if (updateRequest) return;
+  updateRequest = true;
+  const user = state.user.name;
+  try {
+    const data = await api("updates");
+    if (state?.user.admin && state.user.name === user) updateInfo = data.update;
+  } catch {
+    updateInfo = null;
+  } finally {
+    updateRequest = false;
+    renderBuildInfo();
+  }
+}
+function hideNavigationTooltip() {
+  $("navigation-tooltip").hidden = true;
+  tooltipItem?.removeAttribute("aria-describedby");
+  tooltipItem = null;
+}
+function renderSidebar() {
+  const user = state?.user.name ?? null;
+  if (user !== layoutUser) {
+    layoutUser = user;
+    document.body.classList.toggle(
+      "sidebar-collapsed",
+      Boolean(user && readCollapsed(sidebarKey(base.pathname, user))),
+    );
+  }
+  const collapsed = document.body.classList.contains("sidebar-collapsed");
+  $("sidebar-collapse").hidden = !user;
+  $("sidebar-collapse").setAttribute("aria-expanded", String(!collapsed));
+  $("sidebar-collapse").setAttribute("aria-label", t(collapsed ? "nav.expand" : "nav.collapse"));
+  for (const item of document.querySelectorAll("[data-nav-icon]")) {
+    const label = item.querySelector(".nav-label")?.textContent ?? item.getAttribute("aria-label");
+    item.dataset.navTooltip = label;
+    if (item.querySelector(".nav-label")) item.setAttribute("aria-label", label);
+  }
+  const brand = document.querySelector(".brand"),
+    version = buildLabel();
+  brand.dataset.navTooltip = version ? `${t("build.version")}: ${version}` : t("app.title");
+  if (state?.user.admin && updateInfo)
+    brand.dataset.navTooltip += `; ${t("update.available", { version: updateInfo.version })}`;
+  brand.classList.toggle("update-available", Boolean(state?.user.admin && updateInfo));
+  if (tooltipItem) {
+    if (collapsed && matchMedia("(min-width: 901px)").matches) showNavigationTooltip(tooltipItem);
+    else hideNavigationTooltip();
+  }
+}
+$("sidebar-collapse").onclick = () => {
+  if (!state) return;
+  const next = saveCollapsed(
+    sidebarKey(base.pathname, state.user.name),
+    !document.body.classList.contains("sidebar-collapsed"),
+  );
+  document.body.classList.toggle("sidebar-collapsed", next);
+  renderSidebar();
+  requestAnimationFrame(() => {
+    try {
+      fit?.fit();
+    } catch {}
+  });
+};
+function showNavigationTooltip(item) {
+  if (
+    !document.body.classList.contains("sidebar-collapsed") ||
+    !matchMedia("(min-width: 901px)").matches ||
+    !item?.dataset.navTooltip
+  )
+    return;
+  hideNavigationTooltip();
+  tooltipItem = item;
+  const tooltip = $("navigation-tooltip"),
+    rect = item.getBoundingClientRect();
+  tooltip.textContent = item.dataset.navTooltip;
+  tooltip.style.left = `${rect.right + 8}px`;
+  tooltip.style.top = `${Math.max(8, Math.min(innerHeight - 52, rect.top))}px`;
+  tooltip.hidden = false;
+  item.setAttribute("aria-describedby", tooltip.id);
+}
+for (const event of ["pointerover", "focusin"])
+  document.addEventListener(event, (e) => showNavigationTooltip(e.target.closest("[data-nav-icon], .brand")));
+for (const event of ["pointerout", "focusout"])
+  document.addEventListener(event, (e) => {
+    if (!tooltipItem?.contains(e.relatedTarget)) hideNavigationTooltip();
+  });
+window.addEventListener("resize", hideNavigationTooltip);
 applyLanguage();
 await refresh();
 await route();

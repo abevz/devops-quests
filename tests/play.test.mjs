@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { canRun, filterLevels, narrative } from "../web/play.mjs";
+import { attemptState, canRun, filterLevels, narrative } from "../web/play.mjs";
 const levels = [
   {
     id: 1,
@@ -80,4 +80,22 @@ test("brief narrative removes duplicate goals, preserving unique clauses and unk
   assert.deepEqual(narrative({ en: "Success criteria: unique guidance" }, [goal]), {
     en: "Success criteria: unique guidance",
   });
+});
+test("finished attempts never expose live controls, including after reload", () => {
+  for (const status of ["passed", "abandoned", "expired", "setup_failed", "idle"]) {
+    const run = JSON.parse(JSON.stringify({ id: "attempt", status }));
+    assert.deepEqual(attemptState(run), {
+      active: false,
+      preparing: false,
+      finished: true,
+      showStop: false,
+      showTerminal: false,
+      showReplay: true,
+    });
+  }
+  assert.equal(attemptState(null).showReplay, false);
+  assert.equal(attemptState(null).showTerminal, false);
+  assert.equal(attemptState({ status: "active", preparing: true }).showStop, false);
+  assert.equal(attemptState({ status: "active" }).showStop, true);
+  assert.equal(attemptState({ status: "active" }).showTerminal, true);
 });

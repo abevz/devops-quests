@@ -52,3 +52,15 @@ export function narrative(value, objectives = []) {
     }),
   );
 }
+// The persisted attempt status is authoritative, including after a page reload.
+export function attemptState(run) {
+  const active = run?.status === "active";
+  return {
+    active: active && !run.preparing,
+    preparing: active && !!run.preparing,
+    finished: !!run && !active,
+    showStop: active && !run.preparing,
+    showTerminal: active && !run.preparing,
+    showReplay: !!run && !active,
+  };
+}

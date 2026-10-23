@@ -10,6 +10,8 @@ Designed and operated by [Aleksey Bevz](https://www.linkedin.com/in/aleksey-bevz
 
 ![Level map from a clean Linux installation with a synthetic demo account](docs/screenshots/level-map.png)
 
+[Running quest: briefing, isolated terminal and collapsed navigation](docs/screenshots/quest.png).
+
 ## What's inside
 
 The [catalog](levels.yaml) contains **130 quests** across four difficulty bands:
@@ -61,6 +63,11 @@ Enter your own password at the hidden prompt. The first start prepares offline a
 Designed, specified, reviewed and operated by [Aleksey Bevz](https://www.linkedin.com/in/aleksey-bevz/).
 Most of the code was written by AI coding agents working to that design; the architecture, requirements,
 curriculum, acceptance checks, infrastructure and operations are mine.
+
+## Related projects
+
+- [ViktorUJ/cks](https://github.com/ViktorUJ/cks) — open-source platform for learning Kubernetes and AWS EKS and
+  preparing for the CKA, CKS, CKAD and ICA certification exams.
 
 ## Contributing and documentation
 
