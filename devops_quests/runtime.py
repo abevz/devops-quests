@@ -417,12 +417,13 @@ nodes:
             )
         if result.returncode:
             raise RuntimeError(result.stderr.decode()[-3000:])
-        # crane historically canonicalized Docker Hub to index.docker.io, while
-        # CRI resolves docker.io. Both names identify the same verified manifest.
+        # OCI annotations are transport aliases: release archives can retain a
+        # tag or a mirror name. Match containerd's target digest, never a digest
+        # embedded in an image name, before creating the canonical CRI alias.
         reference = self.images[key]
         repository = reference.split("@", 1)[0].rsplit(":", 1)[0]
         canonical = repository + "@" + reference.split("@", 1)[1]
-        imported = self.docker(
+        listing = self.docker(
             "exec",
             node,
             "ctr",
@@ -430,11 +431,21 @@ nodes:
             "k8s.io",
             "images",
             "ls",
-            "-q",
-        ).stdout.split()
-        if canonical not in imported:
-            alias = canonical.replace("docker.io/", "index.docker.io/", 1)
-            if alias not in imported:
+        ).stdout
+        imported = {}
+        for line in listing.splitlines()[1:]:
+            fields = line.split()
+            if len(fields) >= 3:
+                imported[fields[0]] = fields[2]
+        if canonical in imported:
+            if imported[canonical] != pinned_manifest:
+                raise RuntimeError("Pinned image reference has a different target digest")
+        else:
+            alias = next(
+                (name for name, digest in imported.items() if digest == pinned_manifest),
+                None,
+            )
+            if alias is None:
                 raise RuntimeError("Pinned image reference missing after import")
             self.docker(
                 "exec",
@@ -447,6 +458,7 @@ nodes:
                 alias,
                 canonical,
             )
+            imported[canonical] = pinned_manifest
         # Canonicalize legacy unnamed OCI aliases from the kind image and old
         # imports. Containerd checkpoint lookup normalizes these names to
         # docker.io/library; the corresponding metadata key must actually exist.
