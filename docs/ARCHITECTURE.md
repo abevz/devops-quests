@@ -35,7 +35,7 @@ exit status determines whether its objectives pass; checks must validate the res
 state rather than command history. See [the engine](../devops_quests/engine.py) and
 [level contribution rules](../CONTRIBUTING.md).
 
-The curriculum catalog joins stable level IDs, original bilingual narrative, Guide snapshots
+The curriculum catalog joins stable level IDs, original localized narrative, Guide snapshots
 and examples. The UI keeps one PTY across Guide navigation; Stop/Continue creates a new process
 while retaining files. All application/cluster images are prepared before offline use.
 
@@ -60,7 +60,7 @@ These operator scripts are not part of the public installer.
 
 ## Verification
 
-[Default CI](../.github/workflows/ci.yml) runs Python and JS tests, lint, bilingual
+[Default CI](../.github/workflows/ci.yml) runs Python and JS tests, lint, localization
 content/diagram validators, bundle checksums, packaging and public-tree hygiene.
 It starts no sandboxes. [Reference solutions](../solutions/) feed the
 [opt-in integration matrix](../tests/test_quests.py), which runs solutions against
