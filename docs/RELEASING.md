@@ -75,8 +75,16 @@ explicit data migration. Pending briefing hints must survive; rollback to code w
 transfer contract is refused while those records exist.
 
 Smoke must cover the frontend, login, protected APIs returning401 anonymously, and an actual
-authenticated request. Deployment-specific HTTPS chooser/routing checks belong to the private
-integration. Keep the prior symlink/version and a tested rollback command.
+authenticated request. Before opening traffic, also run level 1 (Image identity) and Stop
+through the application API as a synthetic `release-smoke` user, using the installed release's
+GHCR assets. Verify a ready workstation and the pinned image in CRI, then verify the attempt
+and its owned node have stopped. A successful login/state request alone cannot qualify a
+release: it does not exercise OCI import. Use isolated synthetic state and installation-owned
+resources so learner accounts, progress, hints and saved Labs remain unchanged. A failure must
+keep traffic closed and enter the integration's recovery path. This sandbox check belongs to
+deployment qualification; default PR/push CI must still never start sandboxes.
+Deployment-specific HTTPS chooser/routing checks and the smoke implementation belong to the
+private integration. Keep the prior symlink/version and a tested rollback command.
 
 Saved Labs pin runtime assets and code fingerprints. Incompatible saved Labs must block an
 upgrade rather than be reset or deleted. Their data must remain available to the old release;

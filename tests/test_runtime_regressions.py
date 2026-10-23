@@ -158,7 +158,11 @@ def test_oci_import_rejects_unrelated_cri_identity(tmp_path, monkeypatch):
     def docker(*args, **kwargs):
         if "inspecti" in args:
             return result(json.dumps({"status": {"id": "sha256:" + "0" * 64}}))
-        return result("docker.io/example@" + manifest + "\n")
+        return result(
+            "REF TYPE DIGEST SIZE PLATFORMS LABELS\n"
+            f"docker.io/example@{manifest} application/vnd.oci.image.manifest.v1+json "
+            f"{manifest} 1KiB linux/amd64 -\n"
+        )
 
     monkeypatch.setattr(runtime, "docker", docker)
     with pytest.raises(RuntimeError, match="CRI image differs"):
