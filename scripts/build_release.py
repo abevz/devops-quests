@@ -4,11 +4,14 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import tarfile
 from pathlib import Path
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 EXCLUDE = {
     ".git",
     ".venv",
@@ -24,6 +27,31 @@ EXCLUDE = {
 }
 
 
+def dependencies(output):
+    """Package verified tools, wheels and the original collection archives."""
+    from scripts.dependency_assets import verify
+
+    result = {}
+    archive = output / "devops-quests-dependencies-linux-amd64.tar.gz"
+    wheels = sorted((ROOT / ".ci-cache/wheelhouse").glob("*.whl"))
+    if not wheels:
+        raise RuntimeError("Missing pinned release wheelhouse")
+    with tarfile.open(archive, "w:gz") as tar:
+        for name, item in json.loads((ROOT / "tools.lock.json").read_text()).items():
+            path = verify(ROOT / "bin" / name, item["binary_sha256"])
+            tar.add(path, arcname="bin/" + name, recursive=False)
+        for path in wheels:
+            tar.add(path, arcname="wheelhouse/" + path.name, recursive=False)
+    result[archive.name] = hashlib.sha256(archive.read_bytes()).hexdigest()
+    for name, item in json.loads(
+        (ROOT / "labs/collections.lock.json").read_text()
+    ).items():
+        path = verify(ROOT / ".state" / name, item["sha256"])
+        shutil.copyfile(path, output / name)
+        result[name] = item["sha256"]
+    return result
+
+
 def build(version, output):
     if not re.fullmatch(r"v\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?", version):
         raise ValueError("Expected immutable vX.Y.Z")
@@ -35,6 +63,7 @@ def build(version, output):
         raise ValueError("Release source must match the committed tree")
     archive = output / ("devops-quests-" + version + ".tar.gz")
     files = {}
+    assets = {}
     with tarfile.open(archive, "w:gz", format=tarfile.PAX_FORMAT) as tar:
         tracked = (
             subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT)
@@ -58,6 +87,7 @@ def build(version, output):
             if identity.get("version") != version or identity.get("commit") != commit:
                 raise ValueError("Release image lock does not match tag/source commit")
             names.add("release-images.lock.json")
+            assets = dependencies(output)
         for name in sorted(names):
             path = ROOT / name
             rel = path.relative_to(ROOT)
@@ -81,6 +111,7 @@ def build(version, output):
             "commit": commit,
             "architecture": "linux/amd64",
             "files": files,
+            "dependencies": assets,
         }
         raw = (json.dumps(metadata, indent=2) + "\n").encode()
         info = tarfile.TarInfo("RELEASE.json")

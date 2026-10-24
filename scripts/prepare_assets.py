@@ -8,7 +8,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,13 +19,14 @@ def run(*args, **kwargs):
     return subprocess.run(list(args), check=True, **kwargs)
 
 
-def tools_only():
-    from scripts.bootstrap import TOOLS, get
+def tools_only(offline=False, project_only=False):
+    from scripts.bootstrap import TOOLS
+    from scripts.dependency_assets import download
     import io
 
     lock = json.loads((ROOT / "tools.lock.json").read_text())
     (ROOT / "bin").mkdir(exist_ok=True)
-    for name, (url, _, member) in TOOLS.items():
+    for name, (_, _, member) in TOOLS.items():
         item = lock[name]
         target = ROOT / "bin" / name
         if (
@@ -34,9 +34,13 @@ def tools_only():
             and hashlib.sha256(target.read_bytes()).hexdigest() == item["binary_sha256"]
         ):
             continue
-        payload = get(url)
-        if hashlib.sha256(payload).hexdigest() != item["download_sha256"]:
-            raise RuntimeError("Pinned tool archive mismatch: " + name)
+        if offline:
+            raise RuntimeError("Missing or corrupt Release tool: " + name)
+        payload = download(
+            name,
+            {"urls": item["urls"], "sha256": item["download_sha256"]},
+            project_only=project_only,
+        )
         if member:
             with tarfile.open(fileobj=io.BytesIO(payload)) as archive:
                 payload = archive.extractfile(member).read()
@@ -49,7 +53,13 @@ def tools_only():
 def install_release(lock):
     state = ROOT / ".state"
     state.mkdir(mode=0o700, exist_ok=True)
-    tools_only()
+    from scripts.dependency_assets import verify
+
+    tools_only(offline=True)
+    for name, item in json.loads(
+        (ROOT / "labs/collections.lock.json").read_text()
+    ).items():
+        verify(state / name, item["sha256"])
     runtime_refs = json.loads((ROOT / "images.lock.json").read_text())
     runtime_refs.update(json.loads((ROOT / "labs/images.lock.json").read_text()))
     required = {
@@ -136,14 +146,31 @@ def install_release(lock):
             (state / (key + "-oci.ref")).write_text(alias)
     (state / "host-images.json").write_text(json.dumps(host_images, indent=2) + "\n")
     (state / "host-images.json").chmod(0o600)
+
+
+def release_build():
+    """Reuse immutable images only while all image-build inputs remain identical."""
+    from scripts.dependency_assets import download
+
+    lock = json.loads((ROOT / "build-images.lock.json").read_text())
+    for name, checksum in lock["inputs"].items():
+        if hashlib.sha256((ROOT / name).read_bytes()).hexdigest() != checksum:
+            raise RuntimeError(
+                "Image build input changed; refresh build-images.lock.json: " + name
+            )
+    tools_only(project_only=True)
+    state = ROOT / ".state"
+    state.mkdir(mode=0o700, exist_ok=True)
     for name, item in json.loads(
         (ROOT / "labs/collections.lock.json").read_text()
     ).items():
-        with urllib.request.urlopen(item["url"], timeout=90) as response:
-            payload = response.read()
-        if hashlib.sha256(payload).hexdigest() != item["sha256"]:
-            raise RuntimeError("Collection checksum mismatch")
-        (state / name).write_bytes(payload)
+        path = state / name
+        if (
+            not path.is_file()
+            or hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]
+        ):
+            path.write_bytes(download(name, item, project_only=True))
+    install_release(lock)
 
 
 def main():
@@ -151,10 +178,13 @@ def main():
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", action="store_true")
+    parser.add_argument("--release-build", action="store_true")
     parser.add_argument("--tools-only", action="store_true")
     parser.add_argument("--lock", type=Path, default=ROOT / "release-images.lock.json")
     args = parser.parse_args()
-    if args.tools_only:
+    if args.release_build:
+        release_build()
+    elif args.tools_only:
         tools_only()
     elif not args.source and asset_cache.valid(ROOT):
         print(

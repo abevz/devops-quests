@@ -32,6 +32,7 @@ def publish(version):
     images = {}
     upstream = json.loads((ROOT / "images.lock.json").read_text())
     upstream.update(json.loads((ROOT / "labs/images.lock.json").read_text()))
+    transport = json.loads((ROOT / "build-images.lock.json").read_text())["images"]
     for key in (
         "app",
         "argocd",
@@ -50,7 +51,10 @@ def publish(version):
         target = "ghcr.io/abevz/devops-quests-" + key.replace("_", "-") + ":" + version
         # OCI archives use platform-specific manifests; outer Docker services
         # may retain a multi-platform upstream index. Always pin what was pushed.
-        args = [crane, "copy", upstream[key], target]
+        source = transport[key]["reference"]
+        if source.rsplit("@", 1)[1] != upstream[key].rsplit("@", 1)[1]:
+            raise RuntimeError("Build mirror differs from pinned source: " + key)
+        args = [crane, "copy", source, target]
         if key not in {"dind", "gitea", "vault", "registry"}:
             args += ["--platform=linux/amd64"]
         subprocess.run(args, check=True)

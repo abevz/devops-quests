@@ -7,14 +7,17 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-import urllib.request
 from pathlib import Path
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 DOCKER = ["docker", "--host", "unix:///var/run/docker.sock"]
 
 
 def main():
+    from scripts.dependency_assets import download
+
     state = ROOT / ".state"
     state.mkdir(exist_ok=True)
     for name, asset in json.loads(
@@ -26,10 +29,7 @@ def main():
             and hashlib.sha256(path.read_bytes()).hexdigest() == asset["sha256"]
         ):
             continue
-        with urllib.request.urlopen(asset["url"], timeout=60) as response:
-            content = response.read(4 * 1024 * 1024)
-        if hashlib.sha256(content).hexdigest() != asset["sha256"]:
-            raise RuntimeError("Collection checksum mismatch: " + name)
+        content = download(name, asset)
         path.write_bytes(content)
     images = json.loads((ROOT / "labs/images.lock.json").read_text())
     for key, reference in images.items():

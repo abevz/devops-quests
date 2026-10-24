@@ -122,3 +122,41 @@ offered; drafts and pre-releases are ignored. Attempts are persisted and limited
 to one per 24 hours for the configured repository. Network failures stay in logs
 and never block the app. There is no root operation or self-upgrade endpoint in
 the web process: release, deployment and rollback remain operator actions.
+
+## Offline dependencies (Linux amd64 / CPython 3.13)
+
+The tag workflow restores `ci-dependencies.lock.json` package caches from the
+`deps-1` GitHub prerelease. Their SHA-256 values bind the Python wheels and npm
+cache; npm additionally checks `package-lock.json` integrity. CI uses pip
+`--no-index`, npm `--offline`, and builds Python packages without build isolation.
+No sandbox is started in CI.
+
+`build-images.lock.json` records the v1.1.0 GHCR image digests and hashes of image
+build inputs. `prepare_assets.py --release-build` refuses changed inputs and
+reuses these images instead of contacting upstream registries, apt or PyPI.
+`publish_images.py` copies only the digest-verified project mirrors. Refresh the
+snapshot through a reviewed dependency update when changing image inputs; the
+explicit developer `--source` path still builds from upstream sources.
+
+Collections and tool archives have ordered sources in their locks, with the
+project's dependency Release first. A failed HTTP request or checksum proceeds
+to the next source in the developer/source path. Release builds restrict this list
+to project GitHub sources and fail closed; they never fall back to third-party
+servers. Nothing accepts bytes with a different pinned checksum.
+The dependency Release is a prerelease, never latest; do not replace its assets
+or move its tag. Publish a new dependency Release and update locks instead.
+
+Each application Release contains a separate original collection archive and
+`devops-quests-dependencies-linux-amd64.tar.gz` (tools and wheels), listed in both
+`RELEASE.json.dependencies` and `SHA256SUMS`. The VM operator downloads and checks
+these assets before installing Python requirements with `--no-index` and
+`--require-hashes`. `prepare_assets.py` verifies already staged tools/collections
+and pulls only the project's immutable GHCR references. It refuses missing or
+corrupt dependency files instead of using a network fallback during deployment.
+
+Keep release notes in `docs/releases/<tag>.md` before pushing the immutable tag.
+Older Releases without dependency metadata keep the operator's legacy install
+path, including its upstream network requirements. Rollback to an already
+prepared v1.1.0 installation reuses its retained venv and assets without installing
+or downloading dependencies. Do not delete old releases to reclaim space during
+a deployment.
