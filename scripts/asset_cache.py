@@ -9,12 +9,14 @@ from pathlib import Path
 INPUTS = (
     "images.lock.json",
     "tools.lock.json",
+    "build-images.lock.json",
     "labs/images.lock.json",
     "labs/collections.lock.json",
     "scripts/bootstrap.py",
     "scripts/lab_assets.py",
     "scripts/derive_private_image.py",
     "scripts/prepare_assets.py",
+    "scripts/dependency_assets.py",
     "scripts/asset_cache.py",
 )
 
