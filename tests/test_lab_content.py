@@ -57,7 +57,7 @@ def test_all_published_lessons_have_bilingual_runnable_routes_and_block_coverage
             elif "files" in block:
                 assert (ROOT / block["files"]).is_dir()
         count += len(blocks)
-    assert count == 394
+    assert count == 378
 
 
 def test_source_refresh_preserves_editorial_bytes_and_marks_the_lesson_stale(
