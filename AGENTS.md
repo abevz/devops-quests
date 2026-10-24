@@ -4,6 +4,12 @@ Work only in the authorized scope. Preserve accounts, progress, pending briefing
 Lab files and unrelated Docker resources. Never add AI attribution or contributor trailers.
 No default credentials, personal infrastructure, user databases, logs or private keys belong here.
 
+In the maintainer layout (a bare clone with worktrees) treat the `main` worktree as read-only
+(update and status only): create a sibling worktree on a new branch from `origin/main` for
+every task (`git -C main worktree add ../<task> -b <branch> origin/main`), push that branch
+and open a PR. Never commit or push to `main` directly; remove finished worktrees with
+`git worktree remove`.
+
 Use one writer per worktree. Independent read-only review must cover the final changed
 content before commit/publication; later source edits need renewed review. Keep evidence
 outside Git. Verify actual entrypoints and fixture layouts before changing production behavior.
