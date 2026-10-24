@@ -60,27 +60,31 @@ def test_all_published_lessons_have_bilingual_runnable_routes_and_block_coverage
     assert count == 378
 
 
-def test_source_refresh_preserves_editorial_bytes_and_marks_the_lesson_stale(
-    tmp_path, monkeypatch
+def test_rehash_after_editing_russian_text_marks_lesson_and_translation_stale(
+    tmp_path,
 ):
+    from scripts.validate_i18n import audit
+
     catalog = Catalog()
     docs = tmp_path / "docs"
     docs.mkdir()
     for name in ("guide-excerpts.json", "guide-lessons.yaml", "guide-topics.yaml"):
         shutil.copyfile(ROOT / "docs" / name, docs / name)
     shutil.copytree(ROOT / "docs/guides", docs / "guides")
+    shutil.copytree(ROOT / "locales", tmp_path / "locales")
     before = {
         name: (docs / name).read_bytes()
         for name in ("guide-lessons.yaml", "guide-topics.yaml")
     }
-
-    def source(_vault, item):
-        return catalog.guide_messages[item["resource"]]["ru"][
-            "text"
-        ] + "\nChanged source fixture.\n", item["line"]
-
-    monkeypatch.setattr(guide_excerpts, "extract_source", source)
-    assert guide_excerpts.refresh(tmp_path / "fixture-vault", root=tmp_path) == 29
+    assert guide_excerpts.refresh(root=tmp_path) == 29
+    assert (docs / "guides/kubernetes-20/i18n/ru.yaml").read_bytes() == (
+        ROOT / "docs/guides/kubernetes-20/i18n/ru.yaml"
+    ).read_bytes()
+    russian = docs / "guides/kubernetes-20/i18n/ru.yaml"
+    values = yaml.safe_load(russian.read_text())
+    values["text"] += "\nEdited text.\n"
+    russian.write_text(yaml.safe_dump(values, allow_unicode=True, sort_keys=False))
+    assert guide_excerpts.refresh(root=tmp_path) == 29
     for name, expected in before.items():
         assert (docs / name).read_bytes() == expected
     catalog.guides = json.loads((docs / "guide-excerpts.json").read_text())
@@ -89,6 +93,13 @@ def test_source_refresh_preserves_editorial_bytes_and_marks_the_lesson_stale(
         catalog.guide("kubernetes-20")["content"]
         == catalog.guide_lessons["kubernetes-20"]["content"]
     )
+    result = audit(tmp_path)
+    assert not any(e.get("error") == "original_hash_mismatch" for e in result["errors"])
+    assert {
+        "guide": "kubernetes-20",
+        "language": "en",
+        "reason": "snapshot_changed",
+    } in result["stale"]
 
 
 def test_public_reference_preserves_numbered_code_lines():

@@ -67,6 +67,7 @@ smoke logs. Historical outputs and diagrams are not runnable tests.
   proves that workload rollback does not reverse that side effect; it does not
   simulate database transactional correctness. GitOps uses the private repository.
 
-No source Guide or Drills file is changed by the application layer. Refreshing
-source snapshots preserves `guide-lessons.yaml` and `guide-topics.yaml`; stale
-source hashes require a new editorial/coverage review before release.
+The Russian guide text in the repository is the source of truth. Re-hashing it
+(`python -m scripts.guide_excerpts`) preserves `guide-lessons.yaml` and
+`guide-topics.yaml`; stale source hashes require a new editorial/coverage review
+before release.

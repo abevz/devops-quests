@@ -15,7 +15,8 @@ Stop the app first; the fixture intentionally holds its runtime lock. Changes to
 require only their affected matrix. Do not use your live learning profile for tests.
 
 Guides are curated in `docs/guide-lessons.yaml`, `docs/guide-topics.yaml` and localized
-snapshots under `docs/guides/`. Reconcile source hashes when editing original snapshots;
+snapshots under `docs/guides/`. The Russian `ru.yaml` text is the source of truth: after editing
+it, run `python -m scripts.guide_excerpts` to re-hash it, then update the stale translations;
 translations must preserve operational code. Diagrams render locally with strict SVG
 handling. Screenshots use a synthetic `demo` account and must not reveal passwords or keys.
 

@@ -156,7 +156,7 @@ def test_repository_language_resources_and_guide_code_are_complete():
 
 
 def test_validator_rejects_missing_english_changed_code_and_stale_translation(tmp_path):
-    from scripts.validate_i18n import audit, extract_source
+    from scripts.validate_i18n import audit
 
     root = tmp_path / "repo"
     shutil.copytree(ROOT / "locales", root / "locales")
@@ -179,17 +179,6 @@ def test_validator_rejects_missing_english_changed_code_and_stale_translation(tm
     assert any(e["error"] == "missing_english_key" for e in result["errors"])
     assert any(e["error"] == "code_blocks_changed" for e in result["errors"])
     assert any(e["reason"] == "snapshot_changed" for e in result["stale"])
-    original = yaml.safe_load(
-        (root / "docs/guides/kubernetes-4/i18n/ru.yaml").read_text()
-    )["text"]
-    vault = tmp_path / "vault"
-    source = vault / item["source"]
-    source.parent.mkdir(parents=True)
-    source.write_text(original + "\nChanged source text.\n")
-    assert any(
-        e["reason"] == "vault_source_changed" for e in audit(root, vault)["stale"]
-    )
-    assert extract_source(vault, item)[1] == 1
 
 
 @pytest.mark.parametrize(

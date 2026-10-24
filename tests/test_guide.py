@@ -19,7 +19,7 @@ async def test_authenticated_guide_safe_payload_theme_and_navigation(tmp_path):
                 "fixture": {
                     "heading": "A <title>",
                     "text": "</script><script>bad()</script>\n\n> [!note] A\n> text",
-                    "source": "BASE/Guide.md",
+                    "source": "Guide.md",
                     "line": 3,
                     "obsidian": "obsidian://open?vault=example&file=Guide",
                 },
