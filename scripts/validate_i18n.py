@@ -16,24 +16,6 @@ def digest(text):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def extract_source(vault, item):
-    path = (vault / item["source"]).resolve()
-    if not path.is_relative_to(vault.resolve()):
-        raise ValueError("Guide source escapes vault")
-    lines = path.read_text().splitlines()
-    start = next(
-        i
-        for i, line in enumerate(lines)
-        if line.startswith("#") and line.lstrip("# ") == item["heading"]
-    )
-    prefix = "## " if lines[start].startswith("## ") else "### "
-    end = next(
-        (i for i in range(start + 1, len(lines)) if lines[i].startswith(prefix)),
-        len(lines),
-    )
-    return "\n".join(lines[start:end]), start + 1
-
-
 def quest_keys(quest):
     keys = {
         quest["title"],
@@ -57,7 +39,7 @@ def quest_keys(quest):
     return keys
 
 
-def audit(root=ROOT, vault=None):
+def audit(root=ROOT):
     root = Path(root)
     errors, missing, stale = [], {}, []
     languages = sorted(
@@ -203,19 +185,6 @@ def audit(root=ROOT, vault=None):
                     )
             except ValueError as error:
                 errors.append({"guide": name, "error": str(error)})
-        if vault is not None:
-            try:
-                current, _ = extract_source(Path(vault), item)
-                if digest(current) != item["source_hash"]:
-                    stale.append({"guide": name, "reason": "vault_source_changed"})
-            except (OSError, StopIteration, ValueError) as error:
-                stale.append(
-                    {
-                        "guide": name,
-                        "reason": "vault_source_unavailable",
-                        "detail": str(error),
-                    }
-                )
     return {
         "languages": languages,
         "bundles": len(bundles),
@@ -229,7 +198,6 @@ def audit(root=ROOT, vault=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT)
-    parser.add_argument("--vault", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--strict",
@@ -237,7 +205,7 @@ def main():
         help="Fail on missing optional translations too",
     )
     args = parser.parse_args()
-    result = audit(args.root, args.vault)
+    result = audit(args.root)
     if args.output:
         args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     print(

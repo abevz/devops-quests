@@ -1,36 +1,30 @@
-"""Refresh Russian guide snapshots; keep translations and mark old hashes stale."""
+"""Re-hash the Russian guide texts after editing them; translations then show as stale.
 
-import argparse
+The Russian text in docs/guides/<resource>/i18n/ru.yaml is the source of truth.
+"""
+
 import json
-from pathlib import Path
 
 import yaml
 
 from devops_quests.catalog import ROOT
-from scripts.validate_i18n import digest, extract_source
+from scripts.validate_i18n import digest
 
 
-def refresh(vault, root=ROOT):
+def refresh(root=ROOT):
     index_path = root / "docs/guide-excerpts.json"
     index = json.loads(index_path.read_text())
     refreshed = set()
     for item in index.values():
-        text, line = extract_source(vault, item)
-        item["line"] = line
-        item["source_hash"] = digest(text)
         resource = item["resource"]
+        path = root / "docs/guides" / resource / "i18n/ru.yaml"
+        values = yaml.safe_load(path.read_text())
+        item["source_hash"] = digest(values["text"])
         if resource not in refreshed:
-            path = root / "docs/guides" / resource / "i18n/ru.yaml"
+            values["source_hash"] = item["source_hash"]
             path.write_text(
                 yaml.safe_dump(
-                    {
-                        "heading": item["heading"],
-                        "text": text,
-                        "source_hash": item["source_hash"],
-                    },
-                    allow_unicode=True,
-                    sort_keys=False,
-                    width=100000,
+                    values, allow_unicode=True, sort_keys=False, width=100000
                 )
             )
             refreshed.add(resource)
@@ -39,7 +33,4 @@ def refresh(vault, root=ROOT):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--vault", type=Path, required=True)
-    args = parser.parse_args()
-    print("Refreshed Russian snapshots:", refresh(args.vault))
+    print("Re-hashed Russian guides:", refresh())
