@@ -34,6 +34,11 @@ class Resources:
         if "en" not in self.ui:
             raise ValueError("Missing English UI resource")
         self.languages = tuple(self.ui)
+        self.metadata = {
+            lang: json.loads(path.read_text())
+            for lang in self.languages
+            if (path := self.root / "locales" / lang / "metadata.json").exists()
+        }
 
     @staticmethod
     def values(resources, key):

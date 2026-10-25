@@ -59,6 +59,7 @@ function block(
   parent.append(p);
 }
 function translationControls() {
+  document.querySelector("footer").textContent = [t("footer.caption"), i18n.translationNotice(readingTranslation)].filter(Boolean).join(" · ");
   for (const id of ["bay-translate", "preview-translate", "interview-translate"]) {
     const button = $(id);
     button.hidden = i18n.translation === "none" || i18n.translation === i18n.language;
@@ -1508,6 +1509,7 @@ function renderGuide() {
   });
   translate.onclick = () => {
     readingTranslation = !readingTranslation;
+    translationControls();
     renderGuide();
   };
   $("guide-reference").replaceChildren();

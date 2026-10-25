@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { I18n, chooseLanguage } from "../web/locale.mjs";
+import { readFileSync, readdirSync } from "node:fs";
+import { I18n, chooseLanguage, languageControls, loadI18n } from "../web/locale.mjs";
 const en = JSON.parse(readFileSync(new URL("../locales/en/ui.json", import.meta.url)));
 const ru = JSON.parse(readFileSync(new URL("../locales/ru/ui.json", import.meta.url)));
 test("browser matching, ICU plurals, interpolation and English fallbacks", () => {
@@ -31,13 +31,42 @@ test("all language messages use valid ICU with identical argument contracts", as
     }
     return [...names].sort();
   }
-  assert.deepEqual(Object.keys(en).sort(), Object.keys(ru).sort());
-  for (const key of Object.keys(en))
-    assert.deepEqual(
-      argumentsIn(new IntlMessageFormat(en[key], "en", undefined, { ignoreTag: true }).getAst()),
-      argumentsIn(new IntlMessageFormat(ru[key], "ru", undefined, { ignoreTag: true }).getAst()),
-      key,
-    );
+  for (const language of readdirSync(new URL("../locales/", import.meta.url))) {
+    const messages = JSON.parse(readFileSync(new URL(`../locales/${language}/ui.json`, import.meta.url)));
+    assert.deepEqual(Object.keys(en).sort(), Object.keys(messages).sort(), language);
+    for (const key of Object.keys(en))
+      assert.deepEqual(
+        argumentsIn(new IntlMessageFormat(en[key], "en", undefined, { ignoreTag: true }).getAst()),
+        argumentsIn(new IntlMessageFormat(messages[key], language, undefined, { ignoreTag: true }).getAst()),
+        `${language}: ${key}`,
+      );
+  }
+});
+
+test("catalog metadata labels machine languages in both selectors and survives switching", async (t) => {
+  const metadata = { pl: { translation: "machine", translation_label: "tłumaczenie maszynowe" } };
+  t.mock.method(globalThis, "fetch", async () => ({ ok: true, json: async () => ({ messages: { en, ru, pl: en }, metadata }) }));
+  const i18n = await loadI18n(new URL("http://localhost/"), ["en"]);
+  assert.equal(i18n.translationLabel(), "");
+  assert.match(i18n.languageName("pl"), /\(tłumaczenie maszynowe\)$/);
+  const node = () => ({ children: [], append(...children) { this.children.push(...children); }, replaceChildren() { this.children = []; } });
+  const previousDocument = globalThis.document;
+  globalThis.document = { createElement: node };
+  t.after(() => { if (previousDocument === undefined) delete globalThis.document; else globalThis.document = previousDocument; });
+  const host = node();
+  languageControls(i18n, host, () => {});
+  for (const label of host.children) {
+    const options = label.children[0].children;
+    assert.match(options.find((option) => option.value === "pl").textContent, /tłumaczenie maszynowe/);
+    assert.doesNotMatch(options.find((option) => option.value === "en").textContent, /tłumaczenie/);
+  }
+  i18n.setLanguages("pl", "en");
+  assert.equal(i18n.translationLabel(), "tłumaczenie maszynowe");
+  assert.equal(i18n.translationNotice(), "tłumaczenie maszynowe");
+  assert.equal(i18n.translationNotice(true), "tłumaczenie maszynowe");
+  i18n.setLanguages("en", "pl");
+  assert.equal(i18n.translationNotice(), "");
+  assert.equal(i18n.translationNotice(true), "tłumaczenie maszynowe");
 });
 
 test("explicit no-translation survives primary-language changes", () => {

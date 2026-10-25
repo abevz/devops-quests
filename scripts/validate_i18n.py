@@ -3,13 +3,26 @@
 import argparse
 import hashlib
 import json
+import re
+from collections import Counter
 from pathlib import Path
 
 import yaml
 
 from devops_quests.catalog import ROOT
-from devops_quests.code_translation import same_code
+from devops_quests.code_translation import fenced_blocks, same_code
 from devops_quests.i18n import LANGUAGE
+
+DOTTED_LITERAL = re.compile(
+    r"(?<![\w.-])[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)+(?:/[\w./-]+)?"
+)
+RESOURCE_QUANTITY = re.compile(r"\b\d+(?:\.\d+)?(?:m|Mi|Gi|Ki|Ti|ms)\b")
+HYPHENATED_LITERAL = re.compile(r"\b[A-Za-z][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)+\b")
+# Synthetic workload identities also occur as plain prose, outside code spans.
+WORKLOAD_NAMES = re.compile(
+    r"\b(?:board|relay|worker|station|client|reader|dispatcher|visitor|shelf)\b",
+    re.IGNORECASE,
+)
 
 
 def digest(text):
@@ -47,6 +60,136 @@ def audit(root=ROOT):
         for p in (root / "locales").iterdir()
         if p.is_dir() and LANGUAGE.fullmatch(p.name)
     )
+    machine_languages = set()
+    for language in languages:
+        path = root / "locales" / language / "metadata.json"
+        if not path.exists():
+            continue
+        try:
+            metadata = json.loads(path.read_text())
+            if not isinstance(metadata, dict):
+                raise ValueError("Language metadata must be an object")
+            if metadata.get("translation") == "machine":
+                machine_languages.add(language)
+                if (
+                    not isinstance(metadata.get("translation_label"), str)
+                    or not metadata["translation_label"].strip()
+                ):
+                    raise ValueError(
+                        "Machine translation requires a native-language label"
+                    )
+                if metadata.get("source_language") != "en":
+                    raise ValueError(
+                        "Machine translations must identify the English source"
+                    )
+        except (ValueError, TypeError) as error:
+            errors.append(
+                {
+                    "language": language,
+                    "error": "invalid_metadata",
+                    "detail": str(error),
+                }
+            )
+
+    quest_literals = {}
+    for path in (root / "quests").glob("*/quest.yaml"):
+        assets = [path, *path.parent.glob("*.sh")]
+        text = "\n".join(asset.read_text() for asset in assets)
+        quest_literals[str(path.parent.relative_to(root) / "i18n")] = set(
+            HYPHENATED_LITERAL.findall(text)
+        )
+
+    def exact_machine_code(label, values):
+        for language in machine_languages:
+            for key, source in values.get("en", {}).items():
+                target = values.get(language, {}).get(key)
+                if target is None:
+                    continue
+                try:
+                    if fenced_blocks(source) != fenced_blocks(target):
+                        errors.append(
+                            {
+                                "bundle": label,
+                                "language": language,
+                                "key": key,
+                                "error": "code_blocks_changed",
+                            }
+                        )
+                    source_literals = Counter(
+                        x.rstrip(".") for x in DOTTED_LITERAL.findall(source)
+                    )
+                    target_literals = Counter(
+                        x.rstrip(".") for x in DOTTED_LITERAL.findall(target)
+                    )
+                    identifiers = quest_literals.get(label, set())
+                    # A shared literal in the Russian reference distinguishes an
+                    # identifier from coincidental hyphenated English prose.
+                    reference = {
+                        x.lower()
+                        for x in HYPHENATED_LITERAL.findall(
+                            values.get("ru", {}).get(key, "")
+                        )
+                    }
+                    identifiers = {x for x in identifiers if x.lower() in reference}
+                    source_literals.update(
+                        x
+                        for x in HYPHENATED_LITERAL.findall(source)
+                        if x in identifiers
+                    )
+                    target_literals.update(
+                        x
+                        for x in HYPHENATED_LITERAL.findall(target)
+                        if x in identifiers
+                    )
+                    if changed := source_literals - target_literals:
+                        errors.append(
+                            {
+                                "bundle": label,
+                                "language": language,
+                                "key": key,
+                                "error": "technical_literals_changed",
+                                "missing": sorted(changed.elements()),
+                            }
+                        )
+                    source_quantities = Counter(RESOURCE_QUANTITY.findall(source))
+                    target_quantities = Counter(RESOURCE_QUANTITY.findall(target))
+                    if changed := source_quantities - target_quantities:
+                        errors.append(
+                            {
+                                "bundle": label,
+                                "language": language,
+                                "key": key,
+                                "error": "resource_quantities_changed",
+                                "missing": sorted(changed.elements()),
+                            }
+                        )
+                    if label.startswith("quests/"):
+                        source_names = Counter(
+                            x.lower() for x in WORKLOAD_NAMES.findall(source)
+                        )
+                        target_names = Counter(
+                            x.lower() for x in WORKLOAD_NAMES.findall(target)
+                        )
+                        if changed := source_names - target_names:
+                            errors.append(
+                                {
+                                    "bundle": label,
+                                    "language": language,
+                                    "key": key,
+                                    "error": "workload_names_changed",
+                                    "missing": sorted(changed.elements()),
+                                }
+                            )
+                except ValueError as error:
+                    errors.append(
+                        {
+                            "bundle": label,
+                            "language": language,
+                            "key": key,
+                            "error": str(error),
+                        }
+                    )
+
     bundles = [
         (root / "locales", "ui.json", True),
         (root / "locales", "levels.json", True),
@@ -108,6 +251,32 @@ def audit(root=ROOT):
             if absent:
                 missing.setdefault(language, {})[label] = absent
         resources[str(directory) + ("/" + filename if filename else "")] = values
+        exact_machine_code(label, values)
+
+    # These published UI titles and practical lessons live outside flat bundles.
+    for filename, field in [
+        ("guide-lessons.yaml", "content"),
+        ("guide-lessons.yaml", "additional"),
+        ("guide-topics.yaml", None),
+    ]:
+        path = root / "docs" / filename
+        if not path.exists():
+            continue
+        for name, item in yaml.safe_load(path.read_text()).items():
+            if field == "additional" and not item.get(field):
+                continue
+            label = f"docs/{filename}/{name}"
+            if field == "additional":
+                label += "/additional"
+            values = item[field] if field else item
+            if not values.get("en"):
+                errors.append({"bundle": label, "error": "missing_english"})
+            for language in languages:
+                if not values.get(language):
+                    missing.setdefault(language, {})[label] = [field or "title"]
+            exact_machine_code(
+                label, {lang: {"text": text} for lang, text in values.items()}
+            )
     for path in sorted((root / "quests").glob("*/quest.yaml")):
         try:
             quest = yaml.safe_load(path.read_text())

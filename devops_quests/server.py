@@ -338,7 +338,11 @@ def make_app(
 
     async def locales(request):
         return web.json_response(
-            {"languages": catalog.resources.languages, "messages": catalog.resources.ui}
+            {
+                "languages": catalog.resources.languages,
+                "messages": catalog.resources.ui,
+                "metadata": catalog.resources.metadata,
+            }
         )
 
     async def preferences(request):
