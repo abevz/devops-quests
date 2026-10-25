@@ -37,8 +37,11 @@ def test_all_published_lessons_have_bilingual_runnable_routes_and_block_coverage
         guide = catalog.guide(name)
         row = coverage[name]
         assert not guide["lesson_stale"] and row["source_hash"] == guide["source_hash"]
-        assert set(lesson["content"]) == {"en", "ru"}
-        assert fences(lesson["content"]["en"]) == fences(lesson["content"]["ru"])
+        assert set(lesson["content"]) == set(catalog.resources.languages)
+        for language in catalog.resources.languages:
+            assert fences(lesson["content"]["en"]) == fences(
+                lesson["content"][language]
+            )
         for path in (row["short"], row["full"]):
             assert path.startswith("labs/examples/" + lesson["profile"] + "/")
             for script in ("run.sh", "check.sh", "cleanup.sh"):

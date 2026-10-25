@@ -1,0 +1,414 @@
+heading: '10. Networking: od nazwy Service do gotowego adresu kapsuły'
+text: '## 10. Sieć: od nazwy Service do gotowego adresu kapsuły
+
+
+  **W skrócie**
+
+  - A Service zapewnia stabilny punkt dostępowy
+
+  Selektor - A wybiera kapsuły według etykiet
+
+  - EndpointSlice opisuje rzeczywistych odbiorców.
+
+
+  **Miniprzykład:** tylko w przygotowanym powyżej jednorazowym klastrze kind. Utwórz namespace za pomocą
+  `kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig --context kind-guides-order-rest create namespace
+  guide-mini-29`. Zapisz wpis jako `mini.sh`; uruchom go za pomocą `bash -e mini.sh`.
+
+
+  ```bash
+
+  k() { kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig --context kind-guides-order-rest -n guide-mini-29
+  "$@"; }
+
+  k create deployment web --image=nginx:1.29-alpine
+
+  k rollout status deployment/web --timeout=90s
+
+  k expose deployment web --port=80
+
+  k get service web -o jsonpath=''{.spec.selector.app}{"\n"}''
+
+  ```
+
+
+  **Prognozuj:** Co pokaże ostatnie polecenie po zakończeniu poprzednich poleceń?
+
+
+  > [!question] - Odpowiedź
+
+  > Aktualne polecenie stdout:
+
+  >
+
+  > ```text
+
+  > deployment.apps/web created
+
+  > Waiting for deployment "web" rollout to finish: 0 of 1 updated replicas are available...
+
+  > deployment "web" successfully rolled out
+
+  > service/web exposed
+
+  > web
+
+  > ```
+
+  >
+
+  > Kod wyjścia: 0.
+
+
+  Service otrzymał selector app=web. To pokazuje zależność selekcji; Dostawa HTTP nie jest tutaj oddzielnie
+  testowana.
+
+
+  Pod otrzymuje adres z implementacji sieci; Service zapewnia stabilny punkt wejścia do wybranych kapsuł.
+
+  ClusterIP to wewnętrzny adres wirtualny, NodePort to port w węzłach, a LoadBalancer to żądanie zewnętrznego
+  modułu równoważenia obciążenia.
+
+  kube-proxy konfiguruje przekazywanie jądra; implementacja eBPF może zastąpić ten mechanizm.
+
+  Kompletna mechanika adresów i pakietów: [[Networking-Visual-Guide#19. Kubernetes: to rozwiązanie, wirtualny
+  Service i więcej rozwiązań|pod addresses, usługi wirtualne i rzeczywiste backendy]].
+
+  *(wg dokumentacji)* — [Service](https://kubernetes.io/docs/concepts/services-networking/service/).
+
+
+  ### Dlaczego Service istnieje bez żadnej aplikacji
+
+
+  **W skrócie**
+
+  Obiekt - A Service może istnieć bez pasujących Podów
+
+  - Jego selektor musi pasować do etykiet
+
+  Adres - A Service nie potwierdza istnienia aplikacji.
+
+
+  **Miniprzykład:** tylko w przygotowanym powyżej jednorazowym klastrze kind. Utwórz namespace za pomocą
+  `kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig --context kind-guides-order-rest create namespace
+  guide-mini-30`. Zapisz wpis jako `mini.sh`; uruchom go za pomocą `bash -e mini.sh`.
+
+
+  ```bash
+
+  k() { kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig --context kind-guides-order-rest -n guide-mini-30
+  "$@"; }
+
+  k create service clusterip lonely --tcp=80:80
+
+  k get service lonely -o jsonpath=''{.spec.selector.app}{"\n"}''
+
+  k get pods -l app=lonely --no-headers
+
+  k get pods -l app=lonely -o jsonpath=''{.items}{"\n"}''
+
+  ```
+
+
+  **Przewiduj:** Co pokaże ostatnie polecenie po zakończeniu poprzednich poleceń?
+
+
+  > [!question] - Odpowiedź
+
+  > Aktualne polecenie stdout:
+
+  >
+
+  > ```text
+
+  > service/lonely created
+
+  > lonely
+
+  > []
+
+  > ```
+
+  >
+
+  > Kod wyjścia: 0.
+
+
+  Selektor szuka app=lonely, ale w namespace nie utworzono żadnego Pod. Ostatnie polecenie zwraca pustą
+  listę.
+
+
+  Gotowy EndpointSlice nie dowodzi, że aplikacja nasłuchuje na `targetPort` lub że polityka zezwala na
+  ścieżkę.
+
+  `publishNotReadyAddresses: true` zmienia semantykę publikacji readiness; to jest specjalne ustawienie,
+
+  nie jest to naprawa nieprawidłowej sondy readiness. *(wg dokumentacji)* —
+
+  [EndpointSlice](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/).
+
+
+  **`service.yaml` w `/tmp/vg-k8s-work`: kompletny, celowo niepoprawny selector:**
+
+
+  1. A Service definiuje selektor i parę `port`/`targetPort`: pierwsza to Service port; drugi to backend
+  port.
+
+  2.  Kontroler EndpointSlice wybiera pasujące zasobniki **w ramach Service namespace**.
+
+  3. AAdresy i ich warunki readiness są zapisane w API.
+
+  4. Komponent sieciowy obserwuje Service/EndpointSlice i aktualizuje ścieżki do kwalifikującego się addresses.
+
+  Klient 5. A łączy się z Service; połączenie jest przekazywane do jednego backend.
+
+
+  > [!info] - Głębsze wyjaśnienie
+
+  > ```yaml
+
+  > apiVersion: v1
+
+  > kind: Service
+
+  > metadata:
+
+  >   name: web
+
+  >   namespace: vg-k8s
+
+  > spec:
+
+  >   type: ClusterIP
+
+  >   selector:
+
+  >     app: typo
+
+  >   ports:
+
+  >     - port: 80
+
+  >       targetPort: 80
+
+  > ```
+
+  >
+
+  > **Polecenie z dowolnego katalogu: sprawdź addresses i readiness oddzielnie od Service:**
+
+  >
+
+  > ```bash
+
+  > kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \
+
+  >   -n vg-k8s get endpointslices -l kubernetes.io/service-name=web -o json \
+
+  >   | jq ''[.items[].endpoints[]? | {ip: .addresses[0], ready: .conditions.ready}]''
+
+  > ```
+
+  >
+
+  > **Wyniki nowego badania: przykład do przeczytania:**
+
+  >
+
+  > ```text
+
+  > []
+
+  > ```
+
+  >
+
+  > Pasujące do selektora `app: web` wyprodukowano addresses. Niegotowa replika z uszkodzonego rolloutu
+
+  > posiada `ready: false`; stare gotowe repliki mają `true`. *(zweryfikowane)*.
+
+  >
+
+  > **`service.yaml` w `/tmp/vg-k8s-work`: kompletny poprawiony plik:**
+
+  >
+
+  > ```yaml
+
+  > apiVersion: v1
+
+  > kind: Service
+
+  > metadata:
+
+  >   name: web
+
+  >   namespace: vg-k8s
+
+  > spec:
+
+  >   type: ClusterIP
+
+  >   selector:
+
+  >     app: web
+
+  >   ports:
+
+  >     - port: 80
+
+  >       targetPort: 80
+
+  > ```
+
+  >
+
+  > **Wyniki starego klienta: zarejestrowany przebieg 1.33.0/Cilium do odczytania:**
+
+  >
+
+  > ```text
+
+  > wget: can''t connect to remote host (10.106.189.46): Operation not permitted
+
+  > ```
+
+  >
+
+  > To jest **nagrany przebieg** z [[Kubernetes-Coding-Drills-Solutions#2 — Сервис не отвечает|2 — Service
+  nie odpowiada]].
+
+  > Nie jest to uniwersalny błąd dla Service bez backendów: Cilium zastępujący kube-proxy może
+
+  > odrzucić w gnieździe. W tym eksperymencie nie sprawdzono dokładnego komunikatu klienta w nowym klastrze
+  kind. *(niezweryfikowany)*.
+
+
+  ### DNS i ilość kropek
+
+
+  **W skrócie**
+
+  - DNS najpierw rozwiązuje nazwę
+
+  - Reguły wyszukiwania rozwijają krótką nazwę
+
+  -  Pomyślne DNS nie potwierdza dostępności port.
+
+
+  **Krótki scenariusz**
+
+
+  Nazwa web została zmieniona na ClusterIP. Upłynął limit czasu kolejnego żądania HTTP.
+
+
+  **Przewiduj:** Czy to oznacza błąd DNS?
+
+
+  > [!question] - Odpowiedź
+
+  > Analiza podanych warunków: Nie: DNS zwrócił już adres. Następnie sprawdź odbiorców, port, trasę i
+  zasady.
+
+
+  Zwykły Service DNS zwraca swój ClusterIP; headless Service zwraca wybrany zasobnik addresses.
+
+  Krótka nazwa, taka jak `web`, jest wyszukiwana z sufiksami przestrzeni nazw/klastrów.
+
+  `ndots:5` w typowym `resolv.conf` oznacza, że najpierw wypróbowywana jest nazwa zawierająca mniej niż
+  pięć kropek
+
+  z sufiksami wyszukiwania. Może to dodawać zapytania nawet o nazwę zewnętrzną.
+
+  W pełni kwalifikowana nazwa z kropką na końcu, np. `web.vg-k8s.svc.cluster.local.`, jest bezwzględna;
+
+  rzeczywistą domenę klastra można konfigurować. *(wg dokumentacji)* —
+
+  [DNS](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/).
+
+
+  ### Zasady, przychodzące HTTP i granice własności
+
+
+  **W skrócie**
+
+  - Policy ogranicza połączenia dla wybranych Podów
+
+  - An HTTP trasa oddzielnie wybiera backend
+
+  - Ready odbiorcy są wymagani niezależnie od tego, czy istnieją reguły.
+
+
+  **Krótki scenariusz**
+
+
+  HTTPRoute wskazuje na Service bez gotowego endpoints.
+
+
+  **Prognoza:** Czy reguła HTTPRoute sama tworzy gotowe Pody?
+
+
+  > [!question] - Odpowiedź
+
+  > Analiza podanych warunków: Nie. Opisuje trasę; inne mechanizmy zapewniają readiness i liczbę odbiorców.
+
+
+  NetworkPolicy kontroluje połączenia wejściowe/wyjściowe dla wybranych zasobników; zasady są addytywne,
+
+  i dwa izolowane endpoints wymagają pozwolenia po obu stronach. Obiekt działa tylko z obsługą CNI.
+
+  Ingress definiuje routing HTTP przez oddzielny kontroler; Gateway API oddziela GatewayClass/Gateway
+
+  infrastrukturę z tras HTTPRoute. HTTPRoute raportuje załącznik w `status.parents`.
+
+  Kompletne szczegółowe przykłady: [[Networking-Visual-Guide#20. Политики, Ingress, Gateway API i service
+  mesh|polityki, Ingress, Gateway API i service mesh]].
+
+  *(wg dokumentacji)* — [NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/),
+
+  [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/),
+
+  [Gateway API](https://gateway-api.sigs.k8s.io/concepts/api-overview/).
+
+
+  > [!info] - Głębsze wyjaśnienie
+
+  > W ćwiczeniu 26 wagi 90/10 opisują rozkład prawdopodobieństwa, a nie gwarancję 90 żądań na 100.
+
+  > Prowadzenie nagłówka i odniesienie do innego namespace wymagają dozwolonego podłączenia i, jeśli ma
+  to zastosowanie,
+
+  > ReferenceGrant. Tworzenie samego HTTPRoute nie może naprawić brakującej implementacji Gateway lub
+  jej CRDs.
+
+  > Gateway API, mesh i NetworkPolicy nie zostały tutaj zainstalowane. *(niezweryfikowany)* — uruchomienie
+  nowej sieci;
+
+  > wyjaśnienia ról to *(zgodnie z dokumentacją)* — źródło Gateway API powyżej.
+
+  >
+
+  > **Przewiduj:** nazwy zostały rozwiązane, Service istnieje, a EndpointSlice zawiera tylko `ready: false`.
+
+  >
+
+  > > [!question] - Odpowiedź
+
+  > > DNS działa, ale zwykły Service nie ma gotowych backendów. Sprawdź readiness i aplikację.
+
+  > > Naprawienie DNS lub poszerzenie NetworkPolicy nie spowoduje, że kapsuła będzie gotowa.
+
+  > > *(wg dokumentacji)* — źródło EndpointSlice powyżej.
+
+  >
+
+  > **Krótka odpowiedź w języku angielskim:**
+
+  >
+
+  > > A Service selects Pods and exposes a stable address. EndpointSlices hold the backend addresses and
+  readiness.
+
+  > > DNS resolution does not prove that a ready backend exists. I check selection, readiness, the target
+  port and policies.'
+source_hash: e58b732fe2b16594c65731d5e746ab603e11de1bd9b6a9f3698c525e4b317fb0

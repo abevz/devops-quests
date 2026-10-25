@@ -1,0 +1,64 @@
+heading: 'Szablony 7. Jinja2: kontroler buduje tekst dla konkretnego hosta'
+text: "## 7. Szablony Jinja2: kontroler buduje text dla konkretnego hosta\n\n**W skrócie**\n- A template\
+  \ buduje text na podstawie wartości zmiennych.\n- A Jinja expression jest oceniany na maszynie sterującej.\n\
+  Wynikowy - The text musi nadal mieścić się w formacie pliku docelowego.\n\n**Miniprzykład:** zapisz\
+  \ `mini.yml` w oddzielnym katalogu tymczasowym; uruchom `ansible-playbook -i localhost, -c local mini.yml`.\
+  \ Przykład The działa na localhost bez stania.\n\n```yaml\n- hosts: localhost\n  connection: local\n\
+  \  become: false\n  gather_facts: false\n  tasks:\n    - ansible.builtin.debug:\n        msg: \"name={{\
+  \ 'api' | upper }} port={{ 8080 + 1 }}\"\n```\n\n**Przewiduj:** Co pokaże przebieg i jaki będzie jego\
+  \ kod zakończenia?\n\n> [!question] - Odpowiedź\n> Kod zakończenia: 0. Fragmenty standardowego wyjścia:\n\
+  >\n> ```text\n>     \"msg\": \"name=API port=8081\"\n> localhost                  : ok=1    changed=0\
+  \    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n> ```\n\nThe expression konwertuje\
+  \ `api` na wielkie litery i oblicza liczbę. To demonstruje konstrukcję strun; pełny przykład poniżej\
+  \ zapisuje template z modułem `template`.\n\n| Narzędzie | Co kontroluje | Kiedy to wybrać |\n|---|---|---|\n\
+  | `copy` | Gotowy plik lub `content` | Tekst jest identyczny; `content` może również zawierać proste\
+  \ podstawienie. |\n| `template` | Kompletny plik The po renderowaniu Jinja | Potrzebne są wartości,\
+  \ pętle lub warunki specyficzne dla hosta. |\n| `lineinfile` | Jedna linia, często dopasowywana przez\
+  \ `regexp` | Ukierunkowana edycja konfiguracji będącej własnością zewnętrzną; wyrażenie regularne musi\
+  \ rozpoznawać stare i nowe formy. |\n| `blockinfile` | Zaznaczony blok text | Jesteś właścicielem tylko\
+  \ części pliku; odrębne bloki wymagają odrębnych znaczników. |\n\nNie zarządzaj jednocześnie tym samym\
+  \ plikiem za pomocą `template` i `lineinfile`: następny `template` nadpisuje edycję.\n`copy.src` domyślnie\
+  \ oznacza kontroler; `remote_src: true` zmienia źródło na zarządzany węzeł.\n`template.src` to template\
+  \ na kontrolerze. Utwórz katalog nadrzędny osobno.\n\nPlik `app.conf.j2`:\n\n```jinja2\nport={{ app_port\
+  \ | default(8080) }}\n{% for user in users %}\n{% if user.enabled %}\nuser={{ user.name }}\n{% endif\
+  \ %}\n{% endfor %}\n```\n\n`{{ expression }}` emituje value; `{% statement %}` steruje renderowaniem\
+  \ bez emisji słowa kluczowego.\n`{# comment #}` to Jinja comment i nie pojawia się w wynikach. `for`\
+  \ iteruje po `users`,\n`user` tymczasowo nadaje nazwę bieżącemu elementowi, a `if` sprawdza jego wartość\
+  \ logiczną `enabled` value.\n`|` **wewnątrz expression** to filtr, a nie znacznik wieloliniowy YAML.\n\
+  `default(8080)` zastępuje niezdefiniowany value, a nie `false` lub pusty ciąg znaków; `default(8080,\
+  \ true)` zastępuje również wartości\nrozważano false. Unikaj drugiej formy dla portu `0` lub wartości\
+  \ logicznej, gdy te wartości mają specjalne znaczenie.\n\nKompletny `template.yml`:\n\n```yaml\n- name:\
+  \ Render host configuration\n  hosts: lab\n  connection: local\n  gather_facts: false\n  become: false\n\
+  \  vars:\n    users:\n      - name: alice\n        enabled: true\n      - name: bob\n        enabled:\
+  \ false\n  tasks:\n    - name: Render configuration\n      ansible.builtin.template:\n        src: app.conf.j2\n\
+  \        dest: /tmp/ansible-visual-guide/rendered.conf\n        mode: \"0644\"\n```\n\n*(zweryfikowany)*\
+  \ Plik wynikowy i wyniki dwóch serii:\n\n```text\nport=8080\nuser=alice\n\n# First:  ok=1 changed=1\
+  \ failed=0\n# Second: ok=1 changed=0 failed=0\n```\n\n`template` obsługuje „jedną strukturę konfiguracji,\
+  \ różne wartości dla różnych hostów”.\nKontroler The odczytuje `.j2`, podstawia zmienne tego hosta,\
+  \ tworzy zwykły text i wysyła go\ndo zarządzanego węzła. Węzeł zarządzany The nie wykonuje Jinja. Następnie\
+  \ porównywany jest plik i atrybuty The; zmiana powraca\n`changed`, który może powiadomić osobę zajmującą\
+  \ się obsługą.\n\n**Filtr** przekształca value: `| int`, `| bool`, `| upper`, `| to_json`, `| combine(other_dict)`.\n\
+  **test** zwraca wartość logiczną: `x is defined`, `x is none`, `result is failed`.\nW przypadku argumentu\
+  \ modułu `default(omit)` oznacza „nie przekazuj tego parametru”, a nie pusty ciąg znaków.\nNie łącz\
+  \ na ślepo filtrów łańcuchowych: `omit` to wewnętrzny strażnik, a nie zwykły text.\n*(wg dokumentacji)*\
+  \ [Filtry](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_filters.html),\n[Testy](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_tests.html).\n\
+  \n> [!info] - Głębsze wyjaśnienie\n> ```mermaid\n> flowchart TB\n>     V[\"Inventory, play variables,\
+  \ facts\"] --> J[\"Jinja on the control node\"]\n>     S[\"Template on the control node\"] --> J\n>\
+  \     J --> R[\"Rendered text for one host\"]\n>     R --> T[\"Managed host: compare, validate, replace\
+  \ the file\"]\n>     T --> C[\"JSON: changed or unchanged\"]\n>     C --> H[\"Notify the handler only\
+  \ on change\"]\n> ```\n>\n> Białe znaki mają znaczenie w konfiguracji: Ansible `template` domyślnie\
+  \ to `trim_blocks: true`,\n> więc podziały wierszy po dyrektywach blokowych są przetwarzane inaczej\
+  \ niż te po `{{ value }}`.\n> `{%-`/`-%}` usuń sąsiadujące białe znaki/znaki; agresywne przycinanie\
+  \ może połączyć dwie linie konfiguracyjne.\n> Nie dodawaj niepotrzebnie znacznika czasu: nowy text raportuje\
+  \ `changed` przy każdym uruchomieniu.\n>\n> Aby sprawdzić konfigurację przed wymianą, dodaj `validate:\
+  \ '/path/to/app --check %s'`: sprawdzanie węzła zarządzanego\n> plik tymczasowy, w którym `%s` zastąpiono\
+  \ ścieżką. To nie jest rurociąg powłoki; potoki i przekierowania nie są wykonywane.\n> Tej aplikacji\
+  \ nie ma w laboratorium ćwiczeń, więc check jest *(zgodnie z dokumentacją)*, a wykonanie jest *(niezweryfikowane)*.\n\
+  > [Parametry szablonu](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/template_module.html).\n\
+  >\n> Typową awarią jest niezdefiniowane template value lub nieprawidłowe podanie YAML przed Jinja. Rzeczywisty\
+  \ błąd dla\n> `x: {{ bad }}` *(zweryfikowany)*:\n>\n> ```text\n> [ERROR]: YAML parsing failed: This\
+  \ may be an issue with missing quotes around a template block.\n> ```\n>\n> Pytanie: **Where is a template\
+  \ rendered, and when is a handler notified?**\n>\n> > The `template` is rendered on the control node\
+  \ with variables for the current host. Ansible sends\n> > the resulting text to the target and compares\
+  \ it with the destination file. A notification is\n> > sent only if the task reports a change."
+source_hash: b547fb3be6d0da5abc31845c0d662c0f7b46f9753209498724c363e1982e44c6

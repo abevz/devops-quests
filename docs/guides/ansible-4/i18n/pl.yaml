@@ -1,0 +1,144 @@
+heading: '4. Idempotencja: akcja i jej raportowany wynik'
+text: "## 4. Idempotencja: akcja i jej zgłoszony wynik\n\n**W skrócie**\n- Powtarzanie idempotentnego\
+  \ zadania pozostawia ten sam stan.\n- Moduł copy porównuje żądany text z istniejącym file.\n- A changed\
+  \ zgłasza zadeklarowaną zmianę, a nie stan aplikacji.\n\n**Miniprzykład:** zapisz `mini.yml` w oddzielnym\
+  \ katalogu tymczasowym; uruchom `ansible-playbook -i localhost, -c local mini.yml`. Przykład działa\
+  \ na localhost bez stania.\n\n```yaml\n- hosts: localhost\n  connection: local\n  become: false\n  gather_facts:\
+  \ false\n  tasks:\n    - ansible.builtin.copy:\n        dest: \"{{ playbook_dir }}/result.conf\"\n \
+  \       content: \"color=green\\n\"\n        mode: '0600'\n      register: result\n    - ansible.builtin.debug:\n\
+  \        msg: \"{{ result.changed }}\"\n```\n\n**Przewiduj:** Czym changed i komunikat różnią się pomiędzy\
+  \ pierwszym i drugim uruchomieniem w nowym katalogu?\n\n> [!question] - Odpowiedź\n> Uruchom 1; kod\
+  \ wyjścia 0. Fragmenty standardowego wyjścia:\n>\n> ```text\n>     \"msg\": true\n> localhost      \
+  \            : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n\
+  > ```\n>\n> Uruchom 2; kod wyjścia 0. Fragmenty standardowego wyjścia:\n>\n> ```text\n>     \"msg\"\
+  : false\n> localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0\
+  \    rescued=0    ignored=0\n> ```\n\nPierwsze uruchomienie creates file; drugi widzi dopasowanie text\
+  \ i uprawnienia. file należy do katalogu tymczasowego w tym przykładzie.\n\nKompletny `idempotent.yml`:\n\
+  \n```yaml\n- name: Repeat safely\n  hosts: lab\n  connection: local\n  gather_facts: false\n  become:\
+  \ false\n  tasks:\n    - name: Create directory\n      ansible.builtin.file:\n        path: /tmp/ansible-visual-guide/app\n\
+  \        state: directory\n        mode: \"0755\"\n    - name: Write file\n      ansible.builtin.copy:\n\
+  \        content: \"port=8080\\n\"\n        dest: /tmp/ansible-visual-guide/app/config\n        mode:\
+  \ \"0644\"\n      notify: Report change\n    - name: Create marker once\n      ansible.builtin.command:\n\
+  \        argv:\n          - /usr/bin/touch\n          - /tmp/ansible-visual-guide/app/marker\n     \
+  \   creates: /tmp/ansible-visual-guide/app/marker\n  handlers:\n    - name: Report change\n      ansible.builtin.debug:\n\
+  \        msg: handler ran\n```\n\n`argv` to lista argumentów bez analizy shell. W zwykłych `command`,\
+  \ `|` i `>` nie ma create rurociągu\nlub przekierowanie. `shell` przekazuje ciąg do `/bin/sh`, który\
+  \ je rozumie, ale wprowadza ryzyko wtrysku command.\n`creates` sprawdza file **przed** wykonaniem: jeśli\
+  \ znacznik istnieje, command nie działa.\nI odwrotnie, `removes` uruchamia command tylko wtedy, gdy\
+  \ istnieje określony path.\n*(wg dokumentacji)* [`command`](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/command_module.html).\n\
+  \n*(zweryfikowany)* Odpowiednik playbook w czystym katalogu, następnie powtórzony:\n\n```text\n# First\
+  \ run\nlocalhost : ok=4 changed=3 unreachable=0 failed=0 skipped=0 rescued=0 ignored=0\n# Second run\n\
+  localhost : ok=3 changed=0 unreachable=0 failed=0 skipped=0 rescued=0 ignored=0\n```\n\nDlaczego mniej\
+  \ zadań `ok` w drugim uruchomieniu: osoba obsługująca nie została powiadomiona. `creates` chroni przez\
+  \ znacznik file, ale nie sprawdza\npomyślny wynik migracji. Utworzenie znacznika przed pomyślnym zakończeniem\
+  \ powoduje, że późniejsze uruchomienie powoduje nieprawidłowe pominięcie command.\n\nPowtórzenie operacji\
+  \ idempotentnej z tymi samymi danymi wejściowymi pozostawia ten sam stan.\n`file: state=directory` sprawdza\
+  \ katalog i uprawnienia; `copy` porównuje zawartość i wymagane atrybuty.\nJeśli wszystko się zgadza,\
+  \ nie ma co zmieniać. check działa w zarządzanym węźle; kontroler otrzymuje `changed: false`.\n\n| Stan\
+  \ zadania | Znaczenie | Pułapka |\n|---|---|---|\n| `ok` | Sukces bez zgłoszonej zmiany | `changed_when:\
+  \ false` potrafi ukryć prawdziwą zmianę. |\n| `changed` | Sukces ze zgłoszoną zmianą | To jest raport\
+  \ modułu/stanu, a nie niezależny audyt OS. |\n| `failed` | Zadanie nie spełniło kryterium sukcesu |\
+  \ Niektóre działania mogły już mieć miejsce. |\n| `skipped` | Pominięte ze względu na warunek lub tryb\
+  \ | Nie potwierdza to stanu usługi. |\n| `unreachable` | Nie można nawiązać połączenia/wykonania | Różni\
+  \ się od awarii command z `rc != 0`. |\n\nW podsumowaniu liczba `ok` obejmuje pomyślne changed tasks:.\
+  \ Liczniki te nie wykluczają się wzajemnie.\nNiepowodzenie jednego zadania nie powoduje cofnięcia wcześniejszych\
+  \ zmian.\n\n> [!info] - Głębsze wyjaśnienie\n> `command`/`shell` zwykle zgłaszają `changed` po uruchomieniu:\
+  \ nie rozumieją dowolnej semantyki command.\n> `mkdir -p` można bezpiecznie powtórzyć, ale nadal może\
+  \ zgłosić `changed`. Właściwie `echo ... >> file`\n> duplikuje line. Zastąpienie go `lineinfile` zmienia\
+  \ działanie; `changed_when: false` jedynie ukrywa raport.\n>\n> Kompletny przykład prawidłowego raportowania\
+  \ dla **tylko do odczytu** command:\n>\n> **`report.yml` (dowolna nazwa pliku) obok `inventory.ini`\
+  \ z §2:**\n>\n> ```yaml\n> - name: Read and interpret a result\n>   hosts: lab\n>   connection: local\n\
+  >   gather_facts: false\n>   become: false\n>   tasks:\n>     - name: Read a value\n>       ansible.builtin.command:\n\
+  >         argv: [/usr/bin/printf, hello]\n>       register: read_result\n>       changed_when: false\n\
+  >       failed_when: read_result.rc != 0 or read_result.stdout != 'hello'\n> ```\n>\n> `changed_when`\
+  \ zastępuje `changed`, wpływając w ten sposób na `notify`. `failed_when` zastępuje `failed`.\n> **Nie\
+  \ uniemożliwiają** wykonania command ani nie naprawiają jego skutków ubocznych.\n> Lista wyrażeń `failed_when`\
+  \ jest połączona z logicznym AND; użyj pojedynczego wyrażenia z `or` dla logicznego OR.\n> Rzeczywisty\
+  \ nieistniejący przebieg command pokazuje, że akcja może zakończyć się niepowodzeniem (§16), więc\n\
+  > „`command` to zawsze `changed`” jest zbyt absolutne.\n>\n> **Tryb sprawdzania** (`--check`) prosi\
+  \ moduły o przewidywanie zmian. **Tryb różnicowy** (`--diff`) pyta o różnicę,\n> takie jak file text.\
+  \ Są to niezależne tryby. `command` bez `creates`/`removes` to zwykle `skipped`\n> w trybie check; wielokrotny\
+  \ strażnik może przewidzieć `changed` bez uruchamiania command. Wynik `register` po `skipped` nie ma\n\
+  > gwarancja `stdout`. command tylko do odczytu może używać słowa kluczowego zadania `check_mode: false`\
+  \ z\n> `changed_when: false`; działa to naprawdę nawet pod globalnym `--check`.\n> *(zgodnie z dokumentacją)*\
+  \ [Sprawdź i tryby diff](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_checkmode.html).\n\
+  >\n> **Odtwórz:** po jednym zastosowaniu użyj tego samego `idempotent.yml` powyżej. W zadaniu `Write\
+  \ file` (moduł `copy`) zamień `content: \"port=8080\\n\"` na `content: \"port=9090\\n\"`, a następnie\
+  \ uruchom `ansible-playbook -i inventory.ini idempotent.yml --check --diff`.\n>\n> *(zweryfikowane)*\
+  \ Wariant `copy` z `port=9090` działał z `--check --diff` na `port=8080`:\n>\n> ```diff\n> -port=8080\n\
+  > +port=9090\n> ```\n>\n> Podsumowanie: `ok=4 changed=1 failed=0`; porównanie bajtów przed/po potwierdziło,\
+  \ że file pozostał `port=8080`.\n> Powiadomiony program obsługi `debug` również działał w trybie check;\
+  \ nie oznacza to prawdziwego ponownego uruchomienia.\n>\n> Tryb sprawdzania nie powoduje create brakującego\
+  \ katalogu nadrzędnego do późniejszego zadania, uruchamiania usługi lub sprawdzania\n> jego zdrowie.\
+  \ Wsparcie zależy od modułu; Różnice w tajnych danych mogą dotrzeć do dzienników. Drugi zwykły bieg\
+  \ z\n> `changed=0` jest użytecznym dowodem, a nie dowodem poprawności aplikacji.\n\n### Przewidywanie\
+  \ 1: command bez powtórzenia ochronnego\n\n**W skrócie**\n- A command bez stanu check działa ponownie.\n\
+  - Pomyślne wykonanie i zmiana to różne właściwości.\n- Porównaj podsumowania dwóch przebiegów, a nie\
+  \ tylko brak błędów.\n\n**`predict-1.yml` (dowolna nazwa pliku) obok `inventory.ini` z §2:**\n\n```yaml\n\
+  - hosts: lab\n  connection: local\n  gather_facts: false\n  become: false\n  tasks:\n  - name: Probe\n\
+  \    ansible.builtin.command:\n      argv:\n      - /usr/bin/printf\n      - hello\n```\n\n**Prognoza:**\
+  \ uruchom playbook dwa razy bez `creates`. Jaki jest status `Probe` i podsumowanie każdego przebiegu?\n\
+  \n> [!question] - Odpowiedź\n> ```text\n> # Первый запуск; код завершения 0\n> changed: [localhost]\n\
+  > localhost                  : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0\
+  \    ignored=0\n> # Второй запуск; код завершения 0\n> changed: [localhost]\n> localhost           \
+  \       : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n> ```\n\
+  > `command` uruchamia się za każdym razem i zgłasza zmianę, chociaż jedynie drukuje text.\n\n### Przewidywanie\
+  \ 2: tylko raport changed\n\n**W skrócie**\n- changed_when zmienia raport zadania.\n- Nie anuluje wykonania\
+  \ samego command.\n- No Status changed nie świadczy o braku skutków ubocznych.\n\n**`predict-2.yml`\
+  \ (dowolna nazwa pliku) obok `inventory.ini` z §2:**\n\n```yaml\n- hosts: lab\n  connection: local\n\
+  \  gather_facts: false\n  become: false\n  tasks:\n  - name: Probe\n    ansible.builtin.command:\n \
+  \     argv:\n      - /usr/bin/printf\n      - hello\n    changed_when: false\n```\n\n**Prognoza:** dodaj\
+  \ `changed_when: false` do poprzedniego przykładu. Jaki jest status `Probe` i podsumowania pierwszego\
+  \ i drugiego przebiegu?\n\n> [!question] - Odpowiedź\n> ```text\n> # Первый запуск; код завершения 0\n\
+  > ok: [localhost]\n> localhost                  : ok=1    changed=0    unreachable=0    failed=0   \
+  \ skipped=0    rescued=0    ignored=0\n> # Второй запуск; код завершения 0\n> ok: [localhost]\n> localhost\
+  \                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n\
+  > ```\n> command nadal wykonuje się dwukrotnie. Zastępowany jest raport zmian, a nie samo działanie.\n\
+  \n### Przewidywanie 3: command w trybie check\n\n**W skrócie**\n- Tryb sprawdzania pyta o przewidywanie\
+  \ zmian.\n- Nie każdy moduł lub command to obsługuje.\nZadanie - A skipped nie potwierdza pożądanego\
+  \ stanu.\n\n**`predict-3.yml` (dowolna nazwa pliku) obok `inventory.ini` z §2:**\n\n```yaml\n- hosts:\
+  \ lab\n  connection: local\n  gather_facts: false\n  become: false\n  tasks:\n  - name: Probe\n    ansible.builtin.command:\n\
+  \      argv:\n      - /usr/bin/printf\n      - hello\n```\n\n**Prognoza:** w obu seriach zastosowano\
+  \ `--check`. Czy `Probe` zostanie wykonany i co pojawi się w podsumowaniu?\n\n> [!question] - Odpowiedź\n\
+  > ```text\n> # Первый запуск; код завершения 0\n> skipping: [localhost]\n> localhost               \
+  \   : ok=0    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0\n> # Второй\
+  \ запуск; код завершения 0\n> skipping: [localhost]\n> localhost                  : ok=0    changed=0\
+  \    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0\n> ```\n> Bez `creates`/`removes`\
+  \ moduł nie jest w stanie przewidzieć zmian z dowolnego command i pomija je.\n\nPytanie: **How do you\
+  \ make a command idempotent?**\n\n> I first look for a module that manages the required state. If I\
+  \ must run a `command`, I can use a\n> guard such as `creates`, or check the state before running it.\
+  \ `changed_when` controls reporting;\n> it does not stop the `command` from changing the system again.\n\
+  \n### lineinfile: zapewnia line zamiast dołączania przy każdym uruchomieniu\n\n**W skrócie**\n- lineinfile\
+  \ zapewnia obecność żądanego line w file.\n- Wzorzec regexp wybiera line do zastąpienia.\n-  Powtarzanie\
+  \ przebiegu nie powinno powodować ponownego dodawania tego samego line.\n\n**Miniprzykład:** zapisz\
+  \ `mini.yml` w oddzielnym katalogu tymczasowym; uruchom `ansible-playbook -i localhost, -c local mini.yml`.\
+  \ Przykład działa na localhost bez stania.\n\n```yaml\n- hosts: localhost\n  connection: local\n  become:\
+  \ false\n  gather_facts: false\n  tasks:\n    - ansible.builtin.lineinfile:\n        path: \"{{ playbook_dir\
+  \ }}/settings.conf\"\n        regexp: '^color='\n        line: color=green\n        create: true\n \
+  \       mode: '0600'\n      register: result\n    - ansible.builtin.debug:\n        msg: \"{{ result.changed\
+  \ }}\"\n```\n\n**Przewiduj:** Czy pierwszy uruchomi create line? Czy drugie uruchomienie zmieni file?\n\
+  \n> [!question] - Odpowiedź\n> Uruchom 1; kod wyjścia 0. Fragmenty standardowego wyjścia:\n>\n> ```text\n\
+  >     \"msg\": true\n> localhost                  : ok=2    changed=1    unreachable=0    failed=0 \
+  \   skipped=0    rescued=0    ignored=0\n> ```\n>\n> Uruchom 2; kod wyjścia 0. Fragmenty standardowego\
+  \ wyjścia:\n>\n> ```text\n>     \"msg\": false\n> localhost                  : ok=2    changed=0   \
+  \ unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n> ```\n\n`create: true` umożliwia\
+  \ utworzenie file w pustym katalogu. W poprzednim pełnym eksperymencie przedstawionym poniżej przygotowywano\
+  \ file z wyprzedzeniem i używano innej wartości `create`.\n\nUruchom eksperyment w nowym katalogu tymczasowym\
+  \ na localhost, bez pliku bee.\nPoczątkowy `settings.conf` zawiera `color=blue` i `size=2`, po jednym\
+  \ na line.\nPlaybook `line.yml` używa path tylko w tym katalogu:\n\n```yaml\n- name: Local line experiment\n\
+  \  hosts: localhost\n  connection: local\n  gather_facts: false\n  tasks:\n    - name: Ensure color\n\
+  \      ansible.builtin.lineinfile:\n        path: \"{{ playbook_dir }}/settings.conf\"\n        regexp:\
+  \ '^color='\n        line: 'color=green'\n        create: false\n```\n\nUruchom dwukrotnie `ansible-playbook\
+  \ -i localhost, line.yml`.\nPierwszy przebieg zastępuje color i raportuje changed=1; drugi raportuje\
+  \ changed=0.\nsize line pozostaje na swoim miejscu. *(zweryfikowane: dwa lokalne biegi)*.\n`path` wybiera\
+  \ file, `regexp` znajduje line do zastąpienia, a `line` zapewnia żądany text.\nJeśli nic nie pasuje,\
+  \ domyślnie na końcu dodawany jest line.\n`create: false` nie create to brakujący file; to osobna porażka\
+  \ przygotowawcza.\nJeśli pasuje kilka wierszy, zastępowany jest ostatni, a nie usuwany każdy duplikat.\n\
+  Wyrażenie regularne powinno pasować zarówno do starej, jak i ostatecznej formy.\nW przeciwnym razie\
+  \ drugie uruchomienie może dodać kolejny line zamiast rozpoznawać własny wynik.\n\n> [!info] - Głębsze\
+  \ wyjaśnienie\n> | Stan początkowy | Wynik lineinfile |\n> |---|---|\n> | Jeden color=blue | Zamień\
+  \ na color=green |\n> | Nie color | Dodaj color=green |\n> | Już color=green | Bez zmian |\n> | Dwie\
+  \ linie color | Zastąp ostatni mecz; pozostają duplikaty |\n>\n> Migracja nagromadzonych duplikatów\
+  \ to osobne zadanie z wyraźnymi zasadami zachowania innych wierszy.\n> Idempotencja na czystych danych\
+  \ wejściowych nie dowodzi naprawy każdego uszkodzonego wejścia.\n> [Dokumentacja lineinfile](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/lineinfile_module.html)."
+source_hash: ec5da4b6414124b3fccf6157e76d18594d44af5282eecdac4e76f7141c361f70

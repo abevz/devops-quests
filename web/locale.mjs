@@ -11,8 +11,9 @@ export function chooseLanguage(preferred, available) {
   return "en";
 }
 export class I18n {
-  constructor(messages, preferred = ["en"], translation) {
+  constructor(messages, preferred = ["en"], translation, metadata = {}) {
     this.messages = messages;
+    this.metadata = metadata;
     this.languages = Object.keys(messages);
     this.cache = new Map();
     this.setLanguages(chooseLanguage(preferred, this.languages), translation);
@@ -42,7 +43,19 @@ export class I18n {
     return new Intl.DateTimeFormat(this.language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
   }
   languageName(language) {
-    return new Intl.DisplayNames([this.language], { type: "language" }).of(language);
+    const name = new Intl.DisplayNames([this.language], { type: "language" }).of(language);
+    const label = this.translationLabel(language);
+    return label ? `${name} (${label})` : name;
+  }
+  translationLabel(language = this.language) {
+    const metadata = this.metadata[language];
+    return metadata?.translation === "machine" ? metadata.translation_label : "";
+  }
+  translationNotice(showTranslation = false) {
+    return [...new Set([
+      this.translationLabel(),
+      showTranslation && this.translation !== "none" ? this.translationLabel(this.translation) : "",
+    ])].filter(Boolean).join(" · ");
   }
   document(root = document) {
     root.documentElement.lang = this.language;
@@ -55,7 +68,8 @@ export class I18n {
 export async function loadI18n(base, preferred = navigator.languages) {
   const response = await fetch(new URL("api/locales", base));
   if (!response.ok) throw Error(`Language catalog HTTP ${response.status}`);
-  return new I18n((await response.json()).messages, preferred);
+  const { messages, metadata } = await response.json();
+  return new I18n(messages, preferred, undefined, metadata);
 }
 export function languageControls(i18n, host, onchange) {
   host.replaceChildren();

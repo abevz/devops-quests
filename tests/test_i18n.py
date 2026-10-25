@@ -31,11 +31,15 @@ def test_native_quest_structure_and_all_original_languages():
 def test_new_language_is_discovered_without_code_and_partial_text_falls_back(tmp_path):
     root = tmp_path / "catalog"
     shutil.copytree(ROOT / "locales", root / "locales")
-    (root / "locales/pl").mkdir()
-    (root / "locales/pl/ui.json").write_text(json.dumps({"nav.map": "Mapa"}))
+    (root / "locales/zz").mkdir()
+    (root / "locales/zz/ui.json").write_text(json.dumps({"nav.map": "Mapa"}))
+    (root / "locales/zz/metadata.json").write_text(
+        json.dumps({"translation": "machine", "translation_label": "fixture"})
+    )
     resources = Resources(root)
-    assert "pl" in resources.languages
-    assert resources.preferences("pl", "ru") == {"primary": "pl", "translation": "ru"}
+    assert "zz" in resources.languages
+    assert resources.metadata["zz"]["translation_label"] == "fixture"
+    assert resources.preferences("zz", "ru") == {"primary": "zz", "translation": "ru"}
     with pytest.raises(ValueError):
         resources.preferences("../../elsewhere", "ru")
     assert Resources.values({"en": {"title": "English"}, "pl": {}}, "title") == {
@@ -215,3 +219,102 @@ def test_probe_failure_has_localizable_cause(detail, key):
     from devops_quests.engine import Engine
 
     assert Engine.probe_reason(detail) == "checks.cause." + key
+
+
+def test_validator_audits_third_language_metadata_lessons_and_exact_code(tmp_path):
+    from scripts.validate_i18n import audit
+
+    root = tmp_path / "repo"
+    shutil.copytree(ROOT / "locales", root / "locales")
+    shutil.copytree(ROOT / "quests/001", root / "quests/001")
+    shutil.copytree(
+        ROOT / "docs/guides/kubernetes-4", root / "docs/guides/kubernetes-4"
+    )
+    item = json.loads((ROOT / "docs/guide-excerpts.json").read_text())["kubernetes-4"]
+    (root / "docs/guide-excerpts.json").write_text(json.dumps({"kubernetes-4": item}))
+    language = root / "locales/zz"
+    language.mkdir()
+    for source in (root / "locales/en").glob("*.json"):
+        shutil.copyfile(source, language / source.name)
+    metadata = {
+        "translation": "machine",
+        "translation_label": "fixture",
+        "source_language": "en",
+    }
+    (language / "metadata.json").write_text(json.dumps(metadata))
+    for directory in [root / "quests/001/i18n", root / "docs/guides/kubernetes-4/i18n"]:
+        shutil.copyfile(directory / "en.yaml", directory / "zz.yaml")
+    lessons = {
+        "fixture": {
+            "content": {lang: "```sh\necho hello\n```" for lang in ["en", "ru", "zz"]}
+        }
+    }
+    (root / "docs/guide-lessons.yaml").write_text(yaml.safe_dump(lessons))
+    (root / "docs/guide-topics.yaml").write_text(
+        yaml.safe_dump({"fixture": {"en": "Source", "ru": "Title", "zz": "Title"}})
+    )
+    result = audit(root)
+    assert "zz" in result["languages"]
+    assert not result["errors"]
+    assert "zz" not in result["missing"]
+    source = root / "quests/001/i18n/en.yaml"
+    target = source.with_name("zz.yaml")
+    source_values = yaml.safe_load(source.read_text())
+    target_values = yaml.safe_load(target.read_text())
+    source_values["brief"] += " The board requires 100m and synthetic-route."
+    target_values["brief"] += " The translated name requires 100 m and a changed route."
+    (root / "quests/001/setup-0.sh").write_text(
+        "kubectl create configmap synthetic-route\n"
+    )
+    russian = source.with_name("ru.yaml")
+    reference = yaml.safe_load(russian.read_text())
+    reference["brief"] += " synthetic-route"
+    russian.write_text(yaml.safe_dump(reference))
+    source.write_text(yaml.safe_dump(source_values))
+    target.write_text(yaml.safe_dump(target_values))
+    result = audit(root)
+    assert any(
+        e["error"] == "workload_names_changed"
+        and e.get("language") == "zz"
+        and e.get("missing") == ["board"]
+        for e in result["errors"]
+    )
+    assert any(
+        e["error"] == "resource_quantities_changed"
+        and e.get("language") == "zz"
+        and e.get("missing") == ["100m"]
+        for e in result["errors"]
+    )
+    assert any(
+        e["error"] == "technical_literals_changed"
+        and e.get("language") == "zz"
+        and e.get("missing") == ["synthetic-route"]
+        for e in result["errors"]
+    )
+    lessons["fixture"]["content"]["en"] += "\nUse station.internal and each.key."
+    lessons["fixture"]["content"]["zz"] += "\nUse wrong.internal and each.key."
+    lessons["fixture"]["additional"] = {"en": "Additional exercise", "ru": "Exercise"}
+    (root / "docs/guide-lessons.yaml").write_text(yaml.safe_dump(lessons))
+    result = audit(root)
+    assert any(
+        e["error"] == "technical_literals_changed"
+        and e.get("missing") == ["station.internal"]
+        for e in result["errors"]
+    )
+    assert result["missing"]["zz"]["docs/guide-lessons.yaml/fixture/additional"] == [
+        "additional"
+    ]
+    lessons["fixture"]["content"]["zz"] = "```sh\necho changed\n```"
+    (root / "docs/guide-lessons.yaml").write_text(yaml.safe_dump(lessons))
+    result = audit(root)
+    assert any(
+        e["error"] == "code_blocks_changed" and e.get("language") == "zz"
+        for e in result["errors"]
+    )
+    (language / "metadata.json").write_text(json.dumps({"translation": "machine"}))
+    result = audit(root)
+    assert any(e["error"] == "invalid_metadata" for e in result["errors"])
+    (language / "ui.json").unlink()
+    lessons["fixture"]["content"].pop("zz")
+    (root / "docs/guide-lessons.yaml").write_text(yaml.safe_dump(lessons))
+    assert "zz" in audit(root)["missing"]

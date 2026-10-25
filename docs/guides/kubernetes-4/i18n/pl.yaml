@@ -1,0 +1,58 @@
+heading: '4. Sondy: uruchomienie, gotowość i ponowne uruchomienie mają różne konsekwencje'
+text: "## 4. Sondy: startup, readiness i restart mają różne konsekwencje\n\n**W skrócie**\n- Startup podaje\
+  \ czas na uruchomienie aplikacji\n- Readiness kontroluje, czy jest gotowy do odbioru ruchu\n- Liveness\
+  \ może wywołać ponowne uruchomienie kontenera.\n\n**Krótki scenariusz**\n\nReadiness kończy się niepowodzeniem.\
+  \ Liveness powiodło się i proces jest aktywny.\n\n**Prognoza:** Czy sam readiness wymaga ponownego uruchomienia?\n\
+  \n> [!question] - Odpowiedź\n> Analiza podanych warunków: Nie. Pod nie jest już uważany za gotowy do\
+  \ normalnego ruchu Service; ponowne uruchomienie nie jest działaniem readiness.\n\n**`probes.yaml` w\
+  \ `/tmp/vg-k8s-work`: kompletny Pod z trzema sondami:**\n\n```yaml\napiVersion: v1\nkind: Pod\nmetadata:\n\
+  \  name: probes\n  namespace: vg-k8s\nspec:\n  containers:\n    - name: nginx\n      image: nginx:1.27\n\
+  \      ports:\n        - containerPort: 80\n      startupProbe:\n        httpGet:\n          path: /\n\
+  \          port: 80\n        periodSeconds: 2\n        timeoutSeconds: 1\n        failureThreshold:\
+  \ 30\n      readinessProbe:\n        httpGet:\n          path: /\n          port: 80\n        periodSeconds:\
+  \ 2\n        timeoutSeconds: 1\n        failureThreshold: 1\n      livenessProbe:\n        httpGet:\n\
+  \          path: /\n          port: 80\n        periodSeconds: 5\n        timeoutSeconds: 1\n      \
+  \  failureThreshold: 3\n```\n\nSonda to kontrola kubelet, a nie oddzielny serwer monitorowania.\n`httpGet`\
+  \ sprawdza odpowiedź HTTP, `tcpSocket` połączenie, a `exec` kod wyjścia polecenia wewnątrz kontenera;\n\
+  istnieje również wbudowana kontrola gRPC. Połączenie TCP nie dowodzi, że operacja biznesowa jest poprawna.\n\
+  *(wg dokumentacji)* — [konfiguracja sondy](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/).\n\
+  \n> [!info] - Głębsze wyjaśnienie\n> | Sonda | Pytanie | Kubelet działanie po trwałej awarii |\n> |---|---|---|\n\
+  > | `startupProbe` | Czy początkowy startup został ukończony? | Uruchamia ponownie kontener; readiness/liveness\
+  \ pozostaje wyłączony, dopóki startup nie powiedzie się |\n> | `readinessProbe` | Czy można tutaj przesyłać\
+  \ prośby? | Oznacza, że ​​kontener nie jest gotowy; zwykły Service wyklucza niegotowy adres |\n> | `livenessProbe`\
+  \ | Czy należy ponownie uruchomić zablokowany proces? | Zatrzymuje i uruchamia ponownie kontener zgodnie\
+  \ z jego polityką |\n>\n> 1. Kubelet przeprowadza kontrole i zlicza kolejne sukcesy/porażki.\n> 2. `periodSeconds`\
+  \ ustawia odstęp; `timeoutSeconds` ogranicza jedną kontrolę.\n> 3. `failureThreshold` zlicza awarie\
+  \ przed podjęciem działań; dla startup zapewnia budżet startup.\n> 4. Readiness zmienia stan gotowości;\
+  \ kontroler EndpointSlice przekazuje ten stan do warstwy sieciowej.\n> 5.  Aktywność/uruchamianie zatrzymuje\
+  \ kontener; awaria sondy niekoniecznie powoduje powstanie błędnego kodu zakończenia procesu.\n>\n> Tabela\
+  \ i sekwencja to *(zgodnie z dokumentacją)* — źródło sondy powyżej.\n> Liczby poniżej są wyraźnymi ustawieniami\
+  \ ćwiczeń, a nie listą ustawień domyślnych.\n>\n> Startup pozwala `30 × 2 = 60` na około kilka sekund\
+  \ kontroli przed podjęciem działania; to nie jest dokładny stoper\n> dla całego modułu startup, łącznie\
+  \ z pobraniem obrazu. *(zgodnie z dokumentacją)* — źródło sondy powyżej.\n> Przykład trzech sond został\
+  \ sprawdzony oddzielnie w porównaniu z API; jednoczesna awaria wszystkich trzech nie została odtworzona.\n\
+  > *(niezweryfikowany)* — zachowanie całej kombinacji.\n\n### Jak sondy łamią rollout\n\n**W skrócie**\n\
+  -  Niewłaściwa sonda może spowodować zatrzymanie rollout\n- A aktywny proces nie zawsze jest gotowy\
+  \ do obsługi żądań\n- Sprawdź ścieżkę i przeznaczenie konkretnej sondy.\n\n**Krótki scenariusz**\n\n\
+  Aplikacja zwraca 200 na /health, ale readiness wskazuje na /missing i otrzymuje 404.\n\n**Przewiduj:**\
+  \ Która obserwacja odróżnia błąd sondy od awarii procesu?\n\n> [!question] - Odpowiedź\n> Analiza podanych\
+  \ warunków: Kontener działa, restartCount nie rośnie, a zdarzenia zgłaszają awarie readiness 404. Nie\
+  \ oznacza to, że aplikacja uległa awarii.\n\nReadiness na nieistniejącej ścieżce nie zabija procesu:\
+  \ nowe pody pozostają aktywne, ale niedostępne,\nwięc Deployment z `maxUnavailable: 0` zachowuje stare\
+  \ repliki i przestaje się rozwijać.\nNiepoprawny liveness ponownie uruchamia sprawną aplikację; zapobiega\
+  \ zbyt krótki budżet startup\npowolna aplikacja od wykończenia startup. Sprawdzenie bazy danych w liveness\
+  \ może zrestartować każdą replikę\npodczas awarii bazy danych i wzmacniają incydent — wnioski inżynieryjne\
+  \ z zachowania sondy.\n\n> [!info] - Głębsze wyjaśnienie\n> **Wydarzenia z nowej serii: przykład do\
+  \ przeczytania:**\n>\n> ```text\n> Readiness probe failed: HTTP probe failed with statuscode: 404\n\
+  > Liveness probe failed: HTTP probe failed with statuscode: 404\n> Container app failed liveness probe,\
+  \ will be restarted\n> ```\n>\n> Awaria Readiness została odtworzona w §6 Deployment, awaria liveness\
+  \ została odtworzona w osobnym nginx Pod.\n> Moduł liveness został uruchomiony ponownie, a nginx zakończył\
+  \ działanie pomyślnie; ten kod wyjścia nie jest gwarantowany\n> do innych zastosowań. *(zweryfikowane)*.\n\
+  >\n> **Przewiduj:** readiness kończy się niepowodzeniem, a liveness kończy się sukcesem. Czy kubelet\
+  \ zrestartuje kontener?\n>\n> > [!question] - Odpowiedź\n> > Nie tylko dlatego, że readiness zawodzi.\
+  \ Nowy kontener żyje, ale nie jest gotowy.\n> > W nowej serii rollout osiągnął `ProgressDeadlineExceeded`,\
+  \ a stare repliki pozostały.\n> > *(zweryfikowane)*.\n>\n> **Krótka odpowiedź w języku angielskim:**\n\
+  >\n> > Startup protects a slow start. Readiness controls whether a Pod receives normal Service traffic.\n\
+  > > Liveness restarts a container that cannot recover by itself. A failed readiness check does not restart\
+  \ it."
+source_hash: ecad6a149624396bcbf84129724c608bfe67154652b0f31858ad810bf0d16ecf

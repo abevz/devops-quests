@@ -1,0 +1,81 @@
+heading: '11. Storage: żądanie, powiązanie, załącznik i rzeczywiste bajty'
+text: "## 11. Przechowywanie: żądanie, powiązanie, załącznik i rzeczywiste bajty\n\n**W skrócie**\n- A\
+  \ PVC requests storage\n- A PV reprezentuje powiązany wolumin\n-  Istnienie obiektów nie dowodzi, że\
+  \ proces może uzyskać dostęp do data.\n\n**Krótki scenariusz**\n\nPVC to Bound, ale Pod zgłasza FailedMount.\n\
+  \n**Przewiduj:** Czy to już dowodzi, że aplikacja pomyślnie odczytała plik?\n\n> [!question] - Odpowiedź\n\
+  > Analiza podanych warunków: Nie. Wiązanie powiodło się; mocowanie lub montaż nie został jeszcze ukończony.\n\
+  \nPV, PersistentVolume opisuje dostępny wolumen w zakresie klastra.\nPVC, PersistentVolumeClaim to żądanie\
+  \ przestrzeni nazw aplikacji.\nStorageClass określa parametry udostępniania i przechowywania; sam obiekt\
+  \ nie instaluje sterownika.\nCSI to interfejs do sterownika pamięci masowej; jego strona kontrolera\
+  \ udostępnia/dołącza wolumin,\npodczas gdy strona węzła udostępnia go w systemie plików pod.\n*(wg dokumentacji)*\
+  \ — [PV/PVC](https://kubernetes.io/docs/concepts/storage/persistent-volumes/),\n[StorageClass](https://kubernetes.io/docs/concepts/storage/storage-classes/).\n\
+  \n### Dlaczego PVC czeka, zanim proces się zakończy\n\n**W skrócie**\n- Niektóre klasy czekają na pierwszego\
+  \ konsumenta\nUmieszczenie - Pod może mieć wpływ na wybór głośności\n- A Pending PVC nie zawsze oznacza\
+  \ uszkodzony moduł udostępniania.\n\n**Krótki scenariusz**\n\nStorageClass wykorzystuje WaitForFirstConsumer.\
+  \ Powstał PVC, ale nie ma jeszcze konsumenta.\n\n**Przewiduj:** Czy Pending koniecznie wskazuje tutaj\
+  \ błąd?\n\n> [!question] - Odpowiedź\n> Analiza podanych warunków: Nie. Najpierw potrzebny jest konsument,\
+  \ aby można było rozważyć jego umieszczenie.\n\n**`storage.yaml` w `/tmp/vg-k8s-work`: roszczenie i\
+  \ konsument korzystający ze standardowej klasy rodzaju:**\n\n```yaml\napiVersion: v1\nkind: PersistentVolumeClaim\n\
+  metadata:\n  name: data\n  namespace: vg-k8s\nspec:\n  accessModes: [ReadWriteOnce]\n  resources:\n\
+  \    requests:\n      storage: 32Mi\n---\napiVersion: v1\nkind: Pod\nmetadata:\n  name: stored\n  namespace:\
+  \ vg-k8s\nspec:\n  containers:\n    - name: app\n      image: busybox:1.37\n      command: [\"sh\",\
+  \ \"-c\", \"echo durable >/data/value; sleep 3600\"]\n      volumeMounts:\n        - name: data\n  \
+  \        mountPath: /data\n  volumes:\n    - name: data\n      persistentVolumeClaim:\n        claimName:\
+  \ data\n```\n\nUżytkownik 1. A tworzy PVC z rozmiarem, klasą i trybem dostępu.\n2. A Istniejący PV może\
+  \ zostać powiązany z pasującym PVC lub dostawca tworzy nowy PV/wolumin.\n3. W przypadku `Immediate`\
+  \ udostępnianie/wiązanie rozpoczyna się przed wyborem węzła.\n4. W przypadku `WaitForFirstConsumer`\
+  \ decyzja czeka na konsumenta i uwzględnia umieszczenie Pod.\n5. Apo przypisaniu węzła wolumin jest\
+  \ dołączany do węzła i montowany w kontenerze.\n\n> [!info] - Głębsze wyjaśnienie\n> `Bound` PVC wskazuje\
+  \ powiązanie metadanych, ale nie świadczy o pomyślnym `mount` lub zdrowym systemie plików.\n> W przypadku\
+  \ `WaitForFirstConsumer` nie przypisuj bezpośrednio `nodeName`: ominięcie harmonogramu może spowodować\
+  \ opuszczenie PVC\n> w toku. Zamiast tego użyj selektora/powinowactwa, aby ograniczyć wybór węzła.\n\
+  > *(wg dokumentacji)* — [StorageClass](https://kubernetes.io/docs/concepts/storage/storage-classes/).\n\
+  >\n> **Schemat odczytu: gdzie można zakończyć przygotowywanie objętości:**\n>\n> **Krok 1 — Wiązanie\
+  \ za pośrednictwem dostawcy usług**\n>\n> ```mermaid\n> flowchart TB\n>     C[\"PVC: volume requested\"\
+  ]\n>     S[\"StorageClass and provisioner\"]\n>     P[\"PV bound: Bound\"]\n>     C --> S\n>     S -->\
+  \ P\n> ```\n>\n> **Krok 2 — Oczekiwanie na pierwszego konsumenta**\n>\n> ```mermaid\n> flowchart TB\n\
+  >     C[\"PVC: volume requested\"]\n>     P[\"PV bound: Bound\"]\n>     W[\"WaitForFirstConsumer\"]\n\
+  >     N[\"Scheduler selects an eligible node\"]\n>     C --> W\n>     W --> N\n>     N --> P\n> ```\n\
+  >\n> **Krok 3 — Podłączanie i odczytywanie woluminu**\n>\n> ```mermaid\n> flowchart TB\n>     P[\"PV\
+  \ bound: Bound\"]\n>     A[\"Attach to the node\"]\n>     M[\"Mount by kubelet/driver\"]\n>     R[\"\
+  Application reads data\"]\n>     P --> A\n>     A --> M\n>     M --> R\n> ```\n>\n> Przed utworzeniem\
+  \ konsumenta laboratorium PVC nosiło nazwę `Pending`; stworzenie Pod sprawiło, że stał się `Bound`.\n\
+  > Sprawdzono ścieżkę od oczekiwania na konsumenta do powiązania lokalnego PV. *(zweryfikowane)*.\n>\
+  \ Żądanie 32Mi skierowane do lokalnego dostawcy usług nie stanowi dowodu na przydział sprzętu;\n> jest\
+  \ to zależne od implementacji i nie mierzono tutaj objętości wypełnienia. *(niezweryfikowany)*.\n\n\
+  ### Atryb dostępu nie jest blokadą aplikacji\n\n**W skrócie**\n- Atryb dostępu ogranicza sposób podłączania\
+  \ woluminu\n- To nie jest blokada zapisu aplikacji\n- Replikacja danych i kopie zapasowe to osobne kwestie.\n\
+  \n**Krótki scenariusz**\n\nDwa procesy w jednym węźle uzyskały dostęp do woluminu RWO.\n\n**Prognoza:**\
+  \ Czy RWO gwarantuje bezpieczne równoczesne zapisy?\n\n> [!question] - Odpowiedź\n> Analiza podanych\
+  \ warunków: Nie. Aplikacja lub system plików potrzebuje własnego protokołu.\n\n| Tryb | Deklarowany\
+  \ wzór przywiązania |\n|---|---|\n| `ReadWriteOnce`, RWO | Zapisuje z jednego węzła; możliwych jest\
+  \ kilka zasobników w tym węźle |\n| `ReadOnlyMany`, ROX | Odczytuje z wielu węzłów |\n| `ReadWriteMany`,\
+  \ RWX | Zapisuje z wielu węzłów |\n| `ReadWriteOncePod`, RWOP | Dostęp do zapisu dla jednego poda; wymaga\
+  \ obsługi CSI |\n\n> [!info] - Głębsze wyjaśnienie\n> Tryby zależą od sterownika. RWO nie oznacza „jednego\
+  \ procesu” i nie zastępuje blokady bazy danych.\n> Równoczesne zapisy RWX nie stają się spójne automatycznie.\n\
+  > *(wg dokumentacji)* — [PV tryby](https://kubernetes.io/docs/concepts/storage/persistent-volumes/).\n\
+  >\n> Po wydaniu PVC `reclaimPolicy: Delete` oznacza usunięcie PV i obsługiwanego woluminu zewnętrznego;\n\
+  > `Retain` przechowuje data do ręcznego odzyskiwania/ponownego wykorzystania.\n> Rozszerzenie PVC wymaga\
+  \ uprawnień klasy i obsługi sterowników; zmniejszenie żądania nie jest\n> sposób na zmniejszenie istniejącej\
+  \ objętości. *(wg dokumentacji)* — źródło PV powyżej.\n>\n> > [!warning] Kopia zapasowa etcd nie jest\
+  \ kopią zapasową woluminu\n> > etcd zawiera obiekty PVC/PV, ale bajty bazy danych są przechowywane w\
+  \ pamięci. Przywracanie płaszczyzny kontrolnej\n> > obiekty nie tworzą automatycznie spójnego PostgreSQL\
+  \ data. Kopie zapasowe danych i testy przywracania są wymagane osobno.\n> > *(wg dokumentacji)* — [obsługuje\
+  \ etcd](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/).\n\n### Gdzie szukać\
+  \ awarii\n\n**W skrócie**\n- Powiąż awarię pamięci masowej z jej etapem\n- Bound opisuje powiązanie\
+  \ metadanych\n- FailedMount wskazuje na późniejszą operację.\n\n**Krótki scenariusz**\n\nPVC to Bound,\
+  \ a zdarzenie Pod zgłasza FailedMount z błędem uprawnień.\n\n**Przewiduj:** Czy zmiana żądanego rozmiaru\
+  \ PVC pomoże bez innych dowodów?\n\n> [!question] - Odpowiedź\n> Analiza podanych warunków: Nie ma ku\
+  \ temu podstaw. Najpierw sprawdź uprawnienia i ścieżkę mount zidentyfikowaną przez zdarzenie.\n\n`describe\
+  \ pvc`: zła klasa, nieobsługiwany tryb lub awaria udostępniania — `ProvisioningFailed`;\nzwykły konsument\
+  \ oczekujący — `WaitForFirstConsumer`.\n`describe pod`: `FailedMount`, `FailedAttachVolume` lub `Multi-Attach`\
+  \ w przypadku nieprawidłowego drugiego załącznika.\nNastępnie sprawdź zdarzenia/dzienniki sterowników\
+  \ i rzeczywisty stan pamięci, zamiast bez końca usuwać PVC.\nAwarie CSI i ponowne podłączenie StatefulSet\
+  \ nie zostały tutaj odtworzone. *(niezweryfikowany)*.\n\n> [!info] - Głębsze wyjaśnienie\n> **Prognoza:**\
+  \ PVC to Bound, ale proces nie może się rozpocząć z powodu `FailedMount`. Czy zwiększenie replicas to\
+  \ naprawi?\n>\n> > [!question] - Odpowiedź\n> > Nie: wiązanie już nastąpiło; problem występuje niżej,\
+  \ przy mocowaniu/montażu.\n> > Dodatkowe zasobniki mogą również konkurować o wolumen RWO. *(wg dokumentacji)*\
+  \ — źródło PV powyżej.\n>\n> **Krótka odpowiedź w języku angielskim:**\n>\n> > A PVC requests storage,\
+  \ and a PV represents the bound volume. A StorageClass defines provisioning behavior.\n> > WaitForFirstConsumer\
+  \ lets storage placement follow Pod scheduling. Bound does not prove that the volume is mounted."
+source_hash: 1938ff29018d0f83a42e75bd09ecfc28834abb56e58b66e76d887794875f6ecb

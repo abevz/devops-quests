@@ -1,0 +1,350 @@
+heading: '7.4. Adresy: przejście do modułu, zmiana nazwy i zakończenie zarządzania'
+text: '### 7.4. Adresy: przeprowadzka do module, zmiana nazwy i zakończenie zarządzania
+
+
+  **W skrócie**
+
+  Adres - An zawiera ścieżkę module.
+
+  - Przenoszenie kodu zmienia adres nawet wtedy, gdy zawartość pozostaje taka sama.
+
+  Łańcuch bloków - A moved może zachować historię zmiany nazwy.
+
+
+  **Krótki scenariusz**
+
+
+  resource to terraform_data.this. To był moved wewnątrz module.worker, nadając mu adres module.worker.terraform_data.this.
+  State nadal przechowuje stary adres.
+
+
+  **Przewiduj:** Czy silnik rozpozna ruch bazując wyłącznie na identycznym input?
+
+
+  > [!question] - Odpowiedź
+
+  > Nie. Bez moved są to różne adresy: stary znika i pojawia się nowy. Pełna sekwencja sześciu kroków
+  jest zachowana poniżej; jego oryginalne pliki pozostają niezmienione.
+
+
+  > [!info] - Głębsze wyjaśnienie
+
+  > **Punkt wyjścia.** Ta sekcja nie stanowi kontynuacji przykładów `for_each` lub `count` z §7.3. Pierwsze
+  dwa akapity wyjaśniają jedynie adresy; nie ma co uciekać. Praktyka rozpoczyna się od „Przenoszenie resource
+  do module” z pustym state: po §7.3, uruchom `tofu destroy`, a następnie wykonaj kroki 1–6; `modules/worker/`
+  pozostaje niezmieniony.
+
+  >
+
+  > Dla pojedynczego wywołania w §7.1, `tofu state list` pokazało:
+
+  >
+
+  > ```text
+
+  > module.worker.terraform_data.this
+
+  > ```
+
+  >
+
+  > Przeczytaj adres w następujący sposób: `module.worker` to ścieżka połączenia; `terraform_data` to
+  typ; `this` to resource name w środku. Wywołanie `for_each` dodaje klucz: `module.worker["a"].terraform_data.this`.
+  Zagnieżdżone moduły dodają kolejny segment `module.<имя>`.
+
+  >
+
+  > **Przenoszenie resource do module.** We wszystkich sześciu krokach używany jest ten sam katalog i
+  plik: root `main.tf`; `modules/worker/` z §7.1 pozostaje bez zmian. Każdy blok poniżej jest kompletnym
+  plikiem. Nie uruchamiaj `tofu destroy` pomiędzy krokami: chodzi o zachowanie state z poprzedniego kroku.
+
+  >
+
+  > **Krok 1. Ukończ root `main.tf`: resource znajduje się bezpośrednio w katalogu głównym.** Zacznij
+  od pustego state, następnie uruchom `tofu init`, `tofu apply`:
+
+  >
+
+  > ```hcl
+
+  > resource "terraform_data" "this" {
+
+  >   input = { name = "worker-a", port = 8080, labels = {} }
+
+  > }
+
+  > ```
+
+  >
+
+  > **Krok 2. Zakończ rootowanie `main.tf`: wywołanie module zastępuje resource.** Uruchom `tofu init`,
+  `tofu plan`; nie apply:
+
+  >
+
+  > ```hcl
+
+  > module "worker" {
+
+  >   source = "./modules/worker"
+
+  >   name   = "worker-a"
+
+  > }
+
+  > ```
+
+  >
+
+  > ```text
+
+  > # terraform_data.this will be destroyed
+
+  >
+
+  >   # module.worker.terraform_data.this will be created
+
+  > Plan: 1 to add, 0 to change, 1 to destroy.
+
+  > ```
+
+  >
+
+  > Terraform porównuje adresy, a nie podobieństwo treści.
+
+  >
+
+  > **Krok 3. Zakończ rootowanie `main.tf`: dodaj `moved` obok wywołania.** Uruchom `tofu plan`, `tofu
+  apply`:
+
+  >
+
+  > ```hcl
+
+  > module "worker" {
+
+  >   source = "./modules/worker"
+
+  >   name   = "worker-a"
+
+  > }
+
+  >
+
+  > moved {
+
+  >   from = terraform_data.this
+
+  >   to   = module.worker.terraform_data.this
+
+  > }
+
+  > ```
+
+  >
+
+  > ```text
+
+  > # module.worker.terraform_data.this will be updated in-place
+
+  > Plan: 0 to add, 1 to change, 0 to destroy.
+
+  > ```
+
+  >
+
+  > Obiekt zostaje zachowany: nie ma destroy ani nie został utworzony, a jego adres state to teraz `module.worker.terraform_data.this`.
+
+  >
+
+  > **Krok 4. Zakończ rootowanie `main.tf`: zmień nazwę wywołania z `worker` na `agent`, nic więcej nie
+  zmieniając.** Uruchom `tofu init`, `tofu plan`; nie apply:
+
+  >
+
+  > ```hcl
+
+  > module "agent" {
+
+  >   source = "./modules/worker"
+
+  >   name   = "worker-a"
+
+  > }
+
+  >
+
+  > moved {
+
+  >   from = terraform_data.this
+
+  >   to   = module.worker.terraform_data.this
+
+  > }
+
+  > ```
+
+  >
+
+  > **Przewiduj:** po przeprowadzce do module, tylko jego wywołanie name zmienia się z `worker` na `agent`.
+  Co pokaże plan bez kolejnego `moved`?
+
+  >
+
+  > > [!question] - Odpowiedź
+
+  > > ```text
+
+  > >   # module.agent.terraform_data.this will be created
+
+  > >   # module.worker.terraform_data.this will be destroyed
+
+  > > Plan: 1 to add, 0 to change, 1 to destroy.
+
+  > > ```
+
+  > > Nowe wywołanie name zmienia adresy wszystkich zasobów znajdujących się pod nim. Pasujące dane wejściowe
+  nie zachowują powiązania.
+
+  >
+
+  > **Krok 5. Kompletny korzeń `main.tf`: dodaj drugi `moved` dla całego module.** Zachowaj pierwszy `moved`:
+  ważny jest łańcuch dwóch ruchów. Uruchom `tofu plan`, `tofu apply`:
+
+  >
+
+  > ```hcl
+
+  > module "agent" {
+
+  >   source = "./modules/worker"
+
+  >   name   = "worker-a"
+
+  > }
+
+  >
+
+  > moved {
+
+  >   from = terraform_data.this
+
+  >   to   = module.worker.terraform_data.this
+
+  > }
+
+  >
+
+  > moved {
+
+  >   from = module.worker
+
+  >   to   = module.agent
+
+  > }
+
+  > ```
+
+  >
+
+  > ```text
+
+  > # module.worker.terraform_data.this has moved to module.agent.terraform_data.this
+
+  >
+
+  > Plan: 0 to add, 0 to change, 0 to destroy.
+
+  > ```
+
+  >
+
+  > **Krok 6. `removed` dla pojedynczej instancji module. Kompletny root `main.tf`: usuń wywołanie i oba
+  bloki `moved`.** Uruchom `tofu plan`, `tofu apply`:
+
+  >
+
+  > ```hcl
+
+  > removed {
+
+  >   from = module.agent
+
+  >   lifecycle {
+
+  >     destroy = false
+
+  >   }
+
+  > }
+
+  > ```
+
+  >
+
+  > ```text
+
+  > # module.agent.terraform_data.this will be removed from the OpenTofu state but will not be destroyed
+
+  >
+
+  > Plan: 0 to add, 0 to change, 0 to destroy, 1 to forget.
+
+  > Warning: Resource will be removed from the state
+
+  > ```
+
+  >
+
+  > *(kroki 1–6 z kompletnymi plikami zweryfikowanymi 08.10.2026: OpenTofu 1.12.6, jeden katalog, plany
+  zgodne z pokazanymi)*.
+
+  >
+
+  > Po `apply`, `tofu state list` jest pusty. To kończy zarządzanie, a nie niszczenie obiektu. Syntetyczny
+  `terraform_data` nie ma obiektu zewnętrznego; zachowanie prawdziwego obiektu ilustruje mechanizm, a
+  nie ten resource.
+
+  >
+
+  > **Granica wersji:** OpenTofu 1.12.6 odrzuca kluczowany adres instancji w `removed`. Oddzielny root
+  utworzył klucze `aaa` i `bbb`, removed `aaa` z `for_each`, a następnie dodał:
+
+  >
+
+  > **Rootuj `main.tf` w oddzielnym katalogu: dodaj to do wywołania `for_each`:**
+
+  >
+
+  > ```hcl
+
+  > removed {
+
+  >   from = module.worker["aaa"]
+
+  >   lifecycle { destroy = false }
+
+  > }
+
+  > ```
+
+  >
+
+  > ```text
+
+  > Error: Module instance address with keys is not allowed
+
+  > Module address cannot be a module instance (e.g. "module.a[0]"), it must be a
+
+  > module instead (e.g. "module.a").
+
+  > ```
+
+  >
+
+  > Nie zastępuj go `from = module.worker`, jeśli to forget ma mieć tylko jeden klucz: który dotyczy całego
+  module. Selektywne usunięcie z zarządzania w tej wersji wymaga osobnego uzgodnienia `state rm` dokładnego
+  adresu i usunięcia tej samej instancji z konfiguracji. *(zweryfikowano: OpenTofu 1.12.6, plany przed/po
+  `moved`, oba ruchy zostały zastosowane, wiążące usunięcie i odrzucenie wpisanego adresu)*. [Przenoszenie
+  adresów](https://developer.hashicorp.com/terraform/language/modules/develop/refactoring).'
+source_hash: 6cd98d5277d2550678691a836f5357955e046a6ddfd3adfa5458a04a78b9eebf

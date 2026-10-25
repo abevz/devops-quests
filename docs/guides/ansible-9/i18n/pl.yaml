@@ -1,0 +1,57 @@
+heading: '9. Ebłędy: co jest kontynuowane, a czego nie powoduje wycofanie'
+text: "## 9. Błędy: co jest kontynuowane, a czego nie powoduje wycofanie\n\n**W skrócie**\n- block grupuje\
+  \ powiązane zadania.\n- rescue wykonuje określone działania po normalnej awarii w block.\n- Recovery\
+  \ nie cofa automatycznie zmian.\n\n**Miniprzykład:** zapisz `mini.yml` w oddzielnym katalogu tymczasowym;\
+  \ uruchom `ansible-playbook -i localhost, -c local mini.yml`. Przykład działa na localhost bez stania.\n\
+  \n```yaml\n- hosts: localhost\n  connection: local\n  become: false\n  gather_facts: false\n  tasks:\n\
+  \    - block:\n        - ansible.builtin.fail:\n            msg: stop\n      rescue:\n        - ansible.builtin.debug:\n\
+  \            msg: recovered\n      always:\n        - ansible.builtin.debug:\n            msg: cleanup\n\
+  ```\n\n**Przewiduj:** Czy ostateczny kod zakończenia będzie różny od zera po pomyślnym wykonaniu rescue?\
+  \ Czy always będzie działać?\n\n> [!question] - Odpowiedź\n> Kod zakończenia: 0. Fragmenty standardowego\
+  \ wyjścia:\n>\n> ```text\n>     \"msg\": \"recovered\"\n>     \"msg\": \"cleanup\"\n> localhost    \
+  \              : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=1    ignored=0\n\
+  > ```\n\n`rescue` obsługuje zamierzoną awarię, następnie uruchamia się `always`. Ostateczne podsumowanie\
+  \ uwzględnia odzyskanie środków; ten przykład nie zmienia żadnych plików.\n\nKompletny `recovery.yml`:\
+  \ awaria jest zamierzona, ale nie wprowadzono żadnych zmian w OS:\n\n```yaml\n- name: Explain recovery\
+  \ flow\n  hosts: lab\n  connection: local\n  gather_facts: false\n  become: false\n  tasks:\n    - name:\
+  \ Protected operation\n      block:\n        - name: Fail deliberately\n          ansible.builtin.command:\n\
+  \            argv: [/usr/bin/false]\n          changed_when: false\n      rescue:\n        - name: Show\
+  \ failure context\n          ansible.builtin.debug:\n            msg: \"{{ ansible_failed_task.name\
+  \ }}: {{ ansible_failed_result.rc }}\"\n      always:\n        - name: Show cleanup path\n         \
+  \ ansible.builtin.debug:\n            msg: always\n    - name: Continue after recovery\n      ansible.builtin.debug:\n\
+  \        msg: next task\n```\n\n*(zweryfikowane)* Połączone laboratorium z pętlą, ponownymi próbami\
+  \ i zwróconym `rescue`:\n\n```text\n[ERROR]: Task failed: Module failed: The command exited with a non-zero\
+  \ return code.\nTASK [Recovered]\nok: [localhost] => {\"msg\": \"rescued\"}\nTASK [Cleanup signal]\n\
+  ok: [localhost] => {\"msg\": \"always\"}\nlocalhost : ok=4 changed=0 unreachable=0 failed=0 skipped=0\
+  \ rescued=1 ignored=0\n```\n\nZwykła porażka usuwa gospodarza z kolejnych zwykłych zadań w bieżącej\
+  \ grze; inne hosty mogą continue.\nAnsible nie zapewnia transakcji: zmiany wprowadzone przed awarią\
+  \ pozostają.\n**`block`** grupuje zadania i wspólne ustawienia. **`rescue`** działa po niepowodzeniu\
+  \ zadania w block.\n**`always`** następuje po `block`/`rescue`, gdy silnik może wykonać continue.\n\
+  Błąd definicji hosta lub zadania unreachable nie jest zwykłym wynikiem `failed` dla `rescue`.\n\n`ansible_failed_task`\
+  \ i `ansible_failed_result` zapewniają kontekst `rescue`.\nPomyślne `rescue` liczy się jako powrót do\
+  \ zdrowia: gra może continue, z `failed` równym 0 w podsumowaniu\ni `rescued` równe 1. Jeśli odzyskiwanie\
+  \ nie może ukrywać wdrożenia failed, zakończ `rescue`\n`ansible.builtin.fail` po wykonaniu wymaganych\
+  \ działań. Jest to osobna awaria, a nie automatyczne zachowanie `rescue`.\n\n> [!info] - Głębsze wyjaśnienie\n\
+  > ```mermaid\n> flowchart TB\n>     B[\"Block tasks\"] --> R{\"Did the task fail?\"}\n>     R -->|\"\
+  no\"| A[\"Final tasks\"]\n>     R -->|\"yes\"| S[\"Rescue: explicit compensating actions\"]\n>     S\
+  \ --> A\n>     A --> N[\"Next task if the error was handled\"]\n> ```\n>\n> Wycofywanie polega na **działaniach\
+  \ kompensujących, które napisałeś**: przywróceniu kopii zapasowej, przywróceniu wersji,\n> sprawdź stan\
+  \ zdrowia. Te działania też mogą zakończyć się niepowodzeniem. `rescue` block nie gwarantuje odzyskania\
+  \ bazy danych,\n> atomowe aktualizacje plików lub zwrócenie węzła do modułu równoważenia obciążenia.\n\
+  >\n> | Ustawienie | Co to zmienia | Czego to nie robi |\n> |---|---|---|\n> | `failed_when` | Kryterium\
+  \ niepowodzenia wyniku | Does nie cofa już wykonanej akcji. |\n> | `ignore_errors: true` | Kontynuacja\
+  \ po zwykłym wyniku failed | Does nie naprawił `unreachable`, błędy składniowe lub błędy o niezdefiniowanej\
+  \ wartości. |\n> | `ignore_unreachable: true` | Oddzielnie pozwala na kontynuację po `unreachable` |\
+  \ Does nie tworzy działającego połączenia. |\n> | `any_errors_fatal: true` | Nieobsługiwana awaria powoduje\
+  \ zatrzymanie gry dla wszystkich po bieżącym zadaniu grupy | Does nie przywraca pomyślnych hostów. |\n\
+  > | `max_fail_percentage` | Zatrzymuje się, gdy udział failed w partii przekracza próg | Ani sprawdzanie\
+  \ stanu, ani wycofywanie; przeznaczony dla strategii takich jak `linear`. |\n>\n> `max_fail_percentage:\
+  \ 50` z partią 4 sztuk: dwie awarie to dokładnie 50%, więc próg nie jest **nie przekroczony**;\n> trzy\
+  \ niepowodzenia to 75%, więc wykonanie zostaje zatrzymane. Aby zatrzymać się przy dwóch z czterech,\
+  \ użyj progu poniżej 50, na przykład 49.\n> Awaria pomyślnie obsłużona przez `rescue` nie wyzwala tego\
+  \ progu lub `any_errors_fatal` jako nieobsługiwany błąd.\n> *(zgodnie z dokumentacją)* [Obsługa błędów](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_error_handling.html).\n\
+  >\n> Pytanie: **Does `rescue` automatically roll back a deployment?**\n>\n> > No. `rescue` runs tasks\
+  \ that I define after a normal task failure. I must explicitly restore the\n> > previous state and check\
+  \ it. If `rescue` succeeds, Ansible treats the failure as recovered and can\n> > continue, so I may\
+  \ need an explicit fail task to stop the rollout."
+source_hash: 57814bba504547b48d8ae92cef943b835b1dc4050246886a78d050e73b70d430
