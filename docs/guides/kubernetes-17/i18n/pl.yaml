@@ -1,0 +1,77 @@
+heading: '17. PDB, eksmisja i konserwacja węzła: przygotuj dostępność z wyprzedzeniem'
+text: "## 17. PDB, eksmisja i konserwacja węzłów: przygotuj dostępność z wyprzedzeniem\n\n**W skrócie**\n\
+  - A PDB ogranicza dobrowolną eksmisję\n- Porównuje gotowe repliki z budżetem\nW - A PDB nie brakuje\
+  \ replik create.\n\n**Krótki scenariusz**\n\nGotowe są dwie repliki oraz minAvailable=2.\n\n**Przewiduj:**\
+  \ Na ile dobrowolnych eksmisji pozwala ten prosty przypadek?\n\n> [!question] - Odpowiedź\n> Analiza\
+  \ podanych warunków: Zero. Zmniejszenie liczby gotowych replik naruszyłoby budżet.\n\nPDB, PodDisruptionBudget,\
+  \ ogranicza dobrowolne wyrzucenie wybranego obciążenia.\nKontroler porównuje gotowe zasobniki z wymaganą\
+  \ dostępnością i zapisuje `disruptionsAllowed`.\nEviction API sprawdza ten budżet przed zakończeniem\
+  \ Pod.\nPDB nie replikuje create, nie chroni przed awarią węzła/OOM ani nie blokuje bezpośredniego Pod\
+  \ DELETE.\nWdrażanie kontrolera opiera się na własnej strategii, a nie na pozwoleniu PDB: aktualizacja\
+  \ krocząca Deployment\nużywa `strategy.rollingUpdate` (`maxUnavailable`/`maxSurge`) bez konsultacji\
+  \ z PDB. Liczba replik i dystrybucja węzłów\npoprzez `podAntiAffinity` i `topologySpreadConstraints`\
+  \ chronią przed mimowolnym disruptions (awaria węzła, OOM).\nPDB równy liczbie replik (`minAvailable:\
+  \ 2` z dwiema replikami) tworzy `disruptionsAllowed: 0` i bloki\ndowolny `drain`: dodaj replikę lub\
+  \ skorzystaj z budżetu `maxUnavailable: 1`.\n*(wg dokumentacji)* — [disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/).\n\
+  \n### Jeden budżet, dwa stany\n\n**W skrócie**\n- Budżet zależny od aktualnego stanu zdrowia\n- To samo\
+  \ ustawienie może umożliwiać różne działania\n- Eviction API sprawdza bieżący budżet.\n\n**Krótki scenariusz**\n\
+  \nminAvailable=2. Początkowo gotowe są dwie repliki, później trzy.\n\n**Przewiduj:** Jak zmienia się\
+  \ dozwolona liczba eksmisji w tym prostym modelu?\n\n> [!question] - Odpowiedź\n> Analiza zadanych warunków:\
+  \ Od zera do jednego. W obu przypadkach muszą pozostać dwie gotowe repliki.\n\n**`pdb.yaml` w `/tmp/vg-k8s-work`:\
+  \ pełny budżet na dwie repliki `web`:**\n\n```yaml\napiVersion: policy/v1\nkind: PodDisruptionBudget\n\
+  metadata:\n  name: web\n  namespace: vg-k8s\nspec:\n  minAvailable: 2\n  selector:\n    matchLabels:\n\
+  \      app: web\n```\n\n> [!info] - Głębsze wyjaśnienie\n> `minAvailable: 2` wymaga posiadania dwóch\
+  \ gotowych replik.\n> W przypadku dwóch gotowych kapsuł nie jest dozwolona eksmisja; przy trzech, można\
+  \ dopuścić jedną eksmisję.\n> `maxUnavailable` jest polem alternatywnym i nie można go ustawić razem\
+  \ z `minAvailable`.\n> W `policy/v1`, pusty selector wybiera każdy pod w namespace:, nie jest to nieszkodliwe\
+  \ pominięcie etykiet.\n> *(wg dokumentacji)* — źródło disruptions powyżej.\n>\n> **Polecenie z dowolnego\
+  \ katalogu: zbuduj i wyślij pełne żądanie dla wybranego Pod:**\n>\n> ```bash\n> POD=$(kubectl --kubeconfig\
+  \ /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\n>   -n vg-k8s get pods -l app=web -o jsonpath='{.items[0].metadata.name}')\n\
+  > jq -n --arg pod \"$POD\" \\\n>   '{apiVersion:\"policy/v1\",kind:\"Eviction\",metadata:{name:$pod,namespace:\"\
+  vg-k8s\"}}' \\\n>   > /tmp/vg-k8s-work/eviction.json\n> kubectl --kubeconfig /tmp/vg-k8s-kubeconfig\
+  \ --context kind-vg-k8s \\\n>   create --raw \"/api/v1/namespaces/vg-k8s/pods/$POD/eviction\" \\\n>\
+  \   -f /tmp/vg-k8s-work/eviction.json\n> ```\n>\n> `$(...)` przechwytuje dane wyjściowe poleceń, `--arg`\
+  \ przekazuje ciąg znaków do jq, a `--raw` określa ścieżkę API.\n> Wybierz pod dopiero po przygotowaniu\
+  \ naprawionego wdrożenia.\n>\n> **Świeże wyniki z dwiema gotowymi replikami: przykład do przeczytania:**\n\
+  >\n> ```text\n> Error from server (TooManyRequests): Cannot evict pod as it would violate the pod's\
+  \ disruption budget.\n> ```\n>\n> **Świeże wyniki po zwiększeniu do trzech gotowych replik: przykład\
+  \ do przeczytania:**\n>\n> ```text\n> {\"kind\":\"Status\",\"apiVersion\":\"v1\",\"metadata\":{},\"\
+  status\":\"Success\",\"code\":201}\n> ```\n>\n> Sprawdzono obie gałęzie Eviction API; ReplicaSet zastępuje\
+  \ usuniętą replikę. *(zweryfikowane)*.\n\n### Dlaczego drain czeka po pomyślnym zakończeniu cordon\n\
+  \n**W skrócie**\n- Cordon zatrzymuje nowe zwykłe planowanie\n- Drain próbuje eksmitować istniejące kapsuły\n\
+  Budżet dostępności - An może opóźnić ten krok.\n\n**Krótki scenariusz**\n\nCordon się udało, ale jedyna\
+  \ replika jest chroniona przez minAvailable=1.\n\n**Prognoza:** Czy drain musi zostać natychmiast zakończone?\n\
+  \n> [!question] - Odpowiedź\n> Analiza podanych warunków: Nr Eviction narusza budżet; pomyślny cordon\
+  \ nie oznacza, że ​​ewakuacja została zakończona.\n\n**Polecenie z dowolnego katalogu: ograniczone ćwiczenie\
+  \ drain tylko modułów `web`:**\n\n```bash\nkubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s\
+  \ \\\n  drain vg-k8s-worker2 --pod-selector=app=web --ignore-daemonsets --timeout=8s\nkubectl --kubeconfig\
+  \ /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\n  uncordon vg-k8s-worker2\n```\n\n`cordon` zapobiega\
+  \ nowym zwykłym przypisaniom, ale nie eksmituje podów.\n`drain` najpierw powoduje, że węzeł staje się\
+  \ nieplanowany, a następnie eksmituje kwalifikujące się pody przez API i czeka na zakończenie.\n`--ignore-daemonsets`\
+  \ pozostawia strąki DaemonSet; zwykły drain nie usuwa static/mirror Pods.\n`--delete-emptydir-data`\
+  \ pozwala na utratę danych `emptyDir`, natomiast `--force` na niezarządzane pody\nnie jest obejściem\
+  \ PDB. `--disable-eviction` wykorzystuje usuwanie i omija ochronę: to inna operacja.\n*(wg dokumentacji)*\
+  \ — [drain](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/).\n\n> [!info] –\
+  \ głębsze wyjaśnienie\n> **Wyniki nowego uruchomienia: nazwa repliki jest skrócona:**\n>\n> ```text\n\
+  > node/vg-k8s-worker2 cordoned\n> Cannot evict pod as it would violate the pod's disruption budget.\n\
+  > global timeout reached: 8s\n> ```\n>\n> Zweryfikowano: drain ponowił próbę eksmisji, przekroczył limit\
+  \ czasu i pozostawił węzeł niezaplanowany do czasu `uncordon`.\n> Nie „automatycznie odblokowało węzła\
+  \ po awarii”. *(zweryfikowane)*.\n> Filtr `--pod-selector` został użyty wyłącznie w tym eksperymencie;\
+  \ w utrzymaniu nie sprawdza węzła\n> jest wolny od innych zastosowań.\n\n### Praktyczna sekwencja konserwacji\n\
+  \n**W skrócie**\n- Konserwacja rozpoczyna się od sprawdzenia dostępności i wydajności\n- Wymienne kapsuły\
+  \ muszą mieć gdzie uciekać\nBudżet - A nie obejmuje wolnych mocy produkcyjnych create.\n\n**Krótki scenariusz**\n\
+  \nDostępna jest jedna replika i jeden węzeł z PDB minAvailable=1.\n\n**Prognoza:** Czy sam PDB zapewnia\
+  \ nieprzerwaną konserwację?\n\n> [!question] - Odpowiedź\n> Analiza podanych warunków: Nie. Może jedynie\
+  \ zablokować dobrowolną eksmisję; potrzebne są również repliki i pojemność dla nich.\n\nSprawdź stan\
+  \ i wolne moce → usuń blokadę PDB/niegotowe repliki → cordon/drain →\nzaktualizuj węzeł → sprawdź kubelet/node\
+  \ i aplikacje → uncordon → przejdź do następnego węzła.\n`unhealthyPodEvictionPolicy: AlwaysAllow` może\
+  \ pozwolić na eksmisję niegotowych zasobników,\nale nie zastępuje analizy rzeczywistej liczby zdrowych\
+  \ replik.\n*(wg dokumentacji)* — [drain](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/).\n\
+  \n> [!info] - Głębsze wyjaśnienie\n> **Przewiduj:** Deployment ma jedną replikę, a PDB `minAvailable:\
+  \ 1`. Czy drain może sam zachować dostępność?\n>\n> > [!question] - Odpowiedź\n> > Nie: PDB blokuje\
+  \ eksmisję, ale nie tworzy drugiej repliki ani nie rezerwuje pojemności.\n> > Zorganizuj wcześniej wymianę\
+  \ lub uzgodnij dopuszczalny czas przestoju.\n> > *(wg dokumentacji)* — źródło disruptions powyżej.\n\
+  >\n> **Krótka odpowiedź w języku angielskim:**\n>\n> > A PDB limits voluntary eviction through the eviction\
+  \ API. It does not create extra replicas or prevent node failures.\n> > Drain can wait on a blocked\
+  \ budget after it cordons the node. I check capacity and healthy replicas before maintenance."
+source_hash: d27d6b8dc7300a4f32d12b07b1045b07f10ade85d95df944e0abf45e7f95473c

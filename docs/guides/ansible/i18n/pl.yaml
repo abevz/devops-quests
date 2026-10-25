@@ -1,0 +1,112 @@
+heading: '16. Debugging: zidentyfikuj fazę awarii przed zmianą czegokolwiek'
+text: "## 16. Debugowanie: zidentyfikuj fazę awarii przed zmianą czegokolwiek\n\n**W skrócie**\n- Najpierw\
+  \ zidentyfikuj uszkodzony etap: parsowanie, zmienne, połączenie lub wykonanie zadania.\n- Pomyślna analiza\
+  \ YAML nie gwarantuje pomyślnego wykonania.\n- Nie ukrywaj awarii przed zrozumieniem jej przyczyny.\n\
+  \n**Miniprzykład:** zapisz `mini.yml` w oddzielnym katalogu tymczasowym; uruchom `ansible-playbook -i\
+  \ localhost, -c local mini.yml`. Przykład działa na localhost bez stania.\n\n```yaml\n- hosts: localhost\n\
+  \  connection: local\n  become: false\n  gather_facts: false\n  tasks:\n    - ansible.builtin.assert:\n\
+  \        that: 3 == 4\n        fail_msg: values differ\n```\n\n**Przewiduj:** Czy jest to błąd YAML,\
+  \ czy błąd w poprawnie przeanalizowanym zadaniu?\n\n> [!question] - Odpowiedź\n> Kod wyjścia: 2. Fragmenty\
+  \ standardowego wyjścia:\n>\n> ```text\n>     \"msg\": \"values differ\"\n> localhost              \
+  \    : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0\n> ```\n\
+  \nPodręcznik został przeanalizowany, ale jego warunek assert to false. Wynik ten nie wymaga naprawiania\
+  \ połączenia ani dodawania ignore_errors.\n\n**`debug.yml` (dowolna nazwa pliku) obok `inventory.ini`\
+  \ z §2:**\n\n```yaml\n- name: Inspect a result structure\n  hosts: lab\n  connection: local\n  gather_facts:\
+  \ false\n  become: false\n  tasks:\n    - name: Read text\n      ansible.builtin.command:\n        argv:\
+  \ [/usr/bin/printf, hello]\n      register: r\n      changed_when: false\n    - name: Inspect useful\
+  \ fields\n      ansible.builtin.debug:\n        msg:\n          rc: \"{{ r.rc }}\"\n          stdout:\
+  \ \"{{ r.stdout }}\"\n```\n\nNie zaczynaj od dodania `ignore_errors`. Najpierw zlokalizuj fazę: parsowanie\
+  \ YAML → wybór inventory →\nocena zmiennej → połączenie → interpreter lub `become` → moduł → kondycja\
+  \ aplikacji.\nJeśli ocena Jinja na kontrolerze nie powiedzie się, Python i sudo na zarządzanym węźle\
+  \ nie zostały jeszcze sprawdzone.\n\n| Narzędzie | Co odkrywa |\n|---|---|\n| `-v` | Więcej wyników\
+  \ zadań, takich jak polecenie tylko do odczytu stdout. |\n| `-vv` | Więcej kontekstu wykonania; szczegóły\
+  \ zależą od wtyczki. |\n| `-vvv` | Wywoływanie modułów, ścieżki i operacje transportowe; mogą pojawić\
+  \ się drażliwe argumenty. |\n| `-vvvv` | Zwykle potrzebne do bardziej szczegółowego debugowania połączenia.\
+  \ |\n| `debug: var: r` | Struktura wyników; nie pisz `var: \"{{ r }}\"`, ponieważ `var` akceptuje już\
+  \ nazwę lub wyrażenie. |\n| `--check --diff` | Prognozy z obsługiwanych modułów i różnic, z zastrzeżeniem\
+  \ ograniczeń §4. |\n| `--start-at-task 'Name'` | Zacznij od znalezionej nazwy, nie przywracaj wcześniejszych\
+  \ wyników, faktów ani skutków ubocznych `register`. |\n| `--step` | Potwierdzaj zadania interaktywnie;\
+  \ nieodpowiednie dla nieinteraktywnego CI. |\n| `ansible-inventory --graph` | Grupy i nazwy; wtyczka\
+  \ API może wysyłać zapytania do działającego systemu. |\n| `ansible-inventory --host NAME` | Efektywne\
+  \ zmienne inventory; uważaj na sekrety. |\n| `ansible-config dump --only-changed` | Obowiązujące zmiany\
+  \ w configuration i ich źródła. |\n| `ansible-doc ansible.builtin.command` | Parametry samego zainstalowanego\
+  \ version. |\n\n> [!info] - Głębsze wyjaśnienie\n> *(wg dokumentacji)* [CLI](https://docs.ansible.com/ansible/latest/cli/ansible-playbook.html),\n\
+  > [Konfiguracja](https://docs.ansible.com/ansible/latest/reference_appendices/config.html).\n> Wbudowane\
+  \ wtyczki obsługują szczegółowość do sześciu znaków `v`, ale sama liczba nie gwarantuje konkretnego\n\
+  > zestaw danych dla każdej wtyczki. `ANSIBLE_KEEP_REMOTE_FILES=1` przechowuje zdalne pliki tymczasowe\n\
+  > diagnoza i wyłącza `pipelining`; te pliki mogą zawierać wrażliwe dane i wymagać oczyszczenia.\n>\n\
+  > **Konfiguracja nie jest scalana z każdego wykrytego pliku.** Zwykle wygrywa pierwszy plik: `ANSIBLE_CONFIG`\
+  \ →\n> `./ansible.cfg` → `~/.ansible.cfg` → `/etc/ansible/ansible.cfg`; ustawienia środowiska mogą zostać\
+  \ zastąpione\n> wartości plików. Zacznij od `ansible-playbook --version`, który identyfikuje faktycznie\
+  \ używany plik configuration.\n> Całkowicie bezpieczna zabawa diagnostyczna, bez zdradzania pełnych\
+  \ tajemnic:\n\n### Rzeczywiste błędy, `ansible-core` 2.21.4\n\n**W skrócie**\n- Error text pomaga zidentyfikować\
+  \ uszkodzony etap.\nBłąd zmiennej - A różni się od błędu SSH.\n- Przed zmianą ustawień zachowaj pierwotną\
+  \ przyczynę.\n\n**Krótki scenariusz**\n\nZadanie nie może ocenić swojego parametru msg, ponieważ istnieje\
+  \ odwołanie do zmiennej is undefined. Połączenie z hostem nie zostało jeszcze rozpoczęte.\n\n**Przewiduj:**\
+  \ Czy ta awaria świadczy o problemie Python lub sudo na hoście?\n\n> [!question] - Odpowiedź\n> Nie.\
+  \ check zatrzymał się wcześniej podczas oceny parametru na maszynie sterującej. Nie stwierdza ani stanu,\
+  \ ani awarii zdalnego Python.\n\n> [!info] - Głębsze wyjaśnienie\n> Poniższe komunikaty są przycięte\
+  \ do linii przyczynowych; znaczniki czasu i powtarzające się bloki `Origin` zostały usunięte.\n> Błędy\
+  \ z początkowej wersji roboczej zostały celowo odtworzone w `/tmp`, bez SSH do niepowiązanych hostów\
+  \ lub sudo;\n> wyniki oddzielnego recenzenta SSH pojawiają się w §3 i §11.\n>\n> **Nieblokujący stderr\
+  \ z opakowania wywołującego** *(zweryfikowane: dostarczony wynik uruchomienia recenzenta, 06.10.2026,\
+  \ ansible-core 2.21.4)*:\n>\n> ```text\n> ERROR: Ansible requires blocking IO on stdin/stdout/stderr.\
+  \ Non-blocking file handles detected: <stderr>\n> ```\n>\n> Niektóre opakowania i rurociągi CI przechodzą\
+  \ przez nieblokujące stderr do Ansible; napraw połączenie\n> proces poprzez zapewnienie zwykłego blokowania\
+  \ stdin/stdout/stderr, na przykład unikanie nieblokującego pipe.\n>\n> **Nie wybrano hostów** *(zweryfikowano)*,\
+  \ `--limit web1` z localhost-tylko inventory:\n>\n> ```text\n> [WARNING]: Could not match supplied host\
+  \ pattern, ignoring: web1\n> [ERROR]: Specified inventory, host pattern and/or --limit leaves us with\
+  \ no hosts to target.\n> ```\n>\n> Napraw inventory, wzorce hosta i `--limit`, a nie zaporę ogniową.\
+  \ Przed wykonaniem użyj `--list-hosts`.\n>\n> **Brak tłumacza** *(zweryfikowany)*, połączenie lokalne\
+  \ i celowo brak ścieżki:\n>\n> ```text\n> The module interpreter '/tmp/ansible-visual-guide/missing-python'\
+  \ was not found.\n> /bin/sh: line 1: /tmp/ansible-visual-guide/missing-python: No such file or directory\n\
+  > ```\n>\n> Dostęp do SSH i wykonanie Python to oddzielne kontrole. Automatyczne wykrywanie wybiera\
+  \ Python jako pierwsze\n> moduł tego potrzebuje; jawne `ansible_python_interpreter` wyłącza wykrywanie\
+  \ dla tego hosta.\n> Nie zgaduj `/usr/bin/python` dla każdego OS. Początkowa konfiguracja Python wolnego\
+  \ od OS może wykorzystywać `raw`, a następnie\n> zwykłe moduły; instalacja nie została tutaj przeprowadzona.\n\
+  > *(wg dokumentacji)* [Odkrycie interpretera](https://docs.ansible.com/ansible/latest/reference_appendices/interpreter_discovery.html).\n\
+  >\n> **Nieokreślona zmienna** *(zweryfikowana)*, `msg: \"{{ missing_port }}\"`:\n>\n> ```text\n> Error\
+  \ while resolving value for 'msg': 'missing_port' is undefined\n> ```\n>\n> To jest ocena szablonu na\
+  \ kontrolerze. Znajdź źródło, zakres i pisownię; `default` jest odpowiedni dla autentycznie\n> wartość\
+  \ opcjonalna, nie zastępując po cichu wymaganych poświadczeń.\n>\n> **Nieprawidłowy typ stanu** *(zweryfikowany)*,\
+  \ `enabled: \"false\"` i `when: enabled`:\n>\n> ```text\n> Conditional result (True) was derived from\
+  \ value of type 'str' at\n> '/tmp/ansible-visual-guide/08-bool.yml:7:14'. Conditionals must have a boolean\
+  \ result.\n> ```\n>\n> Przełamanie wiersza ma tutaj charakter redakcyjny; komunikat odzwierciedla typ\
+  \ danych wejściowych.\n> Popraw wejście logiczne lub użyj `when: enabled | bool`; nie wyłączaj sprawdzania\
+  \ nieprawidłowych warunków.\n>\n> **YAML zamiast podanego podstawienia** *(zweryfikowane)*, `x: {{ bad\
+  \ }}`:\n>\n> ```text\n> [ERROR]: YAML parsing failed: This may be an issue with missing quotes around\
+  \ a template block.\n> ```\n>\n> Poprawka: `x: \"{{ bad }}\"`; Należy jeszcze zdefiniować `bad`.\n>\
+  \ Zacytuj także ciąg zawierający `: `, na przykład `msg: \"port: 8080\"`.\n>\n> **Polecenie nie istnieje**\
+  \ *(zweryfikowane)*:\n>\n> ```text\n> Error executing command: [Errno 2] No such file or directory:\n\
+  > b'/tmp/ansible-visual-guide/not-a-command'\n> ```\n>\n> Transport i Python już działały; plik wykonywalny\
+  \ was not found, w którym wykonywane jest polecenie.\n> Porównaj `PATH` i ścieżkę węzła zarządzanego\
+  \ z `PATH` kontrolera; `delegate_to` zmienia miejsce inspekcji.\n>\n> **Polecenie zwróciło błąd** *(zweryfikowane)*,\
+  \ `/usr/bin/false`:\n>\n> ```text\n> [ERROR]: Task failed: Module failed: The command exited with a\
+  \ non-zero return code.\n> ```\n>\n> Sprawdź `rc`, `stderr`, `stdout`, a następnie zdecyduj, czy ten\
+  \ kod wyjścia naprawdę oznacza awarię.\n> Nie ustawiaj `failed_when: false` przed zrozumieniem wyniku.\n\
+  \n### EBłędy nie zostały tutaj odtworzone\n\n**W skrócie**\n- Nie każda możliwa awaria została odtworzona\
+  \ w tym środowisku.\nHipoteza - A oparta na dokumentacji i rzeczywistym dzienniku wykonania stanowi\
+  \ inny dowód.\n- Prowadź dochodzenie na etapie zidentyfikowanym na podstawie faktycznego błędu.\n\n\
+  **Krótki scenariusz**\n\nDziennik zawiera jedynie błąd połączenia SSH. Moduł nie otrzymał jeszcze kontroli.\n\
+  \n**Przewiduj:** Czy ten dziennik może wykazać, że zawartość szablonu jest nieprawidłowa?\n\n> [!question]\
+  \ - Odpowiedź\n> Nie. Najpierw sprawdź połączenie. To analizuje dany scenariusz; nie odtworzono tutaj\
+  \ żadnej nowej awarii SSH.\n\n**SSH `UNREACHABLE`:** rzeczywisty prefiks z zainstalowanej wtyczki `ansible-core`\
+  \ SSH to\n`Failed to connect to the host via ssh:`, a następnie SSH stderr szczegóły: DNS, limit czasu\
+  \ połączenia,\nklucz hosta lub uwierzytelnienie. To jest ciąg kodu źródłowego, **nie dziennik uruchomienia\
+  \ SSH** *(niezweryfikowany)*.\nSprawdź adres, trasę, port, `known_hosts`, użytkownika, klucz i host\
+  \ skoku. Nie wyłączaj sprawdzania klucza hosta\njako uniwersalne lekarstwo. `UNREACHABLE` nie oznacza,\
+  \ że ​​aplikacja nie działa.\n\n**Eskalacja uprawnień:** jeśli sudo wymaga hasła, a Ansible go nie otrzymał,\
+  \ wiadomość może być\n`Missing sudo password`; jest to ciąg diagnostyczny z kodu połączenia `ansible-core`,\
+  \ **nie lokalny sudo\npróba** *(niezweryfikowany)*. Sprawdź metodę, użytkownika i hasło `become` oraz\
+  \ `sudoers`. `become_user` nie przyznaje uprawnień;\n`-K` nie omija odmowy `sudoers`. Od wersji `ansible-core`\
+  \ 2.19 oczekiwanie na przekroczenie limitu czasu na eskalację uprawnień to `unreachable`,\nwięc `ignore_errors`\
+  \ tego nie obsługuje.\n[Zmiany eskalacji uprawnień w ansible-core 2.19](https://docs.ansible.com/ansible/latest/porting_guides/porting_guide_core_2.19.html).\n\
+  \n**Rozdzielczość kolekcji lub modułu:** brak przestrzeni nazw w EE powoduje błąd wyszukiwania, a nie\
+  \ sieć\nporażka. Sprawdź pełną nazwę, ścieżkę instalacji i `ansible-galaxy collection list`, a następnie\
+  \ wymagania klienta-biblioteki.\nW tym laboratorium podczas sprawdzania składni znaleziono `kubernetes.core.k8s`;\
+  \ błąd braku kolekcji nie został odtworzony.\n\n> [!info] - Głębsze wyjaśnienie\n> Pytanie: **A playbook\
+  \ works locally but fails in CI. What do you check?**\n>\n> > I first identify the failing phase from\
+  \ the error. I compare the Ansible version, configuration,\n> > collections and Python dependencies,\
+  \ then check inventory and credentials. If the failure is a\n> > connection error, I check the runner's\
+  \ network access and SSH settings."
+source_hash: d81a75f3a11c6621eb1b6f8c740ba2c616d91fe2d30451e4e11f19b5318756eb

@@ -1,0 +1,329 @@
+heading: 8. Ręczne zmiany i usunięty plik źródłowy to różne przypadki (drift, self-heal, prune)
+text: '## 8. Ręczne zmiany i usunięty plik źródłowy to różne przypadki (drift, self-heal, prune)
+
+
+  **W skrócie**
+
+  - Drift to różnica pomiędzy live a desired state.
+
+  - Self-heal koryguje pewne różnice.
+
+  - Prune obsługuje usuwanie obiektów usuniętych ze źródła.
+
+
+  **Krótki scenariusz**
+
+
+  Live COLOR=red, Git COLOR=blue; oddzielny obiekt został usunięty z Git.
+
+
+  **Prognoza:** Czy jedno ustawienie obsługuje obie sytuacje?
+
+
+  > [!question] - Odpowiedź
+
+  > Nie. Przywracanie zmienionego pola i usuwanie dodatkowego obiektu to różne mechanizmy polityki sync.
+
+
+  Najpierw zidentyfikuj komponent i etap, a następnie sprawdź określone przejście. Poniżej zachowany jest
+  cały wcześniejszy materiał.
+
+
+  > [!info] - Głębsze wyjaśnienie
+
+  > **Drift** to różnica pomiędzy obiektem live a jego opisem desired. Może następować po manual edit,
+
+  > Aktywność HPA, mutacja webhook lub inny kontroler. Najpierw ustal, kto jest właścicielem pola.
+
+  > Jeśli HPA powinno zmienić replicas, bezwarunkowe przywrócenie replicas z Git powoduje walkę dwóch
+  kontrolerów.
+
+  > Usunięcie pola z desired state lub celowe wykluczenie go z porównania jest lepsze niż ciągłe „leczenie”
+  objawu.
+
+  >
+
+  > `automated.enabled: true` umożliwia automatyczne sync. `selfHeal: true` umożliwia naprawę
+
+  > Zmiany live dla wersji już zsynchronizowanej. Bez selfHeal manual edit może przetrwać do następnego
+
+  > aktualny sync, ale nowy commit lub inna zmiana źródła nadal może go zastąpić.
+
+  > `prune: true` pozwala na usunięcie prześledzonych zasobów, które już nie istnieją w desired state.
+
+  > To nie jest garbage collector dla każdego obiektu w namespace: niezarządzanego ConfigMap nie należy
+  usuwać
+
+  > tylko dlatego, że nie ma go w katalogu tego Application.
+
+  >
+
+  > `allowEmpty` osobno pozwala na zredukowanie aplikacji do całkowicie pustego zestawu zasobów.
+
+  > Nie jest wymagane usuwanie jednego obsolete ConfigMap, gdy pozostają inne zasoby.
+
+  > Usuwanie Application ma odrębną semantykę finalizer: §4.
+
+  > [Auto-sync, self-heal i prune](https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/).
+
+
+  ### Eeksperyment: prawdziwy kubectl edit
+
+
+  **W skrócie**
+
+  - A manual edit zmiany live state.
+
+  - Porównanie może wykryć różnicę.
+
+  - Przywrócenie zależy od polityki automated.
+
+
+  **Krótki scenariusz**
+
+
+  Kubectl edit zmieniono COLOR na red; selfHeal jest wyłączony.
+
+
+  **Przewiduj:** Czy wartość musi natychmiast powrócić do blue?
+
+
+  > [!question] - Odpowiedź
+
+  > Nie. Widzenie OutOfSync nie oznacza, że zostanie ono poprawione automatycznie.
+
+
+  Najpierw zidentyfikuj komponent i etap, a następnie sprawdź określone przejście. Poniżej zachowany jest
+  cały wcześniejszy materiał.
+
+
+  > [!info] - Głębsze wyjaśnienie
+
+  > Zapisz `$LAB/editor-red.sh`; pełni rolę edytora, aby odtworzyć dokładnie jeden edit:
+
+  >
+
+  > ```bash
+
+  > #!/usr/bin/env bash
+
+  > sed -i ''s/COLOR: blue/COLOR: red/'' "$1"
+
+  > ```
+
+  >
+
+  > Po pierwszym udanym sync:
+
+  >
+
+  > ```bash
+
+  > chmod +x "$LAB/editor-red.sh"
+
+  > KUBE_EDITOR="$LAB/editor-red.sh" k -n guide-gitops edit cm/web-settings
+
+  > refresh
+
+  > k -n argocd wait --for=jsonpath=''{.status.sync.status}''=OutOfSync \
+
+  >   application/guide --timeout=90s
+
+  > state
+
+  > ```
+
+  >
+
+  > **`auto.yaml`:**
+
+  >
+
+  > ```yaml
+
+  > spec:
+
+  >   syncPolicy:
+
+  >     automated:
+
+  >       enabled: true
+
+  >       selfHeal: false
+
+  >       prune: false
+
+  > ```
+
+  >
+
+  > ```bash
+
+  > k -n argocd patch application guide --type merge --patch-file "$LAB/auto.yaml"
+
+  > refresh
+
+  > sleep 8
+
+  > k -n guide-gitops get cm web-settings -o jsonpath=''{.data.COLOR}{"\n"}''
+
+  > sed -i ''s/selfHeal: false/selfHeal: true/'' "$LAB/auto.yaml"
+
+  > k -n argocd patch application guide --type merge --patch-file "$LAB/auto.yaml"
+
+  > k -n guide-gitops wait --for=jsonpath=''{.data.COLOR}''=blue \
+
+  >   cm/web-settings --timeout=90s
+
+  > ```
+
+  >
+
+  > Osiem sekund to tylko zarejestrowane okno obserwacyjne, a nie gwarancja ustawienia reconciliation
+  lub latency.
+
+  > Kontrola odzyskiwania wykorzystuje warunek i timeout, zamiast zakładać, że „gotowość po N sekundach”.
+
+
+  ### Eksperyment: plik zniknął, obiekt pozostał
+
+
+  **W skrócie**
+
+  - Usunięcie pliku powoduje zmiany desired state.
+
+  - Obiekt może pozostać w API.
+
+  - Prune ma swój własny zakres i zasady.
+
+
+  **Krótki scenariusz**
+
+
+  ConfigMap zniknął z Git; automat prune jest wyłączony.
+
+
+  **Prognoza:** Czy kontroler musi usunąć ConfigMap?
+
+
+  > [!question] - Odpowiedź
+
+  > Nie. Może pokazać różnicę i pozostawić obiekt do czasu uzyskania zgody na usunięcie.
+
+
+  Najpierw zidentyfikuj komponent i etap, a następnie sprawdź określone przejście. Poniżej zachowany jest
+  cały wcześniejszy materiał.
+
+
+  > [!info] - Głębsze wyjaśnienie
+
+  > ```bash
+
+  > git -C "$LAB/work" rm app/obsolete.yaml
+
+  > git -C "$LAB/work" commit -m ''Remove obsolete config''
+
+  > git -C "$LAB/work" push origin main
+
+  > refresh
+
+  > k -n argocd wait --for=jsonpath=''{.status.sync.status}''=OutOfSync \
+
+  >   application/guide --timeout=90s
+
+  > k -n guide-gitops get cm obsolete -o name
+
+  > sed -i ''s/prune: false/prune: true/'' "$LAB/auto.yaml"
+
+  > k -n argocd patch application guide --type merge --patch-file "$LAB/auto.yaml"
+
+  > refresh
+
+  > k -n guide-gitops wait --for=delete cm/obsolete --timeout=90s
+
+  > k -n guide-gitops get cm obsolete --ignore-not-found -o name
+
+  > ```
+
+  >
+
+  > **Przewiduj:** czy selfHeal sam poradzi sobie z usunięciem pliku z Git? Co zwrócą kontrole obiektów?
+
+  >
+
+  > > [!question] - Odpowiedź
+
+  > > manual edit wyprodukował `OutOfSync/Healthy`. Przy wyłączonym selfHeal wartość pozostała `red`;
+
+  > > włączenie przywróciło `blue`. Przestarzały obiekt usunięty z Git pozostał `configmap/obsolete`
+
+  > > z `prune: false`; po `prune: true`, ostatni `get --ignore-not-found` zwrócił pustą linię.
+
+  > > Wszystkie przejścia zostały zweryfikowane 18.10. SelfHeal i prune kontrolują różne rodzaje napraw.
+
+
+  ### Akolejny właściciel pola
+
+
+  **W skrócie**
+
+  - Wiele kontrolerów może zmieniać to samo pole.
+
+  -  Sterowanie innego właściciela może powodować konflikt.
+
+  - Odróżnij wykluczenia porównania od zachowania apply.
+
+
+  **Krótki scenariusz**
+
+
+  HPA zarządza replicas, podczas gdy GitOps również próbuje utrzymać stałą liczbę.
+
+
+  **Przewiduj:** Czy wystarczy włączanie selfHeal na czas nieokreślony?
+
+
+  > [!question] - Odpowiedź
+
+  > Nie. Własność replicas i ustawienia porównania/zastosowania muszą być skoordynowane.
+
+
+  Najpierw zidentyfikuj komponent i etap, a następnie sprawdź określone przejście. Poniżej zachowany jest
+  cały wcześniejszy materiał.
+
+
+  > [!info] - Głębsze wyjaśnienie
+
+  > `ignoreDifferences` wyklucza pola z porównania; `RespectIgnoreDifferences=true` wpływa również na
+  sync.
+
+  > To ma znaczenie: „nie porównuj tego” i „nie nadpisuj tego podczas innego sync” to różne obietnice.
+
+  > W przebiegu 02.10 zarejestrowano zmianę Argo i HPA na replicas dziewięć razy w ciągu 90 sekund; ignorowanie
+  samego porównania było niewystarczające
+
+  > podczas nowego sync. Tego eksperymentu HPA tutaj nie powtórzono.
+
+  > [Różna konfiguracja](https://argo-cd.readthedocs.io/en/stable/user-guide/diffing/),
+
+  > [RespectIgnoreDifferences](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/).
+
+
+  ### Częste błędy
+
+
+  -  Traktowanie każdej zmiany w manual jako poprawki awaryjnej, która musi przetrwać reconciliation.
+
+  - EWłączenie prune dla niewłaściwego path bez uprzedniego sprawdzenia zestawu zasobów desired.
+
+  - ADodanie ogólnych reguł ignoreDifferences, które ukrywają prawdziwy błąd dostawy.
+
+  - Poleganie wyłącznie na Git w przypadku critical PVC: prune nie jest polityką przechowywania danych.
+
+
+  **Ćwiczenia:** [[CICD-GitOps-Coding-Drills#Задача 9 — Дрейф: manual, automated, selfHeal|9 — drift]],
+
+  [[CICD-GitOps-Coding-Drills#Задача 10 — Prune|10 — prune]],
+
+  [[CICD-GitOps-Coding-Drills#Задача 13 — HPA против Argo (сломай)|13 — dwóch właścicieli]].'
+source_hash: c8f5061dd19632351f0743b81abe156f3f80528fba2c0d8df768c022bd6774fd
