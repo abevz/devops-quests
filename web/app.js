@@ -45,11 +45,23 @@ const el = (tag, text, cls) => {
   if (cls) n.className = cls;
   return n;
 };
-function block(
-  value,
-  parent,
-  language = readingTranslation && i18n.translation !== "none" ? i18n.translation : i18n.language,
-) {
+// The reading area (briefing, stages, facts, guide text) follows the translation toggle;
+// navigation and controls stay in the primary language.
+const contentLanguage = () =>
+  readingTranslation && i18n.translation !== "none" ? i18n.translation : i18n.language;
+const tc = (key, values) => i18n.t(key, values, contentLanguage());
+const elc = (tag, key, values, cls) => {
+  const n = el(tag, tc(key, values), cls);
+  n.lang = contentLanguage();
+  return n;
+};
+function contentLabels() {
+  for (const node of document.querySelectorAll("[data-i18n-content]")) {
+    node.textContent = tc(node.dataset.i18nContent);
+    node.lang = contentLanguage();
+  }
+}
+function block(value, parent, language = contentLanguage()) {
   if (!value) return;
   const content = i18n.content(value, language);
   const p = el("div", undefined, "markdown");
@@ -59,6 +71,7 @@ function block(
   parent.append(p);
 }
 function translationControls() {
+  contentLabels();
   document.querySelector("footer").textContent = [t("footer.caption"), i18n.translationNotice(readingTranslation)].filter(Boolean).join(" · ");
   for (const id of ["bay-translate", "preview-translate", "interview-translate"]) {
     const button = $(id);
@@ -69,14 +82,16 @@ function translationControls() {
       ),
     });
     button.setAttribute("aria-pressed", String(readingTranslation));
-    button.onclick = () => {
-      readingTranslation = !readingTranslation;
-      translationControls();
-      if (preview) renderPreview();
-      if (state) renderQuest();
-      if (interviewData) renderInterview();
-    };
+    button.onclick = toggleReading;
   }
+}
+function toggleReading() {
+  readingTranslation = !readingTranslation;
+  translationControls();
+  if (preview) renderPreview();
+  if (state) renderQuest();
+  if (interviewData) renderInterview();
+  if (guideData) renderGuide();
 }
 function applyLanguage() {
   i18n.document();
@@ -472,7 +487,7 @@ function renderPreview() {
   $("preview-stages").replaceChildren();
   q.stages.forEach((stage, index) => {
     const section = el("section");
-    section.append(el("h3", t("preview.stage", { number: index + 1 })));
+    section.append(elc("h3", "preview.stage", { number: index + 1 }));
     block(narrative(stage.brief, stage.objectives), section);
     const list = el("ul");
     for (const goal of stage.objectives) {
@@ -483,21 +498,24 @@ function renderPreview() {
     section.append(list);
     $("preview-stages").append(section);
   });
-  $("preview-time").textContent = t(preview.mode === "exam" ? "preview.exam_time" : "preview.estimate", {
+  $("preview-time").textContent = tc(preview.mode === "exam" ? "preview.exam_time" : "preview.estimate", {
     minutes: preview.minutes,
     min: q.estimated_minutes[0],
     max: q.estimated_minutes[1],
   });
+  $("preview-time").lang = contentLanguage();
   $("preview-dependencies").replaceChildren(
-    ...["workstation", ...q.dependencies].map((name) => el("li", t("dependency." + name))),
+    ...["workstation", ...q.dependencies].map((name) => elc("li", "dependency." + name)),
   );
   renderFacts(q.facts, $("preview-facts"));
-  $("preview-score").textContent = t("scoring.formula", state.scoring);
+  $("preview-score").textContent = tc("scoring.formula", state.scoring);
   $("preview-best").textContent = q.best
-    ? t("scoring.best", { score: q.best.score, seconds: Math.floor(q.best.seconds), hints: q.best.hints })
-    : t("scoring.no_best");
+    ? tc("scoring.best", { score: q.best.score, seconds: Math.floor(q.best.seconds), hints: q.best.hints })
+    : tc("scoring.no_best");
+  for (const id of ["preview-score", "preview-best", "preview-availability"]) $(id).lang = contentLanguage();
   const access = q.hint_access;
-  $("preview-hint-policy").textContent = t(
+  $("preview-hint-policy").lang = contentLanguage();
+  $("preview-hint-policy").textContent = tc(
     access.completed ? "hint.completed_free" : access.count ? "hint.pending" : "hint.briefing_rule",
     { count: access.count, penalty: access.count * state.scoring.hint_penalty },
   );
@@ -511,7 +529,7 @@ function renderPreview() {
       : canRun(level, state, preview.mode, preview.track);
   const active = state.run?.status === "active";
   $("preview-run").disabled = !eligible || active || busy;
-  $("preview-availability").textContent = t(
+  $("preview-availability").textContent = tc(
     active
       ? "preview.active"
       : eligible
@@ -903,14 +921,14 @@ function renderQuest() {
 $("bay-back").onclick = () => screen("map");
 function renderFacts(facts, node = $("bay-facts")) {
   node.replaceChildren(
-    el("p", t("facts.network")),
-    el("p", t("facts.directory")),
-    el("p", t("facts.images")),
-    el("p", t("facts.scope")),
+    elc("p", "facts.network"),
+    elc("p", "facts.directory"),
+    elc("p", "facts.images"),
+    elc("p", "facts.scope"),
   );
   for (const [key, values] of Object.entries(facts ?? {})) {
     if (!values.length) continue;
-    node.append(el("strong", t("facts." + key)), el("pre", values.join("\n")));
+    node.append(elc("strong", "facts." + key), el("pre", values.join("\n")));
   }
 }
 function renderCheckFeedback(run, quest) {
@@ -1233,6 +1251,7 @@ async function refresh() {
       renderSidebar();
       usersData = null;
       readingTranslation = false;
+      translationControls();
       $("user-list").replaceChildren();
       preferencesUser = null;
       disposeTerminals();
@@ -1487,8 +1506,10 @@ function renderGuide() {
   if (!guideData) return;
   $("guide-reader").hidden = false;
   $("guide-catalog").hidden = true;
-  $("guide-heading").textContent = i18n.content(guideData.titles).text;
-  const language = readingTranslation && i18n.translation !== "none" ? i18n.translation : i18n.language;
+  const language = contentLanguage();
+  const heading = i18n.content(guideData.titles, language);
+  $("guide-heading").textContent = heading.text;
+  $("guide-heading").lang = heading.language;
   const content = i18n.content(guideData.content, language);
   $("guide-lesson").innerHTML = window.DQMarkdown.renderMarkdown(content.text, { wiki: guideData.wiki });
   $("guide-lesson").lang = content.language;
@@ -1505,24 +1526,26 @@ function renderGuide() {
   const translate = $("guide-translate");
   translate.hidden = i18n.translation === "none" || i18n.translation === i18n.language;
   translate.textContent = t(readingTranslation ? "language.main" : "language.translate", {
-    language: i18n.languageName(i18n.translation === "none" ? i18n.language : i18n.translation),
+    language: i18n.languageName(
+      readingTranslation ? i18n.language : i18n.translation === "none" ? i18n.language : i18n.translation,
+    ),
   });
-  translate.onclick = () => {
-    readingTranslation = !readingTranslation;
-    translationControls();
-    renderGuide();
-  };
+  translate.setAttribute("aria-pressed", String(readingTranslation));
+  translate.onclick = toggleReading;
   $("guide-reference").replaceChildren();
   let loadReference = () => {};
   const reference = i18n.content(guideData.reference, language);
   if (reference.text) {
     const details = el("details", undefined, "card");
-    details.append(el("summary", t("guide.full")));
+    details.append(elc("summary", "guide.full"));
     if (Object.keys(guideData.additional ?? {}).length) {
-      details.append(el("p", i18n.content(guideData.additional, language).text, "callout"));
+      const additional = i18n.content(guideData.additional, language);
+      const callout = el("p", additional.text, "callout");
+      callout.lang = additional.language;
+      details.append(callout);
     }
     if (guideData.full_example) {
-      details.append(el("p", t("guide.full_lab")));
+      details.append(elc("p", "guide.full_lab"));
       details.append(
         el(
           "pre",
