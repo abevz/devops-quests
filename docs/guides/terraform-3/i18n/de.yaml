@@ -1,0 +1,183 @@
+heading: 3. Zustand, Drift und Wiederherstellung [Zustand]
+text: "## 3. Zustand, Drift und Erholung [Zustand]\n\n**Auf einen Blick**\n- State verbindet eine resource-Adresse\
+  \ mit einem object.\n- Die Adresse enthält den Typ resource und den gewählten Namen.\n- Removing-Status\
+  \ löscht nicht automatisch das externe object.\n\n**Minibeispiel:** Speichern als `main.tf` in einem\
+  \ neuen temporären Verzeichnis. Führen Sie nach der Vorbereitung der Dateien `tofu init`, `tofu validate`\
+  \ und dann `tofu apply -auto-approve -input=false -no-color` aus. Überprüfen Sie die Adresse mit `tofu\
+  \ state list`.\n\n```hcl\nresource \"terraform_data\" \"item\" {\n  input = \"tracked\"\n}\noutput \"\
+  value\" {\n  value = terraform_data.item.output\n}\n```\n\n**Vorhersage:** What wird show ausführen\
+  \ und wie wird sein Exit-Code lauten?\n\n> [!question]- Antwort\n> Aktueller Auszug aus dem letzten\
+  \ Befehl:\n>\n> ```text\n> terraform_data.item\n> ```\n>\n> Exit-Code: 0.\n\nNach apply zeigt `state\
+  \ list` die Adresse `terraform_data.item`. Dies ist der Bindungsname, nicht der resource-Inhalt.\n\n\
+  Der Status speichert die Zuordnung „instance Adresse ↔ object ID“, Attribute, Ausgaben und Metadaten\
+  \ für den engine/provider.. Er enthält `lineage`, der den Statusverlauf identifiziert; `serial`, die\
+  \ Snapshot-Nummer; provider Konfigurations- und Abhängigkeitsinformationen. Es handelt sich weder um\
+  \ Quellcode noch um eine vollständige Cloud backup. Das Festplattenformat ist JSON; Ändern Sie es durch\
+  \ `tofu state` oder `terraform state`, nicht durch manuelle Bearbeitungen.\n*(laut Dokumentation)*.\
+  \ [Zweck des Staates](https://developer.hashicorp.com/terraform/language/state/purpose).\n\n### Drift\
+  \ und zwei plan-Modi\n\n**Auf einen Blick**\n- Drift ist eine externe Änderung an einem verwalteten\
+  \ object.\n- A normal plan vergleicht die Realität mit der Konfiguration.\n- refresh-only schlägt vor,\
+  \ den Snapshot zu aktualisieren, ohne den object wiederherzustellen.\n\n**Kurzes Szenario**\n\nFür die\
+  \ Konfiguration ist eine Datei mit dem Text ready erforderlich. Die Datei war created, dann deleted\
+  \ außerhalb von OpenTofu. Ein plan -refresh-only wird gebaut.\n\n**Vorhersage:** Wird dieser plan die\
+  \ Datei zurückbringen?\n\n> [!question]- Antwort\n> Nr. Es wird show angezeigt, dass die Datei fehlt,\
+  \ und es wird vorgeschlagen, die beobachtete Realität im Zustand aufzuzeichnen. Verwenden Sie ein normales\
+  \ plan für Aktionen basierend auf der Konfiguration. Der vollständige local-Lauf unten behält die früheren\
+  \ Ergebnisse bei.\n\nVor einem gewöhnlichen plan liest der provider, dass objects bereits im Status\
+  \ gebunden ist. Wenn der Code drei Replikate anfordert, jemand aber manuell zwei hinterlässt, schlägt\
+  \ plan vor, zum Code zurückzukehren. Ein deleted object führt normalerweise zu Erholung. Ein veränderbares\
+  \ Feld kann an Ort und Stelle aktualisiert werden; ein unveränderlicher muss möglicherweise ersetzt\
+  \ werden. Ein neuer externer object erhält nicht automatisch eine Statusadresse.\n\n`tofu plan -refresh-only`\
+  \ schlägt vor, externes changes **nur in den Status-Snapshot** zu akzeptieren. Nach der Überprüfung\
+  \ speichert `tofu apply -refresh-only` sie; Weder Code noch remote objects werden repariert. Ein gewöhnlicher\
+  \ plan schlägt changes vor, der objects mit Code ausrichtet. Ersetzen Sie den veralteten `terraform\
+  \ refresh` durch den kontrollierten `plan`/`apply -refresh-only`.\n*(laut Dokumentation)*. [Plan Modi](https://developer.hashicorp.com/terraform/cli/commands/plan).\n\
+  \n### Import: Binden Sie einen vorhandenen object\n\n**Auf einen Blick**\n- Import fügt eine Bindung\
+  \ zu einem vorhandenen ID hinzu.\n- Die resource-Konfiguration muss separat deklariert werden.\n- Der\
+  \ plan schlägt möglicherweise den Austausch eines object vor, der bereits über been imported verfügt.\n\
+  \n**Minibeispiel:** Speichern als `main.tf` in einem neuen temporären Verzeichnis. Führen Sie nach der\
+  \ Vorbereitung der Dateien `tofu init`, `tofu validate` und dann `tofu plan -input=false -no-color`\
+  \ aus.\n\n```hcl\nresource \"terraform_data\" \"imported\" {\n  input = \"ready\"\n}\nimport {\n  to\
+  \ = terraform_data.imported\n  id = \"demo-local-id\"\n}\n```\n\n**Vorhersage:** What wird der Run show\
+  \ sein, und wie wird sein Exit-Code lauten?\n\n> [!question]- Antwort\n> Aktueller Auszug aus dem letzten\
+  \ Befehl:\n>\n> ```text\n>   # terraform_data.imported will be updated in-place\n> Plan: 1 to import,\
+  \ 0 to add, 1 to change, 0 to destroy.\n> ```\n>\n> Exit-Code: 0.\n\nMit dem eingebauten resource können\
+  \ wir import ohne externen API demonstrieren. Der plan verbindet den angegebenen ID und bietet separat\
+  \ einen Einstellungseingang.\n\n> [!info]- Ausführlichere Erklärung\n> Alle folgenden Erstentwurfsläufe\
+  \ verwenden den integrierten `terraform_data` und separate Übungszustände. Für einen echten resource\
+  \ definiert provider das ID-Format und object liest.\n>\n> **CLI import.** Deklarieren Sie zuerst das\
+  \ Ziel resource:\n>\n> ```hcl\n> # main.tf\n> terraform {\n>   required_version = \">= 1.7.0\"\n> }\n\
+  >\n> resource \"terraform_data\" \"example\" {\n>   input = \"imported-lab-object\"\n> }\n> ```\n>\n\
+  > ```sh\n> tofu init\n> tofu validate\n> tofu import terraform_data.example imported-lab-object\n> tofu\
+  \ plan\n> ```\n>\n> Der Befehl fügt eine Bindung hinzu, schreibt jedoch keinen `resource`-Block. Beim\
+  \ erneuten Importieren in eine belegte Adresse wurde `Error: Resource already managed by OpenTofu` zurückgegeben.\
+  \ Nach dem ersten import zeigte der plan `Plan: 0 to add, 1 to change, 0 to destroy`: Code angegeben\
+  \ `input`, fehlt im imported resource. Dieser changes erstellt die Bindung und konfiguriert sie dann,\
+  \ anstatt einen externen object zu erstellen. *(verifiziert: OpenTofu 1.12.6)*.\n>\n> **Import-Block.**\
+  \ Anstelle eines sofortigen Befehls überprüfen Sie import in einem plan. `to` ist die Zieladresse; `id`\
+  \ ist die provider-Kennung:\n>\n> **`main.tf` in einem anderen neuen Verzeichnis, nicht dem für `tofu\
+  \ import` verwendeten:**\n>\n> ```hcl\n> # main.tf\n> terraform {\n>   required_version = \">= 1.7.0\"\
+  \n> }\n>\n> resource \"terraform_data\" \"example\" {\n>   input = \"imported-lab-object\"\n> }\n>\n\
+  > import {\n>   to = terraform_data.example\n>   id = \"imported-lab-object\"\n> }\n> ```\n>\n> Nach\
+  \ `init` und `validate` zeigte der plan `Plan: 1 to import, 0 to add, 1 to change, 0 to destroy`. Apply\
+  \ hat die Bindung aufgezeichnet und `input` konfiguriert. Import-Blöcke sind seit Terraform 1.5 und\
+  \ in OpenTofu verfügbar. *(verifiziert: OpenTofu 1.12.6)*.\n\n### Move oder forget eine Bindung\n\n\
+  **Auf einen Blick**\n- moved changes die Bindungsadresse.\n- removed mit destroy=false stoppt die Verwaltung\
+  \ von object.\n- Das Verschieben einer Adresse und das Löschen einer Adresse object sind unterschiedliche\
+  \ Vorgänge.\n\n**Minibeispiel:** Speichern als `main.tf` in einem neuen temporären Verzeichnis. Die\
+  \ Vorbereitung und die Befehlssequenz sind direkt unter dem Codeblock aufgeführt.\n\n```hcl\nresource\
+  \ \"terraform_data\" \"new\" {\n  input = \"stable\"\n}\nmoved {\n  from = terraform_data.old\n  to\
+  \ = terraform_data.new\n}\n```\n\nBereiten Sie es im selben Verzeichnis vor: Speichern Sie zunächst\
+  \ den Inhalt von `before.tf.txt` als `main.tf` und führen Sie `tofu init`, `tofu apply -auto-approve`\
+  \ aus. Ersetzen Sie dann `main.tf` durch den obigen Codeblock und führen Sie `tofu plan -no-color` aus.\n\
+  \nZusätzliche Datei `before.tf.txt`:\n\n```hcl\nresource \"terraform_data\" \"old\" { input = \"stable\"\
+  \ }\n```\n\n**Vorhersage:** What wird show ausführen, und wie wird sein Exit-Code lauten?\n\n> [!question]-\
+  \ Antwort\n> Aktueller Auszug aus dem letzten Befehl:\n>\n> ```text\n>   # terraform_data.old has moved\
+  \ to terraform_data.new\n> Plan: 0 to add, 0 to change, 0 to destroy.\n> ```\n>\n> Exit-Code: 0.\n\n\
+  Durch die Vorbereitung entsteht zunächst Altes. Der plan mit moved behält den object bei und meldet\
+  \ seinen Übergang zur neuen Adresse.\n\n> [!info]- Ausführlichere Erklärung\n> **`moved`.** Erster apply:\n\
+  >\n> **`main.tf` in einem neuen leeren Verzeichnis: Schritt 1:**\n>\n> ```hcl\n> terraform {\n>   required_version\
+  \ = \">= 1.7.0\"\n> }\n>\n> resource \"terraform_data\" \"original\" {\n>   input = \"stable\"\n> }\n\
+  > ```\n>\n> Dann ersetzen Sie die Datei durch:\n>\n> **Ersetzen Sie denselben `main.tf` vollständig:\
+  \ Schritt 2:**\n>\n> ```hcl\n> # new main.tf after refactoring\n> terraform {\n>   required_version\
+  \ = \">= 1.7.0\"\n> }\n>\n> resource \"terraform_data\" \"renamed\" {\n>   input = \"stable\"\n> }\n\
+  >\n> moved {\n>   from = terraform_data.original\n>   to   = terraform_data.renamed\n> }\n> ```\n>\n\
+  > `validate` bestanden; Der plan meldete `terraform_data.original has moved to terraform_data.renamed`\
+  \ und `Plan: 0 to add, 0 to change, 0 to destroy`. Nach apply enthält `state list` nur `terraform_data.renamed`\
+  \ und `Resources: 0 added, 0 changed, 0 destroyed`. Ohne einen Umzug kann eine andere Adresse wie folgt\
+  \ aussehen: destroy/create. *(verifiziert: OpenTofu 1.12.6)*.\n>\n> **`removed`.** Erster validate und\
+  \ apply:\n>\n> **`main.tf` in einem neuen leeren Verzeichnis: Schritt 1:**\n>\n> ```hcl\n> terraform\
+  \ {\n>   required_version = \">= 1.7.0\"\n> }\n>\n> resource \"terraform_data\" \"keep\" {\n>   input\
+  \ = \"leave-me\"\n> }\n> ```\n>\n> Entfernen Sie dann resource aus dem Code und ersetzen Sie die Datei\
+  \ durch:\n>\n> **Ersetzen Sie denselben `main.tf` vollständig: Schritt 2:**\n>\n> ```hcl\n> terraform\
+  \ {\n>   required_version = \">= 1.7.0\"\n> }\n>\n> removed {\n>   from = terraform_data.keep\n>   lifecycle\
+  \ {\n>     destroy = false\n>   }\n> }\n> ```\n>\n> `destroy = false` beendet die Verwaltung, ohne den\
+  \ object zu zerstören. Plan: `Plan: 0 to add, 0 to change, 0 to destroy, 1 to forget`; apply removed\
+  \ die Bindung. Ohne diesen Block führt das Entfernen eines resource aus dem Code normalerweise zur Zerstörung\
+  \ von object. `removed` ist verfügbar seit Terraform 1.7. *(verifiziert: OpenTofu 1.12.6, synthetisch\
+  \ resource)*.\n>\n> **Sofortige Statusbefehle.** Separat apply das Original `terraform_data.original`,\
+  \ dann Konfiguration ersetzen durch:\n>\n> **`main.tf` in einem neuen Verzeichnis: Schritt 1 verwendet\
+  \ den `original`-Block aus `moved` oben; Schritt 2 ersetzt es vollständig durch:**\n>\n> ```hcl\n> terraform\
+  \ {\n>   required_version = \">= 1.7.0\"\n> }\n>\n> resource \"terraform_data\" \"renamed\" {\n>   input\
+  \ = \"stable\"\n> }\n> ```\n>\n> `tofu state mv terraform_data.original terraform_data.renamed` moved\
+  \ die Bindung; Der nächste plan sagte `No changes`. Dann `tofu state rm terraform_data.renamed` removed\
+  \ der Eintrag; Der nächste plan zeigte `Plan: 1 to add, 0 to change, 0 to destroy`. Bei einem externen\
+  \ object kann dies ein Duplikat erzeugen oder fehlschlagen, weil „der object bereits existiert“. Diese\
+  \ Läufe verwendeten nur den Übungszustand. *(verifiziert: OpenTofu 1.12.6)*.\n> *(laut Dokumentation)*.\
+  \ [Import](https://developer.hashicorp.com/terraform/cli/commands/import) · [Adress-Refactoring](https://developer.hashicorp.com/terraform/language/state/refactor).\n\
+  \n### Veraltete Pläne und Wiederherstellung\n\n**Auf einen Blick**\n- A gespeichert. plan ist an einen\
+  \ Snapshot des Status gebunden.\n- Another apply kann es stale machen.\nFür die - Recovery müssen die\
+  \ Bindungen mit dem echten objects überprüft werden.\n\n**Kurzes Szenario**\n\nPlan A wurde unter serial=7.\
+  \ erstellt. Ein weiterer apply schrieb serial=8.. Die alte plan-Datei A ist noch vorhanden.\n\n**Vorhersage:**\
+  \ Reicht die frühere Genehmigung von A aus, um apply zu erreichen?\n\n> [!question]- Antwort\n> No:\
+  \ Erstellen und überprüfen Sie einen neuen plan anhand des aktuellen Stands. Durch die Genehmigung wird\
+  \ die Datei nicht aktualisiert. Dies ist ein Modell; Der vollständige verifizierte Fehlerlauf ist in\
+  \ §11 aufgeführt.\n\nEin gespeicherter plan ist mit einem Status-Snapshot verknüpft. Die verifizierte\
+  \ `Error: Saved plan is stale`-Ablehnung wird in [[Terraform-Coding-Drills-Solutions]] aufgezeichnet;\
+  \ §11 stellt ein neues local-Experiment bereit.\n\nStoppen Sie zur Wiederherstellung gleichzeitige Anwendungen,\
+  \ behalten Sie eine aktuelle Kopie bei, suchen Sie nach einem versionierten backend backup und vergleichen\
+  \ Sie `lineage`, `serial`, Adressen und echte objects. Verwenden Sie `state list`/`state show`; Stellen\
+  \ Sie dann erst einen Snapshot oder einen vorhandenen import objects wieder her. `state push` kann den\
+  \ remote-Status überschreiben: lineage/serial-Prüfungen mit `-force` nicht umgehen, ohne Beweise dafür,\
+  \ dass der Snapshot korrekt ist. Ein leerer Zustand bedeutet nicht eine leere Infrastruktur; blind `apply`\
+  \ kann Duplikate erstellen.\n\n> [!info]- Ausführlichere Erklärung\n> **Schritt 1 – Adresse und object**\n\
+  >\n> ```mermaid\n> flowchart TB\n>     A[\"Address in code\"]\n>     B[\"Binding in state\"]\n>    \
+  \ I[\"Provider object ID\"]\n>     A --> B\n>     B --> I\n> ```\n>\n> **Schritt 2 – Adresse verschieben**\n\
+  >\n> ```mermaid\n> flowchart TB\n>     B[\"Binding in state\"]\n>     M[\"moved: new address,<br/>same\
+  \ object\"]\n>     M --> B\n> ```\n>\n> **Schritt 3 – Entfernen einer Bindung**\n>\n> ```mermaid\n>\
+  \ flowchart TB\n>     B[\"Binding in state\"]\n>     R[\"removed or state rm:<br/>forget the binding\"\
+  ]\n>     R --> B\n> ```\n>\n> **Schritt 4 – Import und object**\n>\n> ```mermaid\n> flowchart TB\n>\
+  \     B[\"Binding in state\"]\n>     X[\"import: bind an existing ID\"]\n>     X --> B\n> ```\n\n###\
+  \ Renennung ohne Verschiebung\n\n**Auf einen Blick**\n- Der Name ist Teil einer resource-Adresse.\n\
+  - Identische Inhalte verbinden nicht zwei verschiedene Adressen miteinander.\n- Verwenden Sie moved,\
+  \ um die Bindung beim Umbenennen beizubehalten.\n\nZuerst apply `resource \"terraform_data\" \"old\"\
+  \ { input = \"stable\" }` in einem neuen Verzeichnis, dann die Datei ersetzen durch:\n\n**Ersetzen Sie\
+  \ denselben `main.tf` vollständig:**\n\n```hcl\nresource \"terraform_data\" \"new\" { input = \"stable\"\
+  \ }\n```\n\n\n**Vorhersage:** nur der resource-Name changes von `old` bis `new`, ohne `moved`. Wird\
+  \ das Ergebnis ein Update oder destroy/create sein?\n> [!question]- Antwort\n> ```text\n>   # terraform_data.new\
+  \ will be created\n>   # terraform_data.old will be destroyed\n> Plan: 1 to add, 0 to change, 1 to destroy.\n\
+  > ```\n> Der Name ist Teil der Adresse. Ohne eine explizite Verschiebung sieht die Engine, dass eine\
+  \ alte Adresse verschwindet und eine neue Adresse erscheint.\n\n### Externes Löschen und Aktualisieren\
+  \ eines Snapshots\n\n**Auf einen Blick**\n- provider erkennt möglicherweise eine externe Löschung.\n\
+  - refresh-only akzeptiert eine Beobachtung im Status.\n- Eine Datei, die verschwunden ist, wird nicht\
+  \ neu erstellt.\n\nWenden Sie eine local-Datei in einem separaten Verzeichnis an:\n\n**`main.tf` in\
+  \ einem neuen leeren Verzeichnis:**\n\n```hcl\nterraform {\n  required_providers {\n    local = { source\
+  \ = \"hashicorp/local\", version = \">= 2.5.0, < 3.0.0\" }\n  }\n}\nresource \"local_file\" \"this\"\
+  \ {\n  filename = \"${path.module}/demo.txt\"\n  content  = \"desired\"\n  lifecycle { ignore_changes\
+  \ = [content] }\n}\n```\n\nEntfernen Sie dann nur die created-Übung `demo.txt` und führen Sie `tofu\
+  \ plan -refresh-only` aus.\n\n**Vorhersage:** Wird `-refresh-only` die deleted-Datei neu erstellen?\n\
+  > [!question]- Antwort\n> ```text\n>   # local_file.this has been deleted\n> This is a refresh-only\
+  \ plan, so OpenTofu will not take any actions to undo\n> these. If you were expecting these changes\
+  \ then you can apply this plan to\n> record the updated values in the OpenTofu state without changing\
+  \ any remote\n> objects.\n> ```\n> Dieser Modus schlägt die Aufzeichnung des externen Verschwindens\
+  \ im Zustand vor. Ein gewöhnlicher plan würde stattdessen vorschlagen, die Datei aus Code zu erstellen.\n\
+  \n*(verifiziert: OpenTofu 1.12.6, `local` 2.9.1; nur die Übungsdatei angewendet)*.\n\n**Kurz auf Englisch:**\
+  \ What macht Terraform den Status?\n\nState ordnet eine resource-Adresse einer object ID zu. Außerdem\
+  \ werden Attribute und Metadaten für spätere Pläne gespeichert. Ein moved blockiert die Adresse changes\
+  \ und behält diesen Link bei.\n\n### Aufteilungsstatus: zuerst ein einzelner Eigentümer, dann neue Automatisierung\n\
+  \n**Auf einen Blick**\n- An object sollte einen geschäftsführenden Eigentümer haben.\n- A sauberes plan\
+  \ für einen root überprüft keinen zweiten root.\n- Handover erfordert die Koordination beider Bindungen\
+  \ und der Automatisierung.\n\n**Modell ohne AWS-Aufrufe:** root A verwaltet bucket `logs`; Die Verwaltung\
+  \ muss nach root B verschoben werden. Der bucket ist nicht moved zwischen Konten, sondern nur seine\
+  \ Verwaltungsbindung changes. Ein remote object sollte einem resource instance entsprechen; import ersetzt\
+  \ nicht die Konfigurationsüberprüfung. [Import](https://developer.hashicorp.com/terraform/language/import),\
+  \ [moving resources](https://developer.hashicorp.com/terraform/cli/state/move).\n\n1. Stop gilt für\
+  \ beide roots, identifiziert provider-Versionen und übernimmt geschützte snapshots beider Zustände.\
+  \ Eine backend-Sperre sperrt die andere root nicht.\n2. Bereiten Sie die Konfiguration in B für die\
+  \ gleichen object, Werte und provider/account. vor. Erstellen Sie sie noch nicht. Ersetzen Sie in A\
+  \ den resource durch `removed` und `destroy = false`.\n3. Review A's plan: Nur Endverwaltung, ohne destroy.\
+  \ Wenden Sie genau das überprüfte plan an.\n4. Fügen Sie import in B hinzu und überprüfen Sie dessen\
+  \ plan: import das vorhandene ID; Stopp bei unerwartetem updates/replacements. Nach dem vereinbarten\
+  \ apply überprüfen Sie Status B, die Abwesenheit von object von A und normale Pläne von beiden roots.\n\
+  5. EAktivieren Sie die Automatisierung von B erst nach der Abstimmung. Beseitigen Sie beim Rollback\
+  \ zunächst die Doppelverwaltung. Stellen Sie A's backup nicht über ein bereits aktives B wieder her.\n\
+  \n[Removed ohne destroy](https://developer.hashicorp.com/terraform/language/resources/syntax#removing-resources),\
+  \ [Zustand locking](https://developer.hashicorp.com/terraform/language/state/locking). Diese Reihenfolge\
+  \ überträgt das Eigentum; Es handelt sich nicht um eine atomare Transaktion über zwei Backends.\n\n\
+  ```hcl\n# A: the previous resource block has already been removed from the configuration.\nremoved {\n\
+  \  from = aws_s3_bucket.logs\n  lifecycle {\n    destroy = false\n  }\n}\n\n# B: resource aws_s3_bucket.logs\
+  \ is declared with its current parameters.\nimport {\n  to = aws_s3_bucket.logs\n  id = \"example-existing-audit-logs\"\
+  \n}\n```\n\n**Vorhersage:** Der object wurde imported in B, aber sein resource blieb in A. Erweist sich\
+  \ ein sauberer B plan als sicherer Transfer?\n> [!question]- Antwort\n> No: A kann immer noch denselben\
+  \ object ändern oder löschen. Die Überprüfung muss sowohl roots als auch deaktivierte Pipelines abdecken."
+source_hash: 0a6090ca1ab8ddbb55297d9aa1d4c1e692166b51d596a74ab19250973ac0c490

@@ -1,0 +1,118 @@
+heading: '9. Resourcen: Scheduler-Versprechen, Kernel-Limits und Knotenräumung'
+text: "## 9. Ressourcen: Scheduler-Versprechen, Kernel limits und Knoten eviction\n\n**Auf einen Blick**\n\
+  - Requests werden während scheduling berücksichtigt\n- Limits schränken die Ressourcennutzung ein\n\
+  - Geringe Stromauslastung bricht resources bereits versprochen nicht ab.\n\n**Kurzes Szenario**\n\n\
+  Der Knoten hat allocatable CPU=2 und insgesamt requests=2. einen neuen Pod requests 1 CPU.\n\n**Vorhersage:**\
+  \ Beobachtet man top=10% enough, um es zu planen?\n\n> [!question]- Antwort\n> Analysis der gegebenen\
+  \ Bedingungen: Nein. Requests nicht verfügbar lassen CPU; Die tatsächliche aktuelle Nutzung ersetzt\
+  \ nicht die Berechnung des Planers.\n\n### CPU und memory schlagen unterschiedlich fehl\n\n**Auf einen\
+  \ Blick**\n- A CPU limit schränkt normalerweise die Ausführungszeit ein\n- A memory limit kann den Prozess\
+  \ stoppen\n- Die Zahl 137 allein stellt den Abbruchgrund nicht dar.\n\n**Kurzes Szenario**\n\nDer Prozess\
+  \ benötigt 1 CPU, aber sein limit=100m. Memory ist ausreichend.\n\n**Vorhersage:** Muss kubelet es allein\
+  \ wegen des CPU limit töten?\n\n> [!question]- Antwort\n> Analysis der gegebenen Bedingungen: Nein.\
+  \ Der erwartete CPU-Mechanismus drosselt, nicht OOM. Memory erfordert eine separate Diagnose.\n\n**`burner.yaml`\
+  \ in `/tmp/vg-k8s-work`: laden und explizit limits:**\n\n```yaml\napiVersion: v1\nkind: Pod\nmetadata:\n\
+  \  name: burner\n  namespace: vg-k8s\nspec:\n  containers:\n    - name: app\n      image: busybox:1.37\n\
+  \      command: [\"sh\", \"-c\", \"while :; do :; done\"]\n      resources:\n        requests:\n   \
+  \       cpu: 50m\n          memory: 16Mi\n        limits:\n          cpu: 100m\n          memory: 32Mi\n\
+  ```\n\n`requests` nehmen an der Platzierung teil; `limits` beschränkt den Verbrauch.\nCPU ist durch\
+  \ die Ausführungszeit begrenzt: Der Prozess wartet und die Latenz erhöht sich, überschreitet aber die\
+  \ Zeit. CPU limit\nist selbst keine OOMKill-Ursache. Memory kann nicht auf die gleiche Weise „verlangsamt“\
+  \ werden: Wenn die Zuweisung fehlschlägt,\nDer Kernel kann den Prozess beenden. Exit-Code 137 bedeutet\
+  \ herkömmlicherweise SIGKILL bis `128 + 9`,\nAber dieser Code allein beweist OOM nicht: Überprüfen Sie\
+  \ `reason: OOMKilled` und die Knotenbedingungen.\n*(laut Dokumentation)* — [CPU](https://kubernetes.io/docs/tasks/configure-pod-container/assign-cpu-resource/),\n\
+  [memory](https://kubernetes.io/docs/tasks/configure-pod-container/assign-memory-resource/).\n\n> [!info]-\
+  \ Ausführlichere Erklärung\n> **Befehl aus einem beliebigen Verzeichnis: Überprüfen Sie den cgroup v2-Mechanismus:**\n\
+  >\n> ```bash\n> kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\n>   -n vg-k8s\
+  \ exec burner -- sh -c \\\n>   'cat /sys/fs/cgroup/cpu.max; cat /sys/fs/cgroup/cpu.stat'\n> ```\n>\n\
+  > **Ausgabe eines neuen Laufs: counters abhängig vom Timing:**\n>\n> ```text\n> 10000 100000\n> ```\n\
+  >\n> `cpu.max` zeigt einen 10000-Mikrosekunden-quota pro 100000-Mikrosekunden-Periode: 0.1-Kern.\n>\
+  \ `nr_throttled` in `cpu.stat` ist ungleich Null; Der Container läuft weiter. *(verifiziert)*.\n> OS\
+  \ Details und System OOM: [[Linux-Troubleshooting-Visual-Guide#5. OOM: лимит контейнера и нехватка памяти\
+  \ узла|container limits and node memory shortage]].\n> A CPU limit kann Nachbarn schützen und gleichzeitig\
+  \ die Latenz erhöhen; Die Entscheidung erfordert eher eine Arbeitsbelastungsmessung\n> an-Regel „Immer\
+  \ entfernen“. Ohne einen memory limit bleibt der knotenweite Druck ein Risiko – eine technische Schlussfolgerung\
+  \ aus der limit-Grenze.\n\n### QoS: Servicequalitätsklasse\n\n**Auf einen Blick**\n- QoS hängt vom deklarierten\
+  \ resources ab\n- Übereinstimmung mit requests und limits ergibt eine bestimmte Klasse, wenn alle Bedingungen\
+  \ met sind\n- Der Klassenname garantiert keine Fehlerfreiheit.\n\n**Minibeispiel:** nur im oben vorbereiteten\
+  \ Einweg-Cluster kind. Erstellen Sie namespace mit `kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig\
+  \ --context kind-guides-order-rest create namespace guide-mini-26`. Speichern Sie den Eintrag als `mini.sh`;\
+  \ Führen Sie es mit `bash -e mini.sh` aus.\n\n```bash\nk() { kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig\
+  \ --context kind-guides-order-rest -n guide-mini-26 \"$@\"; }\nk run web --image=nginx:1.29-alpine --image-pull-policy=Never\n\
+  k wait --for=condition=Ready pod/web --timeout=90s\nk get pod web -o jsonpath='{.spec.containers[0].resources}{\"\
+  \\n\"}'\nk get pod web -o jsonpath='{.status.qosClass}{\"\\n\"}'\n```\n\n**Vorhersage:** Was wird der\
+  \ letzte command anzeigen, nachdem die vorherigen Befehle abgeschlossen sind?\n\n> [!question]- Antwort\n\
+  > Actual command stdout:\n>\n> ```text\n> pod/web created\n> pod/web condition met\n> {}\n> BestEffort\n\
+  > ```\n>\n> Exit-Code: 0.\n\nDer neue namespace hat keinen LimitRange und der Container deklariert keinen\
+  \ resources. Dieser besondere Pod erhält BestEffort.\n\n| Klasse | Gewöhnliche Containerressourcenkonfiguration\
+  \ | Bedeutung |\n|---|---|---|\n| `Guaranteed` | Jeder Container hat CPU und memory requests gleich\
+  \ Null ungleich limits | Der strengste Ressourcenvertrag |\n| `Burstable` | Requests/limits vorhanden,\
+  \ aber Guaranteed-Bedingungen sind nicht met | Die Nutzung kann requests | überschreiten\n| `BestEffort`\
+  \ | Nein CPU/memory requests oder limits | Kein deklarierter Ressourcenvertrag |\n\n> [!info]- Ausführlichere\
+  \ Erklärung\n> Die Tabelle betrifft den gewöhnlichen Container resources; Neue Pod-Level resources erfordern\
+  \ die Überprüfung ihrer eigenen Regeln\n> anstatt diesen Tisch mechanisch anzuwenden. *(laut Dokumentation)*\
+  \ —\n> [QoS](https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/).\n>\n> Wenn nur ein limit\
+  \ gesetzt ist und die Zulassung keinen anderen Antrag vorsieht, wird der API defaults der Antrag an\
+  \ diesen limit gestellt.\n> Im Labor Pod `defaults` nur mit CPU `200m` und memory `64Mi` limits erhielt\
+  \ identische requests\n>  und `Guaranteed`. *(verifiziert)*.\n> Dies bedeutet nicht, dass ein LimitRange\
+  \ oder ein anderer Zulassungsmechanismus niemals eine andere Anfrage bereitstellen kann.\n> *(laut Dokumentation)*\
+  \ – [LimitRange](https://kubernetes.io/docs/concepts/policy/limit-range/).\n\n### Node Druck und eviction\n\
+  \n**Auf einen Blick**\n- Node Ressourcendruck kann eviction auslösen\n- Evicted unterscheidet sich von\
+  \ einem normalen Container-Neustart\n- Lesen Sie den reason und bestimmen Sie den Fehlerumfang.\n\n\
+  **Kurzes Szenario**\n\nDie Phase des Pod ist Failed, die Phase des reason ist Evicted und die Phase\
+  \ des message meldet unzureichende ephemeral-storage.\n\n**Vorhersage:** Sollten Sie mit der Erhöhung\
+  \ des CPU limit beginnen?\n\n> [!question]- Antwort\n> AAnalyse der gegebenen Bedingungen: Nein. Die\
+  \ ersten Hinweise deuten auf knotenlokale Speicherung hin, nicht auf CPU.\n\nWenn die Verfügbarkeit\
+  \ von memory, Festplatte oder PID gering ist, vergleicht kubelet Signale mit konfigurierten Schwellenwerten\
+  \ und kann ggf\neinen Pod vertreiben. Dies unterscheidet sich vom Neustart eines Containers nach seinem\
+  \ eigenen OOM.\nFür memory, über requests hinaus, Priorität und Umfang der überschüssigen Materie; Nur\
+  \ die QoS-Klasse\nIch kann die genaue Reihenfolge nicht vorhersagen. Der Druck eviction muss PDB nicht\
+  \ respektieren.\nSchwellenwerte hängen von der kubelet-Konfiguration ab; Es werden hier keine Standardzahlen\
+  \ behauptet.\n*(laut Dokumentation)* — [node-pressure eviction](https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/).\n\
+  \n> [!info]- Ausführlichere Erklärung\n> Typische Zeichen: ein `Failed` Pod mit reason `Evicted` und\
+  \ ein message über unzureichend `ephemeral-storage`/memory;\n> a Node mit `MemoryPressure`, `DiskPressure`\
+  \ oder `PIDPressure`. Dies sind unterschiedliche Bedingungen, nicht alle kind oder `NotReady`.\n> Pressure\
+  \ eviction wurde in dieser Sitzung absichtlich nicht induziert. *(nicht verifiziert)*.\n>\n> ResourceQuota\
+  \ limits gesamt namespace resources; LimitRange legt individuell zulässig fest\n> values/defaults. Kontingentfehler\
+  \ tritt vor scheduling auf:\n> a ReplicaSet meldet möglicherweise `FailedCreate ... exceeded quota`,\
+  \ ohne dass pod als created aussteht.\n> *(laut Dokumentation)* – [ResourceQuota](https://kubernetes.io/docs/concepts/policy/resource-quotas/).\n\
+  \n### resources in der Größe ändern, ohne den pod zu ersetzen\n\n**Auf einen Blick**\n- Resourcenänderungen\
+  \ verwenden möglicherweise einen separaten API-Pfad\nDer - A requested-Wert wird nicht unbedingt bereits\
+  \ angewendet\n- Oobserve Status und tatsächliche limits.\n\n**Kurzes Szenario**\n\nDie neue Anfrage\
+  \ CPU wurde angenommen, aber resize meldet Infeasible aufgrund des Knotens capacity.\n\n**Vorhersage:**\
+  \ Können Sie den neuen limit für aktiv erklären?\n\n> [!question]- Antwort\n> AAnalyse der gegebenen\
+  \ Bedingungen: Nein. Antragsannahme und tatsächliche Anwendung unterscheiden sich; Überprüfen Sie den\
+  \ resize-Status.\n\n**`resize.yaml` in `/tmp/vg-k8s-work`: der komplette Anfangstext Pod:**\n\n```yaml\n\
+  apiVersion: v1\nkind: Pod\nmetadata:\n  name: resize\n  namespace: vg-k8s\nspec:\n  containers:\n  \
+  \  - name: app\n      image: busybox:1.37\n      command: [\"sleep\", \"3600\"]\n      resizePolicy:\n\
+  \        - resourceName: cpu\n          restartPolicy: NotRequired\n        - resourceName: memory\n\
+  \          restartPolicy: RestartContainer\n      resources:\n        requests:\n          cpu: 50m\n\
+  \          memory: 32Mi\n        limits:\n          cpu: 100m\n          memory: 64Mi\n```\n\n**`resize-patch.json`\
+  \ in `/tmp/vg-k8s-work`: eine vollständige resize-Anfrage, kein Ersatz YAML:**\n\n```json\n{\n  \"spec\"\
+  : {\n    \"containers\": [\n      {\n        \"name\": \"app\",\n        \"resources\": {\n        \
+  \  \"requests\": {\"cpu\": \"100m\"},\n          \"limits\": {\"cpu\": \"300m\"}\n        }\n      }\n\
+  \    ]\n  }\n}\n```\n\n**Befehl aus einem beliebigen Verzeichnis: an die separate Unterressource senden:**\n\
+  \n```bash\nkubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\n  -n vg-k8s patch pod\
+  \ resize --subresource=resize \\\n  --patch-file /tmp/vg-k8s-work/resize-patch.json\nkubectl --kubeconfig\
+  \ /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\n  -n vg-k8s exec resize -- cat /sys/fs/cgroup/cpu.max\n\
+  ```\n\n`in-place resize` wurde in 1.35 stabil; In der älteren Notiz wurde beta in 1.33 beschrieben.\n\
+  Die Unterressource `resize` API akzeptiert gewünschte Werte; kubelet versucht, sie auf dem zugewiesenen\
+  \ Knoten anzuwenden.\n`resizePolicy` gibt an, ob der Container neu gestartet werden muss. `spec` drückt\
+  \ Absicht aus;\n`status.containerStatuses[].resources` meldet den tatsächlich angewendeten resources.\n\
+  *(laut Dokumentation)* – [Größenänderung der Ressource](https://kubernetes.io/docs/tasks/configure-pod-container/resize-container-resources/).\n\
+  \n> [!info]- Ausführlichere Erklärung\n> **Ausgabe eines neuen Laufs: ein Beispiel zum Lesen:**\n>\n\
+  > ```text\n> 30000 100000\n> ```\n>\n> Aus CPU limit wurde 300m; Die Anzahl der Neustarts blieb bei\
+  \ 0. *(bestätigt)*.\n> Unzureichende capacity des Knotens kann die Anforderung ausstehend lassen (`PodResizePending`,\
+  \ `Deferred`/`Infeasible`), während der Prozess\n> verwendet die zuvor angewendete Zuweisung. *(laut\
+  \ Dokumentation)* – die resize-Quelle oben.\n>\n> **Aufgezeichnete Lösungsausgabe für Übung 9: ein Beispiel\
+  \ aus einem 1.33.0-Lauf:**\n>\n> ```text\n> reason: Infeasible\n> message: Node didn't have enough capacity:\
+  \ cpu, requested: 16000, capacity: 2000\n> ```\n>\n> Dies ist ein **aufgezeichneter Lauf** von [[Kubernetes-Coding-Drills-Solutions#9\
+  \ — In-place resize]].\n> In der neuen Sitzung wurden Ressourcenknappheit während resize und Neustart\
+  \ bei einer memory-Änderung *(nicht überprüft)*.\n>\n> **Vorhersage:** CPU Anfrage 50m, limit 100m;\
+  \ Der Prozess benötigt einen vollständigen Kern. Wird daraus OOMKilled?\n>\n> > [!question]- Antwort\n\
+  > > Nicht wegen des CPU limit. Das Labor zeigte einen 0.1-Kern quota und Drosselung; der Prozess blieb\
+  \ am Leben.\n> > OOM ist ein separater memory-Fehlerpfad. *(verifiziert)* – das obige CPU-Experiment.\n\
+  >\n> **Kurze Antwort auf Englisch:**\n>\n> > Requests guide scheduling und limits schränken die Laufzeitnutzung\
+  \ ein. Ein CPU limit kann den Prozess drosseln.\n> > A memory limit kann zur OOM-Beendigung führen.\
+  \ Node Druck eviction ist eine andere Aktion des kubelet."
+source_hash: 1fc619c72b2eb72dfe6ba60c6a0d49b35ae6bb57c0c5983130588941508f3bc3

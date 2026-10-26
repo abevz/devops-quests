@@ -1,0 +1,91 @@
+heading: '13. Secrets: verschlüsselte Speicherung und geschützte Ausführung (Ansible Vault)'
+text: "## 13. Geheimnisse: verschlüsselte Speicherung und geschützte Ausführung (Ansible Vault)\n\n**Auf\
+  \ einen Blick**\n- Ansible Vault protects verschlüsselt data im Ruhezustand.\n- Ar Laufzeit steht der\
+  \ Wert der Aufgabe zur Verfügung.\n- no_log verbirgt eine Aufgabe result im Protokoll, encrypt jedoch\
+  \ nicht die Quelldatei.\n\n**Mini-Beispiel:** `mini.yml` in einem separaten temporären Verzeichnis speichern;\
+  \ Führen Sie `ansible-playbook -i localhost, -c local mini.yml` aus. Das Beispiel läuft auf localhost\
+  \ ohne zu werden.\n\n```yaml\n- hosts: localhost\n  connection: local\n  become: false\n  gather_facts:\
+  \ false\n  tasks:\n    - ansible.builtin.debug:\n        msg: demo-secret\n      no_log: true\n    -\
+  \ ansible.builtin.debug:\n        msg: visible\n```\n\n**Vorhersage:** Welche der beiden Nachrichten\
+  \ bleibt visible?\n\n> [!question]- Antwort\n> Exit-Code: 0. Stdout-Auszüge:\n>\n> ```text\n>     \"\
+  msg\": \"visible\"\n> localhost                  : ok=2    changed=0    unreachable=0    failed=0  \
+  \  skipped=0    rescued=0    ignored=0\n> ```\n\nDer erste Demowert ist in der Aufgabenausgabe ausgeblendet;\
+  \ der zweite bleibt visible. Die Zeichenfolge `demo-secret` befindet sich immer noch im playbook selbst:\
+  \ In diesem Beispiel wird die no_log-Verschlüsselung überprüft, nicht die Vault-Verschlüsselung.\n\n\
+  **Vorbereitung: Erstellen Sie selbst zwei Dateien neben `inventory.ini`.** `vault.pass` ist eine gewöhnliche\
+  \ Textdatei, die eine Passwortzeile enthält; Ansible erstellt es nicht. `secret.yml` ist Klartext YAML,\
+  \ der als nächstes verschlüsselt werden soll:\n\n```bash\nprintf 'lab-demo-password\\n' > vault.pass\n\
+  chmod 600 vault.pass\nprintf 'demo_secret: example-only\\n' > secret.yml\n```\n\nEin sicheres Verfahren\
+  \ mit einem Übungspasswort, **kein echtes secret**:\n\n```bash\nansible-vault encrypt secret.yml --vault-id\
+  \ lab@vault.pass\nansible-vault view secret.yml --vault-id lab@vault.pass\nansible-vault encrypt_string\
+  \ --stdin-name demo_secret --vault-id lab@vault.pass\nansible-playbook -i inventory.ini secret-play.yml\
+  \ --vault-id lab@vault.pass\n```\n\nVor der Verschlüsselung enthielt `secret.yml` `demo_secret: example-only`;\
+  \ `vault.pass` ist eine separate Passwortdatei.\nDie String-Verschlüsselungsvariante liest Standardeingaben:\
+  \ Platzieren Sie keine echten Geheimnisse im Shell-Verlauf oder in Befehlsargumenten.\n`lab@vault.pass`\
+  \ kombiniert das Label `lab` mit einer Passwortquelle. `--vault-id lab@prompt` fordert zur Eingabe des\
+  \ Passworts auf;\nSie können mehrere Vault-Identitäten für Entwicklung und Produktion mit unterschiedlichen\
+  \ Passwörtern übergeben. Eine Identität ist ein Auswahlhinweis,\nkeine Berechtigungsgrenze; Die Matching-Richtlinie\
+  \ ist konfigurierbar. „Ein Passwort für alles“ ist nicht erforderlich.\n\nKomplett `secret-play.yml`:\n\
+  \n```yaml\n- name: Read encrypted variables without showing values\n  hosts: lab\n  connection: local\n\
+  \  gather_facts: false\n  become: false\n  vars_files:\n    - secret.yml\n  tasks:\n    - name: Check\
+  \ presence of secret\n      ansible.builtin.assert:\n        that: demo_secret is defined\n      no_log:\
+  \ true\n```\n\n*(verifiziert)* Dateiverschlüsselung und das richtige Passwort ermöglichten das Lesen\
+  \ des Übungswertes;\nmit der falschen Passwortdatei, `ansible-core` 2.21.4 zurückgegeben:\n\n```text\n\
+  Decryption failed (no vault secrets were found that could decrypt).\n```\n\n**Ansible Vault** verschlüsselt\
+  \ das Repository data, das der Controller während der Ausführung entschlüsselt.\nEs handelt sich nicht\
+  \ um HashiCorp Vault: Ansible. Vault verfügt über keinen Dienst, der zeitlich begrenzte Geheimnisse,\
+  \ API-Richtlinien oder automatische Rotation ausgibt.\nDurch die Verschlüsselung ganzer Dateien werden\
+  \ Schlüssel und Werte ausgeblendet. Die String-Verschlüsselung hinterlässt rund um YAML visible\nund\
+  \ weist einem `!vault`-Block einen Wert zu. `!vault` ist ein Tag vom Typ YAML für eine verschlüsselte\
+  \ Zeichenfolge, nicht die Syntax Jinja.\n\n**`no_log: true`** unterdrückt die Aufgabenausgabe, einschließlich\
+  \ sensibler Ergebnisse. Es verschlüsselt auch keine Datei\nDer verwaltete Knoten verhindert noch das\
+  \ absichtliche Drucken eines secret mit `debug` in der nächsten Aufgabe. Für secret-Vorlagen ebenfalls\
+  \ festgelegt\n`diff: false` und restriktive Zielberechtigungen. Speichern Sie entschlüsselte Geheimnisse\
+  \ nicht in Artefakten.\nFaktcaches oder Ausnahmespuren von Drittprogrammen. Das Debuggen mit deaktiviertem\
+  \ `no_log` birgt ein separates Risiko.\n*(laut Dokumentation)* [Protokollierung und Ausgabeunterdrückung](https://docs.ansible.com/ansible/latest/reference_appendices/logging.html).\n\
+  \n*(verifiziert)* Beim Ausführen der secret-Prüfung mit `-v` wurde der result ausgeblendet:\n\n```text\n\
+  \"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this\
+  \ result\"\n```\n\n> [!info]- Ausführlichere Erklärung\n> ```mermaid\n> flowchart TB\n>     G[\"Encrypted\
+  \ YAML in Git\"] --> C[\"Control node: decrypt with the supplied password\"]\n>     P[\"Password prompt,\
+  \ protected file, executable password client\"] --> C\n>     C --> M[\"Plaintext value in module arguments\"\
+  ]\n>     M --> T[\"Process or configuration file on the managed host\"]\n>     M --> L[\"Logs and diffs:\
+  \ a separate disclosure risk\"]\n> ```\n>\n> String-Verschlüsselung aus der Standardeingabe und Ausführung\
+  \ mit verschlüsselten Variablen wurde ebenfalls überprüft.\n> Das Ansible Vault-Passwort ist weder ein\
+  \ SSH-Passwort noch ein Privilegien-Eskalationspasswort. Verwenden Sie in CI einen geschützten Anmeldeinformationsspeicher:\n\
+  > Der Job-Runner erhält einen kurzlebigen, berechtigungsbeschränkten Datei- oder ausführbaren Passwort-Client,\
+  \ der\n>  gibt das Passwort in der Standardausgabe zurück. Bewahren Sie die Datei außerhalb von Git\
+  \ auf, schränken Sie die Berechtigungen ein und löschen Sie sie nach dem Job.\n> Die CI-Integration\
+  \ selbst was wird hier nicht ausgeführt. Offizielle Vault-Seiten haben bei dieser Überprüfung HTTP 429\
+  \ zurückgegeben;\n> Datei-, Zeichenfolgen- und Identitätsmechanismen wurden lokal bestätigt, die detaillierte\
+  \ Kennwortabgleichsrichtlinie was wurde jedoch nicht überprüft.\n> Referenz zur weiteren Lektüre:\n\
+  > [Vault Passwörter](https://docs.ansible.com/ansible/latest/vault_guide/vault_managing_passwords.html).\n\
+  >\n> **Extern secret lookup** fordert beim Auswerten einer Variablen einen Wert vom Controller an. Dieser\
+  \ Controller benötigt Anmeldeinformationen,\n> CA Trust, eine API Bibliothek und Netzwerk. Der verwaltete\
+  \ Host erhält den resultierenden Wert; Controller-Zugriff auf den secret-Speicher bedeutet nicht\n>\
+  \ Jeder verwaltete Host sollte den gleichen Zugriff haben.\n>\n> A vollständig AWS secret lookup abspielen,\
+  \ **Nur Syntax überprüft; kein API-Anruf getätigt**:\n>\n> **`aws-secret.yml`: ein Lesebeispiel; Nicht\
+  \ ohne AWS-Konto ausführen:**\n>\n> ```yaml\n> - name: Read a cloud secret on the controller\n>   hosts:\
+  \ lab\n>   connection: local\n>   gather_facts: false\n>   become: false\n>   vars:\n>     api_token:\
+  \ \"{{ lookup('amazon.aws.secretsmanager_secret', 'lab/api-token', region='eu-central-1') }}\"\n>  \
+  \ tasks:\n>     - name: Validate secret is not empty\n>       ansible.builtin.assert:\n>         that:\
+  \ api_token | length > 0\n>       no_log: true\n> ```\n>\n> `lookup(...)` wird aufgerufen, wenn `api_token`\
+  \ verwendet wird; Die alleinige Angabe von `vars` stellt keine Garantie dar\n> a Anfrage. Die HashiCorp-Alternative\
+  \ ist `community.hashi_vault` (zum Beispiel das `hashi_vault`-Plugin; Dokumentation\n>  empfiehlt die\
+  \ Berücksichtigung spezieller Plugins. Es benötigt `hvac` und die gewählte Authentifizierungsmethode:\n\
+  > `AppRole`, JWT oder ein Token mit minimalem Gültigkeitsbereich. Eine Cloud-API-Bibliothek kann temporäre\
+  \ Anmeldeinformationen vom Job Runner verwenden.\n> *(laut Dokumentation)* [HashiCorp secret lookup](https://docs.ansible.com/ansible/latest/collections/community/hashi_vault/hashi_vault_lookup.html),\n\
+  > [AWS secret lookup](https://docs.ansible.com/ansible/latest/collections/amazon/aws/secretsmanager_secret_lookup.html).\n\
+  > Live-Authentifizierung ist *(nicht überprüft)*; Fehlermeldungen zum Zugriff verweigert werden nicht\
+  \ erfunden.\n>\n> **SOPS** ist eine alternative strukturierte Dateiverschlüsselung unter Verwendung\
+  \ von age/KMS und Empfängermetadaten.\n> Schlüssel bleiben möglicherweise lesbar, während Werte verschlüsselt\
+  \ werden; a diff zeigt Struktur ohne Offenlegung von Klartext secret\n> Änderungen. Ansible entschlüsselt\
+  \ SOPS nicht automatisch wie `!vault`: Verwenden Sie einen separaten Entschlüsselungsschritt oder\n\
+  > a Plugin wie z. B. `community.sops.sops`\n> `lookup('community.sops.sops', 'secrets.sops.yml') | from_yaml`.\n\
+  > SOPS, die Erfassung und der Zugriff auf einen age- oder KMS-Schlüssel sind auf dem Controller erforderlich.\
+  \ Dies ist *(laut Dokumentation)*,\n> keine local-Verschlüsselungsprüfung: [SOPS Wert lookup](https://docs.ansible.com/ansible/latest/collections/community/sops/sops_lookup.html).\n\
+  >\n> Frage: **Ist Ansible Vault ausreichend, um einen secret aus den Protokollen fernzuhalten?**\n>\n\
+  > > Nr. Vault protects stored data, aber Ansible entschlüsselt es während eines Laufs. Ich verwende\
+  \ `no_log` auf tasks\n> > Verwalten Sie Geheimnisse und deaktivieren Sie sensible Unterschiede. Das\
+  \ vault-Passwort muss aus einer geschützten Quelle stammen,\n> > und entschlüsselte Dateien dürfen nicht\
+  \ als Pipeline-Artefakte gespeichert werden."
+source_hash: 1a48913e6ba1ebb00536e883f268e95e207ff3d424ea2513f9bbd2d88c543f71

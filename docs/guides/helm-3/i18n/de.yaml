@@ -1,0 +1,178 @@
+heading: 3. Wertpfade und -typen [values]
+text: "## 3. Wertpfade und types [values]\n\n**Auf einen Blick**\n- Values werden zusammengeführt, bevor\
+  \ template ausgeführt wird.\n- An-Argument kann den ursprünglichen Wert überschreiben.\nDer Werttyp\
+  \ - A wirkt sich auf die spätere Validierung aus.\n\n**Minibeispiel:** Speichern Sie in einem neuen\
+  \ temporären chart-Verzeichnis den Hauptblock als `templates/example.yaml` und fügen Sie die folgenden\
+  \ Dateien hinzu. Führen Sie dann `helm lint . --set replicaCount=5` und `helm template demo . --dry-run=client\
+  \ --set replicaCount=5` aus. Es wird kein Cluster verwendet.\n\n```gotemplate\napiVersion: v1\nkind:\
+  \ ConfigMap\nmetadata:\n  name: {{ .Release.Name }}\ndata:\n  result: {{ .Values.replicaCount | quote\
+  \ }}\n```\n\nDatei `Chart.yaml`:\n\n```yaml\napiVersion: v2\nname: mini\nversion: 0.1.0\nappVersion:\
+  \ \"2.0.0\"\n```\n\nDatei `values.yaml`:\n\n```yaml\nreplicaCount: 2\n```\n\n**Vorhersage:** Welche\
+  \ Zahl wird im result line erscheinen?\n\n> [!question]- Antwort\n> Atatsächliche `helm template`-Ausgabe\
+  \ (stdout und stderr):\n>\n> ```text\n> ---\n> # Source: mini/templates/example.yaml\n> apiVersion:\
+  \ v1\n> kind: ConfigMap\n> metadata:\n>   name: demo\n> data:\n>   result: \"5\"\n> ```\n>\n> Exit-Codes:\
+  \ lint=0, template=0.\n\nDer template liest den endgültigen replicaCount=5 von --set; quote macht das\
+  \ Feld ConfigMap zu einer Zeichenfolge.\n\n> [!info]- Ausführlichere Erklärung\n> > [!info] Kern und\
+  \ Referenz\n> > Core: Wertepfade, die maps zusammenführen und lists ersetzen. Unterschiede zwischen\
+  \ --set/--set-string/--set-json/--set-file und dem Escapezeichen commas/dots sind Referenzmaterial nach\
+  \ gewöhnlichem values.yaml.\n>\n> Beginnen Sie mit dem Original `replicaCount: 2` und `image.repository:\
+  \ harbor.example.test/demo/democicd`. Helm lädt diese values, überlagert die bereitgestellten Dateien\
+  \ und wertet dann Argumente aus. Vorlagen sehen sie als `.Values.replicaCount` und `.Values.image.repository`.\
+  \ Nach der Auswertung werden sie zu gewöhnlichen `spec.replicas`- und `spec.template.spec.containers[].image`-Feldern.\
+  \ *(verifiziert: Originalwiedergabe)*\n>\n> ```mermaid\n> flowchart TB\n>     A[\"values.yaml: replicaCount=2;\
+  \ image.repository=harbor.example.test/demo/democicd\"] --> B[\"-f a.yaml: 3; example.invalid/app\"\
+  ]\n>     B --> C[\"-f b.yaml: replicaCount=4\"]\n>     C --> D[\"--set replicaCount=5\"]\n>     D -->\
+  \ E[\"Merged .Values: 5; example.invalid/app\"]\n>     E --> F[\"deployment.yaml: .Values.replicaCount;\
+  \ .Values.image.repository\"]\n>     F --> G[\"Manifest: replicas: 5; image: example.invalid/app@0.1.0\"\
+  ]\n>     G --> H[\"On install/upgrade: Kubernetes API\"]\n>     H --> I[\"Deployment → ReplicaSet →\
+  \ Pods; kubelet reads the image\"]\n> ```\n>\n> Die letzten beiden Diagrammschritte sind *(laut Dokumentation)*\
+  \ [Installation](https://helm.sh/docs/helm/helm_install/); lokal `template` führt sie nicht aus.\n\n\
+  ### Ordnen und Zusammenführen\n\n**Auf einen Blick**\n- Dateien werden in der angegebenen Reihenfolge\
+  \ angewendet.\n- Karten werden von key zusammengeführt.\n- Listen werden normalerweise als Ganzes ersetzt.\n\
+  \n**Minibeispiel:** Speichern Sie in einem neuen temporären chart-Verzeichnis den Hauptblock als `templates/example.yaml`\
+  \ und fügen Sie die folgenden Dateien hinzu. Führen Sie dann `helm lint . -f a.yaml -f b.yaml` und `helm\
+  \ template demo . --dry-run=client -f a.yaml -f b.yaml` aus. Es wird kein Cluster verwendet.\n\n```gotemplate\n\
+  apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: merge\ndata:\n  repository: {{ .Values.image.repository\
+  \ | quote }}\n  tag: {{ .Values.image.tag | quote }}\n  items: {{ .Values.items | toJson | quote }}\n\
+  ```\n\nDatei `Chart.yaml`:\n\n```yaml\napiVersion: v2\nname: mini\nversion: 0.1.0\nappVersion: \"2.0.0\"\
+  \n```\n\nDatei `values.yaml`:\n\n```yaml\nimage: {repository: base, tag: old}\nitems: [a, b]\n```\n\n\
+  Datei `a.yaml`:\n\n```yaml\nimage: {repository: team/app}\n```\n\nDatei `b.yaml`:\n\n```yaml\nimage:\
+  \ {tag: new}\nitems: [c]\n```\n\n**Vorhersage:** Bleiben repository aus der ersten Datei und beide ursprünglichen\
+  \ Listeneinträge erhalten?\n\n> [!question]- Antwort\n> Atatsächliche `helm template`-Ausgabe (stdout\
+  \ und stderr):\n>\n> ```text\n> ---\n> # Source: mini/templates/example.yaml\n> apiVersion: v1\n> kind:\
+  \ ConfigMap\n> metadata:\n>   name: merge\n> data:\n>   repository: \"team/app\"\n>   tag: \"new\"\n\
+  >   items: \"[\\\"c\\\"]\"\n> ```\n>\n> Exit-Codes: lint=0, template=0.\n\nDie Datei second ändert tag\
+  \ und ersetzt die gesamte Liste, lässt jedoch repository in Ruhe. Somit bleibt repository erhalten und\
+  \ items enthält nur c.\n\n> [!info]- Ausführlichere Erklärung\n> `-f`-Dateien gelten von links nach\
+  \ rechts; Der Letzte gewinnt, wenn derselbe key in Konflikt steht. Karten merge von key; **lists werden\
+  \ vollständig ersetzt**, nicht erweitert. `null` entfernt einen key aus den Standardeinstellungen. *(laut\
+  \ Dokumentation)* [Values](https://helm.sh/docs/chart_template_guide/values_files/).\n>\n> Zwei tatsächlich\
+  \ verwendete Dateien:\n>\n> ```yaml\n> # /tmp/helm-visual-guide/a.yaml\n> replicaCount: 3\n> image:\n\
+  >   repository: example.invalid/app\n> podAnnotations:\n>   a: first\n> imagePullSecrets:\n>   - name:\
+  \ first\n> ```\n>\n> ```yaml\n> # /tmp/helm-visual-guide/b.yaml\n> replicaCount: 4\n> podAnnotations:\n\
+  >   b: second\n> imagePullSecrets:\n>   - name: second\n> ```\n>\n> ```bash\n> helm template demo /tmp/helm-visual-guide/democicd\
+  \ \\\n>   -f /tmp/helm-visual-guide/a.yaml -f /tmp/helm-visual-guide/b.yaml \\\n>   --set replicaCount=5\
+  \ --show-only templates/deployment.yaml\n> ```\n>\n> Aktuelle result Auszüge *(verifiziert)*:\n>\n>\
+  \ ```yaml\n>   replicas: 5\n> # selector and other fields omitted\n>       annotations:\n>         a:\
+  \ first\n>         b: second\n> # labels omitted\n>       imagePullSecrets:\n>         - name: second\n\
+  >       containers:\n>       - image: \"example.invalid/app@0.1.0\"\n> ```\n>\n> Der repository stammte\
+  \ aus der ersten Datei und die Replikatanzahl aus dem Argument CLI; Die Bezeichnungen `a` und `b` überlebten\
+  \ zusammen, während das erste Listenelement verschwand. Ein ungültiges Bild verhinderte das lokale Rendern\
+  \ nicht (§18).\n\n### Vier Arten von Wertargumenten\n\n**Auf einen Blick**\n- Verschiedene Flags lesen\
+  \ unterschiedliche Darstellungen.\n- A Zeichenfolge und Zahl sind nicht austauschbar.\n- Überprüfen\
+  \ Sie den Typ im endgültigen values.\n\n**Kurzes Szenario**\n\n--set x=12 und --set-string y=12 werden\
+  \ an denselben chart übergeben.\n\n**Vorhersage:** Müssen x und y denselben Typ haben?\n\n> [!question]-\
+  \ Antwort\n> Nr. Das Flag second legt explizit eine Zeichenfolge fest; Das detaillierte Rezept unten\
+  \ zeigt den types während des Renderns.\n\nDies ergibt sich aus den genannten Konditionen. Die vollständige\
+  \ frühere Analyse und ihre Überprüfungsgrenzen sind unten aufgeführt.\n\n> [!info]- Ausführlichere Erklärung\n\
+  > Die kurze Route oben erklärt den Mechanismus und die nächste Prüfung. Vollständige Auflistung und\
+  \ Beobachtungen: [[#Справочный рецепт — Четыре вида аргументов|reference recipe]].\n\n### Referenzrezept\
+  \ – Vier Arten von Argumenten\n\n**Auf einen Blick**\n- Set-string behält den String-Typ bei.\n- Set-file\
+  \ liest den Inhalt einer Datei.\n- Das Überprüfen eines Typs unterscheidet sich vom Drucken ähnlich\
+  \ aussehender Zeichen.\n\n**Mini-Beispiel:** Speichern Sie in einem neuen temporären chart-Verzeichnis\
+  \ den Hauptblock als `templates/example.yaml` und fügen Sie die folgenden Dateien hinzu. Führen Sie\
+  \ dann `helm lint . --set x=12 --set-string y=12 --set-file text=message.txt` und `helm template demo\
+  \ . --dry-run=client --set x=12 --set-string y=12 --set-file text=message.txt` aus. Es wird kein Cluster\
+  \ verwendet.\n\n```gotemplate\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: argument-types\n\
+  data:\n  xType: {{ printf \"%T\" .Values.x | quote }}\n  yType: {{ printf \"%T\" .Values.y | quote }}\n\
+  \  file: {{ .Values.text | trim | quote }}\n```\n\nDatei `Chart.yaml`:\n\n```yaml\napiVersion: v2\n\
+  name: mini\nversion: 0.1.0\nappVersion: \"2.0.0\"\n```\n\nDatei `values.yaml`:\n\n```yaml\n{}\n```\n\
+  \nDatei `message.txt`:\n\n```text\nline from file\n```\n\n**Vorhersage:** Werden x und y denselben Typ\
+  \ haben?\n\n> [!question]- Antwort\n> Tatsächliche `helm template`-Ausgabe (stdout und stderr):\n>\n\
+  > ```text\n> ---\n> # Source: mini/templates/example.yaml\n> apiVersion: v1\n> kind: ConfigMap\n> metadata:\n\
+  >   name: argument-types\n> data:\n>   xType: \"int64\"\n>   yType: \"string\"\n>   file: \"line from\
+  \ file\"\n> ```\n>\n> Exit-Codes: lint=0, template=0.\n\nx wird als Zahl geparst; y wird als String\
+  \ festgelegt. Der Text stammt aus der gesamten Datei; Dies ist eine separate dritte Möglichkeit, einen\
+  \ Wert zu übergeben.\n\n> [!info]- Ausführlichere Erklärung\n> | Argument | Was es liest | Wo es nützlich\
+  \ ist |\n> |---|---|---|\n> | `--set replicaCount=3` | Schlüsselstruktur und values mit Typ parsing\
+  \ | Eine Zahl oder ein boolescher Parameter |\n> | `--set-string image.tag=012` | Erzwingt eine Zeichenfolge\
+  \ | Tags und Bezeichner mit führenden Nullen |\n> | `--set-file config=/tmp/config.txt` | Dateiinhalt\
+  \ als String | Mehrzeiliger Text, keine neue values-Datei |\n> | `--set-json 'imagePullSecrets=[]'`\
+  \ | Ein JSON-Wert: Liste, Objekt, Nummer und mehr | Strukturierte Überschreibungen |\n>\n> *(gemäß Dokumentation)*\
+  \ [Install arguments](https://helm.sh/docs/helm/helm_install/). `--set-file` ist nicht dasselbe wie\
+  \ `-f`: Der erste fügt **Text** in einen key ein, während second eine **YAML-Struktur** liest.\n>\n\
+  > Die Reihenfolge der **verschiedenen Arten** von Flags sollte nicht als universelles „letztes auf dem\
+  \ command line gewinnt“ behandelt werden. In diesem version wird `--set-string` nach `--set` angewendet;\
+  \ Innerhalb eines Flags kind gewinnt der letzte widersprüchliche key. *(verifiziert; siehe auch [[Kubernetes-for-DevOps-Theory#7.\
+  \ Helm 4: что изменилось и где ломается|§7 cheat sheet]])*\n>\nDie Datei > A `templates/probe.yaml`\
+  \ wurde einer Kopie von `probe` hinzugefügt: eine minimale ConfigMap, die values und deren types druckt.\
+  \ Dies ist ein Beobachtungstool, nicht Teil des Originals chart:\n>\n> Die Notation: `|` übergibt den\
+  \ result links davon als letztes Argument an die Funktion rechts davon; `toYaml` konvertiert eine Karte\
+  \ in YAML-Text; `indent 4` verschiebt seine Zeilen um vier Leerzeichen; `quote` schließt result in Anführungszeichen\
+  \ ein. `printf` formatiert eine Zeichenfolge und `%T` zeigt den Typ des Arguments an. Diese Funktionen\
+  \ werden ausgeführt, während template ausgewertet wird, nicht im Kubernetes API. *(gemäß Dokumentation)*\
+  \ [Funktionen](https://helm.sh/docs/chart_template_guide/function_list/).\n>\n> ```yaml\n> apiVersion:\
+  \ v1\n> kind: ConfigMap\n> metadata:\n>   name: probe\n> data:\n>   values: |\n> {{ toYaml .Values |\
+  \ indent 4 }}\n>   types: {{ printf \"%T/%T/%T\" .Values.x .Values.y .Values.z | quote }}\n> ```\n>\n\
+  > Die Notation wird in §4–5 erklärt; Hier zeigt `printf \"%T\"` den Typ, nicht den Wert.\n>\n> ```bash\n\
+  > helm template demo /tmp/helm-visual-guide/probe \\\n>   --set 'x=12,y=true,z=1.10' --show-only templates/probe.yaml\n\
+  > helm template demo /tmp/helm-visual-guide/probe \\\n>   --set-string x=012 --set x=7 --show-only templates/probe.yaml\n\
+  > ```\n>\n> Ausgabe; die restlichen Zeilen werden weggelassen *(verifiziert)*:\n>\n> ```yaml\n> # first\
+  \ run\n>     x: 12\n>     \"y\": true\n>     z: \"1.10\"\n>   types: \"int64/bool/string\"\n> # second\
+  \ run\n>     x: \"012\"\n>   types: \"string/<nil>/<nil>\"\n> ```\n>\n> Für eine **YAML-Datei** funktioniert\
+  \ parsing anders. Drei Dateien mit `image.tag: 1.10`, `image.tag: 010` und `image.tag: 20240101` erzeugten\
+  \ Bildzeichenfolgen im gerenderten Deployment von `harbor.example.test/demo/democicd@1.1`, `harbor.example.test/demo/democicd@8`\
+  \ und `harbor.example.test/demo/democicd@2.0240101e+07`. bzw. *(verifiziert: `tag-decimal.log`, `tag-octal.log`,\
+  \ `tag-date.log`)* Dies ist der result einer Zahl, die durch den template ersetzt wird, keine wörtliche\
+  \ Serialisierung einer Zahl durch `toYaml`. Daher sind quote-String-Versionen in Dateien; `--set-string`\
+  \ korrigiert einen falsch eingegebenen YAML-Wert aus einer anderen Quelle nicht automatisch.\n>\n> Run\
+  \ mit einer Textdatei und JSON *(verifiziert)*:\n>\n> ```bash\n> printf 'line one\\nline two\\n' > /tmp/helm-visual-guide/string.txt\n\
+  > helm template demo /tmp/helm-visual-guide/probe \\\n>   --set-file x=/tmp/helm-visual-guide/string.txt\
+  \ \\\n>   --set-json 'y={\"a\":1,\"b\":true}' --show-only templates/probe.yaml\n> ```\n>\n> ```yaml\n\
+  > # values field fragment\n>     x: |\n>       line one\n>       line two\n>     \"y\":\n>       a:\
+  \ 1\n>       b: true\n>   types: \"string/map[string]interface {}/<nil>\"\n> ```\n\n### Kommas, Punkte\
+  \ und Entfernen eines key\n\n**Auf einen Blick**\nDer Punkt - A in --set trennt verschachtelte Schlüssel.\n\
+  - A Komma trennt Zuweisungen.\n- Literalzeichen müssen korrekt übergeben werden.\n\n**Kurzes Szenario**\n\
+  \nDie Annotation key muss example.com/key sein, mit dem Wert hello,world.\n\n**Vorhersage:** Kann die\
+  \ gesamte Zeichenfolge als eine einfache Zuweisung ohne Escape behandelt werden?\n\n> [!question]- Antwort\n\
+  > Nr. Schützen Sie den Punkt im key und das Komma im Wert aus dem Parser von Helm und übergeben Sie\
+  \ das Argument dann korrekt durch die Shell.\n\nDies ergibt sich aus den genannten Konditionen. Die\
+  \ vollständige frühere Analyse und ihre Überprüfungsgrenzen sind unten aufgeführt.\n\n> [!info]- Ausführlichere\
+  \ Erklärung\n> Die kurze Route oben erklärt den Mechanismus und die nächste Prüfung. Vollständige Auflistung\
+  \ und Beobachtungen: [[#Справочный рецепт — Запятые, точки и удаление ключа|reference recipe]].\n\n\
+  ### Referenzrezept – Kommas, Punkte und Löschen eines key\n\n**Auf einen Blick**\n- CLI Escape und YAML\
+  \ lösen unterschiedliche Probleme.\nDer Punkt - A kann Teil eines Literals key sein.\nDas Komma - A\
+  \ kann Teil eines Werts sein.\n\n**Minibeispiel:** Speichern Sie in einem neuen temporären chart-Verzeichnis\
+  \ den Hauptblock als `templates/example.yaml` und fügen Sie die folgenden Dateien hinzu. Führen Sie\
+  \ dann `helm lint . --set 'annotations.example\\.com/key=hello\\,world'` und `helm template demo . --dry-run=client\
+  \ --set 'annotations.example\\.com/key=hello\\,world'` aus. Es wird kein Cluster verwendet.\n\n```gotemplate\n\
+  apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}\ndata:\n  result: {{ index .Values.annotations\
+  \ \"example.com/key\" | quote }}\n```\n\nDatei `Chart.yaml`:\n\n```yaml\napiVersion: v2\nname: mini\n\
+  version: 0.1.0\nappVersion: \"2.0.0\"\n```\n\nDatei `values.yaml`:\n\n```yaml\nannotations: {}\n```\n\
+  \n**Vorhersage:** Bleibt das Komma Teil eines Werts?\n\n> [!question]- Antwort\n> Atatsächliche `helm\
+  \ template`-Ausgabe (stdout und stderr):\n>\n> ```text\n> ---\n> # Source: mini/templates/example.yaml\n\
+  > apiVersion: v1\n> kind: ConfigMap\n> metadata:\n>   name: demo\n> data:\n>   result: \"hello,world\"\
+  \n> ```\n>\n> Exit-Codes: lint=0, template=0.\n\nDas Argument übergibt den maskierten Punkt und das\
+  \ Komma an Helm. Die Funktion `index` liest das Literal key example.com/key aus der Karte.\n\n> [!info]-\
+  \ Ausführlichere Erklärung\n> A Komma trennt Paare in `--set`; Ein Punkt trennt verschachtelte Schlüssel.\
+  \ Die Shell und der Helm-Parser sind zwei verschiedene Schichten. Um einen Literalpunkt in einem Anmerkungsnamen\
+  \ und ein Komma in seinem Text zu verwenden, muss der Backslash die Shell überleben:\n>\n> ```bash\n\
+  > helm template demo /tmp/helm-visual-guide/democicd \\\n>   --set 'podAnnotations.example\\.com/key=hello\\\
+  ,world' \\\n>   --show-only templates/deployment.yaml\n> ```\n>\n> ```yaml\n>       annotations:\n>\
+  \         example.com/key: hello,world\n> ```\n>\n> *(verifiziert)* Bei `--set x=hello,world` ist der\
+  \ tatsächliche Fehler:\n>\n> ```text\n> Error: failed parsing --set data: key \"world\" has no value\n\
+  > ```\n>\n> Um von einem HTTP probe zu einem command zu wechseln, entfernen Sie das ursprüngliche `httpGet`;\
+  \ Andernfalls verfügt der zusammengeführte probe über zwei Handler. Schlüssellöschung wurde lokal überprüft;\
+  \ Die Gültigkeit von probe gegenüber API wurde nicht überprüft:\n>\n> ```bash\n> helm template demo\
+  \ /tmp/helm-visual-guide/probe \\\n>   --set 'livenessProbe.httpGet=null,livenessProbe.exec.command[0]=true'\
+  \ \\\n>   --show-only templates/deployment.yaml\n> ```\n>\n> ```yaml\n>         livenessProbe:\n>  \
+  \           exec:\n>               command:\n>               - true\n> ```\n>\n> > [!failure] Häufiger\
+  \ Fehler\n> > Hier wurde `true` zu einem booleschen Wert, aber Kubernetes erwartet Zeichenfolgen in\
+  \ `command`. Der richtige Override löscht `httpGet` und übergibt gleichzeitig eine String-Liste:\n>\
+  \ > ```bash\n> > --set livenessProbe.httpGet=null --set-json 'livenessProbe.exec.command=[\"true\"]'\n\
+  > > ```\n> > Überprüfen Sie den korrigierten version separat mit dem API (§19), anstatt nur den YAML\
+  \ zu drucken. Dieser probe-Ersatz wurde im Testdurchlauf nicht getestet.\n>\n> Das korrigierte Rendering\
+  \ wurde ebenfalls ausgeführt *(verifiziert, `null-string.log`)*:\n>\n> ```bash\n> helm template demo\
+  \ /tmp/helm-visual-guide/democicd \\\n>   --set livenessProbe.httpGet=null --set-json 'livenessProbe.exec.command=[\"\
+  true\"]' \\\n>   --show-only templates/deployment.yaml\n> ```\n>\n> ```yaml\n>         livenessProbe:\n\
+  >             exec:\n>               command:\n>               - \"true\"\n> ```\n>\n> **Vorhersage:**\
+  \ Wird `-f a.yaml -f b.yaml --set-string replicaCount=5` mit einem Schema bestehen, das einen integer\
+  \ erfordert?\n>\n> > [!question]- Antwort\n> > No: Der Endwert ist eine Zeichenfolge. Im überprüften\
+  \ Lauf mit der Zeichenfolge `3` meldete Helm:\n> > ```text\n> > - at '/replicaCount': got string, want\
+  \ integer\n> > ```\n> > Ohne Schema fehlen möglicherweise Anführungszeichen in der Ausgabe `replicas:\
+  \ {{ .Values.replicaCount }}`; Dadurch ist der Quelltyp nicht korrekt.\n>\n> **Kurz gesagt – How funktioniert\
+  \ Helm merge values?**\n>\n> > Helm beginnt mit den Standardeinstellungen chart und wendet die values-Dateien\
+  \ der Reihe nach an. Command-line values überschreiben sie. Karten merge durch key, während lists ersetzt\
+  \ werden. Ich verwende Zeichenfolgen in Anführungszeichen oder set-string, wenn ein Wert eine Zeichenfolge\
+  \ bleiben muss."
+source_hash: 0e47b10595ebc049c2e38ba78853b019c6942dd652f3e26afbd7520950793cb3
