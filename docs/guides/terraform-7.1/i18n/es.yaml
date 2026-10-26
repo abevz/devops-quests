@@ -1,0 +1,55 @@
+heading: '7.1. Un módulo de trabajo completo: cuatro archivos y la raíz de llamada'
+text: "### 7.1. Un complete funcionando con module: cuatro archivos y la raíz que llama\n\n**De un vistazo**\n\
+  - La raíz pasa argumentos a un hijo module.\n- Las entradas y salidas definen su contrato.\nLa fuente\
+  \ local - A debe apuntar a un directorio existente.\n\n**Mini-ejemplo:** guarde esto como `main.tf`\
+  \ en un nuevo directorio temporal. Después de preparar los archivos, ejecute `tofu init`, `tofu validate`\
+  \ y luego `tofu apply -auto-approve -input=false -no-color`.\n\n```hcl\nmodule \"worker\" {\n  source\
+  \ = \"./modules/worker\"\n  name = \"api\"\n}\noutput \"label\" {\n  value = module.worker.label\n}\n\
+  ```\n\nArchivo adicional `modules/worker/main.tf`:\n\n```hcl\nvariable \"name\" { type = string }\n\
+  output \"label\" { value = \"${var.name}-dev\" }\n```\n\n**Predecir:** ¿Qué mostrará la ejecución y\
+  \ cuál será su código de salida?\n\n> [!question]- Respuesta\n> Extracto real del último comando:\n\
+  >\n> ```text\n> Apply complete! Resources: 0 added, 0 changed, 0 destroyed.\n> Outputs:\n> + label =\
+  \ \"api-dev\"\n>\n> You can apply this plan to save these new output values to the OpenTofu\n> state,\
+  \ without changing any real infrastructure.\n>\n> Apply complete! Resources: 0 added, 0 changed, 0 destroyed.\n\
+  >\n> Outputs:\n>\n> label = \"api-dev\"\n> ```\n>\n> Ecódigo de salida: 0.\n\nEl archivo adicional a\
+  \ continuación declara la entrada del nombre y la salida label. La raíz pasa api y recibe api-dev.\n\
+  \n> [!info]- Explicación más profunda\n> Todos los archivos siguientes se muestran completos. Cree este\
+  \ diseño en un nuevo directorio temporal; `terraform_data` está integrado, por lo que no se necesitan\
+  \ complementos externos ni la nube. Los nombres de los archivos son una convención de lectura: Terraform\
+  \ combina todos los archivos `.tf` en un directorio en lugar de ejecutarlos en orden.\n>\n> ```text\n\
+  > lab/\n> ├── main.tf\n> ├── terraform.tfvars\n> ├── worker.tftest.hcl              # tests from §7.7\n\
+  > └── modules/worker/\n>     ├── variables.tf              # input contract\n>     ├── main.tf     \
+  \              # resources\n>     ├── outputs.tf                # output contract\n>     └── versions.tf\
+  \               # supported CLI version\n> ```\n>\n> `README.md` debe explicar el propósito, las entradas,\
+  \ las salidas y las actualizaciones de versión; `examples/` debería ser contain un ejemplo mínimo para\
+  \ el consumidor. Esos archivos no son necesarios para este ejercicio; Los cuatro archivos siguientes\
+  \ y la raíz realmente se ejecutaron.\n>\n> **`modules/worker/variables.tf`:**\n>\n> ```hcl\n> variable\
+  \ \"name\" {\n>   description = \"Component name\"\n>   type        = string\n>   validation {\n>  \
+  \   condition     = length(var.name) >= 3\n>     error_message = \"name must contain at least 3 characters.\"\
+  \n>   }\n> }\n> variable \"settings\" {\n>   description = \"Component settings\"\n>   type        =\
+  \ object({ port = optional(number, 8080), labels = optional(map(string), {}) })\n>   default     = {}\n\
+  > }\n> variable \"token\" {\n>   description = \"Training secret\"\n>   type        = string\n>   default\
+  \     = \"demo-token\"\n>   sensitive   = true\n> }\n> ```\n>\n> **`modules/worker/main.tf`:**\n>\n\
+  > ```hcl\n> resource \"terraform_data\" \"this\" {\n>   input = { name = var.name, port = var.settings.port,\
+  \ labels = var.settings.labels }\n> }\n> ```\n>\n> **`modules/worker/outputs.tf`:**\n>\n> ```hcl\n>\
+  \ output \"name\" {\n>   description = \"Component name after apply\"\n>   value       = terraform_data.this.output.name\n\
+  > }\n> output \"id\" {\n>   description = \"Component identifier\"\n>   value       = terraform_data.this.id\n\
+  > }\n> output \"token\" {\n>   description = \"Training secret for the parent\"\n>   value       = var.token\n\
+  >   sensitive   = true\n> }\n> ```\n>\n> **`modules/worker/versions.tf`:**\n>\n> ```hcl\n> terraform\
+  \ {\n>   required_version = \">= 1.7.0\"\n> }\n> ```\n>\n> **Raíz `main.tf`:**\n>\n> ```hcl\n> variable\
+  \ \"name\" { type = string }\n> module \"worker\" {\n>   source = \"./modules/worker\"\n>   name   =\
+  \ var.name\n> }\n> output \"worker_name\" { value = module.worker.name }\n> output \"worker_id\" { value\
+  \ = module.worker.id }\n> output \"worker_token\" {\n>   value     = module.worker.token\n>   sensitive\
+  \ = true\n> }\n> ```\n>\n> **Raíz `terraform.tfvars`:**\n>\n> ```hcl\n> name = \"worker-a\"\n> ```\n\
+  >\n> La raíz se probó con `tofu init`, `tofu plan -out=module.tfplan`, `tofu apply module.tfplan`. El\
+  \ resultado de inicialización abreviado muestra la instalación del hijo module: para una ruta local,\
+  \ esto registra un directorio en lugar de descargar un archivo.\n>\n> ```text\n> Initializing modules...\n\
+  > - worker in modules/worker\n> - terraform.io/builtin/terraform is built in to OpenTofu\n> OpenTofu\
+  \ has been successfully initialized!\n> ```\n>\n> El plan muestra el nombre pasado al resource; la salida\
+  \ `worker_name` aún se desconoce hasta apply:\n>\n> ```text\n> # module.worker.terraform_data.this will\
+  \ be created\n>\n>           + name   = \"worker-a\"\n>           + port   = 8080\n> Plan: 1 to add,\
+  \ 0 to change, 0 to destroy.\n>   + worker_name  = (known after apply)\n>   + worker_token = (sensitive\
+  \ value)\n> ```\n>\n> ```text\n> Apply complete! Resources: 1 added, 0 changed, 0 destroyed.\n> worker_name\
+  \ = \"worker-a\"\n> worker_token = <sensitive>\n> ```\n>\n> *(verificado: OpenTofu 1.12.6, complete\
+  \ ciclo en un nuevo directorio local)*."
+source_hash: 33b1f9fdb01b90503aefe09a80e411207861b13c8ec50345da9d327b75d7d44a

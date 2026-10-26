@@ -1,0 +1,86 @@
+heading: '12. Configuración: el objeto cambió, pero el proceso puede ver un valor antiguo'
+text: "## 12. Configuración: el objeto cambió, pero el proceso puede ver un valor antiguo\n\n**De un vistazo**\n\
+  - A ConfigMap almacena valores con nombre\n- O Los cambios de objeto son visibles a través del API\n\
+  - An Un proceso que ya se está ejecutando aún puede leer un valor anterior.\n\n**Miniejemplo:** solo\
+  \ en el grupo kind desechable preparado anteriormente. Cree el namespace con `kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig\
+  \ --context kind-guides-order-rest create namespace guide-mini-37`. Guarde el listado como `mini.sh`;\
+  \ ejecútelo con `bash -e mini.sh`.\n\n```bash\nk() { kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig\
+  \ --context kind-guides-order-rest -n guide-mini-37 \"$@\"; }\nk create configmap settings --from-literal=color=blue\n\
+  k get configmap settings -o jsonpath='{.data.color}{\"\\n\"}'\nk create configmap settings --from-literal=color=green\
+  \ --dry-run=client -o yaml | k apply -f -\nk get configmap settings -o jsonpath='{.data.color}{\"\\\
+  n\"}'\n```\n\n**Predecir:** ¿Qué mostrará el último command después de que finalicen los comandos anteriores?\n\
+  \n> [!question]- Respuesta\n> command actual stdout:\n>\n> ```text\n> configmap/settings created\n>\
+  \ blue\n> configmap/settings configured\n> green\n> ```\n>\n> Ecódigo de salida: 0.\n\nEl API primero\
+  \ devuelve blue, luego green. Este breve experimento prueba el objeto, no una actualización del entorno\
+  \ del proceso; El experimento completo a continuación compara los métodos de inyección.\n\n**`config.yaml`\
+  \ en `/tmp/vg-k8s-work`: el ConfigMap inicial completo y consumidor:**\n\n```yaml\napiVersion: v1\n\
+  kind: ConfigMap\nmetadata:\n  name: settings\n  namespace: vg-k8s\ndata:\n  mode: blue\n---\napiVersion:\
+  \ v1\nkind: Pod\nmetadata:\n  name: config-reader\n  namespace: vg-k8s\nspec:\n  containers:\n    -\
+  \ name: app\n      image: busybox:1.37\n      command: [\"sleep\", \"3600\"]\n      env:\n        -\
+  \ name: MODE\n          valueFrom:\n            configMapKeyRef:\n              name: settings\n   \
+  \           key: mode\n      volumeMounts:\n        - name: config\n          mountPath: /config\n \
+  \       - name: config\n          mountPath: /single\n          subPath: mode\n  volumes:\n    - name:\
+  \ config\n      configMap:\n        name: settings\n```\n\n**`settings-green.yaml` en `/tmp/vg-k8s-work`:\
+  \ el nuevo archivo ConfigMap completo:**\n\n```yaml\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name:\
+  \ settings\n  namespace: vg-k8s\ndata:\n  mode: green\n```\n\nConfigMap almacena claves no secretas;\
+  \ Secret almacena data con reglas de acceso independientes.\nBase64 en un Secret está codificando, no\
+  \ encriptando. La protección y el sources externos se explican en\n[[Security-Visual-Guide#15. Сеть\
+  \ и секреты: сократить боковое движение и чтение данных|network and secrets: reducing lateral movement\
+  \ and data access]].\nAquí el mecanismo importante es la entrega en un contenedor en funcionamiento.\n\
+  *(según documentación)* — [ConfigMap](https://kubernetes.io/docs/concepts/configuration/configmap/),\n\
+  [Secret](https://kubernetes.io/docs/concepts/configuration/secret/).\n\n> [!info]- Explicación más profunda\n\
+  > 1. Envariables de entorno se leen en la creación del contenedor y no se actualizan en el proceso.\n\
+  > 2. Con un volume normal, kubelet actualiza la proyección después de un retraso; la aplicación debe\
+  \ volver a leer el archivo.\nEl archivo > 3. A single montado con `subPath` no recibe actualizaciones\
+  \ de proyección posteriores.\n> 4. Cambiar un ConfigMap no modifica el Deployment template ni inicia\
+  \ una nueva implementación.\n>\n> Delay depende de la sincronización kubelet y la detección de cambios.\n\
+  > No prometa “30 segundos” universales para cada grupo.\n> *(según documentación)* — [ConfigMap](https://kubernetes.io/docs/concepts/configuration/configmap/).\n\
+  >\n> `valueFrom` selecciona un valor de otro objeto; `key` identifica una entrada en su `data`.\n> `mountPath`\
+  \ es la ruta del contenedor; `subPath` fija un archivo volume en otra ubicación aquí.\n>\n> **Comando\
+  \ desde cualquier directorio: actualice el ConfigMap y compare las tres rutas de entrega:**\n>\n> ```bash\n\
+  > kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\n>   apply -f /tmp/vg-k8s-work/settings-green.yaml\n\
+  > kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\n>   -n vg-k8s exec config-reader\
+  \ -- sh -c \\\n>   'printf \"env=%s\\n\" \"$MODE\"; printf \"directory=\"; cat /config/mode; printf\
+  \ \"\\nsubPath=\"; cat /single; echo'\n> ```\n>\n> **Resultado de una ejecución nueva: un ejemplo para\
+  \ leer:**\n>\n> ```text\n> env=blue\n> directory=green\n> subPath=blue\n> ```\n>\n> A Se comprobaron\
+  \ las tres rutas; la primera lectura poco después del cambio todavía mostraba `blue` en el directorio\
+  \ también.\n> Al leer nuevamente después de esperar se mostró la proyección ordinaria actualizada. *(verificado)*.\n\
+  \n### Projected volume: múltiples sources en un directorio\n\n**De un vistazo**\n- A projected volume\
+  \ combina varios sources\n- Actualizar un archivo y volver a leerlo en la aplicación son acciones independientes\n\
+  - An se establece una variable de entorno cuando se inicia el contenedor.\n\n**Escenario breve**\n\n\
+  Un Secret cambiado. La aplicación recibió su contraseña a través de env al inicio y no se ha reiniciado.\n\
+  \n**Predecir:** ¿Su entorno contendrá automáticamente la nueva cadena?\n\n> [!question]- Respuesta\n\
+  > Análisis de las condiciones dadas: No. El contenedor debe iniciarse de nuevo o utilizar otra forma\
+  \ compatible para actualizar data.\n\n**`projected.yaml` en `/tmp/vg-k8s-work`: un Pod completo; Se\
+  \ requiere ConfigMap `settings`:**\n\n```yaml\napiVersion: v1\nkind: Pod\nmetadata:\n  name: projected\n\
+  \  namespace: vg-k8s\nspec:\n  automountServiceAccountToken: false\n  containers:\n    - name: app\n\
+  \      image: busybox:1.37\n      command: [\"sleep\", \"3600\"]\n      volumeMounts:\n        - name:\
+  \ input\n          mountPath: /input\n          readOnly: true\n  volumes:\n    - name: input\n    \
+  \  projected:\n        sources:\n          - configMap:\n              name: settings\n          - downwardAPI:\n\
+  \              items:\n                - path: pod-name\n                  fieldRef:\n             \
+  \       fieldPath: metadata.name\n          - serviceAccountToken:\n              path: token\n    \
+  \          audience: example-consumer\n              expirationSeconds: 3600\n```\n\nUn projected volume\
+  \ combina ConfigMap, Secret, Downward API y un ServiceAccount token en una proyección.\nDownward API\
+  \ pasa información sobre el propio Pod del contenedor, como su nombre.\nUn token tiene un audience y\
+  \ caducidad; kubelet lo actualiza y la aplicación debe leer el archivo actual.\n*(según documentación)*\
+  \ — [projected volumes](https://kubernetes.io/docs/concepts/storage/projected-volumes/).\n\n> [!info]-\
+  \ Explicación más profunda\n> `automountServiceAccountToken: false` desactiva la proyección **automática**\
+  \ volume, no una proyección token explícitamente declarada.\n> Audience `example-consumer` no promete\
+  \ que el Kubernetes API aceptará este token.\n> A falta ConfigMap/Secret provoca un error de preparación:\
+  \ una variable de entorno puede producir\n> `CreateContainerConfigError`, mientras que un volume puede\
+  \ producir `FailedMount`. Una nueva falla y rotación de token son *(no verificadas)*.\n>\n> Reinicio\
+  \ después de cambios de ConfigMap a través de un template checksum se explica sin duplicar el gráfico\
+  \ en\n> [[Helm-Visual-Guide#20. Как это спрашивают|20. Interview questions]]. Principio: una anotación\
+  \ **Pod template** cambia, entonces se aplica el §6.\n>\n> **Predecir:** se actualiza un Secret, pero\
+  \ la aplicación lo lee solo desde una variable de entorno.\n>\n> > [!question]- Respuesta\nEl proceso\
+  \ en ejecución > > A no recibe automáticamente la nueva variable de entorno.\n> > Necesita un nuevo\
+  \ contenedor u otro mecanismo de entrega y recarga.\n> > *(según la documentación)* — la fuente Secret\
+  \ anterior; el nuevo experimento utilizó ConfigMap.\n>\n> **Respuesta corta en inglés:**\n>\n> > E Los\
+  \ valores del entorno se establecen cuando se inicia el contenedor. Los archivos normales projected\
+  \ se pueden actualizar más tarde.\nEl soporte > > A subPath no recibe esas actualizaciones. La actualización\
+  \ de un ConfigMap por sí sola no reinicia un Deployment.\n\n### Gateway API: dónde estudiar HTTPRoute\n\
+  \nCoincidencia de encabezados, pesos relativos de backendRefs y verificación de `status.parents`\nse\
+  \ explican con un ejemplo independiente 3:1 en [[Networking-Visual-Guide#HTTPRoute: выбор правила, относительные\
+  \ веса и привязка|Networking Guide: HTTPRoute]].\nPrimero verifique Accepted/ResolvedRefs para conocer\
+  \ el padre y la generación previstos, luego la entrega real de HTTP."
+source_hash: a3c5d69576d7f0ba30399e12b71aa425cb02e41fd2edadacd1f125e31471d408

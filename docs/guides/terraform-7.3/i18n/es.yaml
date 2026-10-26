@@ -1,0 +1,49 @@
+heading: 7.3. Un módulo para varios componentes
+text: "### 7.3. Un module para varios components\n\n**De un vistazo**\n- for_each puede repetir una llamada\
+  \ module completa.\n- La clave pasa a formar parte de la dirección de llamada.\nLos argumentos - A se\
+  \ calculan por separado para cada clave.\n\n**Mini-ejemplo:** guarde esto como `main.tf` en un nuevo\
+  \ directorio temporal. Después de preparar los archivos, ejecute `tofu init`, `tofu validate` y luego\
+  \ `tofu apply -auto-approve -input=false -no-color`.\n\n```hcl\nmodule \"worker\" {\n  source = \"./modules/worker\"\
+  \n  for_each = toset([\"api\", \"jobs\"])\n  name = each.key\n}\noutput \"labels\" {\n  value = { for\
+  \ k, v in module.worker : k => v.label }\n}\n```\n\nArchivo adicional `modules/worker/main.tf`:\n\n\
+  ```hcl\nvariable \"name\" { type = string }\noutput \"label\" { value = \"${var.name}-dev\" }\n```\n\
+  \n**Predecir:** ¿Qué mostrará la ejecución y cuál será su código de salida?\n\n> [!question]- Respuesta\n\
+  > Extracto real del último comando:\n>\n> ```text\n> Apply complete! Resources: 0 added, 0 changed,\
+  \ 0 destroyed.\n> Outputs:\n> + labels = {\n>       + api  = \"api-dev\"\n>       + jobs = \"jobs-dev\"\
+  \n>     }\n>\n> You can apply this plan to save these new output values to the OpenTofu\n> state, without\
+  \ changing any real infrastructure.\n>\n> Apply complete! Resources: 0 added, 0 changed, 0 destroyed.\n\
+  >\n> Outputs:\n>\n> labels = {\n>   \"api\" = \"api-dev\"\n>   \"jobs\" = \"jobs-dev\"\n> }\n> ```\n\
+  >\n> Ecódigo de salida: 0.\n\nDos llamadas al mismo directorio son created. Cada uno recibe su propio\
+  \ nombre y la salida conserva la asignación de clave a resultado.\n\n> [!info]- Explicación más profunda\n\
+  > Conserve los archivos secundarios de §7.1. La siguiente raíz **reemplaza**, en lugar de extender,\
+  \ la raíz anterior; Su antiguo `terraform.tfvars` no es necesario aquí.\n>\n> **Reemplace la raíz `main.tf`\
+  \ por completo; eliminar `terraform.tfvars`; mantener `modules/worker/` sin cambios:**\n>\n> ```hcl\n\
+  > variable \"components\" {\n>   type    = map(object({ name = string, port = optional(number, 8080),\
+  \ labels = optional(map(string), {}) }))\n>   default = { a = { name = \"api-dev\" }, b = { name = \"\
+  api-prod\", port = 9090, labels = { env = \"prod\" } } }\n> }\n> module \"worker\" {\n>   source   =\
+  \ \"./modules/worker\"\n>   for_each = var.components\n>   name     = each.value.name\n>   settings\
+  \ = { port = each.value.port, labels = each.value.labels }\n> }\n> output \"names\" { value = { for\
+  \ k, m in module.worker : k => m.name } }\n> ```\n>\n> `optional(number, 8080)` proporciona un puerto\
+  \ si el atributo está ausente o `null`; `optional(map(string), {})` suministra labels vacío. Las claves\
+  \ `a` y `b` determinan direcciones de instancia, mientras que sus valores describen diferentes components\
+  \ o entornos. El estado separado proporciona el límite de acceso entre entornos, en lugar de una clave\
+  \ en esta colección (§8).\n>\n> ```text\n> # module.worker[\"a\"].terraform_data.this will be created\n\
+  >\n>           + name   = \"api-dev\"\n>           + port   = 8080\n>   # module.worker[\"b\"].terraform_data.this\
+  \ will be created\n>           + name   = \"api-prod\"\n>           + port   = 9090\n> Plan: 2 to add,\
+  \ 0 to change, 0 to destroy.\n> ```\n>\n> Después de `apply`, `tofu state list` devolvió:\n>\n> ```text\n\
+  > module.worker[\"a\"].terraform_data.this\n> module.worker[\"b\"].terraform_data.this\n> ```\n>\n>\
+  \ A se utilizó una raíz diferente con `count` para copias numeradas idénticas:\n>\n> **Root `main.tf`\
+  \ en otro directorio nuevo con una copia de `modules/worker/`; un plan en el directorio §7.3 también\
+  \ eliminaría `[\"a\"]` y `[\"b\"]`:**\n>\n> ```hcl\n> module \"worker\" {\n>   source = \"./modules/worker\"\
+  \n>   count  = 2\n>   name   = \"worker-${count.index}\"\n> }\n> output \"names\" { value = module.worker[*].name\
+  \ }\n> ```\n>\n> ```text\n> # module.worker[0].terraform_data.this will be created\n>\n>   # module.worker[1].terraform_data.this\
+  \ will be created\n> Plan: 2 to add, 0 to change, 0 to destroy.\n> ```\n>\n> ```text\n> module.worker[0].terraform_data.this\n\
+  > module.worker[1].terraform_data.this\n> ```\n>\nLa validación de entrada >  se encuentra dentro de\
+  \ module: la raíz §7.1 con `name = \"ab\"` en su archivo de variables se detuvo de la siguiente manera:\n\
+  >\n> ```text\n> Error: Invalid value for variable\n>     │ var.name is \"ab\"\n> name must contain at\
+  \ least 3 characters.\n> ```\n>\n> La salida `token` está marcada como `sensitive` dentro de module;\
+  \ la salida raíz también requiere `sensitive = true`. Su valor sigue siendo una cadena normal en estado:\
+  \ el enmascaramiento de salida no es cifrado. La eliminación del marcador de raíz se reproduce en el\
+  \ §10. *(verificado: OpenTofu 1.12.6; ambos conjuntos de instancias aplicados, validación de entrada\
+  \ y límite secreto verificados)*."
+source_hash: 0228d7ffa09836c70c2ea8edbb3b02698d2e494b5a1998aeeef7912f0036e04c

@@ -1,0 +1,64 @@
+heading: 2. Nombres, grupos y selección de host (inventory)
+text: "## 2. Nombres, grupos y selección de host (inventory)\n\n**De un vistazo**\n- Inventory enumera\
+  \ los nombres de host y grupo.\nEl nombre del host - A puede diferir de su dirección de conexión.\n\
+  - La inspección de inventory muestra la selección de host pero no prueba el acceso.\n\n**Mini-ejemplo:**\
+  \ guardar como `mini.yml`; ejecute `ansible-inventory -i mini.yml --graph`. Esto lee inventory sin conectarse\
+  \ a hosts.\n\n```yaml\nall:\n  children:\n    lab:\n      hosts:\n        localhost:\n          ansible_connection:\
+  \ local\n```\n\n**Predecir:** ¿Qué grupo contendrá localhost? ¿El comando ejecutará tareas en el host?\n\
+  \n> [!question]- Respuesta\n> Rejecución 1; código de salida 0. Salida estándar:\n>\n> ```text\n> @all:\n\
+  >   |--@ungrouped:\n>   |--@lab:\n>   |  |--localhost\n> ```\n\n`--graph` muestra el árbol del grupo.\
+  \ No inicia conexiones ni módulos; El inventory anterior para experimentos completos se conserva a continuación.\n\
+  \nUn inventory seguro para todos los ejemplos de local, archivo `inventory.ini`:\n\n```ini\n[lab]\n\
+  localhost ansible_connection=local ansible_python_interpreter=/usr/bin/python\n```\n\nUn **patrón**\
+  \ en `hosts:` selecciona un conjunto. `web:db` es unión, intersección `web:&production`,\ny exclusión\
+  \ `web:!maintenance`. Las comillas protegen a `!`/`&` de la interpretación del shell.\n`--limit` reduce\
+  \ aún más el conjunto seleccionado; no puede agregar hosts ausente del play:\n\n```bash\nansible-inventory\
+  \ -i inventory.ini --graph\nansible-playbook -i inventory.ini ping.yml --limit localhost --list-hosts\n\
+  ```\n\n*(verificado)* Para local inventory, `--graph` devuelto:\n\n```text\n@all:\n  |--@ungrouped:\n\
+  \  |--@lab:\n  |  |--localhost\n```\n\nInventory responde dos preguntas diferentes: **qué nodos existen**\
+  \ y **cómo conectarse a ellos**.\n`web1` es un inventory key. `ansible_host` es la dirección de conexión;\
+  \ no necesitan coincidir.\nUn grupo define un conjunto de hosts, no un orden de ejecución.\n\nEl equivalente\
+  \ INI de un grupo anidado es `[production:children]` con `web` debajo.\nLas variables plugin cargan\
+  \ los directorios `group_vars/` y `host_vars/` al lado de inventory/playbook:.\n\n> [!info]- Explicación\
+  \ más profunda\n> A Una alternativa YAML inventory; este **no es un playbook** y no contiene una lista\
+  \ de reproducciones:\n>\n> **`inventory.yml` reemplaza a `inventory.ini` en lugar de complementarlo:**\n\
+  >\n> ```yaml\n> all:\n>   children:\n>     lab:\n>       hosts:\n>         localhost:\n>           ansible_connection:\
+  \ local\n>           ansible_python_interpreter: /usr/bin/python\n>     web:\n>       hosts:\n>    \
+  \     web1:\n>           ansible_host: 192.0.2.11\n>         web2:\n>           ansible_host: 192.0.2.12\n\
+  >     production:\n>       children:\n>         web: {}\n> ```\n>\nLas direcciones > A `192.0.2.*` son\
+  \ ilustrativas, no un lab ejecutable. `all` contiene todos los hosts;\n> `ungrouped` contiene hosts\
+  \ sin grupos definidos por el usuario. `children` incluye grupos secundarios.\n> `{}` es un mapa vacío:\
+  \ el grupo se definió anteriormente y se hace referencia aquí.\n>\n> ```mermaid\n> flowchart TB\n> \
+  \    A[\"All hosts\"] --> P[\"Production environment\"]\n>     A --> L[\"Lab\"]\n>     P --> W[\"Web\
+  \ servers\"]\n>     W --> H1[\"web1: inventory name\"]\n>     W --> H2[\"web2: inventory name\"]\n>\
+  \     H1 --> IP[\"SSH connection address\"]\n> ```\n>\n> ```text\n> inventory.ini\n> site.yml\n> group_vars/all.yml\
+  \       # shared values\n> group_vars/web.yml       # web group values\n> host_vars/web1.yml       #\
+  \ values for a specific inventory name\n> ```\n>\n> , por ejemplo, `group_vars/web.yml` contiene `app_port:\
+  \ 8080` y `host_vars/web1.yml` contiene `app_port: 8081`.\n> Estos son mapas YAML, sin rodear `vars:`.\
+  \ Las variables del grupo de padres son más débiles que las del grupo de hijos; las variables del lenguaje\
+  \ principal anulan las variables de grupo.\n> O Los grupos de pares superpuestos utilizan el orden de\
+  \ nombres de forma predeterminada; conjunto `ansible_group_priority`\n>  en inventory en lugar de `group_vars`\
+  \ para cambiar el orden de carga. Tipos en líneas de host INI y\n> INI `:vars` puede diferir; prefiera\
+  \ YAML para booleanos, listas y mapas.\n> *(según documentación)* [Estructura Inventory](https://docs.ansible.com/ansible/latest/inventory_guide/intro_inventory.html).\n\
+  >\n>  Seleccionar `--limit web1` en el local inventory no coincide con nada; este es un problema de\
+  \ selección inventory,\n> no SSH. La advertencia real aparece en el §16.\n> *(según documentación)*\
+  \ [Patrones de host](https://docs.ansible.com/ansible/latest/inventory_guide/intro_patterns.html).\n\
+  >\n> A **dynamic inventory plugin** se ejecuta en el controlador: lee las credenciales, llama a un API,\n\
+  >  y crea nombres, grupos y variables inventory. No instala SSH ni configura nodos.\n> Las etiquetas\
+  \ de recursos de Cloud pueden convertirse en grupos; elija la dirección explícitamente para evitar un\
+  \ IP público inaccesible.\n>\n> | Fuente | Complemento y página oficial |\n> |---|---|\n> | AWS EC2\
+  \ | [`amazon.aws.aws_ec2`](https://docs.ansible.com/ansible/latest/collections/amazon/aws/aws_ec2_inventory.html)\
+  \ |\n> | Proxmox | [`community.proxmox.proxmox`](https://docs.ansible.com/ansible/latest/collections/community/proxmox/proxmox_inventory.html)\
+  \ |\n> | Kubernetes | [`kubernetes.core.k8s`](https://docs.ansible.com/ansible/latest/collections/kubernetes/core/k8s_inventory.html)\
+  \ |\n>\n> An **Configuración inventory** ejemplo, `lab.aws_ec2.yml`: su nombre de archivo debe cumplir\
+  \ con los requisitos de plugin:\n>\n> ```yaml\n> plugin: amazon.aws.aws_ec2\n> regions:\n>   - eu-central-1\n\
+  > filters:\n>   tag:Environment: lab\n> keyed_groups:\n>   - key: tags.Role\n>     prefix: role\n> ```\n\
+  >\n> La colección, la biblioteca Python API y los permisos API son necesarios en el controlador. Kubernetes\
+  \ inventory descubre\n> objetos y conexiones; no convierte cada Pod en una máquina virtual Linux. Un\
+  \ Proxmox IP depende de los datos de API,\n> la configuración del agente invitado y `compose`; una máquina\
+  \ virtual existente no demuestra que SSH esté preparado.\n> Alos tres ejemplos dynamic inventory plugin\
+  \ son *(según la documentación)*;\nLa sincronización >  con API activas aquí es *(no verificada)*.\n\
+  >\n> Pregunta: **What es dynamic inventory, y what ¿`--limit`?**\n>\n> > A dynamic inventory plugin\
+  \ obtiene hosts y grupos de un API en el nodo de control. no lo hace\n> > configure esos hosts. La opción\
+  \ limit selecciona un conjunto más pequeño del hosts ya seleccionado\n> > por el play."
+source_hash: e6be08a790cfdd7058976dbab2b1752e740a6cc1f6ae6f1f4d53b1927384f53b

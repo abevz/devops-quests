@@ -1,0 +1,150 @@
+heading: '4. Idempotencia: una acción y su resultado reportado'
+text: "## 4. Idempotencia: una acción y su reportado result\n\n**De un vistazo**\n- La repetición de una\
+  \ tarea idempotente deja el mismo estado.\n- El módulo copy compara el texto deseado con el archivo\
+  \ existente.\nEl estado de - A changed informa un change declarado, no el estado de la aplicación.\n\
+  \n**Mini-ejemplo:** guarde `mini.yml` en un directorio temporal separado; ejecute `ansible-playbook\
+  \ -i localhost, -c local mini.yml`. El ejemplo se ejecuta en localhost sin convertirse.\n\n```yaml\n\
+  - hosts: localhost\n  connection: local\n  become: false\n  gather_facts: false\n  tasks:\n    - ansible.builtin.copy:\n\
+  \        dest: \"{{ playbook_dir }}/result.conf\"\n        content: \"color=green\\n\"\n        mode:\
+  \ '0600'\n      register: result\n    - ansible.builtin.debug:\n        msg: \"{{ result.changed }}\"\
+  \n```\n\n**Predecir:** ¿En qué se diferencian changed y el mensaje entre la primera y la segunda ejecución\
+  \ en un directorio nuevo?\n\n> [!question]- Respuesta\n> Rejecución 1; código de salida 0. Extractos\
+  \ de salida estándar:\n>\n> ```text\n>     \"msg\": true\n> localhost                  : ok=2    changed=1\
+  \    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n> ```\n>\n> Rejecución 2; código\
+  \ de salida 0. Extractos de salida estándar:\n>\n> ```text\n>     \"msg\": false\n> localhost      \
+  \            : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n\
+  > ```\n\nPrimero ejecute creates el archivo; el segundo ve texto y permisos coincidentes. El archivo\
+  \ pertenece al directorio temporal de este ejemplo.\n\nCompleto `idempotent.yml`:\n\n```yaml\n- name:\
+  \ Repeat safely\n  hosts: lab\n  connection: local\n  gather_facts: false\n  become: false\n  tasks:\n\
+  \    - name: Create directory\n      ansible.builtin.file:\n        path: /tmp/ansible-visual-guide/app\n\
+  \        state: directory\n        mode: \"0755\"\n    - name: Write file\n      ansible.builtin.copy:\n\
+  \        content: \"port=8080\\n\"\n        dest: /tmp/ansible-visual-guide/app/config\n        mode:\
+  \ \"0644\"\n      notify: Report change\n    - name: Create marker once\n      ansible.builtin.command:\n\
+  \        argv:\n          - /usr/bin/touch\n          - /tmp/ansible-visual-guide/app/marker\n     \
+  \   creates: /tmp/ansible-visual-guide/app/marker\n  handlers:\n    - name: Report change\n      ansible.builtin.debug:\n\
+  \        msg: handler ran\n```\n\n`argv` es una lista de argumentos sin análisis shell. En `command`,\
+  \ `|` y `>` normales no se crea una tubería.\no redirección. `shell` pasa una cadena a `/bin/sh`, que\
+  \ los comprende pero introduce el riesgo de inyección de comandos.\n`creates` busca un archivo **antes**\
+  \ de la ejecución: si el marker existe, el command no se ejecuta.\nPor el contrario, `removes` ejecuta\
+  \ command solo cuando existe la ruta especificada.\n*(según documentación)* [`command`](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/command_module.html).\n\
+  \n*(verificado)* Equivalente a playbook en un directorio limpio, luego repetido:\n\n```text\n# First\
+  \ run\nlocalhost : ok=4 changed=3 unreachable=0 failed=0 skipped=0 rescued=0 ignored=0\n# Second run\n\
+  localhost : ok=3 changed=0 unreachable=0 failed=0 skipped=0 rescued=0 ignored=0\n```\n\nPor qué hay\
+  \ menos `ok` tasks en la segunda ejecución: el handler no fue notificado. `creates` protege a través\
+  \ de un archivo marker pero no verifica\nuna migración exitosa result. La creación del marker antes\
+  \ de completarse correctamente hace que una ejecución posterior omita incorrectamente el command.\n\n\
+  Repetir una operación idempotente con la misma entrada deja el mismo estado.\n`file: state=directory`\
+  \ comprueba el directorio y los permisos; `copy` compara content y los atributos requeridos.\nSi todo\
+  \ coincide, no hay nada que change. La verificación se ejecuta en el nodo administrado; el controlador\
+  \ recibe `changed: false`.\n\n| Estado de la tarea | Significado | Trampa |\n|---|---|---|\n| `ok` |\
+  \ Éxito sin un informe change | `changed_when: false` puede ocultar un change real. |\n| `changed` |\
+  \ Éxito con un change informado | Este es un informe module/condition, no una auditoría independiente\
+  \ del sistema operativo. |\n| `failed` | La tarea no cumplió con su criterio de éxito | Es posible que\
+  \ algunas acciones ya hayan ocurrido. |\n| `skipped` | Omitido debido a una condición o modo | Esto\
+  \ no confirma el estado del servicio. |\n| `unreachable` | No se pudo establecer Connection/execution\
+  \ | Diferente a un command que falla con `rc != 0`. |\n\nEl recuento de `ok` del resumen incluye changed\
+  \ tasks exitosos: estos counters no son mutuamente excluyentes.\nEl fracaso de una tarea no revierte\
+  \ los cambios anteriores.\n\n> [!info]- Explicación más profunda\n> `command`/`shell` generalmente informan\
+  \ `changed` cuando se ejecutan: no comprenden la semántica de un command arbitrario.\n> `mkdir -p` es\
+  \ seguro de repetir, pero aún puede informar `changed`. `echo ... >> file` en realidad\n>  duplica un\
+  \ line. Reemplazarlo por `lineinfile` cambia el funcionamiento; `changed_when: false` simplemente oculta\
+  \ el informe.\n>\nEjemplo completo de informes correctos de > A para un command de **solo lectura**:\n\
+  >\n> **`report.yml` (cualquier nombre de archivo) al lado de `inventory.ini` de §2:**\n>\n> ```yaml\n\
+  > - name: Read and interpret a result\n>   hosts: lab\n>   connection: local\n>   gather_facts: false\n\
+  >   become: false\n>   tasks:\n>     - name: Read a value\n>       ansible.builtin.command:\n>     \
+  \    argv: [/usr/bin/printf, hello]\n>       register: read_result\n>       changed_when: false\n> \
+  \      failed_when: read_result.rc != 0 or read_result.stdout != 'hello'\n> ```\n>\n> `changed_when`\
+  \ anula `changed`, afectando así a `notify`. `failed_when` anula `failed`.\n> **No previenen** la ejecución\
+  \ de command ni reparan sus efectos secundarios.\nLa lista de expresiones > A `failed_when` se combina\
+  \ con AND lógico; use una sola expresión con `or` para OR lógico.\n> A Una ejecución real de un comando\
+  \ inexistente muestra que una acción puede fallar antes de tener éxito (§16), por lo que\n>  “`command`\
+  \ es siempre `changed`” es demasiado absoluto.\n>\n> **Modo de verificación** (`--check`) solicita a\
+  \ los módulos que predigan los cambios. **Modo diferencial** (`--diff`) solicita una diferencia,\n>\
+  \ such como texto de archivo. Son modos independientes. `command` sin `creates`/`removes` suele ser\
+  \ `skipped`\n>  en modo de verificación; una repetición guard puede predecir `changed` sin ejecutar\
+  \ command. Un `register` result después de `skipped` no tiene\n> garantía de `stdout`. Un command de\
+  \ solo lectura puede usar la palabra clave de tarea `check_mode: false` con\n> `changed_when: false`;\
+  \ esto se ejecuta de verdad incluso bajo `--check` global.\n> *(según documentación)* [Verificar y modos\
+  \ diff](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_checkmode.html).\n>\n> **Reproducir:**\
+  \ use el mismo `idempotent.yml` anterior después de una aplicación. En la tarea `Write file` (módulo\
+  \ `copy`), reemplace `content: \"port=8080\\n\"` con `content: \"port=9090\\n\"`, luego ejecute `ansible-playbook\
+  \ -i inventory.ini idempotent.yml --check --diff`.\n>\n> *(verificado)* La variante `copy` con `port=9090`\
+  \ ran con `--check --diff` sobre `port=8080`:\n>\n> ```diff\n> -port=8080\n> +port=9090\n> ```\n>\n\
+  > Resumen: `ok=4 changed=1 failed=0`; La comparación de bytes before/after confirmó que el archivo permaneció\
+  \ en `port=8080`.\n> El `debug` handler notificado también ran en modo de verificación; Esto no demuestra\
+  \ un verdadero reinicio.\n>\nEl modo > Check no crea un directorio principal faltante para una tarea\
+  \ posterior, inicia un servicio o prueba\n> su salud. El soporte depende del módulo; Las diferencias\
+  \ de datos secretos pueden llegar a los registros. Una segunda carrera ordinaria con\n> `changed=0`\
+  \ es evidencia útil, no prueba de la corrección de la aplicación.\n\n### Predicción 1: command sin repetición\
+  \ guard\n\n**De un vistazo**\n- A command sin verificación de estado ejecuta again.\n- La ejecución\
+  \ exitosa y un change son propiedades diferentes.\n- Compare los resúmenes de dos ejecuciones, no solo\
+  \ la ausencia de errores.\n\n**`predict-1.yml` (cualquier nombre de archivo) al lado de `inventory.ini`\
+  \ de §2:**\n\n```yaml\n- hosts: lab\n  connection: local\n  gather_facts: false\n  become: false\n \
+  \ tasks:\n  - name: Probe\n    ansible.builtin.command:\n      argv:\n      - /usr/bin/printf\n    \
+  \  - hello\n```\n\n**Predecir:** ejecute este playbook dos veces sin `creates`. ¿Cuáles son el estado\
+  \ de `Probe` y el resumen de cada ejecución?\n\n> [!question]- Respuesta\n> ```text\n> # Первый запуск;\
+  \ код завершения 0\n> changed: [localhost]\n> localhost                  : ok=1    changed=1    unreachable=0\
+  \    failed=0    skipped=0    rescued=0    ignored=0\n> # Второй запуск; код завершения 0\n> changed:\
+  \ [localhost]\n> localhost                  : ok=1    changed=1    unreachable=0    failed=0    skipped=0\
+  \    rescued=0    ignored=0\n> ```\n> `command` se ejecuta ambas veces e informa un change, aunque simplemente\
+  \ imprime texto.\n\n### Predicción 2: solo el informe changed\n\n**De un vistazo**\n- changed_when cambia\
+  \ el informe de la tarea.\n-  No cancela la ejecución del propio command.\nEl estado - No changed no\
+  \ prueba la ausencia de efectos secundarios.\n\n**`predict-2.yml` (cualquier nombre de archivo) al lado\
+  \ de `inventory.ini` de §2:**\n\n```yaml\n- hosts: lab\n  connection: local\n  gather_facts: false\n\
+  \  become: false\n  tasks:\n  - name: Probe\n    ansible.builtin.command:\n      argv:\n      - /usr/bin/printf\n\
+  \      - hello\n    changed_when: false\n```\n\n**Predecir:** agregue `changed_when: false` al ejemplo\
+  \ anterior. ¿Cuáles son los estados y resúmenes de `Probe` para la primera y segunda ejecución?\n\n\
+  > [!question]- Respuesta\n> ```text\n> # Первый запуск; код завершения 0\n> ok: [localhost]\n> localhost\
+  \                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n\
+  > # Второй запуск; код завершения 0\n> ok: [localhost]\n> localhost                  : ok=1    changed=0\
+  \    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n> ```\n>  El command todavía\
+  \ se ejecuta dos veces. Se anula el informe change, no la acción en sí.\n\n### Predicción 3: command\
+  \ en modo de verificación\n\n**De un vistazo**\nEl modo - Check solicita una predicción de cambios.\n\
+  - No todos los módulos o command admiten esto.\nLa tarea - A skipped no demuestra el estado deseado.\n\
+  \n**`predict-3.yml` (cualquier nombre de archivo) al lado de `inventory.ini` de §2:**\n\n```yaml\n-\
+  \ hosts: lab\n  connection: local\n  gather_facts: false\n  become: false\n  tasks:\n  - name: Probe\n\
+  \    ansible.builtin.command:\n      argv:\n      - /usr/bin/printf\n      - hello\n```\n\n**Predecir:**\
+  \ ambas ejecuciones utilizan `--check`. ¿Se ejecutará `Probe` y qué aparece en el resumen?\n\n> [!question]-\
+  \ Respuesta\n> ```text\n> # Первый запуск; код завершения 0\n> skipping: [localhost]\n> localhost  \
+  \                : ok=0    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0\n\
+  > # Второй запуск; код завершения 0\n> skipping: [localhost]\n> localhost                  : ok=0  \
+  \  changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0\n> ```\n> Sin `creates`/`removes`,\
+  \ el módulo no puede predecir los cambios de un command arbitrario y lo omite.\n\nPregunta: **¿Cómo\
+  \ se hace idempotente un command?**\n\n> I primero busque un módulo que administre el estado requerido.\
+  \ Si debo ejecutar un `command`, puedo usar un\n> guard such como `creates`, o verifique el estado antes\
+  \ de ejecutarlo. `changed_when` controls reporting;\n> it no detiene el `command` del changing del system\
+  \ again.\n\n### lineinfile: asegúrese de que haya un line en lugar de agregarlo en cada ejecución\n\n\
+  **De un vistazo**\n- lineinfile garantiza que el line deseado esté presente en un archivo.\n- El patrón\
+  \ regexp selecciona el line para reemplazar.\n- Repetir la ejecución no debería agregar el mismo line\
+  \ again.\n\n**Mini-ejemplo:** guarde `mini.yml` en un directorio temporal separado; ejecute `ansible-playbook\
+  \ -i localhost, -c local mini.yml`. El ejemplo se ejecuta en localhost sin convertirse.\n\n```yaml\n\
+  - hosts: localhost\n  connection: local\n  become: false\n  gather_facts: false\n  tasks:\n    - ansible.builtin.lineinfile:\n\
+  \        path: \"{{ playbook_dir }}/settings.conf\"\n        regexp: '^color='\n        line: color=green\n\
+  \        create: true\n        mode: '0600'\n      register: result\n    - ansible.builtin.debug:\n\
+  \        msg: \"{{ result.changed }}\"\n```\n\n**Predecir:** ¿La primera ejecución creará el line? ¿El\
+  \ segundo ejecutará el archivo change?\n\n> [!question]- Respuesta\n> Rejecución 1; código de salida\
+  \ 0. Extractos de salida estándar:\n>\n> ```text\n>     \"msg\": true\n> localhost                 \
+  \ : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n> ```\n>\n\
+  > Rejecución 2; código de salida 0. Extractos de salida estándar:\n>\n> ```text\n>     \"msg\": false\n\
+  > localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0\
+  \    ignored=0\n> ```\n\n`create: true` permite la creación de un archivo en un directorio vacío. El\
+  \ experiment completo anterior a continuación prepara el archivo con anticipación y utiliza un valor\
+  \ `create` diferente.\n\nEjecute experiment en un nuevo directorio temporal en localhost, sin volverse.\n\
+  El `settings.conf` inicial contiene `color=blue` y `size=2`, uno por line.\nPlaybook `line.yml` usa\
+  \ una ruta solo dentro de ese directorio:\n\n```yaml\n- name: Local line experiment\n  hosts: localhost\n\
+  \  connection: local\n  gather_facts: false\n  tasks:\n    - name: Ensure color\n      ansible.builtin.lineinfile:\n\
+  \        path: \"{{ playbook_dir }}/settings.conf\"\n        regexp: '^color='\n        line: 'color=green'\n\
+  \        create: false\n```\n\nEjecute `ansible-playbook -i localhost, line.yml` dos veces.\nLa primera\
+  \ ejecución reemplaza a color e informa changed=1; el segundo informa changed=0.\nEl size line permanece\
+  \ en su lugar. *(verificado: dos ejecuciones de local)*.\n`path` selecciona el archivo, `regexp` encuentra\
+  \ el line para reemplazar y `line` proporciona el texto deseado.\nSi no coincide nada se añade el line,\
+  \ al final por defecto.\n`create: false` no crea un archivo faltante; eso es un fracaso de preparación\
+  \ aparte.\nSi varias líneas coinciden, se reemplaza la última en lugar de eliminar todos los duplicados.\n\
+  La expresión regular debe coincidir tanto con la forma anterior como con la final.\nDe lo contrario,\
+  \ una segunda ejecución puede agregar otro line en lugar de reconocer su propio result.\n\n> [!info]-\
+  \ Explicación más profunda\n> | Estado inicial | lineinfile result |\n> |---|---|\n> | Un color=blue\
+  \ | Reemplazar con color=green |\n> | No. color | Añadir color=green |\n> | Ya color=green | No. change\
+  \ |\n> | Dos líneas color | Reemplace el último partido; quedan duplicados |\n>\n> Migrar duplicados\
+  \ acumulados es una tarea separada con reglas explícitas para preservar otras líneas.\n> Idempotencia\
+  \ en entradas limpias no demuestra la reparación de todas las entradas corruptas.\n> [lineinfile documentación](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/lineinfile_module.html)."
+source_hash: ec5da4b6414124b3fccf6157e76d18594d44af5282eecdac4e76f7141c361f70
