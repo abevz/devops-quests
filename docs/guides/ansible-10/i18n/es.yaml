@@ -1,0 +1,124 @@
+heading: '10. Handlers: una cola de reacciones a los cambios'
+text: "## 10. Controladores: un queue de reacciones a los cambios\n\n**De un vistazo**\n- A handler reacciona\
+  \ ante un cambio.\n- notify pone en cola una notificación solo después de changed.\n- Varias notificaciones\
+  \ antes de un queue flush pueden producir una ejecución de handler.\n\n**Mini-ejemplo:** guarde `mini.yml`\
+  \ en un directorio temporal separado; ejecute `ansible-playbook -i localhost, -c local mini.yml`. El\
+  \ ejemplo se ejecuta en localhost sin convertirse.\n\n```yaml\n- hosts: localhost\n  connection: local\n\
+  \  become: false\n  gather_facts: false\n  tasks:\n    - ansible.builtin.debug: {msg: changed}\n   \
+  \   changed_when: true\n      notify: reload\n  handlers:\n    - name: reload\n      ansible.builtin.debug:\
+  \ {msg: handler}\n```\n\n**Predecir:** ¿Qué mostrará la ejecución y cuál será su código de salida?\n\
+  \n> [!question]- Respuesta\n> Ecódigo de salida: 0. Extractos de salida estándar:\n>\n> ```text\n> \
+  \    \"msg\": \"changed\"\n>     \"msg\": \"handler\"\n> localhost                  : ok=2    changed=1\
+  \    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n> ```\n\nLa enseñanza task reporta\
+  \ explícitamente `changed: true`, por lo que notifica a `reload`. El handler se ejecuta después del\
+  \ tasks normal; imprime un mensaje en lugar de reiniciar un servicio.\n\nCompleto `handlers.yml`:\n\n\
+  ```yaml\n- name: Explain handler queue\n  hosts: lab\n  connection: local\n  gather_facts: false\n \
+  \ become: false\n  tasks:\n    - name: Simulate a changed result\n      ansible.builtin.debug:\n   \
+  \     msg: changed event\n      changed_when: true\n      notify: configuration changed\n    - name:\
+  \ Flush before continuing\n      ansible.builtin.meta: flush_handlers\n    - name: Continue after flush\n\
+  \      ansible.builtin.debug:\n        msg: next task\n  handlers:\n    - name: Report reload\n    \
+  \  ansible.builtin.debug:\n        msg: handler ran\n      listen: configuration changed\n```\n\nUn\
+  \ handler es un task en la lista especial `handlers`. Implementa “reiniciar una vez después\nvarios\
+  \ cambios”, no “reiniciar después de cada línea configuration”.\nEl controlador recibe `changed`, lee\
+  \ `notify` y pone en cola una notificación para ese host.\nEn un punto flush, el handler se ejecuta\
+  \ como un task normal a través del transporte seleccionado.\n\nLos puntos estándar están después de\
+  \ `pre_tasks`, después de `roles`/`tasks` y después de `post_tasks`.\nVarias notificaciones antes de\
+  \ un punto flush result en una sola ejecución.\nLa ejecución sigue el orden de definición handler, no\
+  \ el orden `notify`. Después de un flush, puede aparecer otra notificación.\nejecute el mismo handler\
+  \ nuevamente en el siguiente punto.\n\n> [!info]- Explicación más profunda\n> `notify` puede nombrar\
+  \ un tema de notificación handler o **`listen`**. `listen` grupos diferentes\n> handlers bajo un event;\
+  \ el task no necesita conocer todos los nombres de handler. Un configuration handler real podría usar\n\
+  > `ansible.builtin.service: {name: app, state: restarted}` en lugar de `debug`;\n>  que requiere un\
+  \ servicio y permisos existentes, por lo que no se ejecutó aquí.\nLos nombres de los controladores >\
+  \  deben ser únicos: handlers con nombres idénticos pueden superponerse entre sí.\n> *(según documentación)*\
+  \ [Handlers](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_handlers.html).\n\n###\
+  \ Por qué la siguiente ejecución no lo soluciona automáticamente\n\n**De un vistazo**\nLa notificación\
+  \ - A permanece en el queue de la ejecución actual.\n- An error antes del queue flush puede dejar el\
+  \ handler sin ejecutar.\nLa ejecución repetida de - A sin un nuevo estado de changed no vuelve a crear\
+  \ la notificación.\n\n**Escenario breve**\n\nEl archivo changed y el task notificaron a reload. El siguiente\
+  \ task falló. En una ejecución repetida, el archivo already coincide, por lo que el módulo informa ok\
+  \ sin changed.\n\n**Predecir:** ¿La repetición de la ejecución garantiza que el proceso vuelva a leer\
+  \ el archivo?\n\n> [!question]- Respuesta\n> No. La ejecución repetida no tiene notificación nueva.\
+  \ Restaure el estado del servicio por separado y verifique qué configuration utiliza el proceso.\n\n\
+  *(verificado)* En el local lab, `debug` reportó `changed`, seguido de `/usr/bin/false`, sin un handler\
+  \ flush:\n\n```text\n# Normal: handler absent\nlocalhost : ok=1 changed=1 unreachable=0 failed=1 rescued=0\
+  \ ignored=0\n# force_handlers: true\nRUNNING HANDLER [H]\nok: [localhost] => {\"msg\": \"handler ran\"\
+  }\nlocalhost : ok=2 changed=1 unreachable=0 failed=1 rescued=0 ignored=0\n```\n\n1. `template` cambia\
+  \ un archivo y pone en cola una notificación `notify`.\n2. El siguiente task en este host falla antes\
+  \ de que se vacíe el handlers.\n3. De forma predeterminada, un handler en cola no se ejecuta para un\
+  \ host fallido.\n4.  En una ejecución repetida, configuration already coincide; `template` devuelve\
+  \ `ok` y no notify.\n5. El servicio puede mantener su antiguo configuration en la memoria.\n\nUn handler\
+  \ forzado no convirtió una implementación fallida en una exitosa. `flush_handlers` antes de que sea\
+  \ útil realizar un control de estado\ncuando el cheque debe inspeccionar un servicio **already restarted**;\
+  \ de lo contrario, verifica el proceso anterior.\nSin embargo, el vaciado ejecuta todo el queue pendiente\
+  \ del host, no solo un handler seleccionado.\n\n> [!info]- Explicación más profunda\n> Esto se refiere\
+  \ a **un host fallido en particular**, no a una regla que diga que \"cualquier error de reproducción\
+  \ cancela cada handler\".\n> Notificado handlers en buen estado hosts normalmente continúa ejecutándose.\n\
+  > `--force-handlers` / reproducir palabra clave `force_handlers: true` obliga a already a notificar\
+  \ a handlers para que se ejecute incluso\n>  para un host fallido. No notify handlers no notificado\
+  \ ni evita `unreachable`: un desconectado\n> host no puede realizar el reinicio. Los errores de análisis\
+  \ y las interrupciones fatales de ejecución tampoco se reparan.\n\n### Predicto 8: dos notificaciones\
+  \ de un handler\n\n**De un vistazo**\n- Dos tasks pueden notify uno handler.\n- Antes de un punto flush\
+  \ compartido, el queue fusiona notificaciones idénticas.\n- El número de notificaciones no es igual\
+  \ al número de ejecuciones.\n\n**Mini-ejemplo:** guarde `mini.yml` en un directorio temporal separado;\
+  \ ejecute `ansible-playbook -i localhost, -c local mini.yml`. El ejemplo se ejecuta en localhost sin\
+  \ convertirse.\n\n```yaml\n- hosts: localhost\n  connection: local\n  become: false\n  gather_facts:\
+  \ false\n  tasks:\n    - ansible.builtin.debug: {msg: changed}\n      changed_when: true\n      notify:\
+  \ reload\n      loop: [first, second]\n  handlers:\n    - name: reload\n      ansible.builtin.debug:\
+  \ {msg: handler}\n```\n\n**Predecir:** ¿Cuántas veces se ejecutará el handler con dos iteraciones?\n\
+  \n> [!question]- Respuesta\n> Ecódigo de salida: 0. Extractos de salida estándar:\n>\n> ```text\n> \
+  \    \"msg\": \"changed\"\n>     \"msg\": \"changed\"\n>     \"msg\": \"handler\"\n> localhost     \
+  \             : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n\
+  > ```\n\nAmbas iteraciones informan que changed y notify son el mismo `reload`. Se ejecuta una vez en\
+  \ el punto flush compartido.\n\n**`predict-8.yml` (cualquier nombre de archivo) al lado de `inventory.ini`\
+  \ de §2:**\n\n```yaml\n- hosts: lab\n  connection: local\n  gather_facts: false\n  become: false\n \
+  \ handlers:\n  - name: H\n    ansible.builtin.debug:\n      msg: handler ran\n  tasks:\n  - name: A\n\
+  \    ansible.builtin.debug:\n      msg: first\n    changed_when: true\n    notify: H\n  - name: B\n\
+  \    ansible.builtin.debug:\n      msg: second\n    changed_when: true\n    notify: H\n```\n\n**Predecir:**\
+  \ ¿con qué frecuencia se ejecuta `H` en la primera ejecución y second? ¿Cuáles son sus resúmenes?\n\n\
+  > [!question]- Respuesta\n> ```text\n> # Первый запуск; код завершения 0\n> changed: [localhost] =>\
+  \ {\n>     \"msg\": \"first\"\n> }\n> changed: [localhost] => {\n>     \"msg\": \"second\"\n> }\n> RUNNING\
+  \ HANDLER [H] ************************************************************\n> ok: [localhost] => {\n\
+  >     \"msg\": \"handler ran\"\n> }\n> localhost                  : ok=3    changed=2    unreachable=0\
+  \    failed=0    skipped=0    rescued=0    ignored=0\n> # Второй запуск; код завершения 0\n> changed:\
+  \ [localhost] => {\n>     \"msg\": \"first\"\n> }\n> changed: [localhost] => {\n>     \"msg\": \"second\"\
+  \n> }\n> RUNNING HANDLER [H] ************************************************************\n> ok: [localhost]\
+  \ => {\n>     \"msg\": \"handler ran\"\n> }\n> localhost                  : ok=3    changed=2    unreachable=0\
+  \    failed=0    skipped=0    rescued=0    ignored=0\n> ```\n> Dos notificaciones antes de que un punto\
+  \ flush se fusionen en una ejecución de `H`. Ambos tasks siempre informan cambios aquí, por lo que el\
+  \ patrón se repite.\n\n### Predict 9: escribir un archivo seguido de un error\n\n**De un vistazo**\n\
+  - A puede ocurrir una falla separada después de un cambio.\n- Sin handlers forzado, es posible que el\
+  \ handler de un host fallido no se ejecute.\nLa ejecución fallida de - A no deshace las acciones realizadas\
+  \ por already.\n\n**Mini-ejemplo:** guarde `mini.yml` en un directorio temporal separado; ejecute `ansible-playbook\
+  \ -i localhost, -c local mini.yml`. El ejemplo se ejecuta en localhost sin convertirse.\n\n```yaml\n\
+  - hosts: localhost\n  connection: local\n  become: false\n  gather_facts: false\n  tasks:\n    - ansible.builtin.debug:\
+  \ {msg: changed}\n      changed_when: true\n      notify: reload\n    - ansible.builtin.fail: {msg:\
+  \ stop}\n  handlers:\n    - name: reload\n      ansible.builtin.debug: {msg: handler}\n```\n\n**Predecir:**\
+  \ ¿Aparecerá el mensaje handler? ¿Qué código de salida devolverá ansible-playbook?\n\n> [!question]-\
+  \ Respuesta\n> ódigo de salida: 2. Extractos estándar:\n>\n> ```text\n>     \"msg\": \"changed\"\n>\
+  \ localhost                  : ok=1    changed=1    unreachable=0    failed=1    skipped=0    rescued=0\
+  \    ignored=0\n> ```\n\nEl task falla antes que el queue flush normal. El handler no se ejecuta y el\
+  \ código de salida es distinto de cero. El experimento completo a continuación muestra un cambio real\
+  \ en un archivo de enseñanza.\n\nPara repetir este ejemplo, primero cree el directorio de ejercicios\
+  \ principal:\n\n```bash\nmkdir -p /tmp/ansible-visual-guide\n```\n\nAntes de un nuevo par de ejecuciones,\
+  \ `failure-config` debe ser absent. Si existe already, elija otro\nnuevo directorio de ejercicios, créelo\
+  \ y actualice `dest` en el ejemplo; no elimine archivos desconocidos.\nMantenga el archivo entre la\
+  \ primera ejecución y la second. El result grabado a continuación utilizó la ruta que se muestra.\n\n\
+  **`predict-9.yml` (cualquier nombre de archivo) al lado de `inventory.ini` de §2:**\n\n```yaml\n- hosts:\
+  \ lab\n  connection: local\n  gather_facts: false\n  become: false\n  handlers:\n  - name: H\n    ansible.builtin.debug:\n\
+  \      msg: handler ran\n  tasks:\n  - name: Probe\n    ansible.builtin.copy:\n      content: 'v1\n\n\
+  \        '\n      dest: /tmp/ansible-visual-guide/failure-config\n      mode: '0644'\n    notify: H\n\
+  \  - name: Fail\n    ansible.builtin.command:\n      argv:\n      - /usr/bin/false\n    changed_when:\
+  \ false\n```\n\n**Predecir:** el archivo de destino es absent antes de la primera ejecución y se conserva\
+  \ entre ejecuciones. ¿Se ejecutará `H` y cómo cambiará el resumen al repetirse?\n\n> [!question]- Respuesta\n\
+  > ```text\n> # Первый запуск; код завершения 2\n> localhost                  : ok=1    changed=1   \
+  \ unreachable=0    failed=1    skipped=0    rescued=0    ignored=0\n> # Второй запуск; код завершения\
+  \ 2\n> localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0\
+  \    ignored=0\n> ```\n> La primera ejecución escribe el archivo, pero la falla bloquea el handler.\
+  \ El second encuentra content coincidente y no envía ninguna notificación nueva; el fracaso persiste.\n\
+  \nPregunta: **¿Por qué un servicio puede conservar el antiguo configuration después de ejecutar un second?**\n\
+  \n> La primera ejecución puede escribir el nuevo archivo y fallar antes de que se ejecute el reinicio\
+  \ handler. En la ejecución second,\n>  el archivo es already correct, por lo que el task no vuelve a\
+  \ ser `notify` el handler. yo pondria una caja fuerte\n> handler flush antes de la verificación de estado\
+  \ o use `force-handlers` cuando ese behavior sea appropriate."
+source_hash: e38cbb8510e4385aca03ce5459ce5e199a92ebe5fe3ffc8623ba5e6e888c2e12

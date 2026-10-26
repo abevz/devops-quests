@@ -1,0 +1,436 @@
+heading: '20. Solución de problemas: pasar de una observación a la capa que falla'
+text: "## 20. Solución de problemas: pasar de una observación a la capa defectuosa\n\n**De un vistazo**\n\
+  - Iniciar diagnóstico con el fallo observado\n- El mismo síntoma puede tener diferentes causas\n- El\
+  \ primer paso debe distinguir entre hipótesis.\n\n**Escenario breve**\n\nUna solicitud HTTP falla, pero\
+  \ aún se desconocen la respuesta DNS, endpoint y el puerto de escucha.\n\n**Predecir:** ¿Es suficiente\
+  \ reiniciar el Deployment de inmediato?\n\n> [!question]- Respuesta\n> Análisis del conditions proporcionado:\
+  \ No. Esta acción no identifica la capa defectuosa y puede destruir evidencia útil.\n\n> [!info] Núcleo\
+  \ y referencia\n> El enfoque central de un caso: síntoma → capa → una siguiente verificación → sus límites.\
+  \ Cada subsección es un caso separado; no es necesario repetir secuencialmente los mecanismos de los\
+  \ apartados 3 a 14. Los tutoriales completos y el artículo 21 son material de referencia.\n\n### Comience\
+  \ con el síntoma\n\n**De un vistazo**\n- El síntoma determina dónde comprobar primero\n- Events muestra\
+  \ la etapa en la que se detuvo el progreso\n- Process logs son útiles solo después de que comienza el\
+  \ proceso.\n\n**Escenario breve**\n\nEl Pod no tiene nodeName y su PodScheduled condition es False.\n\
+  \n**Predecir:** ¿Tiene sentido comenzar con la aplicación logs?\n\n> [!question]- Respuesta\n> Análisis\
+  \ del conditions proporcionado: Primero investigue la programación utilizando conditions y events: es\
+  \ posible que el proceso aún no haya comenzado.\n\n| Síntoma | Caso independiente | Mecanismo |\n|---|---|---|\n\
+  | La imagen no load | [[#Полный пример ошибки загрузки образа|ImagePullBackOff]] | §3: estado container\
+  \ |\n| Process fue asesinado | [[#Полный пример превышения памяти|OOM]] | §9: memoria |\n| Service no\
+  \ responde | [[#Не сводить сетевую диагностику к тексту одной ошибки|Networking]] | §10: conditions\
+  \ |\n| No. shell | [[#Как добраться до процесса без оболочки|Access to the process]] | [[Containers-Visual-Guide|process\
+  \ isolation]] |\n\n### Localice la falla antes de realizar cambios\n\n**De un vistazo**\n- Primero determine\
+  \ el alcance\n- Luego lea el estado del Pod específico\n- An cualquier cambio debe abordar una causa\
+  \ confirmada.\n\n**Miniejemplo:** solo en el grupo desechable kind preparado anteriormente. Cree el\
+  \ namespace con `kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig --context kind-guides-order-rest\
+  \ create namespace guide-mini-66`. Guarde el listado como `mini.sh`; ejecútelo con `bash -e mini.sh`.\n\
+  \n```bash\nk() { kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig --context kind-guides-order-rest\
+  \ -n guide-mini-66 \"$@\"; }\nk run once --image=nginx:1.29-alpine --image-pull-policy=Never --restart=Never\
+  \ --command -- sh -c 'echo diagnostic; exit 3'\nk wait --for=jsonpath='{.status.phase}'=Failed pod/once\
+  \ --timeout=90s\nk logs once\nk get pod once -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}{\"\
+  \\n\"}'\n```\n\n**Predecir:** ¿Qué mostrará el último command después de que finalicen los comandos\
+  \ anteriores?\n\n> [!question]- Respuesta\n> command actual stdout:\n>\n> ```text\n> pod/once created\n\
+  > pod/once condition met\n> diagnostic\n> 3\n> ```\n>\n> Ecódigo de salida: 0.\n\nEl proceso se inició,\
+  \ imprimió diagnostic y luego devolvió 3. Esto difiere de una falla de programación o una falla de extracción\
+  \ de imágenes.\n\n**Comandos en cualquier directorio: la evidencia mínima para Pod `crash`:**\n\n```bash\n\
+  kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\n  -n vg-k8s get pods -o wide\n\
+  kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\n  -n vg-k8s describe pod crash\n\
+  kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\n  -n vg-k8s logs crash -c app\
+  \ --previous\nkubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\n  -n vg-k8s get\
+  \ events --field-selector involvedObject.name=crash --sort-by=.lastTimestamp\n```\n\nPrimero determine\
+  \ el alcance: un container, un Pod, una versión Deployment, un nodo o todo el clúster.\nCompruebe si\
+  \ se ha asignado un nodo; luego verifique la preparación de environment/container, los backends readiness,\
+  \ Service y la ruta network.\nGuarde previous logs y events antes de reiniciar: una nueva ejecución\
+  \ puede ocultar la causa.\nEsta secuencia es un método de ingeniería basado en\n[depuración Pods](https://kubernetes.io/docs/tasks/debug/debug-application/debug-running-pod/)\
+  \ y\n[Servicios de depuración](https://kubernetes.io/docs/tasks/debug/debug-application/debug-service/).\
+  \ *(según documentación)*.\n\n> [!info]- Explicación más profunda\n> **Diagrama a leer: un síntoma puede\
+  \ tener varias causas root:**\n>\n> ```mermaid\n> flowchart TD\n>     A[\"Application<br/>unavailable\"\
+  ] --> B[\"Does a Pod exist?\"]\n>     B -->|\"No\"| C[\"ReplicaSet<br/>events: quota<br/>or admission\"\
+  ]\n>     B -->|\"Yes\"| D[\"Is there<br/>an assigned<br/>node?\"]\n>     D -->|\"No\"| E[\"FailedScheduling:<br/>§8\
+  \ and PVC\"]\n>     D -->|\"Yes\"| F[\"Is the container<br/>running?\"]\n>     F -->|\"No\"| G[\"Image,<br/>configuration,<br/>volume,\
+  \ CNI\"]\n>     F -->|\"Yes\"| H[\"Ready?\"]\n>     H -->|\"No\"| I[\"Probes and<br/>application\"]\n\
+  >     H -->|\"Yes\"| J[\"EndpointSlice,<br/>port, DNS,<br/>policy\"]\n> ```\n>\n> `-o wide` agrega el\
+  \ IP/node; events conecta la falla a un componente;\n> `--previous` lee la instancia terminada. En una\
+  \ imagen distroless, la ausencia de un shell no es una aplicación\nFallo > : use un ephemeral debug\
+  \ container con el permissions/image. requerido\n> Ejemplo completo: [[K8s-Debug-Distroless-Images]].\n\
+  > La ejecución original no se inició ephemeral containers; A continuación se describe una ejecución\
+  \ separada.\n\n### Cinco ramas esenciales y alcance en todo el nodo\n\n**De un vistazo**\n- Distinguir\
+  \ programación, imágenes, procesos, memoria y redes.\n- El alcance a nivel de nodo ayuda a identificar\
+  \ una causa compartida\n- Un error container no prueba que todo el nodo tenga failed.\n\n**Escenario\
+  \ breve**\n\nDiferentes aplicaciones fallan en un solo nodo; ellos trabajan en los demás.\n\n**Predecir:**\
+  \ ¿Qué área deberías investigar a continuación?\n\n> [!question]- Respuesta\n> Análisis del conditions\
+  \ dado: El nodo compartido: su conditions, runtime, recursos y componentes de red, manteniendo cada\
+  \ verificación vinculada a observaciones específicas.\n\n| Síntoma | Primero question | Evidencia →\
+  \ siguiente paso |\n|---|---|---|\n| `Pending`, no `nodeName` | ¿Qué nodos fueron excluidos? | `FailedScheduling`\
+  \ → requests, taints, affinity, PVC (§8/11) |\n| `Pending`, nodo asignado | ¿Qué no se ha preparado?\
+  \ | Fallo `FailedMount`, `FailedCreatePodSandBox`, Secret/image |\n| `CrashLoopBackOff` | ¿Quién dio\
+  \ por terminado el proceso? | Anterior logs, `lastState`, exit code/reason, liveness/OOM (§3/4/9) |\n\
+  | `ImagePullBackOff` | ¿Existe la imagen y es accesible? | Evento Registry/DNS/TLS/auth/tag; imagePullSecrets\
+  \ (§3, [[Containers-Visual-Guide]]) |\n| `Running`, no Ready | ¿Por qué falla readiness? | 404/evento\
+  \ de tiempo de espera; escuchando address/port; dependencia (§4) |\n| Service no tiene backends | ¿Selector\
+  \ o readiness? | Sin direcciones → labels; direcciones no ready → sondas (§10) |\n| Varios Pods en un\
+  \ nodo fallan | ¿Es accesible el nodo? | Node conditions, kubelet/CRI, disk/memory, network |\n\n> [!info]-\
+  \ Explicación más profunda\n> La tabla combina fuentes de depuración públicas y nuevos experimentos;\
+  \ Los errores específicos que no fueron reproducidos están marcados.\n>  en sus respectivas secciones.\
+  \ Una falla de nodo en esta sesión fue *(no probada)*.\n\n### Ejemplo de error de extracción de imagen\
+  \ completa\n\nLa ruta short anterior define el mecanismo y la siguiente verificación. Listado completo\
+  \ y observaciones: [[#Справочный рецепт — Полный пример ошибки загрузки образа|reference recipe]].\n\
+  \n### Ejemplo de límite de memoria completo\n\nLa ruta short anterior define el mecanismo y la siguiente\
+  \ verificación. Listado completo y observaciones: [[#Справочный рецепт — Полный пример превышения памяти|reference\
+  \ recipe]].\n\n### No reduzca la solución de problemas de network a un solo mensaje de error\n\n**De\
+  \ un vistazo**\nEl texto - Error guía la investigación\n- DNS, las conexiones y las respuestas de la\
+  \ aplicación son etapas diferentes\n- A timeout no identifica una sola causa.\n\n**Escenario breve**\n\
+  \nDNS devolvió una dirección; el cliente envió un SYN y no recibió respuesta.\n\n**Predecir:** ¿Esto\
+  \ prueba que la aplicación no está escuchando?\n\n> [!question]- Respuesta\n> Análisis del conditions\
+  \ proporcionado: No. La ruta o el filtrado pueden ser responsables; Verifique de forma independiente\
+  \ el puerto de escucha y observe los paquetes.\n\n**Salida de un cliente anterior: una ejecución registrada\
+  \ de NetworkPolicy/Cilium para leer:**\n\n> [!info]- Explicación más profunda\n> ```text\n> wget: bad\
+  \ address 'web'\n> wget: download timed out\n> ```\n>\n> Esta es una **ejecución grabada** de [[Kubernetes-Coding-Drills-Solutions#3\
+  \ — NetworkPolicy]]:\n>  en el primer caso, la política también bloqueó DNS; en el segundo se permitió\
+  \ DNS pero se bloqueó la ruta a la aplicación.\n> En otro entorno estos mensajes pueden tener diferentes\
+  \ causas; confírmelos con una consulta DNS separada,\n> EndpointSlice, una conexión al puerto y observaciones\
+  \ de la implementación de la red.\n> La ejecución original no incluyó nuevos experimentos de caída de\
+  \ paquetes o fallas de DNS; A continuación aparece una ejecución separada.\n>\n> No apply el antiguo\
+  \ claim que “la política siempre ve targetPort después de DNAT” incondicionalmente:\n>  para la traducción\
+  \ Service address/port, el pedido relativo a la política network depende de la implementación.\n> Diseñe\
+  \ y pruebe la regla en el CNI específico, permitiendo DNS sobre UDP/TCP por separado.\n> *(según documentación)*\
+  \ — [NetworkPolicy y NAT](https://kubernetes.io/docs/concepts/services-networking/network-policies/).\n\
+  >\n> **Predicción:** un Pod tiene `lastState: Completed, exitCode: 0`, pero su recuento de reinicios\
+  \ sigue creciendo. ¿La aplicación es definitivamente saludable?\n>\n> > [!question]- Respuesta\n> >\
+  \ No. En el nuevo experimento, kubelet detuvo nginx debido a un liveness 404 y nginx salió con el código\
+  \ 0.\n> > El evento `failed liveness probe, will be restarted` identifica quién inició la parada.\n\
+  > > *(verificado)* — §4.\n>\n> **Respuesta corta en inglés:**\n>\n> > I primero encuentra la capa defectuosa.\
+  \ Pending sin un nodo es diferente a esperar una imagen en un nodo seleccionado.\n> > I compare events,\
+  \ previous logs y motivos de terminación. Cambio el manifiesto sólo después de tener evidencia de la\
+  \ causa.\n\n###  Llegando a un proceso que no tiene shell\n\n**De un vistazo**\nLa imagen mínima - A\
+  \ puede no tener shell\n- A failed exec sh no prueba una falla de la aplicación\n- Agregue la depuración\
+  \ tools por separado.\n\n**Escenario breve**\n\nEl HTTP endpoint de la aplicación responde, pero exec\
+  \ sh devuelve executable, no found.\n\n**Predecir:** ¿Deberías considerar el container caído?\n\n> [!question]-\
+  \ Respuesta\n> Análisis del conditions proporcionado: No. Falta el executable solicitado; Es posible\
+  \ que la aplicación aún esté funcionando.\n\n**`main.go` en `/tmp/vg-k8s-work` — fuente completa de\
+  \ la aplicación de aprendizaje:**\n\n```go\npackage main\nimport(\"fmt\";\"net\";\"net/http\";\"os\"\
+  ;\"time\")\nfunc main(){\n if len(os.Args)>1 && os.Args[1]==\"crash\" { _,e:=os.ReadFile(\"/config/app.yaml\"\
+  );fmt.Println(e);os.Exit(3) }\n os.WriteFile(\"/data/marker\",[]byte(\"original\\n\"),0600)\n go func(){for{_,e:=os.ReadFile(\"\
+  /config/app.yaml\");if e!=nil{fmt.Println(e)};time.Sleep(time.Second)}}()\n go func(){l,e:=net.Listen(\"\
+  tcp\",\":8082\");if e!=nil{panic(e)};for{c,e:=l.Accept();if e!=nil{continue};go func(c net.Conn){b:=make([]byte,1024);c.Read(b);c.(*net.TCPConn).SetLinger(0);c.Close()}(c)}}()\n\
+  \ http.HandleFunc(\"/\",func(w http.ResponseWriter,r *http.Request){fmt.Fprintln(w,\"ok\")})\n panic(http.ListenAndServe(\"\
+  :8080\",nil))\n}\n```\n\n**`Dockerfile` en `/tmp/vg-k8s-work` — archivo completo; adyacente `root-marker`\
+  \ contiene la cadena `scratch-root`:**\n\n```dockerfile\nFROM scratch\nCOPY app /app\nCOPY root-marker\
+  \ /root-marker\nUSER 0\nENTRYPOINT [\"/app\"]\n```\n\nLos siguientes experimentos se realizaron por\
+  \ separado de los de previous: kind **0.33.0**, Kubernetes y kubectl **1.37.0**, kind-node containerd\
+  \ **2.3.4**, `crictl 1.36.0`; un plano de control y un nodo trabajador. *(verificado)*.\nEphemeral containers\
+  \ se han mantenido estables desde Kubernetes 1.25; Perfiles custom `--custom` desde 1.32. *(según la\
+  \ documentación)* — [depurando un Pod](https://kubernetes.io/docs/tasks/debug/debug-application/debug-running-pod/)\
+  \ en ejecución.\n§2 a 5 cubren estados y sondas; Aquí traemos una herramienta al proceso. Un programa\
+  \ estático en `scratch` reproduce la misma falta de tools que distroless:\nno hay shell, pero la aplicación\
+  \ se ejecuta. La reconstrucción de la imagen de la aplicación con un shell cambia el artefacto bajo\
+  \ investigación, requiere reemplazar el Pod y expande la imagen production. No es necesario para observar\
+  \ el proceso actual.\n\n> [!info]- Explicación más profunda\n> UID 0 se utiliza aquí para los permisos\
+  \ de seguimiento compare; no es el user recomendado para una aplicación real. `8080` sirve a HTTP, `8082`\
+  \ restablece intencionalmente la conexión después de leer la solicitud; el archivo de configuración\
+  \ está ausente.\n>\n> **`lab.yaml` en `/tmp/vg-k8s-work` — conjunto de objetos completo para el ejercicio\
+  \ adicional:**\n>\n> ```yaml\n> apiVersion: v1\n> kind: Namespace\n> metadata: {name: vg-k8s}\n> ---\n\
+  > apiVersion: v1\n> kind: Pod\n> metadata: {name: vg-k8s-app, namespace: vg-k8s, labels: {app: vg-k8s-app}}\n\
+  > spec:\n>   containers:\n>   - name: app\n>     image: vg-k8s-app:1\n>     imagePullPolicy: Never\n\
+  >     volumeMounts: [{name: data, mountPath: /data}]\n>   volumes: [{name: data, emptyDir: {}}]\n> ---\n\
+  > apiVersion: v1\n> kind: Pod\n> metadata: {name: vg-k8s-crash, namespace: vg-k8s, labels: {app: vg-k8s-crash}}\n\
+  > spec:\n>   containers:\n>   - name: app\n>     image: vg-k8s-app:1\n>     imagePullPolicy: Never\n\
+  >     args: [crash]\n>     volumeMounts: [{name: data, mountPath: /data}]\n>   volumes: [{name: data,\
+  \ emptyDir: {}}]\n> ---\n> apiVersion: v1\n> kind: Service\n> metadata: {name: vg-k8s-ok, namespace:\
+  \ vg-k8s}\n> spec:\n>   selector: {app: vg-k8s-app}\n>   ports: [{port: 80, targetPort: 8080}]\n> ---\n\
+  > apiVersion: v1\n> kind: Service\n> metadata: {name: vg-k8s-empty, namespace: vg-k8s}\n> spec:\n> \
+  \  selector: {app: vg-k8s-crash}\n>   ports: [{port: 80, targetPort: 8080}]\n> ---\n> apiVersion: v1\n\
+  > kind: Service\n> metadata: {name: vg-k8s-wrong, namespace: vg-k8s}\n> spec:\n>   selector: {app: vg-k8s-app}\n\
+  >   ports: [{port: 80, targetPort: 9999}]\n> ```\n>\n> **Comando en cualquier directorio, después de\
+  \ crear el clúster `vg-k8s` separado, con kubeconfig del §21:**\n>\n> ```bash\n> printf 'scratch-root\\\
+  n' > /tmp/vg-k8s-work/root-marker\n> CGO_ENABLED=0 go build -o /tmp/vg-k8s-work/app /tmp/vg-k8s-work/main.go\n\
+  > docker build -t vg-k8s-app:1 /tmp/vg-k8s-work\n> /tmp/vg-k8s-bin/kind-linux-amd64 load docker-image\
+  \ vg-k8s-app:1 --name vg-k8s\n> kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s -n\
+  \ vg-k8s apply -f /tmp/vg-k8s-work/lab.yaml\n> kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context\
+  \ kind-vg-k8s -n vg-k8s exec vg-k8s-app -c app -- sh\n> ```\n>\n> **Ejemplo de lectura: final exacto\
+  \ del error; se omite el identificador failed exec:**\n>\n> ```text\n> OCI runtime exec failed: exec\
+  \ failed: unable to start container process: exec: \"sh\": executable file not found in $PATH\n> ```\n\
+  >\n> El error se refiere al lanzamiento del command, no a la disponibilidad del HTTP. La compilación,\
+  \ load y la falla fueron *(verificadas)*.\n\n### Ephemeral container: network compartido, procesos seleccionados,\
+  \ archivos separados\n\n**De un vistazo**\n- An ephemeral container tiene un sistema de archivos independiente\n\
+  - El network del Pod es compartido\nLa visibilidad de - Process depende del entorno namespace y runtime\
+  \ seleccionado.\n\n**Escenario breve**\n\nEl debug container ve el puerto HTTP de la aplicación, pero\
+  \ el cannot encuentra su archivo /app.\n\n**Predecir:** ¿Esto contradice el network compartido?\n\n\
+  > [!question]- Respuesta\n> Análisis del conditions proporcionado: No. Un network compartido no implica\
+  \ un directorio root compartido.\n\n**Comando en cualquier directorio: fije la imagen tools y open a\
+  \ shell al lado de la aplicación:**\n\n```bash\nTOOLS=nicolaka/netshoot@sha256:7f08c4aff13ff61a35d30e30c5c1ea8396eac6ab4ce19fd02d5a4b3b5d0d09a2\n\
+  kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s -n vg-k8s debug -it vg-k8s-app \\\n\
+  \  --image=\"$TOOLS\" --target=app --container=vg-k8s-general --profile=general -- sh\n```\n\n> [!info]-\
+  \ Explicación más profunda\n> En el experimento, el container se mantuvo activo con `sleep 1d`, y los\
+  \ siguientes comandos se ejecutaron a través de `exec -c vg-k8s-general`; el formulario interactivo\
+  \ anterior es *(según la documentación)*, depurando un Pod en ejecución; la conexión sin un TTY fue\
+  \ *(verificada)*.\n>\n> | Comparación | Observación |\n> |---|---|\n> | Sin `--target`, sin `shareProcessNamespace`\
+  \ | `ps`: PID 1 es su propio `sh`; `/app` no es visible |\n> | Con `--target=app` | `ps`: PID 1 es `/app`;\
+  \ containerd admitió ingresar a su PID namespace |\n> | Red en ambos casos | `ss` ve `8080` y `8082`;\
+  \ sin un PID visible el campo propietario está vacío |\n> | Archivos con `--target` | `/root-marker`\
+  \ está ausente en el tools container; `/proc/1/root/root-marker` contiene `scratch-root` |\n> | Espacios\
+  \ de nombres | Red: ambos `net:[4026532841]`; soportes del sistema de archivos: `4026533574` y `4026533571`\
+  \ |\n>\n> La tabla fue *(verificada)*. `--target` selecciona un container por **nombre**; no transfiere\
+  \ su sistema de archivos root. Con `shareProcessNamespace: true`, regular y ephemeral containers ver\
+  \ procesos Pod sin `--target`;\n>  en la copia probada, PID 1 es `/pause` y PID 7 es `/app`. Este es\
+  \ un campo en la plantilla para un nuevo Pod, no un interruptor para uno en ejecución.\n> *(verificado)*\
+  \ — copia a continuación; *(según documentación)* — [proceso compartido namespace](https://kubernetes.io/docs/tasks/configure-pod-container/share-process-namespace/).\n\
+  > El PID namespace controla la visibilidad, mientras que los permisos controlan el acceso a otros procesos\
+  \ y `/proc/<pid>/root`. Las señales pueden detener la aplicación: no asuma que PID 1 es siempre su debugger.\n\
+  > Recordatorio: [[Linux-Troubleshooting-Visual-Guide#9. Процессы: состояния, сигналы, зомби и PID 1|Processes:\
+  \ states, signals, zombies and PID 1]] y [[Linux-Troubleshooting-Visual-Guide#14. Пространства имён\
+  \ и cgroups: основа контейнеров|Namespaces and cgroups: the basis of containers]].\n>\n> **Comando en\
+  \ cualquier directorio: ubicaciones API que conservan un ephemeral container:**\n>\n> ```bash\n> kubectl\
+  \ --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s -n vg-k8s get pod vg-k8s-app \\\n>   -o\
+  \ jsonpath='{.spec.ephemeralContainers}{\"\\n\"}{.status.ephemeralContainerStatuses}{\"\\n\"}'\n> ```\n\
+  >\n> `spec.ephemeralContainers` almacena su nombre, imagen, `targetContainerName` y `securityContext`;\
+  \ `status.ephemeralContainerStatuses` almacena `state`, `containerID` y `restartCount`. Un debugger\
+  \ completo tiene\n> `state.terminated` y 0 reinicios; Los UID y `containerID` de la aplicación no cambian,\
+  \ con 0 reinicios. *(verificado)*. Un container cannot ya agregado es removed/modified y no se reinicia\
+  \ automáticamente.\n> A la nueva entrada necesita un nombre diferente; todo el Pod se elimina por separado\
+  \ según su ciclo de vida. *(según documentación)* — [ephemeral containers](https://kubernetes.io/docs/concepts/workloads/pods/ephemeral-containers/).\n\
+  >\n> **Ejemplo de lectura: rechazo real de API al intentar eliminar la primera entrada:**\n>\n> ```text\n\
+  > The Pod \"vg-k8s-app\" is invalid: spec.ephemeralContainers: Forbidden: existing ephemeral containers\
+  \ \"vg-k8s-isolated\" may not be removed\n> ```\n\n### Llamadas al sistema: vea primero el proceso y\
+  \ luego obtenga permiso de seguimiento\n\n**De un vistazo**\n- Ver un PID no otorga permisos de rastreo\n\
+  - Compruebe el UID y los permisos adicionales por separado\nLa llamada al sistema - A muestra dónde\
+  \ interactúa el proceso con el kernel.\n\n**Escenario breve**\n\nEl debugger ve el proceso, pero ptrace\
+  \ devuelve Operation, no permitted.\n\n**Predecir:** ¿Es suficiente buscar el mismo PID nuevamente?\n\
+  \n> [!question]- Respuesta\n> Análisis del conditions proporcionado: No. Verifique los privilegios requeridos\
+  \ y las restricciones de seguridad en lugar de cambiar los PID a ciegas.\n\n**Comando en cualquier directorio:\
+  \ primero use un perfil sin permisos de seguimiento adicionales:**\n\n```bash\nkubectl --kubeconfig\
+  \ /tmp/vg-k8s-kubeconfig --context kind-vg-k8s -n vg-k8s debug vg-k8s-app \\\n  --image=\"$TOOLS\" --target=app\
+  \ --container=vg-k8s-baseline --profile=baseline \\\n  -- sh -c 'ps -eo pid,args; timeout 3 strace -p\
+  \ 1 -e trace=openat'\nkubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s -n vg-k8s logs\
+  \ vg-k8s-app -c vg-k8s-baseline\n```\n\n`strace` muestra las llamadas de un proceso al kernel; `lsof`\
+  \ conecta descriptores a archivos y sockets. Su sintaxis general no se repite aquí: [[Linux-Troubleshooting-Visual-Guide#10.\
+  \ Дескрипторы, ограничения, lsof и strace|Descriptors, limits, lsof and strace]].\nAquí necesitamos\
+  \ acceso a otro PID; Se agregó `-f` para el proceso Go multiproceso.\n\n> [!info]- Explicación más profunda\n\
+  > **Ejemplo de lectura: seguimiento del rechazo, luego el resultado en container `vg-k8s-general`:**\n\
+  >\n> ```text\n> strace: attach: ptrace(PTRACE_SEIZE, 1): Operation not permitted\n> strace: Process\
+  \ 1 attached with 5 threads\n> [pid    17] openat(AT_FDCWD, \"/config/app.yaml\", O_RDONLY|O_CLOEXEC)\
+  \ = -1 ENOENT (No such file or directory)\n> ```\n>\n> **Comando dentro de debug container `vg-k8s-general`\
+  \ — seguimiento de funcionamiento:**\n>\n> ```bash\n> id\n> grep -E 'CapEff|Seccomp|Uid' /proc/self/status\n\
+  > timeout 3 strace -f -p 1 -e trace=openat\n> ```\n>\n> Ambos casos utilizan UID 0; El users coincidente\
+  \ no reemplazó al `SYS_PTRACE`. En `general`: `CapEff: 00000000a80c25fb`, `Seccomp: 0`; el `/config/app.yaml`\
+  \ que faltaba era found.\n> `timeout` detuvo la observación con el código exit 143 y `strace` se separó;\
+  \ la aplicación siguió ejecutándose. *(verificado)*. Si el PID es invisible, verifique el `--target`\
+  \ y el runtime; si está visible pero el acceso está denegado, verifique los permisos, UID, seccomp y\
+  \ LSM.\n> An UID idéntico solo ayuda cuando el rastreo es permitted y el estado del proceso lo permite;\
+  \ Yama puede requerir\n> a relación padre-hijo o `SYS_PTRACE`. *(según la documentación)* — [Yama, documentación\
+  \ del kernel](https://www.kernel.org/doc/html/latest/admin-guide/LSM/Yama.html).\nLos privilegios >\
+  \ Kernel y seccomp son comprobaciones independientes; Agregar un capability no deshabilita una política\
+  \ seccomp configurada explícitamente. Recordatorio: [[Security-Visual-Guide#6. Привилегии ядра, no-new-privileges\
+  \ и seccomp: три разных ограничения|Kernel privileges, no-new-privileges and seccomp: three separate\
+  \ restrictions]].\n>\n> | Perfil kubectl 1.37.0 | Propósito y límite |\n> |---|---|\n> | `general` |\
+  \ Por defecto; agrega `SYS_PTRACE` para un ephemeral container, sin prometer saltarse todas las restricciones\
+  \ |\n> | `baseline` | Sin seguimiento adicional capabilities; Se observó que `strace` fallaba |\n> |\
+  \ `restricted` | Elimina capabilities, establece `runAsNonRoot`, evita la escalada y utiliza `RuntimeDefault`;\
+  \ no es un perfil ptrace |\n> | `netadmin` | Agrega `NET_ADMIN` y `NET_RAW` para network tools; no agrega\
+  \ `SYS_PTRACE` |\n> | `sysadmin` | `privileged: true`; acceso amplio, utilizado solo en el nodo kind\
+  \ de propiedad en este experimento |\n>\n> *(según la documentación)* — [kubectl v0.37.0 implementación\
+  \ del perfil](https://raw.githubusercontent.com/kubernetes/kubectl/v0.37.0/pkg/cmd/debug/profiles.go);\n\
+  Se ejecutaron > `general`, `baseline`, `netadmin` y `sysadmin`; `restricted` fue aceptado pero su proceso\
+  \ no se inició. *(verificado)*. La imagen netshoot declara su user como la cadena `root`: kubelet informó\n\
+  > `container has runAsNonRoot and image has non-numeric user (root), cannot verify user is non-root`,\
+  \ con motivo `CreateContainerConfigError`. El perfil restricted requiere un image/numeric non-root UID\
+  \ verificado;\nEl lanzamiento corregido de > a aquí fue *(no probado)*. Los perfiles pertenecen al **cliente**\
+  \ kubectl: verifique su `debug --help` en lugar de transferir el antiguo valor `legacy` de un ejemplo\
+  \ de documentación a esta versión.\n\n### Redes dentro del Pod: puerto, DNS, backend y paquetes\n\n\
+  **De un vistazo**\n- Ports, DNS y paquetes responden diferentes preguntas\n- A Service puede señalar\
+  \ el targetPort incorrecto\n- Primero conecte las direcciones involucradas en la solicitud específica.\n\
+  \n**Escenario breve**\n\nEl proceso escucha en 8080, pero el Service reenvía al 9999.\n\n**Predecir:**\
+  \ ¿La resolución exitosa de DNS solucionará un targetPort incorrecto?\n\n> [!question]- Respuesta\n\
+  > Análisis del conditions proporcionado: No. El nombre se resuelve, pero el puerto de destino es incorrecto.\n\
+  \n**Comando dentro de debug container `vg-k8s-general`: separe las tres comprobaciones:**\n\n```bash\n\
+  ss -ltnp\ndig +short vg-k8s-ok.vg-k8s.svc.cluster.local\ncurl -sS --max-time 2 http://vg-k8s-ok\ncurl\
+  \ -sS --max-time 2 http://vg-k8s-empty\ncurl -sS --max-time 2 http://vg-k8s-wrong\ncurl -sS --max-time\
+  \ 2 http://127.0.0.1:8082\n```\n\n`ss -ltnp` verifica la dirección de escucha, una consulta DNS verifica\
+  \ el nombre y `curl` verifica la conexión y la respuesta protocol. El ClusterIP y el puerto de un Service\
+  \ difieren de la dirección Pod y `targetPort`; trabajar DNS no prueba un ready endpoint.\nRecordatorio:\
+  \ [[Linux-Troubleshooting-Visual-Guide#15. Сеть: слушающие порты и смысл ошибок|Networking: listening\
+  \ ports and error meanings]] y [[Networking-Visual-Guide#19. Kubernetes: адрес пода, виртуальный Service\
+  \ и реальные получатели|Kubernetes: Pod address, virtual Service and actual backends]].\n\n> [!info]-\
+  \ Explicación más profunda\n> **Ejemplo de lectura: líneas exactas seleccionadas de la nueva ejecución:**\n\
+  >\n> ```text\n> LISTEN 0      4096               *:8080            *:*    users:((\"app\",pid=1,fd=4))\n\
+  > 10.96.166.152\n> ok\n> curl: (7) Failed to connect to vg-k8s-empty port 80 after 1003 ms: Could not\
+  \ connect to server\n> curl: (7) Failed to connect to vg-k8s-wrong port 80 after 2 ms: Could not connect\
+  \ to server\n> curl: (56) Recv failure: Connection reset by peer\n> ```\n>\n> El primer EndpointSlice\
+  \ incorrecto del Service contenía `ready: false`; el segundo contenía `ready: true` y el puerto `9999`.\
+  \ Dos defectos diferentes producen la misma clase de error del cliente; verifique las direcciones y\
+  \ readiness antes de cambiar el network. *(verificado)*.\n>\n> **`deny.yaml` en `/tmp/vg-k8s-work`:\
+  \ bloquea todas las conexiones salientes excepto DNS:**\n>\n> ```yaml\n> apiVersion: networking.k8s.io/v1\n\
+  > kind: NetworkPolicy\n> metadata: {name: vg-k8s-deny, namespace: vg-k8s}\n> spec:\n>   podSelector:\
+  \ {matchLabels: {app: vg-k8s-app}}\n>   policyTypes: [Egress]\n>   egress:\n>   - ports:\n>     - {protocol:\
+  \ UDP, port: 53}\n>     - {protocol: TCP, port: 53}\n> ```\n>\n> **Comando en cualquier directorio:\
+  \ captura de paquetes container y activación de políticas:**\n>\n> ```bash\n> kubectl --kubeconfig /tmp/vg-k8s-kubeconfig\
+  \ --context kind-vg-k8s -n vg-k8s debug vg-k8s-app \\\n>   --image=\"$TOOLS\" --target=app --container=vg-k8s-network\
+  \ --profile=netadmin -- sleep 1d\n> kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s\
+  \ -n vg-k8s apply -f /tmp/vg-k8s-work/deny.yaml\n> ```\n>\n> **Comando dentro de debug container `vg-k8s-network`:\
+  \ captura en la interfaz Pod:**\n>\n> ```bash\n> timeout 5 tcpdump -ni eth0 -c 3 tcp > /tmp/policy.packets\
+  \ 2>&1 & t=$!\n> sleep 1\n> dig +short vg-k8s-ok.vg-k8s.svc.cluster.local\n> curl -sS --connect-timeout\
+  \ 3 --max-time 4 http://vg-k8s-ok\n> wait \"$t\"\n> cat /tmp/policy.packets\n> ```\n>\n> **Ejemplo de\
+  \ lectura: DNS funciona, sin respuesta a tres paquetes SYN; las líneas de captura se muestran completas:**\n\
+  >\n> ```text\n> 10.96.166.152\n> curl: (28) Connection timed out after 3002 milliseconds\n> 11:32:59.077297\
+  \ IP 10.244.1.2.47308 > 10.96.166.152.80: Flags [S], seq 586176593, win 42340, options [mss 1460,sackOK,TS\
+  \ val 1598642578 ecr 0,nop,wscale 9], length 0\n> 11:33:00.112702 IP 10.244.1.2.47308 > 10.96.166.152.80:\
+  \ Flags [S], seq 586176593, win 42340, options [mss 1460,sackOK,TS val 1598643614 ecr 0,nop,wscale 9],\
+  \ length 0\n> 11:33:01.137689 IP 10.244.1.2.47308 > 10.96.166.152.80: Flags [S], seq 586176593, win\
+  \ 42340, options [mss 1460,sackOK,TS val 1598644639 ecr 0,nop,wscale 9], length 0\n> ```\n>\n>  En esta\
+  \ configuración de prueba, `kindnetd:v20260820-69b56db7` **aplica NetworkPolicy**: la regla de denegación\
+  \ provocó un timeout y HTTP devolvió `ok` nuevamente después de que se implementó la política. removed.\
+  \ *(verificado)*. Aquí no fue necesario instalar otro CNI.\n> Antes de repetir, elimine la política\
+  \ con `kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s -n vg-k8s delete -f /tmp/vg-k8s-work/deny.yaml`.\n\
+  >  Sin un permiso DNS, la primera variante denegada produjo `curl: (28) Resolving timed out after 2001\
+  \ milliseconds`. Para `vg-k8s-wrong`, la misma captura con `-c 4` registró SYN → tradujo SYN → RST →\
+  \ RST al cliente;\n>  para el Service en funcionamiento con `-c 3`, el tercer paquete fue SYN-ACK (`Flags\
+  \ [S.]`). *(verificado)*.\n> **Ejemplo de lectura: respuesta de puerto cerrado de la captura:**\n>\n\
+  > ```text\n> 11:34:33.930659 IP 10.244.1.2.9999 > 10.244.1.1.33615: Flags [R.], seq 0, ack 2968960123,\
+  \ win 0, length 0\n> 11:34:33.930670 IP 10.96.238.53.80 > 10.244.1.2.35022: Flags [R.], seq 0, ack 2968960123,\
+  \ win 0, length 0\n> ```\n>\nEl rechazo de > A en SYN significa que no se estableció la conexión; a\
+  \ timeout significa que la respuesta esperada está ausente; un reset después de la solicitud significa\
+  \ que la transmisión fue interrumpida. El texto del error por sí solo no identifica el componente responsable:\
+  \ [[Networking-Visual-Guide#7. Ошибки клиента: симптом и источник решения|Client errors: symptom and\
+  \ decision source]].\n> `tcpdump` muestra paquetes en el punto de captura; `traceroute` verifica las\
+  \ respuestas a las sondas y no reemplaza una captura.\n> Recordatorio: [[Linux-Troubleshooting-Visual-Guide#16.\
+  \ traceroute и tcpdump: увидеть путь и факт обмена|traceroute and tcpdump: observing the path and actual\
+  \ exchange]].\n\n### Se bloquea antes de poder conectarse: investigue una copia\n\n**De un vistazo**\n\
+  La copia - A Pod ayuda a investigar una falla rápida\n- La copia command debe existir en su imagen.\n\
+  -  Copiar un objeto no instala tools.\n\n**Escenario breve**\n\nLa imagen original scratch contiene\
+  \ solo /app.. Se supone que la copia debe seguir ejecutándose con sleep.\n\n**Predecir:** ¿sleep comenzará\
+  \ sin agregar una imagen diferente?\n\n> [!question]- Respuesta\n> Análisis del conditions proporcionado:\
+  \ No. El API puede aceptar la copia, pero el runtime no encontrará el executable.\n\n**Comando en cualquier\
+  \ directorio: primero una copia defectuosa y luego una copia con una imagen de reemplazo:**\n\n```bash\n\
+  kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s -n vg-k8s debug vg-k8s-crash \\\n\
+  \  --copy-to=vg-k8s-copy-fails --container=app -- sleep 1d\nkubectl --kubeconfig /tmp/vg-k8s-kubeconfig\
+  \ --context kind-vg-k8s -n vg-k8s debug vg-k8s-crash \\\n  --copy-to=vg-k8s-copy --container=app --set-image=\"\
+  app=$TOOLS\" --share-processes -- sleep 1d\nkubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s\
+  \ -n vg-k8s events --for pod/vg-k8s-copy-fails --types=Warning\n```\n\n> [!info]- Explicación más profunda\n\
+  > **Ejemplo de lectura: final exacto del error de tiempo de ejecución del contenedor:**\n>\n> ```text\n\
+  > exec: \"sleep\": executable file not found in $PATH\n> ```\n>\n> La copia API se realizó correctamente,\
+  \ pero la primera copia recibió `RunContainerError`; `scratch` tampoco contiene `sleep`.\n> En la segunda\
+  \ copia, `app` es el tools container y es `Running`: el proceso Go original ya no se reproduce.\n> El\
+  \ Pod original mostraba `CrashLoopBackOff`, motivo de terminación `Error` y exit código 3. *(verificado)*.\n\
+  >  Para conservar la aplicación, agregue tools a una copia en lugar de reemplazar su imagen.\n>\n> **Comando\
+  \ en cualquier directorio: una copia con dos containers y un PID compartido namespace:**\n>\n> ```bash\n\
+  > kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s -n vg-k8s debug vg-k8s-app \\\n\
+  >   --copy-to=vg-k8s-shared --container=vg-k8s-tools --image=\"$TOOLS\" --share-processes -- sleep 1d\n\
+  > kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s -n vg-k8s exec vg-k8s-shared -c\
+  \ vg-k8s-tools -- ps -eo pid,args\n> ```\n>\n> Sin `--target`, muestra `/pause` (PID 1), `/app` (PID\
+  \ 7) y `sleep 1d`. (PID 24). *(verificado)*.\n> Copies recibió un nuevo UID/IP y tenía su labels removed;\
+  \ el Service no los selecciona. Todos aterrizaron en `vg-k8s-worker`,\n> pero eso no está garantizado:\
+  \ `--same-node` no se especificó aquí. El uso compartido de PID se habilitó a través de `--share-processes`.\n\
+  > Se copiaron las definiciones de volumen: `emptyDir` es nuevo y su contenido no se copia. En el `/data/marker`\
+  \ original,\n> `changed` fue escrito a través de `/proc/1/root`; la nueva copia en ejecución decía `original`.\
+  \ *(verificado)*.\n> A PVC puede seguir siendo una referencia al **mismo** claim; El contenido de la\
+  \ memoria y el estado del proceso inactivo no se copian.\n> `--keep-labels` puede enviar tráfico Service\
+  \ real a la copia; verifique el contenedor de inicio y probe options.\n> *(según documentación)* — [kubectl\
+  \ debug referencia](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_debug/).\n\n### \
+  \ Desde el nodo: CRI, nodo root, e ingresando un namespace específico\n\n**De un vistazo**\nLa depuración\
+  \ - Node otorga un acceso más amplio\n- chroot cambia el sistema de archivos root, no todos los namespace\n\
+  - nsenter selecciona un proceso específico namespace.\n\n**Escenario breve**\n\nDespués de chroot /host,\
+  \ el command todavía usa su previous network namespace.\n\n**Predecir:** ¿Debería chroot exponer automáticamente\
+  \ el network de Pod requerido?\n\n> [!question]- Respuesta\n> Análisis del conditions dado: No. Ingrese\
+  \ el network namespace correspondiente por separado; Este es un análisis escrito y no se realizó la\
+  \ depuración de privileged.\n\n**Comando en cualquier directorio: solo un nodo en su propio clúster\
+  \ desechable:**\n\n```bash\nkubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s -n vg-k8s\
+  \ debug node/vg-k8s-worker \\\n  --image=\"$TOOLS\" --profile=sysadmin -- sleep 1d\n```\n\n> [!info]-\
+  \ Explicación más profunda\n> `node-debugger-vg-k8s-worker-gjdfp` era created; para una variante interactiva,\
+  \ agregue `-it` y reemplace `sleep 1d` con `sh`.\n> El experimento ingresó a `debugger` a través de\
+  \ `exec`. `/host` es el root del nodo **kind container**, no la máquina del propietario.\n> PID, network\
+  \ y IPC namespaces coincidieron con el nodo; el soporte namespace permaneció separado. *(verificado)*.\n\
+  > `chroot /host` cambia el root utilizado para las rutas; él mismo no ingresa a otros namespaces.\n\
+  >\n> **Comando dentro del nodo-debug container: busque el objetivo container y use el nodo tools:**\n\
+  >\n> ```bash\n> chroot /host crictl ps\n> chroot /host crictl inspect -o json c7a6edaa4cdd0 > /tmp/container.json\n\
+  > chroot /host crictl logs --tail=2 c7a6edaa4cdd0\n> chroot /host journalctl -u kubelet -u containerd\
+  \ -n 3 --no-pager\n> ```\n>\n> Para un nodo shell, use `chroot /host`; aquí cada command usa su root\
+  \ y sus utilidades por separado.\n> Lea `info.pid` de JSON; El análisis en el experimento ocurrió afuera.\
+  \ `crictl ps` coincidía con el nombre, Pod y namespace; `inspect` proporcionó PID **927**,\n>  y `logs`\
+  \ devolvieron `open /config/app.yaml: no such file or directory`. *(verificado)*.\n> Node CRI endpoint:\
+  \ `unix:///run/containerd/containerd.sock` de `/etc/crictl.yaml`.\n> Kubelet y containerd son servicios\
+  \ systemd activos; logs se leyeron a través del diario y la solicitud logs se encontraba en `/var/log/pods/.../app/0.log`.\n\
+  > `/var/log/kubelet.log` y `/var/log/containerd.log` no existen: `No such file or directory`. *(verificado)*.\n\
+  >\n> **Comando dentro del nodo-debug container — después de salir de chroot, usando el PID de inspect:**\n\
+  >\n> ```bash\n> nsenter -t 927 -n ss -ltnp\n> nsenter -t 927 -m /bin/sh\n> nsenter -t 927 -m /app crash\n\
+  > nsenter -t 927 -p sh -c 'grep NSpid /proc/self/status'\n> cat /proc/927/root/root-marker\n> ```\n\
+  >\n> `-n`: `8080`/`8082` son visibles, propiedad de `/app`, nodo PID 927.\n> `-m`: `/bin/sh` vuelve\
+  \ a estar ausente — `nsenter: failed to execute /bin/sh: No such file or directory`;\n>  el `/app crash`\
+  \ estático se inició y devolvió el código exit 3. Puede leer `/proc/927/root` sin necesidad de un shell\
+  \ dentro del objetivo.\n> `-p`: el nuevo shell tiene `NSpid: 2243 118`; sin `-m` y un `/proc` recién\
+  \ montado, los comandos `ps` pueden mostrar la lista de procesos del nodo.\n>  Estos valores PID pertenecen\
+  \ a esta ejecución: consíguelos siempre de nuevo. *(verificado)*.\n> Con `general`, el nodo `chroot`\
+  \ **funcionó**, pero se denegó `nsenter -n`:\n> `nsenter: reassociate to namespaces failed: Operation\
+  \ not permitted`. Sin privilegios no significa \"sin ningún capabilities\".\n> *(verificado)*; el propósito\
+  \ del modo de depuración de nodos es *(según la documentación)*, [depurar un nodo](https://kubernetes.io/docs/tasks/debug/debug-cluster/kubectl-node-debug/).\n\
+  > El nodo completado debugger `node-debugger-vg-k8s-worker-pnhx6` permaneció como `Failed`, con 0 reinicios.\n\
+  > Esalir del shell no delete el objeto; Ambos Pods de nodos fueron removed manualmente. *(verificado)*.\n\
+  > **Comando en cualquier directorio — delete exactamente el nodo Pods created aquí:**\n>\n> ```bash\n\
+  > kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s -n vg-k8s delete pod \\\n>   node-debugger-vg-k8s-worker-gjdfp\
+  \ node-debugger-vg-k8s-worker-pnhx6\n> ```\n\n### Enfoques relacionados y límites de permisos\n\n**De\
+  \ un vistazo**\n- Elija una herramienta para la capa observada\n- Los permisos deben coincidir con la\
+  \ operación requerida\nEl perfil más amplio - A no reemplaza la evidencia de la causa.\n\n**Escenario\
+  \ breve**\n\nAlguien propone iniciar la depuración del nodo privileged inmediatamente para leer un previous\
+  \ logs de un container.\n\n**Predecir:** ¿Es necesario para este primer paso específico?\n\n> [!question]-\
+  \ Respuesta\n> Análisis del conditions dado: No. Comience con el acceso permitted logs --previous; Se\
+  \ necesitan permisos más amplios sólo para una siguiente operación justificada.\n\n- A tools container\
+  \ junto a la aplicación, un sidecar, es útil para la resolución de problemas habituales o cuando el\
+  \ contenedor efímero API no está disponible.\n  Agréguelo a la plantilla para un nuevo Pod; Proporcionar\
+  \ un sistema de archivos compartido a través de un volume. Proyecto de ejemplo: *(según la documentación)*,\
+  \ [netshoot](https://github.com/nicolaka/netshoot).\n- `kubectl exec -c <tools>` ingresa a un tools\
+  \ container que ya se está ejecutando. Con `shareProcessNamespace: true`,\n  puede ver la aplicación;\
+  \ La copia probada arriba demuestra este enfoque. *(verificado)*.\n- `kubectl port-forward pod/vg-k8s-app\
+  \ 18080:8080` con un kubeconfig separado devolvió `ok` en `127.0.0.1:18080`.\n  Este es un camino a\
+  \ través del API/kubelet hasta el Pod; El éxito no prueba DNS/ClusterIP ni la ruta normal del cliente.\
+  \ *(verificado)*.\n- `kubectl cp` ejecuta `tar` en el objetivo container: nuestro error fue `exec: \"\
+  tar\": executable file not found in $PATH`.\n  Lea tools y `/proc/<pid>/root`; cómo funciona `cp` es\
+  \ *(según la documentación)*, [kubectl cp](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_cp/);\
+  \ el fallo fue *(verificado)*.\n- `kubectl logs --previous -c app` selecciona la instancia terminada.\
+  \ Aquí dos requests failed para recuperar su logs,\n  y se detuvieron más intentos; Los actuales logs\
+  \ y CRI permanecieron accesibles. Texto exacto y límites: §21.\n- `kubectl events --for pod/<name>`\
+  \ y `describe pod` muestran fallas de startup/BackOff, no llamadas al sistema.\n  Ambos se utilizaron\
+  \ en el copy/crashing Pod incorrecto. *(verificado)*.\nEphemeral containers requiere `get` en Pod y\
+  \ `patch`/`update` en **`pods/ephemeralcontainers`**; attach/exec requiere sus propios permisos.\nPara\
+  \ crear una copia o nodo debugger se requiere `create pods`; el nodo Pod también necesita admisión para\
+  \ acceder al host.\n*(según la documentación)* — [RBAC](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)\
+  \ y depuración de nodos.\n`auth can-i patch pods/ephemeralcontainers`: el administrador recibió `yes`,\
+  \ el valor predeterminado ServiceAccount `no`. *(verificado)*.\nPSA también verifica ephemeral containers:\
+  \ con `baseline:v1.37`, nuestro `general` fue rechazado por su capabilities agregado;\nEl nodo `sysadmin`\
+  \ fue rechazado para `hostNetwork`, `hostPID`, `hostIPC`, `hostPath` y `privileged`. Con `restricted:v1.37`,\n\
+  También se produjo el rechazo. La etiqueta enforce no detuvo los procesos existentes. *(verificado)*.\n\
+  **Ejemplo de lectura: porción relevante exacta del rechazo de admisión del nodo-Pod:**\n\n> [!info]-\
+  \ Explicación más profunda\n> ```text\n> violates PodSecurity \"baseline:v1.37\": host namespaces (hostNetwork=true,\
+  \ hostPID=true, hostIPC=true), hostPath volumes (volume \"host-root\"), privileged (container \"debugger\"\
+  \ must not set securityContext.privileged=true)\n> ```\n>\n> El perfil `restricted` no repara otros\
+  \ containers inseguros en un Pod existente.\n> Recordatorio: [[Security-Visual-Guide#14. Pod Security\
+  \ и собственный допуск: отказы на разных свойствах|Pod Security and custom admission: rejecting different\
+  \ properties]].\nEl nodo > A privileged Pod con el nodo root/namespaces otorga el poder de hacerse cargo\
+  \ de todo el nodo:\n> acceso a CRI, otros containers y secretos. Este es un límite técnico; otorgar\
+  \ permisos para un incidente específico.\n> Registre el operador, objetivo, image/digest, perfil, hora\
+  \ y motivo; API audit debe conservar operaciones\n> on creación de `pods/ephemeralcontainers`, Pod y\
+  \ attach/exec.. No reemplaza los comandos de registro dentro de shell.\n> *(según documentación)* —\
+  \ [Kubernetes auditoría](https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/); La configuración\
+  \ de audit aquí fue *(no probada)*.\n> Oobtener imágenes tools de un registro controlado, procedencia\
+  \ y vulnerabilidades de verify, y fijar un digest,\n> no `latest`; no dejar tools ni capturas que contengan\
+  \ secretos en production. Esta es una práctica recomendada, no una prueba de registro.\n>\n> | Síntoma\
+  \ | Primera herramienta | Siguiente herramienta |\n> |---|---|---|\n> | No shell, proceso activo | `logs`,\
+  \ `describe` | `debug --target`, luego `ps`/`ss` |\n> | Process visible, ptrace denegado | UID, capabilities,\
+  \ seccomp | Perfil aprobado y `strace -f -p` |\n> | Configuración cannot ser leída | Registros que contienen\
+  \ la ruta | `/proc/<pid>/root`, `strace` con `openat` |\n> | El nombre Service no se resuelve | `dig`,\
+  \ `/etc/resolv.conf` | DNS events, UDP/TCP 53 captura |\n> | DNS funciona, TCP falla | EndpointSlice\
+  \ y `ss` | `curl`, `tcpdump`: SYN/RST o reintentos |\n> | No hay tiempo suficiente para conectarse |\
+  \ `logs --previous`, `lastState` | `debug --copy-to`, con `--set-image` si es necesario |\n> | Varios\
+  \ Pods en un nodo fallan | Node conditions, events | Diario Node `debug`, CRI, kubelet/containerd |\n\
+  >\n> **Predicción:** la captura muestra tres paquetes SYN a `10.96.166.152:80`, DNS devolvió esa dirección\
+  \ y no hay ningún SYN-ACK.\n> ¿Esto prueba que el proceso Go no está escuchando en `8080`?\n>\n> > [!question]-\
+  \ Respuesta\n> > No. En el experimento real estaba escuchando y el Service tenía un ready endpoint;\
+  \ un egress NetworkPolicy bloqueó la respuesta.\n> > Eliminándolo restaurado `ok`. Una captura del lado\
+  \ del cliente muestra que la respuesta está ausente aquí, pero no identifica la ubicación de entrega\
+  \ en sí. *(verificado)*.\n>\n> **Respuesta corta en inglés — Pod sin shell:**\n>\n> > I verifique primero\
+  \ logs y events. Agrego un ephemeral container con una imagen tools confiable y apunto al app container.\n\
+  > > It shares o Pod network; El acceso al proceso depende del runtime y de los permisos. Puedo leer\
+  \ los archivos app a través de `/proc/<pid>/root`.\n> > I utiliza el perfil debug más pequeño permitido\
+  \ y no reconstruye la imagen en ejecución solo para agregar un shell.\n>\n> **Respuesta corta en inglés\
+  \ — CrashLoopBackOff:**\n>\n> > I verifique previous logs, events y el último motivo exit. Si el app\
+  \ se detiene demasiado rápido, creo una copia separada del debug.\n> > I cambie su command o use una\
+  \ imagen tools; `sleep` no funcionará si falta en la imagen original.\n> > La copia tiene un nuevo estado\
+  \ de proceso y puede tener un nuevo volume data, por lo que lo compare con el Pod original."
+source_hash: a9911b0d30fcb13a83c52c4c520c00aa95768bb144d28fba43f444341043508c

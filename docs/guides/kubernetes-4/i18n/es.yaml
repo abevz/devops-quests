@@ -1,0 +1,60 @@
+heading: '4. Probes: el inicio, la preparación y el reinicio tienen diferentes consecuencias'
+text: "## 4. Sondas: startup, readiness y reiniciar tienen consecuencias diferentes\n\n**De un vistazo**\n\
+  - Startup le da tiempo a la aplicación para comenzar\n- Readiness controla si está listo para recibir\
+  \ tráfico\n- Liveness puede desencadenar un reinicio del contenedor.\n\n**Escenario breve**\n\nReadiness\
+  \ falla. Liveness tiene éxito y el proceso está activo.\n\n**Predecir:** ¿Es necesario reiniciar el\
+  \ propio readiness?\n\n> [!question]- Respuesta\n> Análisis de las condiciones dadas: No. El Pod ya\
+  \ no se considera listo para el tráfico normal Service; reiniciar no es una acción readiness.\n\n**`probes.yaml`\
+  \ en `/tmp/vg-k8s-work`: un Pod completo con tres probes:**\n\n```yaml\napiVersion: v1\nkind: Pod\n\
+  metadata:\n  name: probes\n  namespace: vg-k8s\nspec:\n  containers:\n    - name: nginx\n      image:\
+  \ nginx:1.27\n      ports:\n        - containerPort: 80\n      startupProbe:\n        httpGet:\n   \
+  \       path: /\n          port: 80\n        periodSeconds: 2\n        timeoutSeconds: 1\n        failureThreshold:\
+  \ 30\n      readinessProbe:\n        httpGet:\n          path: /\n          port: 80\n        periodSeconds:\
+  \ 2\n        timeoutSeconds: 1\n        failureThreshold: 1\n      livenessProbe:\n        httpGet:\n\
+  \          path: /\n          port: 80\n        periodSeconds: 5\n        timeoutSeconds: 1\n      \
+  \  failureThreshold: 3\n```\n\nUn probe es una comprobación kubelet, no un servidor de supervisión independiente.\n\
+  `httpGet` verifica la respuesta HTTP, `tcpSocket` la conexión y `exec` el código de salida de un comando\
+  \ dentro del contenedor;\nTambién hay una verificación gRPC incorporada. Una conexión TCP no prueba\
+  \ que una operación comercial sea correcta.\n*(según documentación)* — [Configuración probe](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/).\n\
+  \n> [!info]- Explicación más profunda\n> | Sonda | Pregunta | Acción Kubelet después de un fracaso sostenido\
+  \ |\n> |---|---|---|\n> | `startupProbe` | ¿Ha terminado el startup inicial? | Reinicia el contenedor;\
+  \ readiness/liveness permanece deshabilitado hasta que startup tenga éxito |\n> | `readinessProbe` |\
+  \ ¿Se pueden enviar solicitudes aquí? | Marca el contenedor como no listo; un Service normal excluye\
+  \ la dirección no preparada |\n> | `livenessProbe` | ¿Debería ser un proceso atascado restarted? | Detiene\
+  \ y reinicia el contenedor según su política |\n>\n> 1. Kubelet ejecuta comprobaciones y cuenta consecutivas\
+  \ successes/failures.\n> 2. `periodSeconds` establece el intervalo; `timeoutSeconds` limita una verificación.\n\
+  > 3. `failureThreshold` cuenta los fallos antes de actuar; para startup proporciona un presupuesto de\
+  \ startup.\n> 4. Readiness cambia el estado listo; el controlador EndpointSlice pasa ese estado a la\
+  \ capa de red.\n> 5. Liveness/startup detiene el contenedor; La falla de probe no necesariamente produce\
+  \ un código de salida de proceso fallido.\n>\n> La tabla y la secuencia son *(según la documentación)*:\
+  \ la fuente probe anterior.\n> Los números siguientes son configuraciones de ejercicio explícitas, no\
+  \ una lista de valores predeterminados.\n>\n> Startup permite aproximadamente `30 × 2 = 60` segundos\
+  \ de comprobaciones antes de la acción; este no es un cronómetro exacto\n>  para todo el pod startup,\
+  \ incluida la descarga de imágenes. *(según la documentación)*: la fuente probe anterior.\n> El ejemplo\
+  \ de tres sondas se comparó con el API por separado; No se reprodujo el fallo simultáneo de los tres.\n\
+  > *(no verificado)*: comportamiento de esta combinación completa.\n\n### Cómo probes rompe un rollout\n\
+  \n**De un vistazo**\n- An probe incorrecto puede bloquear un rollout\nEl proceso en vivo - A no siempre\
+  \ está listo para atender solicitudes\n- Compruebe la ruta y el propósito del probe específico.\n\n\
+  **Escenario breve**\n\nLa aplicación devuelve 200 en /health, pero readiness apunta a /missing y recibe\
+  \ 404.\n\n**Predecir:** ¿Qué observación distingue un error probe de un proceso bloqueado?\n\n> [!question]-\
+  \ Respuesta\n> Análisis de las condiciones dadas: el contenedor se está ejecutando, restartCount no\
+  \ aumenta y los eventos informan fallas readiness 404. Esto no prueba que la aplicación fallara.\n\n\
+  Readiness en una ruta inexistente no finaliza el proceso: los nuevos pods permanecen vivos pero no disponibles,\n\
+  entonces un Deployment con `maxUnavailable: 0` conserva réplicas antiguas y deja de progresar.\nEl liveness\
+  \ incorrecto reinicia una aplicación en buen estado; un presupuesto demasiado corto para startup impide\n\
+  una aplicación lenta desde el acabado startup. Verificar la base de datos en liveness puede reiniciar\
+  \ cada réplica\ndurante una interrupción de la base de datos y amplificar el incidente: una inferencia\
+  \ de ingeniería del comportamiento de probe.\n\n> [!info]- Explicación más profunda\n> **Eventos de\
+  \ una ejecución nueva: un ejemplo para leer:**\n>\n> ```text\n> Readiness probe failed: HTTP probe failed\
+  \ with statuscode: 404\n> Liveness probe failed: HTTP probe failed with statuscode: 404\n> Container\
+  \ app failed liveness probe, will be restarted\n> ```\n>\nLa falla > Readiness se reprodujo en el §6\
+  \ Deployment, falla liveness en un nginx Pod separado.\n> El módulo liveness restarted y nginx salieron\
+  \ exitosamente; ese código de salida no está garantizado\n>  para otras aplicaciones. *(verificado)*.\n\
+  >\n> **Predicción:** readiness falla y liveness tiene éxito. ¿kubelet reiniciará el contenedor?\n>\n\
+  > > [!question]- Respuesta\n> > No simplemente porque falla readiness. El nuevo contenedor sigue vivo\
+  \ pero no preparado.\n> >  En la nueva ejecución, el rollout alcanzó el `ProgressDeadlineExceeded` y\
+  \ quedaron réplicas antiguas.\n> > *(verificado)*.\n>\n> **Respuesta corta en inglés:**\n>\n> > Startup\
+  \ protege un inicio lento. Readiness controla si un Pod recibe tráfico normal de Service.\n> > Liveness\
+  \ reinicia un contenedor que no puede recuperarse por sí solo. Una verificación failed readiness no\
+  \ lo reinicia."
+source_hash: ecad6a149624396bcbf84129724c608bfe67154652b0f31858ad810bf0d16ecf

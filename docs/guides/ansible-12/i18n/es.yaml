@@ -1,0 +1,136 @@
+heading: 12. Roles, colecciones e inclusión (`import_*`, `include_*`)
+text: "## 12. Roles, collections e inclusión (`import_*`, `include_*`)\n\n**De un vistazo**\n- A role\
+  \ grupos relacionados con tasks y configuraciones.\n- A collection distribuye módulos y roles bajo un\
+  \ nombre compartido.\n-  Tener instalado ansible-core no garantiza que haya disponible un collection\
+  \ de terceros.\n\n**Mini-ejemplo:** guarde `mini.yml` en un directorio temporal separado; ejecute `ansible-playbook\
+  \ -i localhost, -c local mini.yml`. El ejemplo se ejecuta en localhost sin convertirse.\n\n```yaml\n\
+  - hosts: localhost\n  connection: local\n  become: false\n  gather_facts: false\n  tasks:\n    - ansible.builtin.include_role:\n\
+  \        name: demo\n```\n\n**Archivos adicionales en el mismo directorio temporal:**\n\n`roles/demo/tasks/main.yml`:\n\
+  \n```yaml\n- ansible.builtin.debug:\n    msg: from role\n```\n\n**Predecir:** ¿Qué mostrará la ejecución\
+  \ y cuál será su código de salida?\n\n> [!question]- Respuesta\n> Ecódigo de salida: 0. Extractos de\
+  \ salida estándar:\n>\n> ```text\n>     \"msg\": \"from role\"\n> localhost                  : ok=2\
+  \    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n> ```\n\nUna tarea\
+  \ incluye el `demo` role de un directorio local. La role imprime una message en la misma obra, sin iniciar\
+  \ un proceso de solicitud por separado.\n\nUn diseño minimalista completo role; cada bloque es un archivo\
+  \ separado:\n\n`roles/demo/defaults/main.yml`:\n\n```yaml\nmessage: hello\n```\n\n`roles/demo/tasks/main.yml`:\n\
+  \n```yaml\n- name: Show role input\n  ansible.builtin.debug:\n    msg: \"{{ message }}\"\n```\n\n`site.yml`:\n\
+  \n```yaml\n- name: Use a role\n  hosts: lab\n  connection: local\n  gather_facts: false\n  become: false\n\
+  \  roles:\n    - role: demo\n      message: custom input\n```\n\nA **role** paquetes relacionados con\
+  \ tasks, valores predeterminados, handlers y plantillas. No es un servidor independiente ni nuevo.\n\
+  proceso: su tasks participa en el juego execution. Su diseño estándar determina dónde se encuentran\
+  \ los archivos.\nUn **collection** es un paquete versionado y con espacio de nombres que contiene roles,\
+  \ módulos, complementos y documentación.\n`ansible-core` proporciona el motor y los módulos integrados;\
+  \ la distribución `ansible` incluye la comunidad collections.\n\n```text\nsite.yml\nroles/demo/\n  defaults/main.yml\
+  \        # low-precedence, configurable values\n  vars/main.yml            # high-precedence internal\
+  \ values, if needed\n  tasks/main.yml           # task list without outer hosts/tasks keys\n  handlers/main.yml\
+  \        # handler list\n  templates/app.conf.j2\n  files/static.conf\n  meta/main.yml            #\
+  \ dependencies\n  meta/argument_specs.yml  # input contract, if needed\nrequirements.yml\n```\n\nEl\
+  \ parámetro Role `message` anula los valores predeterminados. Si un valor configurable está oculto en\
+  \ `vars/main.yml`,\ninventory ya no puede anularlo (§5). `meta/main.yml` con `dependencies: []` declara\
+  \ no\ndependencies; una lista no vacía ejecuta dependencies antes de role. No ocultar todo el pedido\
+  \ de actualización continua\nen una cadena de dependencia: la secuencia crítica es más fácil de ver\
+  \ en la obra.\n*(según documentación)* [Roles](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html).\n\
+  \nInclusión de ### Static y dynamic (`import_*`, `include_*`)\n\n**De un vistazo**\n- import_tasks expande\
+  \ la lista de tareas mientras se analiza playbook.\n- include_tasks carga la lista de tareas en tiempo\
+  \ de ejecución.\n- A Como resultado, la lista de tareas visibles y la selección de etiquetas pueden\
+  \ diferir.\n\n**Mini-ejemplo:** guarde `mini.yml` en un directorio temporal separado; ejecute `ansible-playbook\
+  \ -i localhost, -c local mini.yml`. El ejemplo se ejecuta en localhost sin convertirse.\n\n```yaml\n\
+  - hosts: localhost\n  connection: local\n  become: false\n  gather_facts: false\n  tasks:\n    - ansible.builtin.import_tasks:\
+  \ part.yml\n    - ansible.builtin.include_tasks: part.yml\n```\n\n**Archivos adicionales en el mismo\
+  \ directorio temporal:**\n\n`part.yml`:\n\n```yaml\n- ansible.builtin.debug:\n    msg: part\n```\n\n\
+  **Predecir:** ¿Cuántas veces aparecerá part message en una ejecución normal?\n\n> [!question]- Respuesta\n\
+  > Ecódigo de salida: 0. Extractos de salida estándar:\n>\n> ```text\n>     \"msg\": \"part\"\n>    \
+  \ \"msg\": \"part\"\n> localhost                  : ok=3    changed=0    unreachable=0    failed=0 \
+  \   skipped=0    rescued=0    ignored=0\n> ```\n\nAmbas inclusiones ejecutan una tarea en `part.yml`,\
+  \ por lo que message aparece dos veces. La inclusión de Static y dynamic siguen siendo mecanismos diferentes.\n\
+  \nCompleto `reuse.yml` y `part.yml`:\n\n```yaml\n# reuse.yml\n- name: Compare loading modes\n  hosts:\
+  \ lab\n  connection: local\n  gather_facts: false\n  become: false\n  tasks:\n    - name: Static\n \
+  \     ansible.builtin.import_tasks: part.yml\n      tags: [static]\n    - name: Dynamic\n      ansible.builtin.include_tasks:\
+  \ part.yml\n      loop: [one, two]\n      tags: [dynamic]\n```\n\n```yaml\n# part.yml\n- name: Part\n\
+  \  ansible.builtin.debug:\n    msg: \"{{ item | default('no loop') }}\"\n```\n\n*(verificado)* `--list-tasks`\
+  \ mostró `Part TAGS: [static]` y `Dynamic TAGS: [dynamic]`.\nUna tirada normal imprimió `no loop`, luego\
+  \ `one`, `two`. Pero `--tags dynamic` simplemente included el archivo dos veces;\nsu `Part` tasks sin\
+  \ etiquetar no se ejecutó: resumen `ok=2`, sin mensajes `one`/`two`.\nPara seleccionar niños también,\
+  \ configure en `include_tasks`:\n\n**`import_*`** se expande cuando se analiza playbook. **`include_*`**\
+  \ se expande en el momento execution,\ncuando se conocen las variables del lenguaje principal y los\
+  \ elementos loop. Esto explica las diferencias:\n\n| Propiedad | `import_tasks` / `import_role` | `include_tasks`\
+  \ / `include_role` |\n|---|---|---|\n| `--list-tasks` | Los tasks internos son visibles | Normalmente\
+  \ sólo es visible la tarea include; su contenido no tiene expanded. |\n| `when` | Se propaga al tasks\
+  \ interno y se evalúa para cada | Prueba el include; Después de la entrada, la misma condición no se\
+  \ reevalúa automáticamente para cada child. |\n| `tags` | Heredado por interno tasks | Las etiquetas\
+  \ en el include seleccionan el propio include; los niños necesitan su propio tags o `apply` por separado.\
+  \ |\n| `loop` | No compatible con una tarea `import_*` o role | El include puede repetirse para cada\
+  \ item. |\n| Nombre de archivo | Debe estar disponible durante el análisis | Puede depender de los datos\
+  \ del tiempo de ejecución. |\n| `--start-at-task` | Los nombres internos suelen estar disponibles |\
+  \ No se puede iniciar arbitrariamente dentro de un dynamic include no expandido. |\n\n> [!info]- Explicación\
+  \ más profunda\nFragmento > **`reuse.yml`: argumentos anidados de la tarea `include_tasks`:**\n>\n>\
+  \ ```yaml\n> file: part.yml\n> apply:\n>   tags: [dynamic]\n> ```\n>\n> Este **fragmento de argumento**\
+  \ reemplaza el escalar `part.yml`; la tarea exterior todavía necesita `tags: [dynamic]`\n>  para llegar\
+  \ al include. No mezcle palabras clave de tareas con argumentos de módulos.\n> *(según documentación)*\
+  \ [Reutilizando contenido](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse.html).\n\
+  >\n> **Controladores e inclusión:** una importación de static en `handlers` expone handlers por separado\
+  \ del archivo;\n> notificar sus nombres individuales. Un dynamic include en `handlers` puede ser notificado\
+  \ por su nombre de tarea de inclusión, luego\n>  se ejecuta la lista included. Los controladores de\
+  \ un included role dinámicamente estarán disponibles después\n> que role es included: no notifique a\
+  \ un controlador no registrado antes de `include_role`.\nEl controlador > A en sí no admite `import_role`/`include_role`\
+  \ normal como forma de llamar a un role.\n>  Compruebe estos límites instead para inferir que “la inclusión\
+  \ dynamic funciona igual en todas partes”.\n> *(según documentación)* [Manejadores e inclusión](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_handlers.html).\n\
+  \n### Galaxy y un contrato compartido para equipos\n\n**De un vistazo**\n- Galaxy distribuye dependencies;\
+  \ no ejecuta libros de jugadas.\n- requirements.yml enumera los collections o roles requeridos.\n- Fijar\
+  \ el version ayuda a reproducir el entorno de la máquina de control.\n\n**Escenario breve**\n\nLa ejecución\
+  \ local utiliza el collection de requirements.yml. En CI, solo está instalado ansible-core; Falta el\
+  \ collection.\n\n**Predecir:** ¿Es suficiente el mismo ansible-core version para reproducir la ejecución?\n\
+  \n> [!question]- Respuesta\n> No. CI también debe tener el collection requerido y su dependencies. Esto\
+  \ examina el contenido del entorno; La instalación de Galaxy no se realizó para esta tarea.\n\n**`requirements.yml`:**\n\
+  \n```yaml\ncollections:\n  - name: kubernetes.core\n    version: \"6.1.0\"\n```\n\n```bash\nansible-galaxy\
+  \ collection install -r requirements.yml\n```\n\nGalaxy es un mecanismo de distribución de contenido\
+  \ y catálogo, no un ejecutor de tareas. Pasadores `requirements.yml` dependencies.\nPor ejemplo, un\
+  \ collection real con un version fijado intencionalmente, que no se afirma que sea el más reciente:\n\
+  \nLa instalación no se ejecutó aquí. Para un role independiente, utilice `roles:` con `name`/`src` y\
+  \ `version`;\n`version` es una etiqueta o confirmación para una fuente Git. El nombre completo de un\
+  \ módulo collection no es include sino version: seleccione version\na través de la instalación o una\
+  \ imagen del entorno de ejecución, no a través de la cadena `kubernetes.core.k8s`.\n*(según documentación)*\
+  \ [Galaxy](https://docs.ansible.com/ansible/latest/galaxy/user_guide.html),\n[Instalando collections](https://docs.ansible.com/ansible/latest/collections_guide/collections_installing.html).\n\
+  \nPara múltiples equipos: valores predeterminados documentados y contratos de entrada, lanzamientos\
+  \ versionados, registros de cambios,\npruebas de compatibilidad con versiones compatibles de `ansible-core`\
+  \ y sistema operativo, y consumidores canary antes de actualizaciones importantes.\nTeams fija versiones\
+  \ y actualiza mediante revisión; una rama mutable `main` hace que el mismo playbook se comporte de manera\
+  \ diferente mañana.\nEsta es una estructura de colaboración recomendada.\n\n> [!info]- Explicación más\
+  \ profunda\nLa falla típica de > A es un role/collection faltante o un include excluido por tags. El\
+  \ primero aparece durante\n> comprobación de sintaxis o resolución del módulo; el segundo puede producir\
+  \ una recapitulación exitosa **sin el tasks** requerido.\n> An `kubernetes.core.k8s` disponible pasó\
+  \ la verificación de sintaxis; el caso de la colección perdida no fue reproducido.\n\n### Predicto 11:\
+  \ etiqueta en una importación static\n\n**De un vistazo**\n- import_tasks incluye tasks mientras se\
+  \ analiza playbook.\nLa etiqueta - A en un static include se propaga a su tasks anidado.\n- Compruebe\
+  \ qué tasks se seleccionaron, no solo si el include tiene una etiqueta.\n\n**`predict-11.yml` (cualquier\
+  \ nombre de archivo) al lado de `inventory.ini` del §2; `part.yml` está en el mismo directorio:**\n\n\
+  ```yaml\n- hosts: lab\n  connection: local\n  gather_facts: false\n  become: false\n  tasks:\n  - name:\
+  \ Probe\n    ansible.builtin.import_tasks: part.yml\n    tags:\n    - pick\n```\n\n`part.yml` (sin tags):\n\
+  \n```yaml\n- name: Child\n  ansible.builtin.debug:\n    msg: child ran\n```\n\n**Predecir:** agregue\
+  \ `--tags pick` a ambas ejecuciones. ¿Se ejecutará `Child` y cuáles son los resúmenes?\n\n> [!question]-\
+  \ Respuesta\n> ```text\n> # Первый запуск; код завершения 0\n> ok: [localhost] => {\n>     \"msg\":\
+  \ \"child ran\"\n> }\n> localhost                  : ok=1    changed=0    unreachable=0    failed=0\
+  \    skipped=0    rescued=0    ignored=0\n> # Второй запуск; код завершения 0\n> ok: [localhost] =>\
+  \ {\n>     \"msg\": \"child ran\"\n> }\n> localhost                  : ok=1    changed=0    unreachable=0\
+  \    failed=0    skipped=0    rescued=0    ignored=0\n> ```\n> La etiqueta de importación static se\
+  \ hereda por el archivo tasks; `Child` se ejecuta en todos los execution.\n\n### Predicto 12: etiqueta\
+  \ en un dynamic include\n\n**De un vistazo**\n- include_tasks incluye tasks en tiempo de ejecución.\n\
+  La etiqueta - A en el propio include no agrega automáticamente esa etiqueta a su tasks.\nLa selección\
+  \ de - Tag puede abrir un archivo y luego omitir su contenido.\n\n**`predict-12.yml` (cualquier nombre\
+  \ de archivo) al lado de `inventory.ini` del §2; `part.yml` está en el mismo directorio:**\n\n```yaml\n\
+  - hosts: lab\n  connection: local\n  gather_facts: false\n  become: false\n  tasks:\n  - name: Probe\n\
+  \    ansible.builtin.include_tasks: part.yml\n    tags:\n    - pick\n```\n\n`part.yml` (sin tags):\n\
+  \n```yaml\n- name: Child\n  ansible.builtin.debug:\n    msg: child ran\n```\n\n**Predecir:** reemplace\
+  \ `import_tasks` con `include_tasks` y agregue `--tags pick` a ambas ejecuciones. ¿Se ejecutará `Child`\
+  \ y cuáles son los resúmenes?\n\n> [!question]- Respuesta\n> ```text\n> # Первый запуск; код завершения\
+  \ 0\n> included: /tmp/ansible-visual-guide/part.yml for localhost\n> localhost                  : ok=1\
+  \    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n> # Второй запуск;\
+  \ код завершения 0\n> included: /tmp/ansible-visual-guide/part.yml for localhost\n> localhost      \
+  \            : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n\
+  > ```\n> Solo se selecciona la tarea include; sin etiquetar `Child` no se ejecuta. Aquí `ok=1` se refiere\
+  \ a incluir el archivo, no su tarea child.\n\nPregunta: **¿Cuándo usaría you `include_tasks` instead\
+  \ de `import_tasks`?**\n\n> I uso `include_tasks` cuando la elección depende de los datos del tiempo\
+  \ de ejecución o cuando necesito un loop para la tarea\nArchivo > . `import_tasks` es expanded antes\
+  \ de execution, por lo que sus tasks son visibles para list-tasks y heredan\n> tags. Con un include,\
+  \ debo manejar tags tanto en el include como en su child tasks."
+source_hash: 5dc1183c50accfee638e7569de9289a7b34420b9afe7c8191628a134afa958d3
