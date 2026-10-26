@@ -1,0 +1,61 @@
+heading: '4. Probes: Startup, Bereitschaft und Neustart haben unterschiedliche Konsequenzen'
+text: "## 4. Sonden: startup, readiness und Neustart haben unterschiedliche Konsequenzen\n\n**Auf einen\
+  \ Blick**\n- Startup gibt der Anwendung Zeit zum Starten\n- Readiness steuert, ob es bereit ist, Datenverkehr\
+  \ zu empfangen\n- Liveness kann einen Container-Neustart auslösen.\n\n**Kurzes Szenario**\n\nReadiness\
+  \ schlägt fehl. Liveness ist erfolgreich und der Prozess ist aktiv.\n\n**Vorhersage:** Erfordert readiness\
+  \ selbst einen Neustart?\n\n> [!question]- Antwort\n> AAnalyse der gegebenen Bedingungen: Nein. Der\
+  \ Pod gilt nicht mehr als bereit für den normalen Service-Verkehr; Ein Neustart ist keine readiness-Aktion.\n\
+  \n**`probes.yaml` in `/tmp/vg-k8s-work`: ein kompletter Pod mit drei probes:**\n\n```yaml\napiVersion:\
+  \ v1\nkind: Pod\nmetadata:\n  name: probes\n  namespace: vg-k8s\nspec:\n  containers:\n    - name: nginx\n\
+  \      image: nginx:1.27\n      ports:\n        - containerPort: 80\n      startupProbe:\n        httpGet:\n\
+  \          path: /\n          port: 80\n        periodSeconds: 2\n        timeoutSeconds: 1\n      \
+  \  failureThreshold: 30\n      readinessProbe:\n        httpGet:\n          path: /\n          port:\
+  \ 80\n        periodSeconds: 2\n        timeoutSeconds: 1\n        failureThreshold: 1\n      livenessProbe:\n\
+  \        httpGet:\n          path: /\n          port: 80\n        periodSeconds: 5\n        timeoutSeconds:\
+  \ 1\n        failureThreshold: 3\n```\n\nEin probe ist eine kubelet-Prüfung, kein separater Überwachungsserver.\n\
+  `httpGet` prüft die HTTP-Antwort, `tcpSocket` die Verbindung und `exec` den Exit-Code eines Befehls\
+  \ im Container.\nEs gibt auch eine integrierte gRPC-Prüfung. Eine TCP-Verbindung beweist nicht, dass\
+  \ ein Geschäftsvorgang korrekt ist.\n*(laut Dokumentation)* – [probe Konfiguration](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/).\n\
+  \n> [!info]- Ausführlichere Erklärung\n> | Sonde | Frage | Kubelet Aktion nach anhaltendem Fehler |\n\
+  > |---|---|---|\n> | `startupProbe` | Ist der ursprüngliche startup fertig? | Startet den Container\
+  \ neu; readiness/liveness bleibt deaktiviert, bis startup erfolgreich ist |\n> | `readinessProbe` |\
+  \ Können hier Anfragen gestellt werden? | Markiert den Container als nicht bereit; ein gewöhnlicher\
+  \ Service schließt die Unready-Adresse | aus\n> | `livenessProbe` | Sollte ein feststeckender Prozess\
+  \ restarted sein? | Stoppt und startet den Container gemäß seiner Richtlinie |\n>\n> 1. Kubelet führt\
+  \ Prüfungen durch und zählt aufeinanderfolgende successes/failures.\n> 2. `periodSeconds` legt das Intervall\
+  \ fest; `timeoutSeconds` beschränkt eine Prüfung.\n> 3. `failureThreshold` zählt Fehler vor der Aktion;\
+  \ Für startup ist ein startup-Budget vorgesehen.\n> 4. Readiness ändert den Bereitschaftsstatus; Der\
+  \ EndpointSlice-Controller übergibt diesen Status an die Netzwerkschicht.\n> 5. Liveness/startup stoppt\
+  \ den Container; Ein probe-Fehler führt nicht unbedingt zu einem fehlerhaften Prozess-Exit-Code.\n>\n\
+  > Die Tabelle und die Reihenfolge sind *(laut Dokumentation)* – die obige probe-Quelle.\n> Die folgenden\
+  \ Zahlen sind explizite Übungseinstellungen und keine Liste von Standardwerten.\n>\n> Startup ermöglicht\
+  \ etwa `30 × 2 = 60` Sekunden Überprüfungen vor der Aktion; Dies ist keine exakte Stoppuhr\n> für den\
+  \ gesamten Pod startup inklusive Bild-Download. *(laut Dokumentation)* – die probe-Quelle oben.\n> Das\
+  \ Beispiel mit drei Sonden wurde separat mit dem API verglichen; Der gleichzeitige Ausfall aller drei\
+  \ wurde nicht reproduziert.\n> *(nicht verifiziert)* – Verhalten dieser vollständigen Kombination.\n\
+  \n### Wie probes einen rollout kaputt macht\n\n**Auf einen Blick**\n- An falscher probe kann einen rollout\
+  \ blockieren\nDer Live-Prozess - A ist nicht immer bereit, Anfragen zu bearbeiten\n- Überprüfen Sie\
+  \ den Pfad und Zweck des spezifischen probe.\n\n**Kurzes Szenario**\n\nDie Anwendung gibt 200 für /health\
+  \ zurück, aber readiness zeigt auf /missing und empfängt 404.\n\n**Vorhersage:** Welche Beobachtung\
+  \ unterscheidet einen probe-Fehler von einem abgestürzten Prozess?\n\n> [!question]- Antwort\n> Analysis\
+  \ der gegebenen Bedingungen: Der Container läuft, restartCount nimmt nicht zu und Ereignisse melden\
+  \ readiness 404-Fehler. Dies beweist nicht, dass die Anwendung abgestürzt ist.\n\nReadiness auf einem\
+  \ nicht vorhandenen Pfad bricht den Prozess nicht ab: Neue Pods bleiben aktiv, sind aber nicht verfügbar.\n\
+  Daher behält ein Deployment mit `maxUnavailable: 0` alte Replikate bei und wird nicht mehr weiterentwickelt.\n\
+  Falsch liveness startet eine fehlerfreie Anwendung neu; Ein zu kurzes Budget startup verhindert\neine\
+  \ langsame Anwendung durch die Endbearbeitung startup. Durch Überprüfen der Datenbank in liveness kann\
+  \ jedes Replikat neu gestartet werden\nwährend eines Datenbankausfalls auftreten und den Vorfall verstärken\
+  \ – eine technische Schlussfolgerung aus dem probe-Verhalten.\n\n> [!info]- Ausführlichere Erklärung\n\
+  > **Ereignisse aus einem neuen Lauf: ein Beispiel zum Lesen:**\n>\n> ```text\n> Readiness probe failed:\
+  \ HTTP probe failed with statuscode: 404\n> Liveness probe failed: HTTP probe failed with statuscode:\
+  \ 404\n> Container app failed liveness probe, will be restarted\n> ```\n>\nDer > Readiness-Fehler wurde\
+  \ im §6 Deployment, liveness-Fehler in einem separaten nginx Pod reproduziert.\n> Der liveness-Pod restarted\
+  \ und nginx wurden erfolgreich beendet. Dieser Exit-Code ist nicht garantiert\n> für andere Anwendungen.\
+  \ *(verifiziert)*.\n>\n> **Vorhersage:** readiness schlägt fehl und liveness ist erfolgreich. Wird kubelet\
+  \ den Container neu starten?\n>\n> > [!question]- Antwort\n> > Nicht nur, weil readiness ausfällt. Der\
+  \ neue Container bleibt am Leben, aber noch nicht fertig.\n> > In der neuen Auflage erreichte der rollout\
+  \ den Wert `ProgressDeadlineExceeded` und alte Nachbauten blieben erhalten.\n> > *(verifiziert)*.\n\
+  >\n> **Kurze Antwort auf Englisch:**\n>\n> > Startup schützt einen langsamen Start. Readiness steuert,\
+  \ ob ein Pod normalen Service-Verkehr empfängt.\n> > Liveness startet einen Container neu, der sich\
+  \ nicht selbst wiederherstellen kann. Eine failed readiness-Prüfung führt nicht zum Neustart."
+source_hash: ecad6a149624396bcbf84129724c608bfe67154652b0f31858ad810bf0d16ecf

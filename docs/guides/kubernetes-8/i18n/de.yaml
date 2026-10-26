@@ -1,0 +1,133 @@
+heading: '8. Platzierung: geeignete Knoten zuerst, der beste Knoten zweitens'
+text: "## 8. Platzierung: teilnahmeberechtigter nodes an erster Stelle, bester node an zweiter Stelle\n\
+  \n**Auf einen Blick**\n- Der Scheduler schließt zunächst ungeeignete nodes aus\n- Es wählt dann unter\
+  \ den berechtigten nodes aus\n- High priority überschreibt keine harte Einschränkung.\n\n**Kurzes Szenario**\n\
+  \nDer Pod erfordert disk=fast.. Kein node hat dieses Etikett.\n\n**Vorhersage:** Wird ein hoher priority\
+  \ das Problem beheben?\n\n> [!question]- Antwort\n> AAnalyse der gegebenen Bedingungen: Nein. Es gibt\
+  \ keinen berechtigten node; Ändern Sie die Anforderungen oder stellen Sie Kapazitäten mit dem erforderlichen\
+  \ Etikett bereit.\n\nDer Scheduler liest nicht zugewiesene Pods und node-Informationen aus dem API.\n\
+  Durch die Filterung werden nodes ausgeschlossen, die gegen zwingende Bedingungen verstoßen. Nach der\
+  \ Wertung werden die verbleibenden nodes gewertet\nund zeichnet eine Aufgabe auf. Ressourcenvergleiche\
+  \ verwenden `requests` und available\n`allocatable`-Kapazität, kein geringer Strom. CPU-Nutzung in `top`.\
+  \ `allocatable` ist die Kapazität nach node-Reservierungen.\n*(laut Dokumentation)* – [scheduler](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/),\n\
+  [resources](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/).\n\n> [!info]-\
+  \ Ausführlichere Erklärung\n> **Lesediagramm: Warum hohes priority die Inkompatibilität nicht beheben\
+  \ kann:**\n>\n> ```mermaid\n> flowchart TD\n>     P[\"Pod without an assigned node\"] --> F[\"Filters:\
+  \ resources, taints, labels, volumes\"]\n>     F --> Y[\"Eligible nodes exist\"]\n>     Y --> S[\"Score\
+  \ and select a node\"]\n>     S --> B[\"Binding through the API\"]\n>     F --> N[\"No eligible nodes\"\
+  ]\n>     N --> E[\"FailedScheduling\"]\n>     E --> R[\"Can preemption free an eligible node?\"]\n>\
+  \ ```\n\n### Vier klassische Ursachen für Pending\n\n**Auf einen Blick**\n- Pending kann bedeuten, dass\
+  \ kein passender node vorhanden ist\n- Lesen Sie Bedingungen und Ereignisse, um die Ursache zu finden\n\
+  - Nicht jeder Pending-Status beinhaltet einen Image-Pull.\n\n**Minibeispiel:** nur im oben vorbereiteten\
+  \ Einweg-Cluster kind. Erstellen Sie den namespace mit `kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig\
+  \ --context kind-guides-order-rest create namespace guide-mini-20`. Speichern Sie den Eintrag als `mini.sh`;\
+  \ Führen Sie es mit `bash -e mini.sh` aus.\n\n```bash\nk() { kubectl --kubeconfig /tmp/guides-order-rest.kubeconfig\
+  \ --context kind-guides-order-rest -n guide-mini-20 \"$@\"; }\ncat > overrides.json <<'JSON'\n{\"spec\"\
+  :{\"nodeSelector\":{\"guide.example/missing\":\"yes\"}}}\nJSON\njq -e '.spec.nodeSelector' overrides.json\
+  \ >/dev/null\nk run pending --image=nginx:1.29-alpine --image-pull-policy=Never --overrides=\"$(cat\
+  \ overrides.json)\"\nk wait --for=jsonpath='{.status.conditions[0].reason}'=Unschedulable pod/pending\
+  \ --timeout=60s\nk get pod pending -o jsonpath='{.status.phase}{\"\\n\"}'\nk get pod pending -o jsonpath='{.status.conditions[0].reason}{\"\
+  \\n\"}'\n```\n\n**Vorhersage:** Was wird der letzte command anzeigen, nachdem die vorherigen Befehle\
+  \ abgeschlossen sind?\n\n> [!question]- Antwort\n> Actual command stdout:\n>\n> ```text\n> pod/pending\
+  \ created\n> pod/pending condition met\n> Pending\n> Unschedulable\n> ```\n>\n> Exit-Code: 0.\n\nDem\
+  \ node fehlt in dieser Umgebung das erforderliche Etikett. Der Container wurde keinem node zugewiesen;\
+  \ der reason ist Unschedulable.\n\n**`toobig.yaml` in `/tmp/vg-k8s-work`: absichtlich unmöglich requests:**\n\
+  \n```yaml\napiVersion: v1\nkind: Pod\nmetadata:\n  name: toobig\n  namespace: vg-k8s\nspec:\n  containers:\n\
+  \    - name: app\n      image: busybox:1.37\n      command: [\"sleep\", \"3600\"]\n      resources:\n\
+  \        requests:\n          cpu: \"1000\"\n          memory: 1Ti\n```\n\n| Ursache | Vergleich | Zu\
+  \ prüfende Beweise |\n|---|---|---|\n| Insufficient resources | Pod requests plus zugewiesenes requests\
+  \ gegen `allocatable` | `Insufficient cpu`, `Insufficient memory` |\n| Ein node taint wird nicht toleriert\
+  \ | `taints` gegen `tolerations` | `untolerated taint` |\n| Etiketten oder verbindliche Regeln gelten\
+  \ nicht match | `nodeSelector`, affinity, Vertrieb | `didn't match Pod's node affinity/selector` |\n\
+  | Ein volume ist nicht bereit oder seine Topologie steht in Konflikt | PVC, PV, Lagerung nodes | `unbound\
+  \ immediate PersistentVolumeClaims`, `volume node affinity conflict` |\n\n> [!info]- Ausführlichere\
+  \ Erklärung\n> Diese vier Ursachen sind eine praktische Gruppierung und keine erschöpfende Liste der\
+  \ `Pending`-Bedingungen.\n> An zugewiesener Pod wartet möglicherweise auch auf ein Bild, Secret, CNI\
+  \ oder volume-Anhang: Überprüfen Sie zuerst `spec.nodeName`.\n> Resourcen und Regeln sind *(laut Dokumentation)*\
+  \ – Quellen oben und\n> [Speicherbindung](https://kubernetes.io/docs/concepts/storage/storage-classes/).\n\
+  >\n> CPU `1000` bedeutet hier tausend Kerne, nicht tausend Millicores.\n> CPU `m` bedeutet ein Tausendstel\
+  \ eines Kerns; `Mi`/`Gi`/`Ti` sind binäre memory-Einheiten.\nDie > A-Anfrage reserviert den Prozess\
+  \ memory nicht vorab: Er nimmt an der node-Zulassung teil.\n> *(laut Dokumentation)* — [resources](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/).\n\
+  >\n> **Ein neues Ereignis: ein Beispiel zum Lesen:**\n>\n> ```text\n> 0/3 nodes are available: 1 node(s)\
+  \ had untolerated taint(s), 2 Insufficient cpu,\n> 2 Insufficient memory. preemption: 0/3 nodes are\
+  \ available:\n> 3 Preemption is not helpful for scheduling.\n> ```\n>\n> pod wurde nicht zugewiesen;\
+  \ ein Ereignis bestätigte den Mangel an resource. Separat obligatorisch `nodeSelector: disk: imaginary`\n\
+  > produziert `2 node(s) didn't match Pod's node affinity/selector`. *(verifiziert)*.\n\n### Node taints\
+  \ und tolerations\n\n**Auf einen Blick**\n- A taint verbietet oder schränkt die Planung ein\nMit - A\
+  \ toleration kann ein Pod eine bestimmte Einschränkung tolerieren\n- Die Auswahl dieses node wird nicht\
+  \ erzwungen.\n\n**Kurzes Szenario**\n\nDer Pod toleriert dedicated=batch:NoSchedule.. Er hat keinen\
+  \ selector.\n\n**Vorhersage:** Muss es auf einem Stapel node landen?\n\n> [!question]- Antwort\n> Analysis\
+  \ der gegebenen Bedingungen: Nein. A toleration entfernt eine Einschränkung; Für die Platzierung gelten\
+  \ weiterhin die sonstigen Bedingungen des Veranstalters.\n\n**Befehl aus jedem Verzeichnis: eine Übung\
+  \ taint nur auf einem Einweglabor node:**\n\n```bash\nkubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context\
+  \ kind-vg-k8s \\\n  taint node vg-k8s-worker dedicated=reserved:NoSchedule\n```\n\n**`placed.yaml` in\
+  \ `/tmp/vg-k8s-work`: toleration plus Pflichtplatzierung:**\n\n```yaml\napiVersion: v1\nkind: Pod\n\
+  metadata:\n  name: placed\n  namespace: vg-k8s\nspec:\n  nodeSelector:\n    kubernetes.io/hostname:\
+  \ vg-k8s-worker\n  tolerations:\n    - key: dedicated\n      operator: Equal\n      value: reserved\n\
+  \      effect: NoSchedule\n  containers:\n    - name: app\n      image: busybox:1.37\n      command:\
+  \ [\"sleep\", \"3600\"]\n```\n\nEin taint gehört zu einem node; Ein toleration erlaubt einem pod, die\
+  \ entsprechende Einschränkung zu **tolerieren**.\n`NoSchedule` blockiert neue Zuweisungen; `PreferNoSchedule`\
+  \ drückt eine Präferenz aus;\n`NoExecute` kann auch bestehende Pods entfernen, vorbehaltlich ihrer tolerations\
+  \ und Dauer.\nEin toleration zieht keinen Pod zu einem node und reserviert diesen node nicht ausschließlich\
+  \ für die Anwendung.\n*(laut Dokumentation)* – [taints/tolerations](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/).\n\
+  \n> [!info]- Ausführlichere Erklärung\n> A pod mit derselben node-Auswahl **ohne** ein toleration blieb\
+  \ nicht zugewiesen und erhielt ein taint-Ereignis.\n> Der taint wurde nach Überprüfung entfernt; Ein\
+  \ erfolgreicher Lauf von `placed.yaml` selbst wird hier nicht beansprucht.\n> *(verifiziert)* – Ablehnung\
+  \ ohne toleration; Das vollständige Positivbeispiel ist *(nicht verifiziert)*.\n\n### Affinity und Vertrieb\n\
+  \n**Auf einen Blick**\n- Affinity drückt eine Planungspräferenz oder -anforderung aus\n- Spread schränkt\
+  \ eine ungleichmäßige Verteilung ein\nDie weiche Präferenz - A garantiert keine Trennung.\n\n**Kurzes\
+  \ Szenario**\n\nZwei replicas haben nur preferred anti-affinity. Ein node ist available.\n\n**Vorhersage:**\
+  \ Können beide dabei landen?\n\n> [!question]- Antwort\n> AAnalyse der gegebenen Bedingungen: Ja. Eine\
+  \ weiche Präferenz weicht der Möglichkeit, einen Pod einzuplanen; Eine strenge Garantie erfordert eine\
+  \ strenge Regel und ausreichende Kapazität.\n\n**`spread.yaml` in `/tmp/vg-k8s-work`: ein vollständiger\
+  \ Deployment spread über nodes:**\n\n```yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name:\
+  \ spread\n  namespace: vg-k8s\nspec:\n  replicas: 3\n  selector:\n    matchLabels:\n      app: spread\n\
+  \  template:\n    metadata:\n      labels:\n        app: spread\n    spec:\n      affinity:\n      \
+  \  nodeAffinity:\n          requiredDuringSchedulingIgnoredDuringExecution:\n            nodeSelectorTerms:\n\
+  \              - matchExpressions:\n                  - key: kubernetes.io/os\n                    operator:\
+  \ In\n                    values: [linux]\n      topologySpreadConstraints:\n        - maxSkew: 1\n\
+  \          topologyKey: kubernetes.io/hostname\n          whenUnsatisfiable: DoNotSchedule\n       \
+  \   labelSelector:\n            matchLabels:\n              app: spread\n      containers:\n       \
+  \ - name: app\n          image: busybox:1.37\n          command: [\"sleep\", \"3600\"]\n          resources:\n\
+  \            requests:\n              cpu: 20m\n              memory: 16Mi\n```\n\n`nodeAffinity` wählt\
+  \ **node labels**; `podAffinity`/`podAntiAffinity` wählt die Nähe zum Ausgewählten aus\n**Pods** innerhalb\
+  \ einer `topologyKey`-Domäne, z. B. einer hostname oder Zone.\n`requiredDuringSchedulingIgnoredDuringExecution`\
+  \ ist bei der Planung obligatorisch, danach ist jedoch eine Beschriftungsänderung erforderlich\nDer\
+  \ Startvorgang entfernt den Pod nicht selbst. `preferred...` drückt eine Bewertungspräferenz aus.\n\
+  *(laut Dokumentation)* – [node Zuordnung](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/).\n\
+  \n> [!info]- Ausführlichere Erklärung\n> `topologySpreadConstraints` vergleicht die Anzahl ausgewählter\
+  \ Pods über Domänen hinweg.\n> `maxSkew` begrenzt das Ungleichgewicht; `DoNotSchedule` macht diese Einschränkung\
+  \ obligatorisch.\n> während `ScheduleAnyway` uses es als Präferenz. Fehlende Zone labels und zu strenge\
+  \ Bedingungen\n>  kann einen Pod Pending hinterlassen, auch wenn resources available ist.\n> *(laut\
+  \ Dokumentation)* – [Distribution](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/).\n\
+  >\n> Alternative Einträge in `nodeSelectorTerms` sind OR; Ausdrücke innerhalb eines Eintrags sind UND.\n\
+  > Zum Streuen muss template labels match `labelSelector`; andernfalls werden die falschen Pods gezählt.\n\
+  > Das Beispielschema wird gegen API geprüft; Die tatsächliche Verbreitung des replicas ist *(nicht verifiziert)*.\n\
+  \n### Priority und preemption\n\n**Auf einen Blick**\n- Priority definiert die Warteschlangenwichtigkeit\n\
+  - Preemption kann Kapazität freigeben, indem andere Pods ersetzt werden\n- Die Never-Richtlinie verbietet\
+  \ es diesem Pod, anderen zuvorzukommen.\n\n**Kurzes Szenario**\n\nEin Pod mit hoher Priorität hat preemptionPolicy=Never\
+  \ und kein resources ist frei.\n\n**Vorhersage:** Sollte es einem Pod mit niedrigerer Priorität zuvorkommen?\n\
+  \n> [!question]- Antwort\n> AAnalyse der gegebenen Bedingungen: Nein. Es darf zuerst in der Warteschlange\
+  \ warten, erhält aber keine preemption-Rechte.\n\n**`priority.yaml` in `/tmp/vg-k8s-work`: hoch priority\
+  \ ohne preemption:**\n\n```yaml\napiVersion: scheduling.k8s.io/v1\nkind: PriorityClass\nmetadata:\n\
+  \  name: vg-k8s-important\nvalue: 10000\nglobalDefault: false\npreemptionPolicy: Never\ndescription:\
+  \ \"Important work without preemption\"\n---\napiVersion: v1\nkind: Pod\nmetadata:\n  name: important\n\
+  \  namespace: vg-k8s\nspec:\n  priorityClassName: vg-k8s-important\n  containers:\n    - name: app\n\
+  \      image: busybox:1.37\n      command: [\"sleep\", \"3600\"]\n      resources:\n        requests:\n\
+  \          cpu: 20m\n          memory: 16Mi\n```\n\n`PriorityClass` legt den numerischen Wert priority\
+  \ fest; ein weiterer important Pod wird früher für die Planung berücksichtigt.\nWenn resources nicht\
+  \ ausreicht, wählt der Planer möglicherweise Pods mit niedrigerer Priorität als Opfer aus.\nDies hilft\
+  \ nur, wenn das Entfernen dieser Opfer einen node in Frage stellt. Es kann kein falsches oder fehlendes\
+  \ Etikett reparieren\nPV. PDB wird bei der Auswahl der Opfer berücksichtigt, aber die Beachtung bei\
+  \ preemption ist keine absolute Garantie.\n*(laut Dokumentation)* – [priority/preemption](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/).\n\
+  \n> [!info]- Ausführlichere Erklärung\n> `preemptionPolicy: Never` behält die Warteschlange priority\
+  \ bei, verhindert jedoch, dass dieser pod anderen zuvorkommt.\n> Actual preemption wurde hier nicht\
+  \ reproduziert. *(nicht verifiziert)*.\n>\n> **Vorhersage:** `top` zeigt einen inaktiven node, aber\
+  \ alle CPU requests wurden bereits zugewiesen. Passt ein anderer Pod?\n>\n> > [!question]- Antwort\n\
+  > > Niedriger tatsächlicher Verbrauch storniert nicht zuvor verbuchte requests.\n> > A neu Pod kann\
+  \ `Insufficient cpu` erhalten. *(laut Dokumentation)* – die resource-Quelle oben.\n>\n> **Kurze Antwort\
+  \ auf Englisch:**\n>\n> > Der Scheduler filtert nodes nach harten Einschränkungen und bewertet dann\
+  \ den gültigen nodes.\n> > It uses resource requests, nicht nur aktuelle Nutzung. Ein toleration lässt\
+  \ einen taint zu, wählt jedoch nicht den node aus.\n> > Preemption hilft nur, wenn durch Entfernen der\
+  \ unteren priority Pods ein node geeignet ist."
+source_hash: 36cd87d7a648dd018cb7d1c579c26e90c5220736b717a7008647db08d8d4fecd

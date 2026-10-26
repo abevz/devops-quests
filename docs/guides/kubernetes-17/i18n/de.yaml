@@ -1,0 +1,85 @@
+heading: '17. PDB, Räumung und Knotenwartung: Bereiten Sie die Verfügbarkeit im Voraus vor'
+text: "## 17. PDB, Räumung und Knotenwartung: Bereiten Sie die Verfügbarkeit im Voraus vor\n\n**Auf einen\
+  \ Blick**\n- A PDB schränkt die freiwillige Räumung ein\n- Es vergleicht fertige Replikate mit dem budget\n\
+  - A PDB erstellt keine fehlenden Replikate.\n\n**Kurzes Szenario**\n\nZwei Replikate sind fertig und\
+  \ minAvailable=2.\n\n**Vorhersage:** Wie viele freiwillige Räumungen sind in diesem einfachen Fall möglich?\n\
+  \n> [!question]- Antwort\n> AAnalyse der gegebenen Bedingungen: Null. Eine Reduzierung der Anzahl bereiter\
+  \ Replikate würde gegen budget verstoßen.\n\nPDB, PodDisruptionBudget schränkt die freiwillige Entfernung\
+  \ einer ausgewählten Arbeitslast ein.\nDer Controller vergleicht die Bereitschaft pods mit der erforderlichen\
+  \ Verfügbarkeit und zeichnet `disruptionsAllowed` auf.\nDer Eviction API prüft den budget, bevor er\
+  \ einen Pod terminiert.\nPDB erstellt keine Replikate, schützt nicht vor dem Knoten failure/OOM und\
+  \ blockiert keinen direkten Pod DELETE.\nEin Controller-Rollout folgt seiner eigenen Strategie und nicht\
+  \ der Erlaubnis PDB: einem Deployment rolling update\nVerwendet `strategy.rollingUpdate` (`maxUnavailable`/`maxSurge`)\
+  \ ohne Rücksprache mit PDB. Anzahl der Replikate und Knotenverteilung\ndurch `podAntiAffinity` und `topologySpreadConstraints`\
+  \ schützen vor unfreiwilligem disruptions (Knotenausfall, OOM).\nEin PDB, der der Replikatanzahl entspricht\
+  \ (`minAvailable: 2` mit zwei Replikaten), erzeugt `disruptionsAllowed: 0` und blockiert\nbeliebig `drain`:\
+  \ Fügen Sie ein Replikat hinzu oder verwenden Sie ein `maxUnavailable: 1` budget.\n*(laut Dokumentation)*\
+  \ – [disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/).\n\n### Ein budget,\
+  \ zwei Zustände\n\n**Auf einen Blick**\n- Der budget hängt vom aktuellen Zustand ab\n-  Dieselbe Einstellung\
+  \ kann unterschiedliche Aktionen ermöglichen\n- Der Eviction API prüft den aktuellen budget.\n\n**Kurzes\
+  \ Szenario**\n\nminAvailable=2. Zunächst stehen zwei Replikate bereit, dann drei.\n\n**Vorhersage:**\
+  \ Wie ändert sich die zulässige Anzahl von Räumungen in diesem einfachen Modell?\n\n> [!question]- Antwort\n\
+  > AAnalyse der gegebenen Bedingungen: Von Null auf Eins. In jedem Fall müssen zwei fertige Replikate\
+  \ übrig bleiben.\n\n**`pdb.yaml` in `/tmp/vg-k8s-work`: das komplette budget für zwei `web`-Nachbauten:**\n\
+  \n```yaml\napiVersion: policy/v1\nkind: PodDisruptionBudget\nmetadata:\n  name: web\n  namespace: vg-k8s\n\
+  spec:\n  minAvailable: 2\n  selector:\n    matchLabels:\n      app: web\n```\n\n> [!info]- Ausführlichere\
+  \ Erklärung\nFür > `minAvailable: 2` müssen zwei Replikate bereitgehalten werden.\n> Bei zwei bereitstehenden\
+  \ pods ist keine Räumung zulässig; Bei drei kann eine Räumung zulässig sein.\n> `maxUnavailable` ist\
+  \ ein alternatives Feld und kann nicht zusammen mit `minAvailable` festgelegt werden.\n> In `policy/v1`\
+  \ wählt ein leeres selector jedes pod im namespace aus: Dies ist kein harmloses Weglassen von Beschriftungen.\n\
+  > *(laut Dokumentation)* – die disruptions-Quelle oben.\n>\n> **Befehl aus einem beliebigen Verzeichnis:\
+  \ Erstellen und senden Sie eine vollständige Anfrage für einen ausgewählten Pod:**\n>\n> ```bash\n>\
+  \ POD=$(kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\n>   -n vg-k8s get pods\
+  \ -l app=web -o jsonpath='{.items[0].metadata.name}')\n> jq -n --arg pod \"$POD\" \\\n>   '{apiVersion:\"\
+  policy/v1\",kind:\"Eviction\",metadata:{name:$pod,namespace:\"vg-k8s\"}}' \\\n>   > /tmp/vg-k8s-work/eviction.json\n\
+  > kubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\n>   create --raw \"/api/v1/namespaces/vg-k8s/pods/$POD/eviction\"\
+  \ \\\n>   -f /tmp/vg-k8s-work/eviction.json\n> ```\n>\n> `$(...)` erfasst die Befehlsausgabe, `--arg`\
+  \ übergibt eine Zeichenfolge an jq und `--raw` gibt einen API-Pfad an.\n> Wählen Sie einen pod erst\
+  \ aus, nachdem der reparierte Rollout fertig ist.\n>\n> **Neue Ausgabe mit zwei fertigen Replikaten:\
+  \ ein Beispiel zum Lesen:**\n>\n> ```text\n> Error from server (TooManyRequests): Cannot evict pod as\
+  \ it would violate the pod's disruption budget.\n> ```\n>\n> **Neue Ausgabe nach Erhöhung auf drei fertige\
+  \ Replikate: ein Beispiel zum Lesen:**\n>\n> ```text\n> {\"kind\":\"Status\",\"apiVersion\":\"v1\",\"\
+  metadata\":{},\"status\":\"Success\",\"code\":201}\n> ```\n>\n> Both Eviction API Zweige wurden überprüft;\
+  \ ReplicaSet ersetzt ein entferntes Replikat. *(verifiziert)*.\n\n### Warum drain wartet, nachdem cordon\
+  \ erfolgreich war\n\n**Auf einen Blick**\n- Cordon stoppt die neue normale Planung\n- Drain versucht,\
+  \ vorhandenes Pods zu entfernen\n- An Verfügbarkeit budget kann diesen Schritt verzögern.\n\n**Kurzes\
+  \ Szenario**\n\nCordon war erfolgreich, aber die einzige Replik ist durch minAvailable=1. geschützt\n\
+  \n**Vorhersage:** Muss drain sofort fertig werden?\n\n> [!question]- Antwort\n> Analysis der gegebenen\
+  \ Bedingungen: Nein. Eviction verstößt gegen budget; Erfolgreich cordon bedeutet nicht, dass die Evakuierung\
+  \ abgeschlossen ist.\n\n**Befehl aus einem beliebigen Verzeichnis: eine eingeschränkte Übung drain von\
+  \ nur `web` pods:**\n\n```bash\nkubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\
+  \n  drain vg-k8s-worker2 --pod-selector=app=web --ignore-daemonsets --timeout=8s\nkubectl --kubeconfig\
+  \ /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\n  uncordon vg-k8s-worker2\n```\n\n`cordon` verhindert\
+  \ neue normale Zuweisungen, entfernt pods jedoch nicht.\n`drain` macht den Knoten zunächst außerplanbar,\
+  \ entfernt dann berechtigte pods über API und wartet auf den Abschluss.\n`--ignore-daemonsets` Blätter\
+  \ DaemonSet pods; Normales drain entfernt static/mirror Pods nicht.\n`--delete-emptydir-data` erlaubt\
+  \ den Verlust von `emptyDir`-Daten, während `--force` für nicht verwaltete pods sorgt\nist kein PDB-Bypass.\
+  \ `--disable-eviction` verwendet Löschung und umgeht den Schutz: Das ist ein anderer Vorgang.\n*(laut\
+  \ Dokumentation)* – [drain](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/).\n\
+  \n> [!info]- Ausführlichere Erklärung\n> **Ausgabe eines neuen Laufs: Der Replikatname wird abgekürzt:**\n\
+  >\n> ```text\n> node/vg-k8s-worker2 cordoned\n> Cannot evict pod as it would violate the pod's disruption\
+  \ budget.\n> global timeout reached: 8s\n> ```\n>\n> Verifiziert: drain hat die Räumung erneut versucht,\
+  \ es kam zu einer Zeitüberschreitung und der Knoten blieb bis `uncordon` außerplanbar.\n> Der Knoten\
+  \ wurde nach einem Fehler nicht automatisch entsperrt. *(verifiziert)*.\n> Der Filter `--pod-selector`\
+  \ wurde nur für dieses Experiment verwendet; Bei der Wartung wird der Knoten nicht nachgewiesen\n> ist\
+  \ frei von anderen Anwendungen.\n\n### Praktische Wartungssequenz\n\n**Auf einen Blick**\n- Wartung\
+  \ beginnt mit Verfügbarkeits- und Kapazitätsprüfungen\n- Replacement Pods muss irgendwo laufen\n- A\
+  \ budget schafft keine freie Kapazität.\n\n**Kurzes Szenario**\n\nEs gibt ein Replikat und einen verfügbaren\
+  \ Knoten mit PDB minAvailable=1.\n\n**Vorhersage:** Gewährleistet ein PDB allein eine unterbrechungsfreie\
+  \ Wartung?\n\n> [!question]- Antwort\n> AAnalyse der gegebenen Bedingungen: Nein. Es kann nur die freiwillige\
+  \ Räumung blockiert werden; Es werden auch Nachbildungen und Kapazitäten dafür benötigt.\n\nÜberprüfen\
+  \ Sie den Zustand und die freie Kapazität → entfernen Sie blockierende PDB/unready-Replikate → cordon/drain\
+  \ →\nupdate der Knoten → Überprüfen Sie kubelet/node und Anwendungen → uncordon → Fahren Sie mit dem\
+  \ nächsten Knoten fort.\n`unhealthyPodEvictionPolicy: AlwaysAllow` kann die Räumung unbereiter pods\
+  \ ermöglichen,\nersetzt jedoch nicht die Analyse der tatsächlichen Anzahl fehlerfreier Replikate.\n\
+  *(laut Dokumentation)* – [drain](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/).\n\
+  \n> [!info]- Ausführlichere Erklärung\n> **Vorhersage:** Ein Deployment hat eine Replik und PDB `minAvailable:\
+  \ 1`. Kann drain die Verfügbarkeit selbst aufrechterhalten?\n>\n> > [!question]- Antwort\n> > No: PDB\
+  \ blockiert die Räumung, erstellt jedoch weder ein zweites Replikat noch reserviert es Kapazität.\n\
+  > > AVereinbaren Sie vorher einen Ersatz oder vereinbaren Sie eine akzeptable Ausfallzeit.\n> > *(laut\
+  \ Dokumentation)* – die obige disruptions-Quelle.\n>\n> **Kurze Antwort auf Englisch:**\n>\n> > A PDB\
+  \ schränkt die freiwillige Räumung durch die Räumung API ein. Es werden keine zusätzlichen Replikate\
+  \ erstellt und Knotenausfälle werden nicht verhindert.\n> > Drain kann auf einen blockierten budget\
+  \ warten, nachdem dieser den Knoten abgesperrt hat. Ich überprüfe vor der Wartung die Kapazität und\
+  \ fehlerfreie Replikate."
+source_hash: d27d6b8dc7300a4f32d12b07b1045b07f10ade85d95df944e0abf45e7f95473c

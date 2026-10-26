@@ -1,0 +1,62 @@
+heading: '9. Errors: Was wird fortgesetzt und was führt ein Rollback nicht aus?'
+text: "## 9. Fehler: Was geht weiter und was führt ein Rollback nicht aus?\n\n**Auf einen Blick**\n- Blockgruppen\
+  \ im Zusammenhang mit tasks.\n- rescue führt bestimmte Aktionen nach einem normalen failure im Block\
+  \ aus.\n- Recovery führt Änderungen nicht automatisch zurück.\n\n**Mini-Beispiel:** `mini.yml` in einem\
+  \ separaten temporären Verzeichnis speichern; Führen Sie `ansible-playbook -i localhost, -c local mini.yml`\
+  \ aus. Das Beispiel läuft auf localhost ohne zu werden.\n\n```yaml\n- hosts: localhost\n  connection:\
+  \ local\n  become: false\n  gather_facts: false\n  tasks:\n    - block:\n        - ansible.builtin.fail:\n\
+  \            msg: stop\n      rescue:\n        - ansible.builtin.debug:\n            msg: recovered\n\
+  \      always:\n        - ansible.builtin.debug:\n            msg: cleanup\n```\n\n**Vorhersage:** Wird\
+  \ der endgültige Exit-Code nach einem erfolgreichen rescue ungleich Null sein? Wird immer laufen?\n\n\
+  > [!question]- Antwort\n> Exit-Code: 0. Stdout-Auszüge:\n>\n> ```text\n>     \"msg\": \"recovered\"\n\
+  >     \"msg\": \"cleanup\"\n> localhost                  : ok=2    changed=0    unreachable=0    failed=0\
+  \    skipped=0    rescued=1    ignored=0\n> ```\n\n`rescue` verarbeitet das absichtliche failure, dann\
+  \ wird `always` ausgeführt. Die endgültige Zusammenfassung umfasst recovery; In diesem Beispiel werden\
+  \ keine Dateien geändert.\n\nVollständiges `recovery.yml`: Das failure ist beabsichtigt, es werden jedoch\
+  \ keine Änderungen am Betriebssystem vorgenommen:\n\n```yaml\n- name: Explain recovery flow\n  hosts:\
+  \ lab\n  connection: local\n  gather_facts: false\n  become: false\n  tasks:\n    - name: Protected\
+  \ operation\n      block:\n        - name: Fail deliberately\n          ansible.builtin.command:\n \
+  \           argv: [/usr/bin/false]\n          changed_when: false\n      rescue:\n        - name: Show\
+  \ failure context\n          ansible.builtin.debug:\n            msg: \"{{ ansible_failed_task.name\
+  \ }}: {{ ansible_failed_result.rc }}\"\n      always:\n        - name: Show cleanup path\n         \
+  \ ansible.builtin.debug:\n            msg: always\n    - name: Continue after recovery\n      ansible.builtin.debug:\n\
+  \        msg: next task\n```\n\n*(verifiziert)* Ein kombinierter lab mit einer Schleife, Wiederholungsversuchen\
+  \ und `rescue` ergab:\n\n```text\n[ERROR]: Task failed: Module failed: The command exited with a non-zero\
+  \ return code.\nTASK [Recovered]\nok: [localhost] => {\"msg\": \"rescued\"}\nTASK [Cleanup signal]\n\
+  ok: [localhost] => {\"msg\": \"always\"}\nlocalhost : ok=4 changed=0 unreachable=0 failed=0 skipped=0\
+  \ rescued=1 ignored=0\n```\n\nEin gewöhnlicher failure entfernt den Host aus nachfolgenden gewöhnlichen\
+  \ tasks im aktuellen Spiel; andere hosts kann continue.\nAnsible stellt keine Transaktion bereit: Änderungen,\
+  \ die vor failure vorgenommen wurden, bleiben bestehen.\n**`block`** gruppiert tasks und gemeinsame\
+  \ Einstellungen. **`rescue`** wird ausgeführt, nachdem ein task im Block fehlschlägt.\n**`always`**\
+  \ folgt auf `block`/`rescue`, wenn die Engine die Ausführung continue ausführen kann.\nEin unreachable-Host-\
+  \ oder Aufgabendefinitionsfehler ist kein gewöhnliches `failed`-Ergebnis für `rescue`.\n\n`ansible_failed_task`\
+  \ und `ansible_failed_result` bieten `rescue` context.\nErfolgreiches `rescue` zählt als recovery: Das\
+  \ Spiel kann continue sein, wobei `failed` in der Zusammenfassung gleich 0 ist\nund `rescued` gleich\
+  \ 1. Wenn recovery einen failed deployment nicht verbergen darf, beenden Sie `rescue` mit\n`ansible.builtin.fail`\
+  \ nach den erforderlichen Aktionen. Dies ist ein separates failure, kein automatisches `rescue`-Verhalten.\n\
+  \n> [!info]- Ausführlichere Erklärung\n> ```mermaid\n> flowchart TB\n>     B[\"Block tasks\"] --> R{\"\
+  Did the task fail?\"}\n>     R -->|\"no\"| A[\"Final tasks\"]\n>     R -->|\"yes\"| S[\"Rescue: explicit\
+  \ compensating actions\"]\n>     S --> A\n>     A --> N[\"Next task if the error was handled\"]\n> ```\n\
+  >\n> Rollback besteht aus **von Ihnen geschriebenen Kompensationsaktionen**: Wiederherstellen eines\
+  \ Backups, Zurücksetzen einer Version,\n> Überprüfen Sie den Zustand. Auch diese Aktionen können fehlschlagen.\
+  \ Ein `rescue`-Block garantiert keine Datenbank recovery,\n> atomare Dateiaktualisierungen oder Rückgabe\
+  \ eines Knotens an den Load Balancer.\n>\n> | Einstellung | Was es ändert | Was es nicht tut |\n> |---|---|---|\n\
+  > | `failed_when` | Das failure-Kriterium des Ergebnisses | Macht eine bereits durchgeführte Aktion\
+  \ nicht rückgängig. |\n> | `ignore_errors: true` | Wird nach einem gewöhnlichen failed-Ergebnis fortgesetzt\
+  \ | Behebt weder `unreachable` noch Syntaxfehler oder Fehler aufgrund undefinierter Werte. |\n> | `ignore_unreachable:\
+  \ true` | Ermöglicht separat die Fortsetzung nach `unreachable` | Erstellt kein funktionierendes connection.\
+  \ |\n> | `any_errors_fatal: true` | Ein unbehandelter failure stoppt das Spiel für alle nach dem aktuellen\
+  \ task | des Stapels Führt kein erfolgreiches Rollback durch hosts. |\n> | `max_fail_percentage` | Stoppt,\
+  \ nachdem der failed-Anteil eines Stapels einen Schwellenwert | überschreitet Weder Gesundheitsprüfung\
+  \ noch Rollback; gedacht für Strategien wie `linear`. |\n>\n> `max_fail_percentage: 50` mit einer Charge\
+  \ von 4: Zwei Fehler betragen genau 50 %, sodass der Schwellenwert **nicht überschritten** wird;\n>\
+  \ drei Fehler betragen 75 %, sodass die Ausführung angehalten wird. Um bei zwei von vier anzuhalten,\
+  \ verwenden Sie einen Schwellenwert unter 50, beispielsweise 49.\n> A failure erfolgreich behandelt\
+  \ durch `rescue` löst diesen Schwellenwert nicht aus oder `any_errors_fatal` als nicht behandelter Fehler.\n\
+  > *(laut Dokumentation)* [Fehlerbehandlung](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_error_handling.html).\n\
+  >\n> Frage: **Führt `rescue` automatisch zu einem Rollback eines deployment?**\n>\n> > Nr. `rescue`\
+  \ führt tasks aus, das ich nach einem normalen task failure definiere. Ich muss das explizit wiederherstellen\n\
+  > > Vorheriger Zustand und überprüfen Sie ihn. Wenn `rescue` succeeds, behandelt Ansible den failure\
+  \ als recovered und kann\n> > continue, daher benötige ich möglicherweise einen expliziten Fehler task,\
+  \ um den Rollout zu stoppen."
+source_hash: 57814bba504547b48d8ae92cef943b835b1dc4050246886a78d050e73b70d430

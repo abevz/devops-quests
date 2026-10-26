@@ -1,0 +1,254 @@
+heading: 6. Lebenszyklus-, Ersatz- und Bereitstellungsbefehle [lifecycle]
+text: "## 6. Lebenszyklus, replacement und Bereitstellungsbefehle [lifecycle]\n\n**Auf einen Blick**\n\
+  - Der lifecycle beschreibt Betriebsregeln.\n- Durch das Ändern eines Felds kann ein Objekt aktualisiert\
+  \ oder ersetzt werden.\n- Lesen Sie zuerst die plan-Aktionen.\n\n**Minibeispiel:** Speichern als `main.tf`\
+  \ in einem neuen temporären Verzeichnis. Die Vorbereitung und die command-Sequenz sind direkt unter\
+  \ dem Codeblock aufgeführt.\n\n```hcl\nvariable \"release\" { default = \"v1\" }\nresource \"terraform_data\"\
+  \ \"app\" {\n  input = var.release\n}\noutput \"release\" {\n  value = terraform_data.app.output\n}\n\
+  ```\n\nReihenfolge: `tofu init` → `tofu apply -auto-approve` mit der Standardeinstellung → `tofu plan\
+  \ -input=false -no-color -var=release=v2`. Führen Sie alle Befehle im selben neuen temporären Verzeichnis\
+  \ aus.\n\n**Vorhersage:** What wird der Lauf show sein, und wie wird sein exit-Code lauten?\n\n> [!question]-\
+  \ Antwort\n> Aktueller Auszug aus dem letzten command:\n>\n> ```text\n>   # terraform_data.app will\
+  \ be updated in-place\n> Plan: 0 to add, 1 to change, 0 to destroy.\n> Outputs:\n> ~ release = \"v1\"\
+  \ -> (known after apply)\n> ```\n>\n> Exit-Code: 0.\n\nDie Vorbereitung gilt v1. Der plan mit v2 aktualisiert\
+  \ die Eingabe an Ort und Stelle: In diesem Beispiel gibt es keine replacement-Regel.\n\nDer provider\
+  \ bestimmt, welche Felder direkt aktualisiert werden und welche replacement erfordern. Plan Symbole:\
+  \ `~` Update, `-/+` destroy dann erstellen, `+/-` erstellen dann destroy, `+` und `-` erstellen und\
+  \ destroy. Um einen Namen, ein Bild oder einen Typ zu ändern, ist möglicherweise replacement erforderlich.\
+  \ Das hängt vom resource/provider version ab, nicht nur vom Motor.\n\nJedes der folgenden Beispiele\
+  \ ist ein unabhängiger Stamm mit einem `main.tf`. Der integrierte `terraform_data` führt keine Cloud-Anrufe\
+  \ durch. Erster Entwurf checks verwendet OpenTofu 1.12.6; Am Ende erscheinen neue Übungen mit separaten\
+  \ Konfigurationen.\n\n### Replacement und `create_before_destroy`\n\n**Auf einen Blick**\n- Replacement\
+  \ umfasst sowohl das Erstellen als auch das Löschen.\n- create_before_destroy ändert ihre Reihenfolge.\n\
+  - Die Plattform muss die gleichzeitige Existenz beider Kopien zulassen.\n\n**Minibeispiel:** Speichern\
+  \ als `main.tf` in einem neuen temporären Verzeichnis. Die Vorbereitung und die command-Sequenz sind\
+  \ direkt unter dem Codeblock aufgeführt.\n\n```hcl\nvariable \"release\" { default = \"v1\" }\nresource\
+  \ \"terraform_data\" \"app\" {\n  input = var.release\n  triggers_replace = [var.release]\n  lifecycle\
+  \ { create_before_destroy = true }\n}\n```\n\nReihenfolge: `tofu init` → `tofu apply -auto-approve`\
+  \ mit der Standardeinstellung → `tofu plan -input=false -no-color -var=release=v2`. Führen Sie alle\
+  \ Befehle im selben neuen temporären Verzeichnis aus.\n\n**Vorhersage:** What wird der Lauf show sein,\
+  \ und wie wird sein exit-Code lauten?\n\n> [!question]- Antwort\n> Aktueller Auszug aus dem letzten\
+  \ command:\n>\n> ```text\n>   # terraform_data.app must be replaced\n> Plan: 1 to add, 0 to change,\
+  \ 1 to destroy.\n> ```\n>\n> Exit-Code: 0.\n\nNach der Anwendung von v1 ändert ein neues plan die Version\
+  \ in v2. triggers_replace erfordert replacement; lifecycle legt fest, ob und in welcher Reihenfolge\
+  \ replacement zulässig ist.\n\n> [!info]- Ausführlichere Erklärung\n> `triggers_replace` fordert replacement\
+  \ an, wenn sich eine Version ändert. Zuerst apply `v1`, dann plan `v2`:\n>\n> **`main.tf` in einem neuen\
+  \ leeren Verzeichnis:**\n>\n> ```hcl\n> terraform {\n>   required_version = \">= 1.5.0\"\n> }\n>\n>\
+  \ variable \"release\" {\n>   type    = string\n>   default = \"v1\"\n> }\n>\n> resource \"terraform_data\"\
+  \ \"app\" {\n>   input           = var.release\n>   triggers_replace = [var.release]\n>\n>   lifecycle\
+  \ {\n>     create_before_destroy = true\n>   }\n> }\n> ```\n>\n> plan zeigte `+/-` und `Plan: 1 to add,\
+  \ 0 to change, 1 to destroy`. Die neue Instanz ist created, bevor die alte Instanz destroyed ist. Die\
+  \ reale Plattform muss beides gleichzeitig zulassen: Namen können beispielsweise unterschiedlich sein.\
+  \ Separat fordert `tofu plan -replace=terraform_data.app` einmaliges replacement einer bestimmten Adresse\
+  \ an. *(verifiziert: OpenTofu 1.12.6, `init`, `validate`, anfänglicher apply und replacement plan)*.\n\
+  \n### `prevent_destroy`: Schutz besteht, solange die Regel besteht\n\n**Auf einen Blick**\n- prevent_destroy\
+  \ blockiert eine Löschung plan, während die Regel in Kraft ist.\n- Replacement beinhaltet auch das Löschen.\n\
+  Der aus der Konfiguration entfernte - A-Block kann das Objekt nicht mehr schützen.\n\n**Minibeispiel:**\
+  \ Speichern als `main.tf` in einem neuen temporären Verzeichnis. Die Vorbereitung und die command-Sequenz\
+  \ sind direkt unter dem Codeblock aufgeführt.\n\n```hcl\nvariable \"release\" { default = \"v1\" }\n\
+  resource \"terraform_data\" \"app\" {\n  input = var.release\n  triggers_replace = [var.release]\n \
+  \ lifecycle { prevent_destroy = true }\n}\n```\n\nReihenfolge: `tofu init` → `tofu apply -auto-approve`\
+  \ mit der Standardeinstellung → `tofu plan -input=false -no-color -var=release=v2`. Führen Sie alle\
+  \ Befehle im selben neuen temporären Verzeichnis aus.\n\n**Vorhersage:** What wird der Lauf show sein,\
+  \ und wie wird sein exit-Code lauten?\n\n> [!question]- Antwort\n> Aktueller Auszug aus dem letzten\
+  \ command:\n>\n> ```text\n>   # terraform_data.app must be replaced\n> Plan: 1 to add, 0 to change,\
+  \ 1 to destroy.\n> Error: Resource instance cannot be destroyed\n> ```\n>\n> Exit-Code: 1.\n\nNach der\
+  \ Anwendung von v1 ändert ein neues plan die Version in v2. triggers_replace erfordert replacement;\
+  \ lifecycle legt fest, ob und in welcher Reihenfolge replacement zulässig ist.\n\n> [!info]- Ausführlichere\
+  \ Erklärung\n> **`main.tf` in einem neuen leeren Verzeichnis:**\n>\n> ```hcl\n> terraform {\n>   required_version\
+  \ = \">= 1.5.0\"\n> }\n>\n> variable \"release\" {\n>   type    = string\n>   default = \"v1\"\n> }\n\
+  >\n> resource \"terraform_data\" \"database\" {\n>   input           = \"keep\"\n>   triggers_replace\
+  \ = [var.release]\n>\n>   lifecycle {\n>     prevent_destroy = true\n>   }\n> }\n> ```\n>\n>  Nach dem\
+  \ ersten apply hörte `tofu plan -var=release=v2` mit `Error: Resource instance cannot be destroyed`\
+  \ und `Resource instance terraform_data.database has prevent_destroy set, but the plan calls for it\
+  \ to be destroyed.` auf. Durch das Entfernen des gesamten resource-Blocks wird auch die Regel entfernt.\
+  \ OpenTofu 1.12 erlaubt einen dynamischen Ausdruck für dieses Argument; Überprüfen Sie die Kompatibilität\
+  \ mit Ihrem Terraform version separat. *(bestätigt: OpenTofu 1.12.6, replacement abgelehnt)*.\n\n###\
+  \ `ignore_changes`: Ein anderer Besitzer aktualisiert das Feld\n\n**Auf einen Blick**\n- ignore_changes\
+  \ schließt ein Feld von der Aktualisierungsberechnung aus.\n- Dadurch wird die Verantwortung für die\
+  \ Aktualisierung des Felds an eine andere Person übertragen.\n- Die Regel garantiert nicht, dass ein\
+  \ fehlendes Objekt erhalten bleibt.\n\n**Minibeispiel:** Speichern als `main.tf` in einem neuen temporären\
+  \ Verzeichnis. Die Vorbereitung und die command-Sequenz sind direkt unter dem Codeblock aufgeführt.\n\
+  \n```hcl\nvariable \"release\" { default = \"v1\" }\nresource \"terraform_data\" \"app\" {\n  input\
+  \ = var.release\n  lifecycle {\n    ignore_changes = [input]\n  }\n}\n```\n\nReihenfolge: `tofu init`\
+  \ → `tofu apply -auto-approve` mit der Standardeinstellung → `tofu plan -input=false -no-color -var=release=v2`.\
+  \ Führen Sie alle Befehle im selben neuen temporären Verzeichnis aus.\n\n**Vorhersage:** What wird der\
+  \ Lauf show sein, und wie wird sein exit-Code lauten?\n\n> [!question]- Antwort\n> Aktueller Auszug\
+  \ aus dem letzten command:\n>\n> ```text\n> No changes. Your infrastructure matches the configuration.\n\
+  > ```\n>\n> Exit-Code: 0.\n\nDer erste apply speichert v1. Eine spätere Änderung nur der Eingabe in\
+  \ v2 löst keine Aktualisierung aus.\n\n> [!info]- Ausführlichere Erklärung\n> Zuerst apply `input =\
+  \ \"v1\"`, dann ändern Sie es in `v2`:\n>\n> **`main.tf` in einem neuen leeren Verzeichnis: zuerst apply\
+  \ `input = \"v1\"`, dann ändern Sie es in `\"v2\"`; Das second-Formular ist unten dargestellt:**\n>\n\
+  > ```hcl\n> terraform {\n>   required_version = \">= 1.5.0\"\n> }\n>\n> resource \"terraform_data\"\
+  \ \"app\" {\n>   input = \"v2\"\n>\n>   lifecycle {\n>     ignore_changes = [input]\n>   }\n> }\n> ```\n\
+  >\n> Plan: `No changes. Your infrastructure matches the configuration.` Dies zeigt das Ignorieren einer\
+  \ vorhandenen Feldänderung und ist keine Garantie dafür, dass jede externe Änderung ausgeblendet wird.\
+  \ `ignore_changes = all` kann Fehler maskieren; Verwenden Sie die Regel nur mit einem bewussten externen\
+  \ Feldbesitzer. *(verifiziert: OpenTofu 1.12.6)*.\n\n### Bestellung mit `depends_on`\n\n**Auf einen\
+  \ Blick**\nDie Referenz - A deklariert eine Abhängigkeit normalerweise automatisch.\n- depends_on macht\
+  \ eine versteckte Abhängigkeit explizit.\n- Es legt die Reihenfolge fest; Der Zustand der Anwendung\
+  \ wird nicht überprüft.\n\n**Minibeispiel:** Speichern Sie dies als `main.tf` in einem neuen temporären\
+  \ Verzeichnis. Führen Sie nach der Vorbereitung der Dateien `tofu init`, `tofu validate` und dann `tofu\
+  \ apply -auto-approve -input=false -no-color` aus.\n\n```hcl\nresource \"terraform_data\" \"prepare\"\
+  \ {\n  input = \"ready\"\n}\nresource \"terraform_data\" \"deploy\" {\n  input = \"app\"\n  depends_on\
+  \ = [terraform_data.prepare]\n}\n```\n\n**Vorhersage:** What wird der Lauf show sein, und wie wird sein\
+  \ exit-Code lauten?\n\n> [!question]- Antwort\n> Aktueller Auszug aus dem letzten command:\n>\n> ```text\n\
+  >   # terraform_data.deploy will be created\n>   # terraform_data.prepare will be created\n> Plan: 2\
+  \ to add, 0 to change, 0 to destroy.\n> Apply complete! Resources: 2 added, 0 changed, 0 destroyed.\n\
+  > ```\n>\n> Exit-Code: 0.\n\nDie Erstellung von deploy wartet auf prepare, auch wenn die Eingabe ihren\
+  \ Wert nicht liest. In diesem Beispiel gibt es keine HTTP-Prüfung.\n\n> [!info]- Ausführlichere Erklärung\n\
+  Die Wertreferenz > A stellt bereits eine Abhängigkeit her. Explizites `depends_on` ist erforderlich,\
+  \ wenn eine echte Abhängigkeit ohne einen zu übergebenden Wert vorhanden ist:\n>\n> **`main.tf` in einem\
+  \ neuen leeren Verzeichnis:**\n>\n> ```hcl\n> terraform {\n>   required_version = \">= 1.5.0\"\n> }\n\
+  >\n> resource \"terraform_data\" \"prepare\" {\n>   input = \"prepare first\"\n> }\n>\n> resource \"\
+  terraform_data\" \"deploy\" {\n>   input      = \"deploy second\"\n>   depends_on = [terraform_data.prepare]\n\
+  > }\n> ```\n>\n> Während apply wurde `prepare` abgeschlossen, bevor `deploy` startete. Das Argument\
+  \ legt Ordnung und konservative Planung fest, nicht replacement. Eine umgekehrte Abhängigkeit kann einen\
+  \ Zyklus erzeugen; aufgezeichneter Übungstext: `Error: Cycle: terraform_data.b, terraform_data.a, terraform_data.c`.\
+  \ *(verifiziert: OpenTofu 1.12.6; Zyklus — [[Terraform-Coding-Drills-Solutions]])*.\n\n### Bedingungen\
+  \ vor und nach einer Operation\n\n**Auf einen Blick**\n- precondition checks ein erforderliches condition.\n\
+  - postcondition checks das Ergebnis einer Operation.\n- A failed erforderlich condition erzeugt einen\
+  \ error.\n\n**Minibeispiel:** Speichern als `main.tf` in einem neuen temporären Verzeichnis. Führen\
+  \ Sie nach der Vorbereitung der Dateien `tofu init`, `tofu validate` und dann `tofu plan -input=false\
+  \ -no-color -var=port=0` aus.\n\n```hcl\nvariable \"port\" { default = 8080 }\nresource \"terraform_data\"\
+  \ \"app\" {\n  input = var.port\n  lifecycle {\n    precondition {\n      condition = var.port > 0\n\
+  \      error_message = \"port must be positive.\"\n    }\n  }\n}\n```\n\n**Vorhersage:** What wird der\
+  \ Lauf show sein, und wie wird sein exit-Code lauten?\n\n> [!question]- Antwort\n> Aktueller Auszug\
+  \ aus dem letzten command:\n>\n> ```text\n> Error: Resource precondition failed\n> ```\n>\n> Exit-Code:\
+  \ 1.\n\nNull wurde geliefert; Der precondition stoppt den resource plan vor dem apply.\n\n> [!info]-\
+  \ Ausführlichere Erklärung\n> `precondition` checks eine Voraussetzung; `postcondition` checks das provider\
+  \ Ergebnis. Im letzteren bezieht sich `self` auf die aktuelle Instanz:\n>\n> **`main.tf` in einem neuen\
+  \ leeren Verzeichnis:**\n>\n> ```hcl\n> terraform {\n>   required_version = \">= 1.5.0\"\n> }\n>\n>\
+  \ variable \"port\" {\n>   type    = number\n>   default = 8080\n> }\n>\n> resource \"terraform_data\"\
+  \ \"service\" {\n>   input = { port = var.port }\n>\n>   lifecycle {\n>     precondition {\n>      \
+  \ condition     = var.port > 0\n>       error_message = \"port must be greater than 0\"\n>     }\n>\
+  \     postcondition {\n>       condition     = self.output.port <= 65535\n>       error_message = \"\
+  provider returned an invalid port\"\n>     }\n>   }\n> }\n> ```\n>\n> Mit dem Standardport werden plan\
+  \ und apply übergeben. `tofu plan -var=port=0` returned `Error: Resource precondition failed` vor der\
+  \ Operation. `tofu apply -var=port=70000` updated die local resource, dann returned `Error: Resource\
+  \ postcondition failed` und `provider returned an invalid port`. Eine bisher unbekannte Voraussetzung\
+  \ apply kann später überprüft werden. Ein `output` hat einen direkten `precondition` ohne einen `lifecycle`-Wrapper\
+  \ und keinen `postcondition`. *(verifiziert: OpenTofu 1.12.6)*.\n> *(laut Dokumentation)*. [Lebenszyklus](https://developer.hashicorp.com/terraform/language/meta-arguments/lifecycle)\
+  \ · [Benutzerdefinierte Bedingungen](https://developer.hashicorp.com/terraform/language/expressions/custom-conditions).\n\
+  \n### check.assert: eher diagnostizieren than einen Vorgang verbieten\n\n**Auf einen Blick**\n- check\
+  \ testet eine Erwartung an das System.\n- A false assertion im Check ergibt einen warning.\nFür ein\
+  \ verbindliches Verbot ist ein Blockiermechanismus - A erforderlich.\n\n**Minibeispiel:** Speichern\
+  \ als `main.tf` in einem neuen temporären Verzeichnis. Führen Sie nach der Vorbereitung der Dateien\
+  \ `tofu init`, `tofu validate` und dann `tofu plan -input=false -no-color` aus.\n\n```hcl\nvariable\
+  \ \"replicas\" { default = 2 }\ncheck \"capacity\" {\n  assert {\n    condition = var.replicas >= 3\n\
+  \    error_message = \"Need three replicas.\"\n  }\n}\n```\n\n**Vorhersage:** What wird der Lauf show\
+  \ sein, und wie wird sein exit-Code lauten?\n\n> [!question]- Antwort\n> Aktueller Auszug aus dem letzten\
+  \ command:\n>\n> ```text\n> No changes. Your infrastructure matches the configuration.\n> Warning: Check\
+  \ block assertion failed\n> ```\n>\n> Exit-Code: 0.\n\nZwei ist weniger than drei: Ein warning erscheint,\
+  \ aber plan wird immer noch mit Code Null beendet.\n\n> [!info]- Ausführlichere Erklärung\n> `validation`\
+  \ definiert die gültige Eingabe eines variable; Ein known invalid-Eingang blockiert den plan.\n> `precondition`\
+  \ gibt eine resource/output-Voraussetzung an und blockiert auch einen Vorgang, wenn dieser Wert falsch\
+  \ ist.\n> `check` ist ein separater Block mit einem oder mehreren `assert`-Einträgen: false erzeugt\
+  \ einen warning.\n> Es ersetzt nicht den obligatorischen Schutz vor der Schaffung eines teuren oder\
+  \ gefährlichen resource.\n>\n> Standalone `main.tf`, ohne Ressourcen, Anbieter oder backend:\n>\n> ```hcl\n\
+  > variable \"replicas\" {\n>   type    = number\n>   default = 2\n> }\n> check \"spare_capacity\" {\n\
+  >   assert {\n>     condition     = var.replicas >= 3\n>     error_message = \"Less than three replicas:\
+  \ inspect capacity.\"\n>   }\n> }\n> ```\n>\n> RFühren Sie `tofu init -backend=false`, `tofu validate`\
+  \ und dann `tofu plan -input=false` aus.\n> Mit default=2 gibt der plan mit `Warning: Check block assertion\
+  \ failed` 0 zurück.\n> Mit `-var=replicas=4` gibt es kein warning. *(verifiziert: nur validate/plan)*.\n\
+  > Kein apply ist erforderlich oder wurde in diesem Experiment durchgeführt.\n>\n> | Mechanismus | false\
+  \ für einen known-Wert | Zweck |\n> |---|---|---|\n> | validation | Error | Zulässige Eingabe |\n> |\
+  \ precondition | Error | Erforderliche Betriebsvoraussetzung |\n> | check.assert | Warning | Health/expectation\
+  \ Überprüfung |\n>\n> An unbekannter Wert kann die Überprüfung verzögern, bis sein Wert während apply\
+  \ verfügbar ist.\n> Dies ist eine Bewertungseigenschaft und keine Garantie für eine frühzeitige Ablehnung\
+  \ für jeden Ausdruck.\nDie > A-Prüfung kann eine verschachtelte data-Quelle haben. Dieses Beispiel hat\
+  \ keines und verwendet kein Netzwerk.\n> Der Ausfall einer solchen data Source Inside Check hat auch\
+  \ eine spezielle Diagnosesemantik.\n> Für eine obligatorische Einschränkung wählen Sie validation/precondition\
+  \ anstelle des Schweregrads warning.\n> [OpenTofu: checks](https://opentofu.org/docs/language/checks/)\
+  \ – verifiziert 20.10.2026.\n\n### Replacement ausgelöst durch einen anderen resource\n\n**Auf einen\
+  \ Blick**\n- replace_triggered_by verknüpft einen replacement mit einem anderen resource.\nEine Änderung\
+  \ an der Quelle löst die Regel auf dem abhängigen resource aus.\n- An gewöhnliches variable kann durch\
+  \ terraform_data. geleitet werden\n\n**Minibeispiel:** Speichern als `main.tf` in einem neuen temporären\
+  \ Verzeichnis. Die Vorbereitung und die command-Sequenz sind direkt unter dem Codeblock aufgeführt.\n\
+  \n```hcl\nvariable \"release\" { default = \"v1\" }\nresource \"terraform_data\" \"version\" { input\
+  \ = var.release }\nresource \"terraform_data\" \"app\" {\n  input = \"app\"\n  lifecycle {\n    replace_triggered_by\
+  \ = [terraform_data.version]\n  }\n}\n```\n\nReihenfolge: `tofu init` → `tofu apply -auto-approve` mit\
+  \ der Standardeinstellung → `tofu plan -input=false -no-color -var=release=v2`. Führen Sie alle Befehle\
+  \ im selben neuen temporären Verzeichnis aus.\n\n**Vorhersage:** What wird der Lauf show sein, und wie\
+  \ wird sein exit-Code lauten?\n\n> [!question]- Antwort\n> Aktueller Auszug aus dem letzten command:\n\
+  >\n> ```text\n>   # terraform_data.app will be replaced due to changes in replace_triggered_by\n>  \
+  \ # terraform_data.version will be updated in-place\n> Plan: 1 to add, 1 to change, 1 to destroy.\n\
+  > ```\n>\n> Exit-Code: 0.\n\nversion ist updated; app ist nach der Regel replaced. Der eigene Eingabestring\
+  \ des app bleibt unverändert.\n\n> [!info]- Ausführlichere Erklärung\n> `replace_triggered_by` reagiert\
+  \ auf Änderungen in einem verwalteten resource oder seinem Attribut. Ein gewöhnlicher variable hat keinen\
+  \ lifecycle, daher kann er in `terraform_data` eingewickelt werden:\n>\n> **`main.tf` in einem neuen\
+  \ leeren Verzeichnis:**\n>\n> ```hcl\n> variable \"release\" {\n>   type    = string\n>   default =\
+  \ \"1.0\"\n> }\n>\n> resource \"terraform_data\" \"release\" {\n>   input = var.release\n> }\n>\n> resource\
+  \ \"terraform_data\" \"deployment\" {\n>   input = \"deploy\"\n>\n>   lifecycle {\n>     replace_triggered_by\
+  \ = [terraform_data.release]\n>   }\n> }\n> ```\n>\n> Changing `release` aktualisiert den ersten resource\
+  \ und ersetzt den second. Verifizierter Text: `terraform_data.deployment will be replaced due to changes\
+  \ in replace_triggered_by`. Im Gegensatz dazu legt `depends_on` die Reihenfolge fest; `-replace=ADDRESS`\
+  \ fordert einmaliges replacement an. Ein gespeicherter plan enthält bereits ausgewählte Aktionen; zusätzliche\
+  \ Planungsflags können es nicht ändern. *(verifiziert: OpenTofu 1.12.6, plan nach Releasewechsel)*.\n\
+  \n### Provisioner: der letzte Ausweg\n\n**Auf einen Blick**\n- local-exec führt einen command auf der\
+  \ Maschine OpenTofu aus.\n- Der command kann nach Beginn der Erstellung fehlschlagen.\n- Dies ist kein\
+  \ vollständiger replacement für ein separates Konfigurationsverwaltungstool.\n\n**Minibeispiel:** Speichern\
+  \ Sie dies als `main.tf` in einem neuen temporären Verzeichnis. Führen Sie nach der Vorbereitung der\
+  \ Dateien `tofu init`, `tofu validate` und dann `tofu apply -auto-approve -input=false -no-color` aus.\n\
+  \n```hcl\nresource \"terraform_data\" \"failure\" {\n  input = \"demo\"\n  provisioner \"local-exec\"\
+  \ {\n    command = \"exit 7\"\n  }\n}\n```\n\n**Vorhersage:** What wird der show sein, und wie wird\
+  \ sein exit-Code lauten?\n\n> [!question]- Antwort\n> Aktueller Auszug aus dem letzten command:\n>\n\
+  > ```text\n>   # terraform_data.failure will be created\n> Plan: 1 to add, 0 to change, 0 to destroy.\n\
+  > Error: local-exec provisioner error\n> ```\n>\n> Exit-Code: 1.\n\nDer demo command gibt 7 zurück;\
+  \ apply meldet einen provisioner error und gibt seinen eigenen Code ungleich Null zurück. Es sind keine\
+  \ externen Systeme betroffen.\n\n> [!info]- Ausführlichere Erklärung\n> `local-exec` läuft auf der Workstation\
+  \ oder dem Runner; `remote-exec` wird über `connection` auf dem Remote-Objekt ausgeführt. In `${self.id}`\
+  \ bezeichnet `self` die aktuelle Instanz. Die Engine modelliert nicht jeden command-Nebeneffekt und\
+  \ kann teilweise abgeschlossene Arbeiten nicht zuverlässig wiederholen. Bei `create_before_destroy =\
+  \ true` wird die Zerstörungszeit provisioners nicht ausgeführt. Bevorzugen Sie ein Bild, cloud-init\
+  \ oder Ansible für Maschinen.\n>\n> A complete Beispiel mit einem absichtlichen failure:\n>\n> **`main.tf`\
+  \ in einem neuen leeren Verzeichnis:**\n>\n> ```hcl\n> terraform {\n>   required_version = \">= 1.5.0\"\
+  \n> }\n>\n> resource \"terraform_data\" \"hook\" {\n>   input = \"created first\"\n>\n>   provisioner\
+  \ \"local-exec\" {\n>     command = \"echo 'created ${self.id}' && exit 1\"\n>   }\n> }\n> ```\n>\n\
+  > Nach `init` und `validate`, apply failed mit `Error: local-exec provisioner error` und `exit status\
+  \ 1`. Der resource war bereits created; `tofu state show terraform_data.hook` zeigte `(tainted)`. Entfernen\
+  \ Sie `&& exit 1`, damit command erfolgreich ist. Verbindungs-, Timeout- und Teilkonfigurationsfehler\
+  \ hängen vom Host und der Shell ab; Es gibt keine universelle Botschaft. *(verifiziert: OpenTofu 1.12.6,\
+  \ nur Übungsverzeichnis)*.\n> *(laut Dokumentation)*. [Bereitsteller](https://developer.hashicorp.com/terraform/language/resources/provisioners/syntax)\
+  \ · [Blöcke prüfen](https://developer.hashicorp.com/terraform/language/block/check).\n>\n> ```mermaid\n\
+  > flowchart TB\n>     U[\"Argument<br/>changed\"] --> Q[\"Provider and<br/>lifecycle<br/>determine<br/>the\
+  \ action\"]\n>     Q --> I[\"In-place<br/>update:<br/>modify<br/>the existing<br/>object\"]\n>     Q\
+  \ --> R[\"Default<br/>replacement:<br/>delete<br/>old →<br/>create<br/>new\"]\n>     Q --> C[\"create_before_destroy:<br/>create<br/>new\
+  \ →<br/>delete<br/>old\"]\n> ```\n\n### Prognostizieren Sie die Aktion, bevor Sie das Symbol prüfen\n\
+  \n**Auf einen Blick**\n- A plan unterscheidet ein Update von einem replacement.\n- Die Anzahl der Operationen\
+  \ und ihre Reihenfolge sind unterschiedliche Eigenschaften.\nDie Einschränkung - A lifecycle gilt nur\
+  \ in der eigenen Konfiguration.\n\nEin separates Root zum Aktualisieren von `input`:\n\n**`main.tf`\
+  \ in einem neuen leeren Verzeichnis:**\n\n```hcl\nvariable \"release\" {\n  type    = string\n  default\
+  \ = \"v1\"\n}\nresource \"terraform_data\" \"app\" {\n  input = var.release\n}\n```\n\nFühren Sie nach\
+  \ `init` und dem ersten `apply` `tofu plan -var=release=v2` aus.\n\n**Vorhersage:** Es gibt kein `triggers_replace`.\
+  \ Wie wird sich plan an `terraform_data.app` ändern?\n> [!question]- Antwort\n> ```text\n>   # terraform_data.app\
+  \ will be updated in-place\n> Plan: 0 to add, 1 to change, 0 to destroy.\n> ```\n> Dieser integrierte\
+  \ resource ermöglicht die Aktualisierung von `input`; Das Ändern eines Arguments impliziert nicht automatisch\
+  \ replacement.\n\nIn zwei anderen Verzeichnissen, add `triggers_replace = [var.release]` bis zum gleichen\
+  \ resource. Behalten Sie die Standardreihenfolge in der einen und add `lifecycle { create_before_destroy\
+  \ = true }` in der anderen bei. Apply, beide zuerst mit `v1`.\n\n**Vorhersage:** Ändert `create_before_destroy`\
+  \ für `release=v2` die Aktionsanzahl oder deren Reihenfolge?\n> [!question]- Antwort\n> ```text\n> -/+\
+  \ destroy and then create replacement\n>   # terraform_data.app must be replaced\n> -/+ resource \"\
+  terraform_data\" \"app\" {\n> Plan: 1 to add, 0 to change, 1 to destroy.\n>\n> +/- create replacement\
+  \ and then destroy\n>   # terraform_data.app must be replaced\n> +/- resource \"terraform_data\" \"\
+  app\" {\n> Plan: 1 to add, 0 to change, 1 to destroy.\n> ```\n> Die Aktionsanzahl ist identisch, aber\
+  \ die Reihenfolge ist umgekehrt: destroy/create gegenüber create/destroy.\n\n\n**Durch das Entfernen\
+  \ des Blocks wird der Schutz entfernt.** In einem neuen Root zuerst apply:\n\n**`main.tf` in einem neuen\
+  \ leeren Verzeichnis:**\n\n```hcl\nvariable \"release\" {\n  type    = string\n  default = \"v1\"\n\
+  }\nresource \"terraform_data\" \"app\" {\n  input            = var.release\n  triggers_replace = [var.release]\n\
+  \  lifecycle { prevent_destroy = true }\n}\n```\n\n\n**Vorhersage:** Entfernen Sie das gesamte `resource`\
+  \ und variable aus der Datei. Wird der ehemalige `prevent_destroy` noch apply sein?\n> [!question]-\
+  \ Antwort\n> ```text\n>   # terraform_data.app will be destroyed\n> Plan: 0 to add, 0 to change, 1 to\
+  \ destroy.\n> ```\n> Die Regel lebt in der resource-Konfiguration, nicht als permanenter Statusschutz.\
+  \ Sobald der Block entfernt wird, kann die Engine ihn nicht mehr lesen.\n\n**Handbuch drift und `ignore_changes`.**\
+  \ In einem separaten Experiment apply das complete `local_file` aus §3, dann ersetzen Sie `demo.txt`\
+  \ content durch `manual drift` ohne Codeänderung.\n\n**Vorhersage:** Wird `ignore_changes = [content]`\
+  \ diese manual-Dateibearbeitung verbergen?\n> [!question]- Antwort\n> ```text\n>   # local_file.this\
+  \ will be created\n> Plan: 1 to add, 0 to change, 0 to destroy.\n> ```\n> Provider `local` checks die\
+  \ content-Prüfsumme und meldet das vorherige Objekt als fehlend. `ignore_changes` verhindert nicht die\
+  \ Erstellung eines fehlenden Objekts; Dies unterscheidet sich von der Aktualisierung eines vorhandenen\
+  \ Felds.\n\n*(verifiziert: OpenTofu 1.12.6, `local` 2.9.1; Update, beide Ersetzungen, Schutzentfernung\
+  \ mit Konfiguration und manual drift)*.\n\n**Kurz auf Englisch:** What ändert sich create_before_destroy?\n\
+  \nTerraform erstellt das neue Objekt, bevor das alte gelöscht wird. Der plan enthält noch einen Create\
+  \ und einen destroy. Die Plattform muss die gleichzeitige Existenz beider Objekte zulassen."
+source_hash: 5d66690f7642741100ea92e7005b72e96007c700ca2283b1daad193742ea399f

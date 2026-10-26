@@ -1,0 +1,316 @@
+heading: 11. Strategien und gestaffelte Updates (`serial`)
+text: "## 11. Strategien und inszenierte Updates (`serial`)\n\n**Auf einen Blick**\n- serial begrenzt\
+  \ die Größe eines Hosts batch.\n- Der playbook verarbeitet den aktuellen batch, bevor er zum nächsten\
+  \ übergeht.\n- Batch-Größe entspricht nicht der Anzahl der durch forks festgelegten Arbeitsprozesse.\n\
+  \n**Kurzes Szenario**\n\nEs gibt 5 hosts. Der playbook setzt `serial: 2`; Alle batches sind erfolgreich.\n\
+  \n**Vorhersage:** Wie viele batches wird der playbook verarbeiten und wie viele hosts werden im letzten\
+  \ sein?\n\n> [!question]- Antwort\n> Drei batches: 2, 2 und 1 Host. Dadurch wird eine Listenpartition\
+  \ berechnet. Es wird kein neuer Server update ausgeführt.\n\n**`linear`**: Jeder Host im aktuellen batch\
+  \ beendet Aufgabe N vor Aufgabe N+1.\n**`free`**: Ein schneller Host schreitet voran, ohne auf einen\
+  \ langsamen zu warten. Task order innerhalb eines Hosts\nbleibt bestehen, aber es gibt keine gemeinsame\
+  \ Wirtsübergreifende Barriere. `free` ist ungeeignet, wenn Schritt 2 die Fertigstellung von Schritt\
+  \ 1 erfordert\nauf jedem Host. Verlassen Sie sich bei der Synchronisierung mit `free` nicht auf `run_once`.\n\
+  \n**`serial`** ist die Hostgröße batch für play. **`forks`** begrenzt parallele Arbeitsprozesse.\n**`throttle`**\
+  \ begrenzt eine bestimmte Aufgabe, einen bestimmten Block oder play: nützlich für APIs mit Anforderungsratenbegrenzungen.\n\
+  Die effektive Task-Parallelität darf `forks` oder die Anzahl der verfügbaren hosts im batch nicht überschreiten.\n\
+  `throttle` kann diese Obergrenze nur senken. Mit `serial: 1` vervollständigt ein Host den play, dann\
+  \ startet der nächste.\n`serial: [1, 5, \"100%\"]` bedeutet einen canary-Host, dann fünf und dann alle\
+  \ verbleibenden hosts.\n*(laut Dokumentation)* [Strategien und Host batches](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_strategies.html).\n\
+  \n```mermaid\nflowchart TB\n    A[\"Batch: one host\"] --> D[\"Pre-tasks: remove from traffic and wait\"\
+  ]\n    D --> C[\"Tasks: update configuration or version\"]\n    C --> F[\"Run the handler\"]\n    F\
+  \ --> H[\"Verify the new process is healthy\"]\n    H --> E[\"Post-tasks: return to the load balancer\"\
+  ]\n    E --> N[\"Next batch\"]\n    H -->|\"failure\"| S[\"Stop, recover explicitly, keep the unhealthy\
+  \ host out of traffic\"]\n```\n\n> [!info]- Ausführlichere Erklärung\n> | Route | Was ist zu überprüfen\
+  \ |\n> |---|---|\n> | serial/strategy | welcher hosts den batch eingegeben hat und wann der nächste\
+  \ batch stoppt |\n> | delegation | wer ausführt und wessen Variablen gelesen werden |\n> | async | was\
+  \ started, wo der job ID ist und wer auf den result wartet |\n> | reboot | der nach reboot zurückgekehrt\
+  \ ist und die health-Prüfungen bestanden hat |\n>\n> Vollständige SSH-Experimente und kernel-Updates\
+  \ sind in den jeweiligen Unterabschnitten verlinkt.\n>\n> > [!info] Kern und Referenz\n> > Core: strategy/serial\
+  \ und das separate delegation experimentieren bis zur „Asynchronen Ausführung“. Die Aktualisierungen\
+  \ Async und kernel sind Referenzrouten. Studieren Sie run_once zusammen mit batch-Grenzen.\n\n### `serial:\
+  \ 1` auf zwei SSH hosts: Erfolg und Stoppen nach Misserfolg\n\nDer kurze Weg oben erklärt den Mechanismus\
+  \ und die nächste Überprüfung. Vollständige Auflistung und Beobachtungen: [[#Veröffentlichtes Rezept\
+  \ – `serial: 1` auf zwei SSH-Hosts: успех и остановка после сбоя|Referenzrezept]].\n\n### Referenzrezept\
+  \ – `serial: 1` an zwei SSH hosts: Erfolg und Stoppen nach Misserfolg\n\n**Auf einen Blick**\n- Mit\
+  \ serial: 1 enthält der aktuelle batch einen Host.\n- Die Fehlerrichtlinie regelt den Übergang zum späteren\
+  \ batches.\n- Das frühere SSH-Experiment bleibt ein separater Beweis.\n\n**Kurzes Szenario**\n\nDie\
+  \ Liste enthält web1 und web2, mit `serial: 1`, `any_errors_fatal: true`. Die Änderungsaufgabe auf web1\
+  \ endete mit einem normalen error.\n\n**Vorhersage:** Sollte der nächste batch automatisch beginnen,\
+  \ web2 zu ändern?\n\n> [!question]- Antwort\n> Nr. Der angegebene fatal-Fehler stoppt den Rest des playbook.\
+  \ Der frühere SSH-Lauf wird unten beibehalten; Dieses kurze Szenario analysiert seine Logik.\n\n*(verifiziert:\
+  \ Durchlauf des Prüfers auf 06.10.2026, ansible-core 2.21.4, SSH zu zwei debian:stable-slim-Containern)*\n\
+  \nIn einer separaten Rezension playbook wurde die `web`-Gruppe mit zwei SSH hosts verwendet (§18):\n\
+  \n**`rolling-ssh.yml` — Lesebeispiel: erfordert die beiden SSH hosts aus §18:**\n\n```yaml\n- name:\
+  \ Demonstrate rolling batches over SSH\n  hosts: web\n  gather_facts: false\n  serial: 1\n  max_fail_percentage:\
+  \ 0\n  tasks:\n    - name: Drain\n      ansible.builtin.debug:\n        msg: \"drain {{ inventory_hostname\
+  \ }}\"\n    - name: Deploy\n      ansible.builtin.command: \"{{ deploy_cmd | default('/bin/true') }}\"\
+  \n      changed_when: true\n    - name: Enable\n      ansible.builtin.debug:\n        msg: \"enable\
+  \ {{ inventory_hostname }}\"\n```\n\nBei einem normalen Lauf erscheint die Überschrift play zweimal:\
+  \ einmal pro batch.\nNachricht order und abschließende Zusammenfassung (gekürzte Ausgabeauszüge):\n\n\
+  ```text\ndrain web1 → changed: [web1] → enable web1\ndrain web2 → changed: [web2] → enable web2\nweb1\
+  \ : ok=3 changed=1 … failed=0\nweb2 : ok=3 changed=1 … failed=0\n```\n\nBei Ausführung mit `-e deploy_cmd=/bin/false`:\n\
+  \n```text\ndrain web1\nfatal: [web1]: FAILED! => {\"changed\": true, … \"cmd\": [\"/bin/false\"], …}\n\
+  NO MORE HOSTS LEFT\nweb1 : ok=1 changed=0 unreachable=0 failed=1\n```\n\nDie Zusammenfassung enthält\
+  \ **nur `web1`**: Der zweite batch startete nicht und `web2` erschien nie.\n`enable web1` lief ebenfalls\
+  \ nicht. Der `changed: true` result der fehlgeschlagenen Aufgabe wird durchgesetzt\n`changed_when: true`;\
+  \ Die Zusammenfassung `changed=0` counter zählt diesen Fehler nicht als erfolgreiche Änderung.\n\nEin\
+  \ rolling update mit diesem Schwellenwert schützt den **verbleibenden hosts** davor, eine fehlgeschlagene\
+  \ Bereitstellung fortzusetzen.\nDer ausgefallene Host wird weder zurückgesetzt noch in die Rotation\
+  \ zurückversetzt: Im Modell dieses Beispiels bleibt `web1` drained.\nHier sind `drain`/`enable` nur\
+  \ `debug`; keine wirkliche Last balancer wurde geändert. Ersetzen Sie sie durch echte\nOperationen erfordern\
+  \ explizite Kompensationsmaßnahmen durch `block`/`rescue` oder `always` (§9),\nmit einer health-Prüfung\
+  \ vor der Rückgabe des Hosts; Ein fehlerhafter Host darf nicht bedingungslos aktiviert werden.\n\n###\
+  \ Predict: Ein SSH batch schlägt nach drain fehl\n\n**Vorhersage:** Der obige playbook läuft mit `-e\
+  \ deploy_cmd=/bin/false`. Welches hosts erscheint\nin der Zusammenfassung? Ist `web1` zur Rotation zurückgekehrt?\n\
+  \n> [!question]- Antwort\n> Es erscheint nur `web1`: `ok=1 changed=0 unreachable=0 failed=1`.\n> `web2`\
+  \ fehlt: Der zweite batch startet nie, nachdem `max_fail_percentage: 0` überschritten wurde.\n> `enable\
+  \ web1` wurde nicht ausgeführt, daher wird es vom Bereitstellungsmodell nicht rotiert.\n> Der Lauf verwendete\
+  \ `debug` anstelle einer Last balancer API und veränderte die tatsächliche Verkehrsrotation nicht.\n\
+  > Es gibt kein automatisches Rollback; Definieren Sie explizit die Wiederherstellung und sichere Wiederaktivierung.\n\
+  \n### Delegation und einmalige Ausführung (`delegate_to`, `run_once`)\n\n**Auf einen Blick**\n- delegate_to\
+  \ wählt aus, wo eine Aufgabe ausgeführt wird.\n- Der ursprüngliche Host und der Ausführungshost können\
+  \ unterschiedliche Namen haben.\n- run_once begrenzt die Ausführung innerhalb des aktuellen batch, nicht\
+  \ unbedingt während des gesamten Laufs.\n\n**Mini-Beispiel:** `mini.yml` in einem separaten temporären\
+  \ Verzeichnis speichern; Führen Sie `ansible-playbook -i localhost, -c local mini.yml` aus. Das Beispiel\
+  \ läuft auf localhost ohne zu werden.\n\n```yaml\n- hosts: localhost\n  connection: local\n  become:\
+  \ false\n  gather_facts: false\n  tasks:\n    - ansible.builtin.command: /usr/bin/printf delegated\n\
+  \      delegate_to: localhost\n      changed_when: false\n      register: result\n    - ansible.builtin.debug:\n\
+  \        msg: \"{{ inventory_hostname }}:{{ result.stdout }}\"\n```\n\n**Vorhersage:** Was wird der\
+  \ Lauf zeigen und wie wird sein Exit-Code lauten?\n\n> [!question]- Antwort\n> Exit-Code: 0. Stdout-Auszüge:\n\
+  >\n> ```text\n>     \"msg\": \"localhost:delegated\"\n> localhost                  : ok=2    changed=0\
+  \    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n> ```\n\nDer delegated command\
+  \ wird explizit auf localhost ausgeführt, und die nächste Aufgabe kann auf seinen result zugreifen.\
+  \ Hier fallen Original und Empfang hosts zusammen; Das vollständige Experiment zeigt den Unterschied\
+  \ zwischen zwei Namen.\n\nKomplett **sicher simulation** `rolling.yml`; Hostnamen müssen zu einer separaten\
+  \ Übung gehören inventory:\n\n**`rolling-inventory.ini`: ein separater inventory mit der Gruppe `web_lab`:**\n\
+  \n```ini\n[web_lab]\nweb1 ansible_connection=local ansible_python_interpreter=/usr/bin/python\nweb2\
+  \ ansible_connection=local ansible_python_interpreter=/usr/bin/python\n```\n\n**`rolling.yml`; Führen\
+  \ Sie `ansible-playbook -i rolling-inventory.ini rolling.yml` aus:**\n\n```yaml\n- name: Simulate rolling\
+  \ order\n  hosts: web_lab\n  connection: local\n  gather_facts: false\n  become: false\n  strategy:\
+  \ linear\n  serial: 1\n  max_fail_percentage: 0\n  pre_tasks:\n    - name: Simulate LB drain\n     \
+  \ ansible.builtin.debug:\n        msg: \"Drain {{ inventory_hostname }}\"\n      delegate_to: localhost\n\
+  \  tasks:\n    - name: Write host-specific demo configuration\n      ansible.builtin.copy:\n       \
+  \ content: \"version=1\\n\"\n        dest: \"/tmp/ansible-visual-guide/{{ inventory_hostname }}.conf\"\
+  \n        mode: \"0644\"\n      notify: Reload simulation\n    - name: Reload before checking\n    \
+  \  ansible.builtin.meta: flush_handlers\n    - name: Check simulated health\n      ansible.builtin.command:\n\
+  \        argv: [/usr/bin/true]\n      changed_when: false\n      register: health\n      until: health.rc\
+  \ == 0\n      retries: 2\n      delay: 0\n      throttle: 1\n  post_tasks:\n    - name: Simulate enabling\
+  \ in LB\n      ansible.builtin.debug:\n        msg: \"Enable {{ inventory_hostname }}\"\n      delegate_to:\
+  \ localhost\n  handlers:\n    - name: Reload simulation\n      ansible.builtin.debug:\n        msg:\
+  \ reload simulation\n```\n\n*(verifiziert)* Der simulation lief auf zwei local-Namen: zuerst alle `web1`-Schritte,\
+  \ dann `web2`;\njeder hatte `ok=5 changed=1 failed=0`. Dabei werden die Bestellung `serial`, die Spülung\
+  \ delegation und handler überprüft.\nEine Syntaxprüfung validiert die Struktur; Die Deaktivierung von\
+  \ simulated durch `debug` und `/usr/bin/true` ist **keine** Lastprüfung von balancer oder health.\n\
+  Dies ist kein Beweis für Updates ohne Ausfallzeiten. Ein echtes Design braucht eine Ladung balancer\
+  \ API/module, die auf Neues wartet\nVerbindungen zu stoppen und bestehende zu drain, ausreichend Restgruppenkapazität,\
+  \ eine Service-Adressenprüfung health nach Neustart,\nund Bestätigung des Wiedereintritts in den Pool.\
+  \ Ein `rescue`-Block darf einen fehlerhaften Host nicht bedingungslos erneut aktivieren.\n`post_tasks`\
+  \ ist kein Ersatz für `always`: Ein ausgefallener Host erreicht ihn möglicherweise nie.\n\n`delegate_to:\
+  \ lb1` ändert **wo eine Aufgabe ausgeführt wird**: Der Load balancer-Host führt die Aktion aus.\nwährend\
+  \ `inventory_hostname` weiterhin den ursprünglichen web-Host benennt, der aktualisiert wird.\nVerbindungseinstellungen\
+  \ und viele andere Variablen stammen vom delegated-Host;\nLesen Sie die ursprünglichen Hostwerte explizit\
+  \ über `hostvars[inventory_hostname]`, um Mehrdeutigkeiten zu vermeiden.\nEin `register` result bleibt\
+  \ mit dem ursprünglichen Host verbunden. Für gesammelte Fakten,\n`delegate_facts: true` ordnet sie dem\
+  \ delegated-Host zu.\n\nWenn 20 web hosts delegate in eine localhost-Datei schreibt, sind Rennen möglich:\
+  \ delegation serialisiert nicht\nautomatisch zugreifen. Verwenden Sie bei Bedarf `throttle: 1` oder\
+  \ eine explizit geloopte Aufgabe.\n`run_once: true` wird einmal **pro aktuellem batch** ausgeführt und\
+  \ verteilt seine result und Fakten innerhalb dieses batch.\nBei `serial` wiederholt sich dies für jeden\
+  \ batch. Eine Möglichkeit besteht darin, den gesamten play einmal auszuführen\n`when: inventory_hostname\
+  \ == ansible_play_hosts_all[0]`, aber wenn dieser erste Host ausfällt oder gefiltert wird\nVor dem Schritt\
+  \ übernimmt nicht automatisch ein anderer Host. Für Migrationen ein separates play\nmit einem explizit\
+  \ ausgewählten Executor und externem Parallelitätsschutz ist zuverlässiger.\n*(laut Dokumentation)*\
+  \ [Delegation](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_delegation.html).\n\n\
+  > [!info]- Ausführlichere Erklärung\nDer typische Fehler > A ist eine service HTTP-Adresse, die die\
+  \ required status nicht zurückgibt, bevor retries erschöpft ist. Das genaue `uri`\nDie Nachricht > \
+  \ hängt von status, timeout und dem Antworttext ab. Dieser lab hat keine echte Last balancer oder Anwendung,\
+  \ also\n> dieser Fehler wurde nicht reproduziert *(nicht überprüft)*; Es wird kein erstelltes Protokoll\
+  \ angezeigt. Die Überprüfung eines TCP-Ports reicht nicht aus (§8).\n> [HTTP status prüft](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/uri_module.html).\n\
+  \n### Zwei Namen: Executor, Variablenquelle und result Besitzer\n\nDer kurze Weg oben erklärt den Mechanismus\
+  \ und die nächste Überprüfung. Vollständige Auflistung und Beobachtungen: [[#Справочный рецепт — Два\
+  \ имени: кто исполняет, чьи переменные и кому принадлежит результат|reference recipe]].\n\n### Referenzrezept\
+  \ – Zwei Namen: Ausführungshost, Variable context und result ownership\n\n**Auf einen Blick**\n- Delegation\
+  \ kann ändern, wo die Ausführung stattfindet.\n- register gehört standardmäßig zum ursprünglichen Host.\n\
+  - Unterscheiden Sie beide Namen, um result ownership zu überprüfen.\n\n**Mini-Beispiel:** `mini.yml`\
+  \ in einem separaten temporären Verzeichnis speichern; Führen Sie `ansible-playbook -i localhost, -c\
+  \ local mini.yml` aus. Das Beispiel läuft auf localhost ohne zu werden.\n\n```yaml\n- hosts: localhost\n\
+  \  connection: local\n  become: false\n  gather_facts: false\n  tasks:\n    - ansible.builtin.command:\
+  \ /usr/bin/printf result\n      delegate_to: localhost\n      changed_when: false\n      register: result\n\
+  \    - ansible.builtin.debug:\n        msg: \"{{ result.stdout }}\"\n```\n\n**Vorhersage:** Was wird\
+  \ der Lauf zeigen und wie wird sein Exit-Code lauten?\n\n> [!question]- Antwort\n> Exit-Code: 0. Stdout-Auszüge:\n\
+  >\n> ```text\n>     \"msg\": \"result\"\n> localhost                  : ok=2    changed=0    unreachable=0\
+  \    failed=0    skipped=0    rescued=0    ignored=0\n> ```\n\nDer registrierte result steht für die\
+  \ nächste Aufgabe des aktuellen Hosts zur Verfügung. Das Mini-Beispiel verwendet einen localhost; Im\
+  \ folgenden vollständigen Experiment werden zwei Namen separat geprüft.\n\n**Ein question:** nach `web1\
+  \ → web2`, wo sollten Sie nach `register` und `set_fact` suchen?\nDie beiden folgenden inventory hosts\
+  \ verwenden **einen local-Computer**, ohne SSH oder Änderungen an seinem configuration.\nweb1 verfügt\
+  \ absichtlich über einen nicht vorhandenen Python interpreter: Die delegated-Aufgabe muss web2s interpreter\
+  \ verwenden.\nDer zweite play setzt den interpreter erneut, um `serial` mit beiden Namen zu testen.\n\
+  \n**`inventory.ini`:**\n\n```ini\n[lab]\nweb1 ansible_connection=local ansible_host=127.0.0.11 role_label=web\
+  \ ansible_python_interpreter=/not-used/on-web1\nweb2 ansible_connection=local ansible_host=127.0.0.12\
+  \ role_label=helper ansible_python_interpreter=/usr/bin/python3\n```\n\n**`delegation.yml`:**\n\n```yaml\n\
+  - name: Observe delegation\n  hosts: web1\n  gather_facts: false\n  become: false\n  tasks:\n    - name:\
+  \ Execute on web2, store the result on web1\n      ansible.builtin.command:\n        argv:\n       \
+  \   - /usr/bin/printf\n          - '%s\\n'\n          - 'owner={{ inventory_hostname }} arg_host={{\
+  \ ansible_host }} delegate_host={{ hostvars.web2.ansible_host }} source={{ hostvars[inventory_hostname].role_label\
+  \ }}'\n      delegate_to: web2\n      register: probe\n      changed_when: false\n    - name: Attach\
+  \ a fact to the original host\n      ansible.builtin.set_fact:\n        original_fact: kept-on-web1\n\
+  \      delegate_to: web2\n    - name: Attach a fact to the delegate\n      ansible.builtin.set_fact:\n\
+  \        delegated_fact: kept-on-web2\n      delegate_to: web2\n      delegate_facts: true\n    - name:\
+  \ Show ownership\n      ansible.builtin.debug:\n        msg:\n          - '{{ probe.stdout }}'\n   \
+  \       - 'web1.register={{ hostvars.web1.probe is defined }} web2.register={{ hostvars.web2.probe is\
+  \ defined }}'\n          - 'web1.fact={{ hostvars.web1.original_fact }} web2.fact={{ hostvars.web2.delegated_fact\
+  \ }}'\n\n- name: Observe run_once per serial batch\n  hosts: lab\n  gather_facts: false\n  become: false\n\
+  \  strategy: linear\n  serial: 1\n  vars:\n    ansible_python_interpreter: /usr/bin/python3\n  tasks:\n\
+  \    - name: This action runs once in EACH batch\n      ansible.builtin.command:\n        argv: [/usr/bin/printf,\
+  \ '%s\\n', 'batch={{ inventory_hostname }}']\n      run_once: true\n      register: batch\n      changed_when:\
+  \ false\n    - ansible.builtin.debug:\n        var: batch.stdout\n```\n\n**Befehle in einem neuen temporären\
+  \ Verzeichnis, das diese beiden Dateien enthält:**\n\n```bash\nprintf '[defaults]\\nretry_files_enabled\
+  \ = False\\n' > ansible.cfg\nANSIBLE_CONFIG=\"$PWD/ansible.cfg\" ANSIBLE_NOCOLOR=1   ansible-playbook\
+  \ -i inventory.ini delegation.yml\n```\n\n**Lokal ausgeführt**, ansible-core 2.21.5, Exit-Code 0. Tatsächliche\
+  \ Ausgabezeilen; Verwaltungszeilen TASK/PLAY weggelassen:\n\n```text\n        \"owner=web1 arg_host=127.0.0.11\
+  \ delegate_host=127.0.0.12 source=web\",\n        \"web1.register=True web2.register=False\",\n    \
+  \    \"web1.fact=kept-on-web1 web2.fact=kept-on-web2\"\n    \"batch.stdout\": \"batch=web1\"\n    \"\
+  batch.stdout\": \"batch=web2\"\n```\n\n| Beobachtung | Vor der Aufgabe | Nach |\n|---|---|---|\n| Execution\
+  \ context | Task gehört zu web1 | command ist delegated bis web2; seine funktionierende Python wird\
+  \ verwendet |\n| Modulargumente | Werte werden noch als Vorlage erstellt | `inventory_hostname=web1`;\
+  \ explizit hostvars unterscheiden Quelle und delegate |\n| `register: probe` | Auf beiden nicht vorhanden\
+  \ | `hostvars.web1.probe` existiert, aber web2 hat keine |\n| `set_fact` ohne delegate_facts | Tatsache\
+  \ fehlt | `original_fact` auf web1 |\n| `delegate_facts: true` | Tatsache fehlt | `delegated_fact` auf\
+  \ web2 |\n| run_once + serial: 1 | Zwei batches | Zwei Ausführungen: batch=web1 und batch=web2 |\n\n\
+  Ein überraschendes Detail: `ansible_host` eingefügt **in command argv** entspricht in diesem Lauf der\
+  \ Adresse von web1.\nEs kann nicht als Nachweis des Hinrichtungsortes dienen. Connection/become/interpreter-Einstellungen\n\
+  sind als Vorlage für delegate vorgesehen; Wählen Sie explizit `hostvars[inventory_hostname]` oder `hostvars.web2`\
+  \ als Argumente aus.\nAlle Aktionen hier sind local: Adressen `127.0.0.11/12` sind inventory-Labels;\
+  \ Es werden keine Verbindungen zu ihnen hergestellt.\n[Delegation context und delegate_facts](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_delegation.html).\n\
+  \n**Grenze:** Das Experiment beweist die Grenzen von ownership und batch, nicht zwei physische Ausführungsmaschinen,\
+  \ SSH-Zugriff\noder sicheres Schreiben in eine freigegebene Datei. `run_once` ist keine verteilte Sperre.\n\
+  **Vorhersage:** Wenn delegate_facts aus dem zweiten set_fact entfernt wird, wo erscheint dann delegated_fact?\n\
+  \n> [!info]- Ausführlichere Erklärung\n> > [!question]- Antwort\n> > Auf dem Original web1. Das Delegieren\
+  \ der Ausführung allein ändert nichts an fact ownership.\n>\n> **Kurz auf Englisch:** Delegation ändert\
+  \ die Ausführung context. Registrierte Ergebnisse gehören weiterhin dem ursprünglichen Host;\n> delegate_facts\
+  \ controls fact ownership und run_once gilt für den aktuellen serial batch.\n\n### Asynchrone Ausführung:\
+  \ ein langer Prozess und Warten auf seinen result (`async`)\n\n**Auf einen Blick**\n- async legt ein\
+  \ Zeitlimit für eine Hintergrundaufgabe fest.\n- poll: 0 gibt die Kontrolle vor completion zurück.\n\
+  - Die Kennung job wird benötigt, um die result später zu überprüfen.\n\n**Kurzes Szenario**\n\nDie Aufgabe\
+  \ beginnt mit `async: 30`, `poll: 0`. Die erste Antwort enthält einen job ID, aber der endgültige result\
+  \ wurde noch nicht überprüft.\n\n**Vorhersage:** Kann der Anwendungsvorgang bereits als erfolgreich\
+  \ erklärt werden?\n\n> [!question]- Antwort\n> Nr. Der Empfang eines job ID bestätigt, dass der Wartemechanismus\
+  \ started; Erhalten Sie das endgültige result separat über async_status.. Das vollständige ausführbare\
+  \ Rezept ist unten aufgeführt.\n\nKomplett `async.yml`:\n\n```yaml\n- name: Launch and join an async\
+  \ job\n  hosts: lab\n  connection: local\n  gather_facts: false\n  become: false\n  vars:\n    ansible_async_dir:\
+  \ /tmp/ansible-visual-guide/async\n  tasks:\n    - name: Launch harmless wait\n      ansible.builtin.command:\n\
+  \        argv: [/usr/bin/sleep, \"1\"]\n      async: 10\n      poll: 0\n      register: job\n      changed_when:\
+  \ false\n    - name: Wait for completion\n      ansible.builtin.async_status:\n        jid: \"{{ job.ansible_job_id\
+  \ }}\"\n      register: done\n      until: done.finished\n      retries: 5\n      delay: 1\n      changed_when:\
+  \ false\n    - name: Remove status file\n      ansible.builtin.async_status:\n        jid: \"{{ job.ansible_job_id\
+  \ }}\"\n        mode: cleanup\n      changed_when: false\n```\n\nEine gewöhnliche Aufgabe beschäftigt\
+  \ einen Arbeiter until, der command beendet. `async: 10` legt das Ausführungszeitlimit in Sekunden fest;\n\
+  `poll: 0` startet einen job und gibt sofort die Kontrolle zurück. Der Controller erhält einen job ID;\
+  \ Ein Wrapper auf dem verwalteten Knoten schreibt\nstatus in das Verzeichnis async job. Dies ist **keine**\
+  \ abgeschlossene Bewerbung result. Bei `poll: 2` der Controller selbst\nüberprüft status regelmäßig\
+  \ und wartet, bis die Aufgabe abgeschlossen ist, bevor sie fortfährt.\n\n*(verifiziert)* `ansible-core`\
+  \ 2.21.4: alle drei tasks abgeschlossen, `ok=3 changed=0 failed=0`.\nDa `ansible-core` 2.19, `started`/`finished`\
+  \ boolesche Werte sind; frühere Versionen verwendeten auch ganze Zahlen 0/1.\nEntfernen Sie bei `poll:\
+  \ 0` die Datei status explizit; `mode: cleanup` beendet den Prozess nicht.\nStarten Sie die Paketinstallation\
+  \ nicht ohne zu warten, wenn für die nächste Aufgabe ebenfalls die Sperre des Paketmanagers erforderlich\
+  \ ist.\nAsync bietet keinen vollständigen Start simulation im Prüfmodus.\n*(laut Dokumentation)* [Asynchrone\
+  \ Ausführung](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_async.html),\n[`async_status`](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/async_status_module.html).\n\
+  \n### Predict 10: Fehler in einem Ein-Host batch\n\n**Auf einen Blick**\n- serial schränkt einen batch\
+  \ ein, definiert jedoch selbst keine Fehlerrichtlinie.\n- A normal fail schließt den Host von nachfolgenden\
+  \ normalen tasks aus.\n- BVor einem echten update testen Sie den Stopp in einer small-Umgebung.\n\n\
+  **Mini-Beispiel:** `mini.yml` in einem separaten temporären Verzeichnis speichern; Führen Sie `ansible-playbook\
+  \ -i localhost, -c local mini.yml` aus. Das Beispiel läuft auf localhost ohne zu werden.\n\n```yaml\n\
+  - hosts: localhost\n  connection: local\n  become: false\n  gather_facts: false\n  tasks:\n    - ansible.builtin.fail:\n\
+  \        msg: batch stopped\n    - ansible.builtin.debug:\n        msg: must not run\n```\n\n**Vorhersage:**\
+  \ Wird die zweite Aufgabe auf demselben Host ausgeführt?\n\n> [!question]- Antwort\n> Exit-Code: 2.\
+  \ Stdout-Auszüge:\n>\n> ```text\n> localhost                  : ok=0    changed=0    unreachable=0 \
+  \   failed=1    skipped=0    rescued=0    ignored=0\n> ```\n\nNach einem Fehler wird die nächste normale\
+  \ Aufgabe dieses Hosts nicht ausgeführt. Das Arbeiten mit mehreren batches bleibt in der ursprünglichen\
+  \ Vollübung bestehen.\n\n**`predict-10.yml` (beliebiger Dateiname); inventory ist `rolling-inventory.ini`\
+  \ mit der Gruppe `web_lab` oben:**\n\n```yaml\n- hosts: web_lab\n  connection: local\n  gather_facts:\
+  \ false\n  become: false\n  serial: 1\n  max_fail_percentage: 50\n  tasks:\n  - name: Start\n    ansible.builtin.debug:\n\
+  \      msg: start\n  - name: Fail first host\n    ansible.builtin.fail:\n      msg: intentional\n  \
+  \  when: inventory_hostname == 'web1'\n  - name: End\n    ansible.builtin.debug:\n      msg: end\n```\n\
+  \n**Vorhersage:** inventory listet `web1` und dann `web2` auf, beide mit local-Verbindungen. Startet\
+  \ `web2` und wie lauten die beiden Rückblicke?\n\n> [!question]- Antwort\n> ```text\n> # Первый запуск;\
+  \ код завершения 2\n> web1                       : ok=1    changed=0    unreachable=0    failed=1  \
+  \  skipped=0    rescued=0    ignored=0\n> # Второй запуск; код завершения 2\n> web1                \
+  \       : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0\n> ```\n\
+  > Ein Fehler in einem Ein-Host-batch beträgt 100 % und überschreitet den 50 %-Schwellenwert. `web2`\
+  \ startet nie den play und fehlt in der Zusammenfassung.\n\nFrage: **Wie würden Sie eine Änderung einführen,\
+  \ ohne alle Server herunterzufahren?**\n\n> I würde update ein small batch gleichzeitig mit `serial`\
+  \ sein. Ich würde jeden Server auslasten drain\n> balancer, update, führen Sie required handler aus\
+  \ und überprüfen Sie den neuen Prozess vor dem enabling-Verkehr.\n> Dafür sind außerdem genügend Kapazität\
+  \ auf den verbleibenden Servern und ein expliziter Wiederherstellungsplan erforderlich.\n\n### Kernel-Updates\
+  \ für eine VM-Flotte\n\nDer kurze Weg oben erklärt den Mechanismus und die nächste Überprüfung. Vollständige\
+  \ Auflistung und Beobachtungen: [[#Справочный рецепт — Обновление ядра на парке ВМ|reference recipe]].\n\
+  \n### Referenzrezept – Aktualisieren des kernel in einer VM-Flotte\n\n**Auf einen Blick**\n- Rebooting\
+  \ ist ein separater Vorgang innerhalb eines rolling update.\nDie Rückgabe von - SSH beweist nicht, dass\
+  \ die Anwendung bereit ist.\n- Geben Sie den nächsten batch frei, nachdem die ausgewählten Prüfungen\
+  \ für die aktuelle bestanden wurden.\n\n**Kurzes Szenario**\n\nNach dem kernel update ist SSH wieder\
+  \ verfügbar. Die service-Prüfung schlägt immer noch fehl.\n\n**Vorhersage:** Können Sie mit dem nächsten\
+  \ batch fortfahren, nur weil SSH verfügbar ist?\n\n> [!question]- Antwort\n> Nein, wenn der Vertrag\
+  \ eine wiederhergestellte service erfordert. Bestehen Sie zuerst diese Prüfung oder stoppen Sie den\
+  \ update. Hier wurden keine Neustarts oder Paketinstallationen durchgeführt.\n\nHinzugefügt 08.10.2026\
+  \ – DSV technisches Interview question: „Tausend VMs; update ihre Kernel mit minimaler Ausfallzeit“.\n\
+  Dies verwendet dasselbe `serial`, aber die Aufgabe ist ein kernel-Paket update und reboot.\n\n**`kernel-patch.yml`\
+  \ – Lesebeispiel; inventory mit einer `app_servers` Gruppe von 200 hosts:**\n\n```yaml\n- name: Patch\
+  \ the kernel in rolling batches\n  hosts: app_servers\n  become: true\n  gather_facts: false\n  serial:\n\
+  \    - 1\n    - \"10%\"\n    - \"25%\"\n  max_fail_percentage: 0\n  pre_tasks:\n    - name: Take the\
+  \ host out of the load balancer\n      ansible.builtin.debug:\n        msg: \"Drain {{ inventory_hostname\
+  \ }}\"\n      delegate_to: localhost\n      become: false\n  tasks:\n    - name: Install the latest\
+  \ kernel package\n      ansible.builtin.dnf:\n        name: kernel\n        state: latest\n      register:\
+  \ kernel_update\n    - name: Reboot only when the kernel changed\n      ansible.builtin.reboot:\n  \
+  \      reboot_timeout: 600\n      when: kernel_update.changed\n    - name: Read the running kernel\n\
+  \      ansible.builtin.command:\n        argv: [/usr/bin/uname, -r]\n      register: running_kernel\n\
+  \      changed_when: false\n    - name: Wait until the service answers\n      ansible.builtin.uri:\n\
+  \        url: \"http://{{ inventory_hostname }}:8080/healthz\"\n        status_code: 200\n      register:\
+  \ health\n      until: health.status == 200\n      retries: 10\n      delay: 6\n      delegate_to: localhost\n\
+  \      become: false\n  post_tasks:\n    - name: Put the host back into the load balancer\n      ansible.builtin.debug:\n\
+  \        msg: \"Enable {{ inventory_hostname }} on kernel {{ running_kernel.stdout }}\"\n      delegate_to:\
+  \ localhost\n      become: false\n```\n\n*(08.10.2026, ansible-core 2.21.4: `--syntax-check` bestanden,\
+  \ und `--list-hosts` zeigte 200 hosts. Der playbook selbst **war nicht laufen**:\nes erfordert echte\
+  \ VMs und Neustarts. Die `debug` tasks sind Platzhalter für Last-balancer-Aufrufe.)*\n\nWas jeder Teil\
+  \ macht:\n\n| Linie | Zweck |\n|---|---|\n| `serial: [1, \"10%\", \"25%\"]` | Zuerst eine VM (canary),\
+  \ dann 20, dann batches von 50. Mit 200 hosts: 1, 20, 50, 50, 50, 29 |\n| `max_fail_percentage: 0` |\
+  \ Ein Fehler in einem batch stoppt alles; andere VMs bleiben auf dem alten kernel und behalten running\
+  \ |\n| `pre_tasks` und `post_tasks` | Entfernen Sie die VM vor dem Update aus der Last balancer und\
+  \ geben Sie sie nach der Überprüfung zurück |\n| `when: kernel_update.changed` | nicht reboot eine VM,\
+  \ deren kernel bereits aktuell ist; Wiederholen ist sicher |\n| `ansible.builtin.reboot` | startet neu\
+  \ und wartet auf eine erneute Antwort von SSH |\n| `uri` mit `until` | prüft den service, nicht nur,\
+  \ ob die VM eingeschaltet ist |\n\nDrei Dinge fehlen beim playbook, aber required in der Antwort:\n\n\
+  > [!info]- Ausführlichere Erklärung\n> - **`forks`.** Ansible funktioniert standardmäßig auf fünf hosts\
+  \ gleichzeitig. Bei `forks = 5` geht ein batch von 50 jeweils fünf Mal weiter.\nDas 30-Minuten-Fenster\
+  \ >   A erfordert einen Lauf mit `-f 50`.\n> - **Repliken eines service dürfen nicht alle in denselben\
+  \ batch fallen.** Andernfalls fällt der gesamte service aus, obwohl VMs reboot vorhanden sind\n>   stages.\
+  \ Verwenden Sie eine separate inventory-Gruppe für jede „Hälfte“ von service oder führen Sie sie nach\
+  \ Zone aus.\n> - **Kubernetes-Knoten** müssen drained vor reboot mit `kubectl drain` sein und dann mit\
+  \ `kubectl uncordon` zurückgegeben werden.\n>\n> Zwei weitere erwähnenswerte Ansätze:\n>\n> | Ansatz\
+  \ | Wann sollte man es verwenden |\n> |---|---|\n> | Replace statt Upgrade: Erstellen Sie ein neues\
+  \ VM-Image (Packer), rufen Sie neue VMs auf und entfernen Sie dann die alten | Cloud- und Kubernetes-Knoten;\
+  \ Laut Michal im Interview ersetzt DSV auf diese Weise Knotenbilder, normalerweise montags |\n> | Live\
+  \ patching (`kpatch` auf RHEL, Canonical Livepatch) – patchen Sie den running kernel ohne a reboot |\
+  \ Dringend security fixes; Dies kann nicht geschehen. install eine neue kernel-Version |\n>\n> Frage:\
+  \ **Wie würden Sie kernel auf tausend VMs mit minimaler Ausfallzeit aktualisieren?**\n>\n> > I würde\
+  \ einen rolling update mit Ansible machen. Zuerst ein canary-Host, dann small batches mit `serial`.\n\
+  > > Für jeden Host: Nehmen Sie ihn aus der Last. balancer, install, kernel, reboot, überprüfen Sie service,\
+  \ put es zurück.\n> > Replikate eines service dürfen nicht im selben batch sein. Wenn ein reboot nicht\
+  \ akzeptabel ist, würde ich den Live-patching verwenden\n> > für security fixes, oder ersetzen Sie die\
+  \ VMs durch ein neues Image.\n\n### Nur ein Teil von inventory kehrt nach reboot zurück\n\n**Teilfehlermodell,\
+  \ ohne diesen Computer neu zu starten.** In batch `web01/web02` kehrte der erste Host zurück, während\
+  \ beim zweiten eine Zeitüberschreitung beim Wiederherstellen der Verbindung auftrat. Der dritte Host\
+  \ `web03` hat nicht started, sondern update. Beweise pro Host beibehalten: drain, Paket, boot ID/kernel,\
+  \ reconnect, HTTP health, zurück zum Laden balancer. Ein einzelner abschließender `failed=1` gibt nicht\
+  \ an, welcher Schritt den Host bereits geändert hat.\n\n| Gastgeber | Beobachtung | Nächste Aktion |\n\
+  |---|---|---|\n| web01 | neu kernel, gesund | Datenverkehr erst nach checking | wiederherstellen\n|\
+  \ web02 | reconnect timeout, health unbekannt | den Verkehr gesperrt halten; den Zugriff über einen\
+  \ autorisierten Kanal untersuchen |\n| web03 | update hat nicht started | Stoppen Sie nachfolgende batches\
+  \ until. Die Ursache ist behoben\n\n`reboot` wartet auf reboot und einen erfolgreichen Test command;\
+  \ das ist noch keine Bewerbungsprüfung. `rescue` fängt unreachable nicht ab und ein Host, der aus der\
+  \ aktiven Ausführung entfernt wurde, wird durch `ignore_errors` nicht automatisch fehlerfrei. [reboot](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/reboot_module.html),\
+  \ [error handling](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_error_handling.html).\
+  \ Für den Wiedereintritt sind connect + kernel + health-Prüfungen erforderlich; Beschränken Sie retries\
+  \ auf explizit ausgewähltes hosts und behalten Sie dabei den batch-Schutz bei. `max_fail_percentage`\
+  \ muss **überschritten** sein und sein Prozentsatz wird für den aktuellen batch berechnet. [serial und\
+  \ max_fail_percentage](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_strategies.html)."
+source_hash: 9c4fbf37a0b5543ea862a8a4a4d678cf98c5d4379d2276616d6370f3277a8ced
