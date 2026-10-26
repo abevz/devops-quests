@@ -1,0 +1,572 @@
+heading: 8. Instalación, actualizaciones y reversión [versión lifecycle]
+text: '## 8. Instalación, actualizaciones y rollback [versión lifecycle]
+
+
+  **De un vistazo**
+
+  - Install crea una versión.
+
+  - Upgrade agrega una nueva revisión.
+
+  - Rollback utiliza history, pero no deshace efectos externos arbitrarios.
+
+
+  **Escenario breve**
+
+
+  La migración cambió la base de datos, luego Helm restauró la Deployment anterior.
+
+
+  **Predecir:** ¿Esto garantiza que la base de datos volvió a su esquema anterior?
+
+
+  > [!question]- Respuesta
+
+  > No. El manifiesto Kubernetes history no es una migración de base de datos inversa.
+
+
+  Esto se desprende de las condiciones indicadas. El análisis anterior completo y sus límites de verificación
+  se conservan a continuación.
+
+
+  > [!info]- Explicación más profunda
+
+  > Esta sección trata sobre las operaciones de API — *(según la documentación)* [install](https://helm.sh/docs/helm/helm_install/),
+  [upgrade](https://helm.sh/docs/helm/helm_upgrade/), [rollback](https://helm.sh/docs/helm/helm_rollback/),
+  [uninstall](https://helm.sh/docs/helm/helm_uninstall/). Los resultados del revisor a continuación verifican
+  las transiciones principales; Los comandos de reproducción utilizan sólo el grupo temporal §19.
+
+  >
+
+  > | Comando | Acción del cliente e información retenida |
+
+  > |---|---|
+
+  > | `install` | Crea el primer conjunto resource y revisión 1 |
+
+  > | `upgrade` | Calcula nuevos manifiestos, recursos updates y agrega una revisión |
+
+  > | `upgrade --install` | Elige install cuando está ausente; de ​​lo contrario, upgrade; no es un controlador
+  continuo |
+
+  > | `status` | Lee el registro de lanzamiento status; no reemplaza los controles de pod |
+
+  > | `history` | Muestra revisiones, estados, versiones y descripciones retenidas |
+
+  > | `rollback demo 1` | Aplica el chart/values guardado de la revisión 1 y crea una **nueva** revisión
+  |
+
+  > | `uninstall` | Elimina los recursos administrados y normalmente history |
+
+  > | `uninstall --keep-history` | Elimina recursos pero conserva history con un status desinstalado |
+
+  >
+
+  > Upgrade history está limitado por `--history-max`; Nunca asuma que queda una revisión muy antigua.
+  Rollback no “rebobina” la numeración de history: después de las revisiones 1 y 2, un rollback exitoso
+  al contenido de 1 crea 3. Los datos de bases de datos externas y las migraciones irreversibles no se
+  revierten simplemente porque regresan manifiestos antiguos.
+
+  >
+
+  > ```mermaid
+
+  > flowchart TB
+
+  >     A["install: revision 1"] --> B["upgrade: revision 2"]
+
+  >     B --> C["rollback to revision 1 contents: new revision 3"]
+
+  >     C --> D["uninstall: resources deleted"]
+
+  >     D --> E["--keep-history: history retained"]
+
+  > ```
+
+
+  ### En espera, failure y actualizaciones forzadas
+
+
+  **De un vistazo**
+
+  - Wait espera condiciones específicas.
+
+  - A timeout limita el tiempo de espera.
+
+  - A forzado update tiene consecuencias distintas.
+
+
+  **Escenario breve**
+
+
+  El Pod se está ejecutando, pero el readiness no pasa antes del timeout.
+
+
+  **Predecir:** ¿Es suficiente con Running por sí solo para que una espera de readiness tenga éxito?
+
+
+  > [!question]- Respuesta
+
+  > No. Se deben cumplir las condiciones de la estrategia de espera seleccionada.
+
+
+  Esto se desprende de las condiciones indicadas. El análisis anterior completo y sus límites de verificación
+  se conservan a continuación.
+
+
+  > [!info]- Explicación más profunda
+
+  Se leyeron > Local `helm install --help` y `helm upgrade --help` *(verificado como contrato CLI)*:
+
+  >
+
+  > ```text
+
+  > --rollback-on-failure
+
+  > # из upgrade --help
+
+  > The --wait flag will be defaulted to "watcher" if --rollback-on-failure is set
+
+  > --wait WaitStrategy[=watcher]
+
+  > # фрагмент описания
+
+  > Default when flag is omitted: ''hookOnly''.
+
+  > --timeout duration
+
+  > # стандартное значение
+
+  > (default 5m0s)
+
+  > --force-replace
+
+  > # описание
+
+  > force resource updates by replacement
+
+  > ```
+
+  >
+
+  > Esto significa que Helm 4 sin flag espera a hooks, no todos los pods comunes se convierten en ready.
+  `--wait` sin valor habilita `watcher`; También se puede seleccionar `legacy`. `--wait-for-jobs` extiende
+  la espera a trabajos ordinarios; hook Los trabajos ya requieren success. `--timeout` limita la espera
+  de operación, no todas las acciones de aplicaciones externas de forma universal. *(según documentación)*
+  [upgrade](https://helm.sh/docs/helm/helm_upgrade/).
+
+  >
+
+  > Helm 3 `--atomic` habilita la espera y rollback en failure, o la eliminación después de un failed
+  install. En Helm 4, el flag principal es `--rollback-on-failure`; `--atomic` permanece como un alias
+  obsoleto, con una ejecución verificada en [[Kubernetes-for-DevOps-Theory#7. Helm 4: что изменилось и
+  где ломается|§7]]. Un failed **upgrade** apunta a la revisión anterior exitosa; a failed **install**
+  elimina esa instalación de failed. `--wait` por sí solo **no promete rollback**.
+
+  >
+
+  > Helm 3 `--force` / Helm 4 `--force-replace` reemplazan recursos en lugar de actualizarlos normalmente.
+  Esta no es una forma libre de consecuencias de “permitir campos inmutables”: replacement puede interrumpir
+  el servicio. `--force-conflicts` se refiere a conflictos de propiedad de campos durante la aplicación
+  del lado del servidor (§10), una operación diferente.
+
+
+  ### Oobservado install → upgrade → rollback
+
+
+  **De un vistazo**
+
+  - History muestra una secuencia de revisiones.
+
+  - A rollback crea su propio evento history.
+
+  - La experiencia registrada se aplica a su propio entorno de laboratorio.
+
+
+  **Escenario breve**
+
+
+  El registro antiguo muestra operaciones exitosas de install, upgrade y rollback.
+
+
+  **Predecir:** ¿Esto demuestra que un nuevo upgrade con un values diferente tendrá éxito?
+
+
+  > [!question]- Respuesta
+
+  > No. Las entradas modificadas necesitan su propia verificación.
+
+
+  Esto se desprende de las condiciones indicadas. El análisis anterior completo y sus límites de verificación
+  se conservan a continuación.
+
+
+  > [!info]- Explicación más profunda
+
+  > ```bash
+
+  > helm install demo "$CHART" -n helm-lab -f "$LAB/values-lab.yaml" \
+
+  >   --rollback-on-failure --timeout 3m
+
+  > helm status demo -n helm-lab
+
+  > helm upgrade demo "$CHART" -n helm-lab -f "$LAB/values-lab.yaml" \
+
+  >   --set replicaCount=3 --rollback-on-failure
+
+  > helm history demo -n helm-lab
+
+  > helm rollback demo 1 -n helm-lab --wait
+
+  > helm history demo -n helm-lab
+
+  > ```
+
+  >
+
+  > *(verificado: ejecución del revisor 06.10.2026, Helm 4.3.0, kind, Kubernetes 1.34.0)*
+
+  >
+
+  > ```text
+
+  > STATUS: deployed
+
+  > REVISION: 1
+
+  > DESCRIPTION: Install complete
+
+  > # два Pod demo-democicd-…: каждый 1/1 Running
+
+  > # upgrade
+
+  > Release "demo" has been upgraded.
+
+  > REVISION: 2
+
+  > # history: выбранные колонки, выравнивание нормализовано
+
+  > 1  superseded  Install complete
+
+  > 2  deployed    Upgrade complete
+
+  > # rollback
+
+  > Rollback was a success!
+
+  > 1  superseded  Install complete
+
+  > 2  superseded  Upgrade complete
+
+  > 3  deployed    Rollback to 1
+
+  > ```
+
+  >
+
+  > El Deployment volvió a dos réplicas. Rollback **se agregó la revisión 3** copiando el contenido de
+  1; Se mantuvieron las revisiones anteriores. Esto se observa en history, no en una predicción basada
+  en documentación.
+
+  >
+
+  > `helm get values demo -n helm-lab` mostró únicamente values proporcionado por el usuario; `--all`
+  produjo 30 líneas que incluyen los valores predeterminados del gráfico:
+
+  >
+
+  > *(verificado: ejecución del revisor 06.10.2026, Helm 4.3.0, kind, Kubernetes 1.34.0)*
+
+  >
+
+  > ```text
+
+  > image:
+
+  >   repository: nginxinc/nginx-unprivileged
+
+  >   tag: stable
+
+  > imagePullSecrets: []
+
+  > replicaCount: 2
+
+  > ```
+
+
+  ### Imagen failure y automático rollback
+
+
+  **De un vistazo**
+
+  - An aparece un error de imagen después de enviar los manifiestos.
+
+  - Automatic rollback depende del modo de comando.
+
+  - A El renderizado exitoso no verifica si la imagen está disponible.
+
+
+  **Escenario breve**
+
+
+  El template produjo una referencia de imagen sintácticamente válida, pero el registry no ofrece esa
+  imagen.
+
+
+  **Predecir:** ¿Puede el Pod seguir sin estar listo incluso si el template tiene éxito?
+
+
+  > [!question]- Respuesta
+
+  > YSí. El render local no verificó la disponibilidad de la imagen.
+
+
+  Esto se desprende de las condiciones indicadas. El análisis anterior completo y sus límites de verificación
+  se conservan a continuación.
+
+
+  > [!info]- Explicación más profunda
+
+  > ```bash
+
+  > helm upgrade demo "$CHART" -n helm-lab -f "$LAB/values-lab.yaml" \
+
+  >   --set image.tag=helm-study-missing-tag --rollback-on-failure --timeout 45s
+
+  > ```
+
+  >
+
+  > El comando tardó 46 segundos. La advertencia es omitted; failure real y columnas history seleccionadas:
+
+  >
+
+  > *(verificado: ejecución del revisor 06.10.2026, Helm 4.3.0, kind, Kubernetes 1.34.0)*
+
+  >
+
+  > ```text
+
+  > Error: UPGRADE FAILED: release demo failed, and has been rolled back due to rollback-on-failure being
+  set: resource Deployment/helm-lab/demo-democicd not ready. status: InProgress, message: Updated: 1/2
+
+  > context deadline exceeded
+
+  > # history: описание failed сокращено
+
+  > 4  failed    Upgrade "demo" failed: resource Deployment/helm-lab/demo-democicd not ready…
+
+  > 5  deployed  Rollback to 3
+
+  > ```
+
+  >
+
+  >  Aquí un failed upgrade con `--rollback-on-failure` costó **dos revisiones**: 4 failed, 5 was automático
+  rollback. El nuevo Pod was `Terminating`; dos vainas antiguas permanecieron `Running` porque rolling
+  update las retuvo. Esto describe que Deployment, no es una garantía de disponibilidad universal durante
+  rollback.
+
+
+  ### What permanece después de failure
+
+
+  **De un vistazo**
+
+  La operación - A failed puede dejar atrás recursos y history.
+
+  - Inspeccione el estado antes de la limpieza.
+
+  - Eliminar registros no soluciona la causa.
+
+
+  **Escenario breve**
+
+
+  Upgrade failed; los Pods antiguos siguen funcionando y el nuevo Job permanece.
+
+
+  **Predecir:** ¿Puedes asumir que todo el was se eliminó solo porque el status dice failed?
+
+
+  > [!question]- Respuesta
+
+  > No. Verifique los recursos hooks y history para esa operación específica.
+
+
+  Esto se desprende de las condiciones indicadas. El análisis anterior completo y sus límites de verificación
+  se conservan a continuación.
+
+
+  > [!info]- Explicación más profunda
+
+  > Helm almacena estados intermedios `pending-install`, `pending-upgrade` o `pending-rollback`. Un failure
+  manejado normalmente se convierte en `failed`; un accidente puede dejar `pending-*`. Los recursos pueden
+  actualizarse parcialmente: Kubernetes API no hace que la versión completa sea una sola transacción.
+  Sin rollback automático, pueden coexistir objetos nuevos y antiguos. *(según documentation/implementation)*
+  [upgrade](https://github.com/helm/helm/blob/main/pkg/action/upgrade.go).
+
+  >
+
+  > > [!failure] Error común
+
+  > > Se trata `--wait` como rollback y `deployed` como estado de la aplicación.
+
+  > > ```bash
+
+  > > # WRONG when automatic rollback is required
+
+  > > helm upgrade demo "$CHART" --wait
+
+  > > # CORRECT for this requirement in Helm 4
+
+  > > helm upgrade demo "$CHART" --rollback-on-failure --timeout 2m
+
+  > > ```
+
+  > > Esperando failure sin automático rollback deja una revisión failed. Rollback también puede fallar;
+  inspeccione su history y verifique el estado de Kubernetes.
+
+  >
+
+  > **Predicción:** después de actualizar a la revisión 2, rollback apunta a 1. ¿La última revisión pasará
+  a ser 1?
+
+  >
+
+  > > [!question]- Respuesta
+
+  > > No. En la ejecución del revisor, `helm rollback demo 1 --wait` arrojó:
+
+  > > *(verificado: ejecución del revisor 06.10.2026, Helm 4.3.0, kind, Kubernetes 1.34.0)*
+
+  > > ```text
+
+  > > Rollback was a success!
+
+  > > # history: выбранные колонки
+
+  > > 1 superseded
+
+  > > 2 superseded
+
+  > > 3 deployed  Rollback to 1
+
+  > > ```
+
+  > > El Deployment volvió a tener dos réplicas. Datos externos was no verificados; El manifiesto rollback
+  no promete una migración inversa de la base de datos *(según la documentación)*.
+
+  >
+
+  > **Brevemente en inglés — What ¿rollback hace?**
+
+  >
+
+  > > Helm aplica una configuración de versión anterior y crea una nueva revisión. No mueve el número
+  de revisión hacia atrás. Puede restaurar recursos Kubernetes, pero no puede deshacer automáticamente
+  los cambios de datos externos. Verifico tanto la versión history como el estado de la carga de trabajo.
+
+
+  ### Application rollback después de que la base de datos haya cambiado
+
+
+  **De un vistazo**
+
+  - La aplicación y la base de datos tienen cambios separados.
+
+  - Es posible que el código antiguo no comprenda el nuevo esquema.
+
+  - Se necesita compatibilidad antes de un rollback automático.
+
+
+  **Escenario breve**
+
+
+  Una nueva migración eliminó una columna, mientras que la versión anterior de la aplicación todavía la
+  lee.
+
+
+  **Predecir:** ¿El rolling respaldará el problema con el Deployment?
+
+
+  > [!question]- Respuesta
+
+  > No. El código antiguo es incompatible con el esquema restante; el orden de migración debe planificarse
+  con antelación.
+
+
+  Esto se desprende de las condiciones indicadas. El análisis anterior completo y sus límites de verificación
+  se conservan a continuación.
+
+
+  > [!info]- Explicación más profunda
+
+  > **Un modelo, no una migración de base de datos en vivo.** Una revisión Helm almacena el estado de
+  la versión; no implica revertir SQL ni restaurar datos externos. Los recursos de Hook también necesitan
+  su propia política de limpieza. [Helm rollback](https://helm.sh/docs/helm/helm_rollback/), [hooks](https://helm.sh/docs/topics/charts_hooks/).
+
+  >
+
+  > **Paso 1 — Expand y la nueva versión de la aplicación**
+
+  >
+
+  > ```mermaid
+
+  > flowchart TB
+
+  >     A["App v1 + DB S1"]
+
+  >     E["Expand: DB S2, old field retained"]
+
+  >     B["App v2 + DB S2"]
+
+  >     A --> E
+
+  >     E --> B
+
+  > ```
+
+  >
+
+  > **Paso 2 — Application rollback en DB S2**
+
+  >
+
+  > ```mermaid
+
+  > flowchart TB
+
+  >     B["App v2 + DB S2"]
+
+  >     R["App v1 + DB S2"]
+
+  >     C{"Is v1 compatible with S2?"}
+
+  >     OK["Service works; DB remains S2"]
+
+  >     FAIL["Release rollback did not restore the service"]
+
+  >     B -->|"helm rollback: v1 manifests"| R
+
+  >     R --> C
+
+  >     C -->|"yes"| OK
+
+  >     C -->|"no"| FAIL
+
+  > ```
+
+  >
+
+  > Ejemplo de contrato de compatibilidad: S1 tiene `users.name`; S2 **agrega nullable** `display_name`
+  y conserva `name`. Expand primero; v2 luego escribe ambos campos y lee el nuevo con fallback en el anterior.
+  Backfill completa el nuevo campo; después de rollback v1 continúa reading/writing el antiguo. Volver
+  a v2 requiere resincronizar values modificado por v1. Elimine `name` solo después de que se cierre la
+  ventana rollback y todos los lectores migren; esa migración de contrato hace que v1 sea incompatible.
+  Este es un ejemplo de diseño, no una garantía automática Helm. Antes de rollout, pruebe v1/v2 en S2,
+  repetición de migración y restauración de copia de seguridad en una base de datos separada.'
+source_hash: 13b7edb4e6eb04aa96ab15622cfc19fc7cab0f9ca0b7186e3a3fb2436eba20ea

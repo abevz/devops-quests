@@ -1,0 +1,245 @@
+heading: 3. Quién compara y quién aplica (Argo CD internals, sync, waves, hooks)
+text: '## 3. Quién compara y quién aplica (Argo CD internals, sync, waves, hooks)
+
+
+  **De un vistazo**
+
+  - El repo-server recupera y procesa la fuente.
+
+  - El Application controller lo compara y aplica.
+
+  - Hooks y waves ordenan las etapas.
+
+
+  **Escenario breve**
+
+
+  El PreSync Job no se ha completado; Los recursos ordinarios se encuentran en un phase posterior.
+
+
+  **Predecir:** ¿Debería un número de wave más bajo en un recurso ordinario permitirle omitir un PreSync
+  sin terminar?
+
+
+  > [!question]- Respuesta
+
+  > No. El phase se considera en primer lugar; un número wave no anula el límite phase.
+
+
+  Primero identifique el componente y la etapa, luego verifique la transición indicada. El material anterior
+  completo se conserva a continuación.
+
+
+  > [!info]- Explicación más profunda
+
+  > **Repo-server** recupera un repositorio revision y convierte la ruta seleccionada en objetos Kubernetes.
+
+  > Lee documentos plain YAML, crea un conjunto de recursos Kustomize o representa plantillas Helm.
+
+  > con values seleccionado. La representación exitosa no implica que la admisión de API acepte el resultado.
+
+  > Esta ruta puede fallar en Git credentials, DNS, revision, ruta, plantillas o dependencias de gráficos.
+
+  >
+
+  > **Application-controller** observa el Application y los recursos de destino. Recibe el estado desired
+  de repo-server,
+
+  >  lo compara con el estado activo y calcula sync/health.. Durante sync coordina la aplicación, el estado
+  en espera,
+
+  > hooks y prune hasta el Kubernetes API. Luego, Deployment controller y kubelet realizan
+
+  >  trabajo propio. Argo CD no reemplaza el programador ni inicia directamente los procesos de nodo.
+
+  >
+
+  > El **Argo CD API server** sirve para UI/CLI/API, autenticación y permisos operation.
+
+  > No lo confundas con el Kubernetes API server. Redis proporciona almacenamiento en caché;
+
+  La caché > a no reemplaza los objetos Git o API. ApplicationSet controller crea Applications (§4).
+
+  > [Arquitectura](https://argo-cd.readthedocs.io/en/stable/operator-manual/architecture/).
+
+  >
+
+  > ```mermaid
+
+  > flowchart TD
+
+  >     G["Git: revision and path"] --> R["Repo-server<br/>renders desired state"]
+
+  >     R --> C["Application-controller<br/>compares and syncs"]
+
+  >     K["Kubernetes API<br/>live state and status"] --> C
+
+  >     C --> K
+
+  >     U["UI or CLI"] --> A["Argo CD API server"]
+
+  >     A --> C
+
+  > ```
+
+  >
+
+  > **Sync** aplica un revision seleccionado. No es una transacción atómica entre recursos:
+
+  > si el tercer objeto no se aplica, es posible que los dos primeros ya hayan cambiado. Algunas reparaciones
+  requieren otra
+
+  > sync, no simplemente refresh. El recurso selectivo sync no ejecuta hooks;
+
+  >  para migraciones, esta es una diferencia importante con respecto a un sync completo normal.
+
+  >
+
+  > A **phase** define la etapa amplia: `PreSync`, `Sync` ordinaria y luego `PostSync`.
+
+  > PreSync debe finalizar correctamente antes de que se apliquen los objetos principales; PostSync se
+  ejecuta después
+
+  > exitoso sync y recursos saludables. `SyncFail` ejecuta acciones después de una sincronización fallida.
+
+  > A hook no revierte sus efectos externos ni deshace un esquema de base de datos ya modificado.
+
+  >
+
+  > A **wave** es un número entero en la anotación `argocd.argoproj.io/sync-wave`.
+
+  >  Dentro de un phase, los números más bajos se ejecutan primero. El próximo wave espera a que el anterior
+  sea ready.
+
+  > Si una onda-0 Deployment nunca se convierte en Healthy, es posible que la onda-1 Service aún no exista.
+
+  > Esto no ordena solicitudes HTTP ni crea un gráfico de dependencia universal entre Applications.
+
+  > La poda invierte el orden de wave: los números más altos primero.
+
+  > [Fases y waves](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-waves/),
+
+  > [hooks](https://argo-cd.readthedocs.io/en/stable/user-guide/resource_hooks/).
+
+
+  ### Experiment: la primera sincronización completa
+
+
+  **De un vistazo**
+
+  - Sync realiza el operation seleccionado.
+
+  - El éxito se establece a partir de los resultados de los recursos.
+
+  - Confirmar pedido a partir de eventos, no de un retraso arbitrario.
+
+
+  **Escenario breve**
+
+
+  Se completó PreSync, luego se aplicaron ConfigMap, Deployment y Service en sus respectivos waves.
+
+
+  **Predecir:** ¿Qué confirma el pedido application?
+
+
+  > [!question]- Respuesta
+
+  > El operation registra y registra eventos de objetos con marca de tiempo; un único Synced status final
+  no revela el orden completo.
+
+
+  Primero identifique el componente y la etapa, luego verifique la transición indicada. El material anterior
+  completo se conserva a continuación.
+
+
+  > [!info]- Explicación más profunda
+
+  >  Los archivos de carga de trabajo se reproducen en su totalidad en la sección "Archivos de laboratorio"
+  anterior. En ellos, el PreSync Job `preflight` imprime una línea,
+
+  >  espera tres segundos y sale con 0. ConfigMap usa wave -1, Deployment 0 y Service 1.
+
+  > El Namespace ya existe: PreSync no puede esperar a un Namespace en un phase posterior.
+
+  >
+
+  > **`sync.yaml` fuera del repositorio de configuración:**
+
+  >
+
+  > ```yaml
+
+  > operation:
+
+  >   sync:
+
+  >     prune: false
+
+  > ```
+
+  >
+
+  > ```bash
+
+  > k -n argocd patch application guide --type merge --patch-file "$LAB/sync.yaml"
+
+  > k -n argocd wait --for=jsonpath=''{.status.operationState.phase}''=Succeeded \
+
+  >   application/guide --timeout=180s
+
+  > state
+
+  > k -n guide-gitops get job/preflight cm/web-settings deploy/web svc/web -o json |
+
+  >   jq -r ''.items[] | [.kind, .metadata.name, .metadata.creationTimestamp] | @tsv''
+
+  > ```
+
+  >
+
+  > `wait` tiene un timeout finito: el incumplimiento de la condición requiere investigación,
+
+  > no trata el tiempo transcurrido como un éxito. Una marca de tiempo es el tiempo de creación, no necesariamente
+  el tiempo de preparación.
+
+  > También inspeccione un `.status.completionTime` de un Job y un conditions/ready replicas de un Deployment.
+
+  >
+
+  > **Predecir:** ¿puede aparecer el Service antes de que finalice el PreSync? que pasa
+
+  ¿>  si el hook cambia de `exit 0` a `exit 1` y al mismo tiempo solicita `VERSION: v3`?
+
+  >
+
+  > > [!question]- Respuesta
+
+  > > En este sync completo, la onda-1 Service aparece después de PreSync y wave 0 exitosos.
+
+  > >  Con `exit 1`, el operation se convirtió en `Failed` y el `VERSION` vivo permaneció como `v1`:
+
+  > >  la nueva configuración nunca llegó al phase principal. Ambos escenarios fueron verificados en 18.10.
+
+  > > Job `backoffLimit: 0` y Application `retry.limit: 0` significan que no hay retries aquí.
+
+
+  ### Errores comunes
+
+
+  - Se trata el `BeforeHookCreation` como un permiso para conservar el antiguo Job para siempre: se elimina
+  antes de la siguiente ejecución.
+
+  - Omitiendo un deadline por un hook atascado: el operation puede esperar sin progreso útil.
+
+  -  Confuso Kubernetes Job retries con Argo CD sync retries: son capas separadas.
+
+  -  Ejecutando una migración irreversible antes de una versión application incompatible sin un plan de
+  compatibilidad.
+
+
+  **Ejercicios:** [[CICD-GitOps-Coding-Drills#Задача 11 — Waves и PreSync-хук; сломанная миграция|11 —
+  hooks and waves]],
+
+  [[CICD-GitOps-Coding-Drills#Задача 15 — Health, дедлайн и зависшие ретраи|15 — stuck operation]].'
+source_hash: 2b0669e4c37ceb01dad06dd24aee99c4ff73151e7787ccad94648492a58639bf

@@ -1,0 +1,150 @@
+heading: '2. HCL desde cero: bloques, referencias y valores'
+text: "## 2. HCL desde cero: bloques, referencias y valores\n\n**De un vistazo**\n- HCL describe valores\
+  \ en bloques con nombre.\n- locals le da un nombre a un valor calculado.\n- An expresión calcula un\
+  \ valor; no es una secuencia de comandos.\n\n**Mini-ejemplo:** guarde esto como `main.tf` en un nuevo\
+  \ directorio temporal. Después de preparar los archivos, ejecute `tofu init`, `tofu validate` y luego\
+  \ `tofu apply -auto-approve -input=false -no-color`.\n\n```hcl\nlocals {\n  name = \"api\"\n  port =\
+  \ 8080\n}\noutput \"endpoint\" {\n  value = \"${local.name}:${local.port}\"\n}\n```\n\n**Predecir:**\
+  \ ¿Qué mostrará la ejecución y cuál será su código de salida?\n\n> [!question]- Respuesta\n> Extracto\
+  \ real del último comando:\n>\n> ```text\n> Apply complete! Resources: 0 added, 0 changed, 0 destroyed.\n\
+  > Outputs:\n> + endpoint = \"api:8080\"\n>\n> You can apply this plan to save these new output values\
+  \ to the OpenTofu\n> state, without changing any real infrastructure.\n>\n> Apply complete! Resources:\
+  \ 0 added, 0 changed, 0 destroyed.\n>\n> Outputs:\n>\n> endpoint = \"api:8080\"\n> ```\n>\n> Ecódigo\
+  \ de salida: 0.\n\nLa línea de salida inserta el nombre y el número en una cadena, lo que produce `api:8080`.\n\
+  \nHCL es un lenguaje declarativo configuration. En `resource \"terraform_data\" \"service\"`, la primera\
+  \ palabra es el tipo de bloque, `terraform_data` el tipo resource y `service` el nombre elegido por\
+  \ el autor. `variable \"environment\"` y `output \"service_names\"` tienen cada uno un label. `type\
+  \ = string` es un argumento: nombre a la izquierda, valor a la derecha. `validation` es un bloque anidado\
+  \ con sus propios argumentos `condition` y `error_message`. Un comentario comienza con `#`.\n\nUna expresión\
+  \ calcula un valor a partir de literales, funciones y referencias. `var.environment` es una entrada\
+  \ variable, `local.active_services` es un valor local calculado y `terraform_data.service` es una colección\
+  \ de instancias. Un bloque `for_each` expone `each.key` y `each.value`. Un nombre `for` iterator existe\
+  \ solo dentro de esa expresión. `${...}` interpola un valor en una cadena. `{...}` en un argumento es\
+  \ un object o map, no un nuevo bloque HCL.\n\n> [!info]- Explicación más profunda\n>  Los tipos primitivos\
+  \ son `string`, `number`, `bool`; los tipos de colección son `list(T)`, `set(T)`, `map(T)`; Los tipos\
+  \ estructurales son `object({...})`, `tuple([...])`. `null` significa un valor ausente. `(known after\
+  \ apply)` significa desconocido hasta ahora, no `null` o un error. La sensibilidad es una característica\
+  \ de valor separada; Los valores ephemeral tienen restricciones adicionales (§10).\n\n### De entradas\
+  \ a salidas\n\n**De un vistazo**\n- variable acepta una entrada.\n- local calcula un valor intermedio.\n\
+  - output devuelve un resultado a la persona que llama.\n\n**Mini-ejemplo:** guarde esto como `main.tf`\
+  \ en un nuevo directorio temporal. Después de preparar los archivos, ejecute `tofu init`, `tofu validate`\
+  \ y luego `tofu apply -auto-approve -input=false -no-color`.\n\n```hcl\nvariable \"name\" { default\
+  \ = \"api\" }\nlocals {\n  label = \"${var.name}-dev\"\n}\nresource \"terraform_data\" \"service\" {\n\
+  \  input = local.label\n}\noutput \"label\" { value = terraform_data.service.output }\n```\n\n**Predecir:**\
+  \ ¿Qué mostrará la ejecución y cuál será su código de salida?\n\n> [!question]- Respuesta\n> Extracto\
+  \ real del último comando:\n>\n> ```text\n>   # terraform_data.service will be created\n> Plan: 1 to\
+  \ add, 0 to change, 0 to destroy.\n> Apply complete! Resources: 1 added, 0 changed, 0 destroyed.\n>\
+  \ Outputs:\n> + label = (known after apply)\n> terraform_data.service: Creating...\n> terraform_data.service:\
+  \ Creation complete after 0s [id=8eecb7b7-b9e6-12ab-363d-50fec8fd8166]\n>\n> Apply complete! Resources:\
+  \ 1 added, 0 changed, 0 destroyed.\n>\n> Outputs:\n>\n> label = \"api-dev\"\n> ```\n>\n> Ecódigo de\
+  \ salida: 0.\n\nLa entrada `api` se convierte en `api-dev`; el resource lo almacena y la salida lo publica.\n\
+  \n**`main.tf` en un nuevo directorio vacío:**\n\n```hcl\nterraform {\n  required_version = \">= 1.4.0\"\
+  \n}\n\nvariable \"environment\" {\n  type    = string\n  default = \"dev\"\n\n  validation {\n    condition\
+  \     = contains([\"dev\", \"test\", \"prod\"], var.environment)\n    error_message = \"environment\
+  \ must be dev, test, or prod.\"\n  }\n}\n\nvariable \"services\" {\n  type = map(object({\n    port\
+  \    = number\n    enabled = bool\n  }))\n  default = {\n    api  = { port = 8080, enabled = true }\n\
+  \    docs = { port = 8081, enabled = false }\n  }\n}\n\nlocals {\n  active_services = {\n    for name,\
+  \ service in var.services : name => service\n    if service.enabled\n  }\n\n  service_names = {\n  \
+  \  for name, service in local.active_services : name => \"${var.environment}-${name}\"\n  }\n}\n\nresource\
+  \ \"terraform_data\" \"service\" {\n  for_each = local.active_services\n\n  input = {\n    name = local.service_names[each.key]\n\
+  \    port = each.value.port\n  }\n}\n\nresource \"terraform_data\" \"summary\" {\n  input = [for service\
+  \ in terraform_data.service : service.output.name]\n}\n\noutput \"service_names\" {\n  value = terraform_data.summary.output\n\
+  }\n```\n\nEl `terraform_data` integrado está disponible desde Terraform 1.4 sin un complemento externo\
+  \ ni una cuenta en la nube. `required_version` restringe el CLI version, no el provider. Completo configuration:\n\
+  \nEl valor predeterminado `var.services` es contains `api` y `docs`. El `active_services` local mantiene\
+  \ solo las entradas con `enabled = true`, por lo que `terraform_data.service[\"api\"]` es created y\
+  \ `docs` está ausente. Para este ejemplo, `each.key = \"api\"` y `each.value.port = 8080`. La referencia\
+  \ en resource `summary` lo conecta a los recursos `service`; `service.output.name` se convierte en known\
+  \ después de apply. La salida raíz lee el resultado list.\n\n`for` construye un nuevo valor; `condition\
+  \ ? yes : no` elige sucursal. Un símbolo como `var.items[*].id` recopila un atributo de elementos list,\
+  \ conjunto o tuple. Los mapas y recursos `for_each` suelen utilizar `[for item in ... : item.id]`. Funciones\
+  \ `lower`, `upper`, `length`, `contains`, `merge`, `try`, `jsonencode` transforman valores; `terraform\
+  \ console` es útil para comprobarlos.\n\n`locals` nombre valores calculados; no son variables mutables\
+  \ durante apply. Los valores se vuelven a calcular para un nuevo plan. Una raíz ordinaria `output` se\
+  \ almacena en estado, mientras que una salida secundaria define su contrato con la principal. Terraform\
+  \ 1.10+ y OpenTofu 1.11+ permiten `ephemeral = true` para salidas de módulo secundario, utilizables\
+  \ solo en contextos permitidos ephemeral. Las salidas raíz no pueden ser ephemeral. `sensitive = true`\
+  \ enmascara la salida pero no elimina el valor del estado.\n\nEl número ###  acepta fracciones: integralidad\
+  \ validate por separado.\n\n**De un vistazo**\n- El tipo de número permite valores fraccionarios.\n\
+  La verificación de rango - A no requiere un integer.\n- floor se puede utilizar para comprobar por separado\
+  \ si un valor es integer.\n\n**Mini-ejemplo:** Guardar como `main.tf` en un nuevo directorio temporal.\
+  \ Después de preparar los archivos, ejecute `tofu init`, `tofu validate` y luego `tofu plan -input=false\
+  \ -no-color -var=port=2048.5`.\n\n```hcl\nvariable \"port\" {\n  default = 2048\n  validation {\n  \
+  \  condition = floor(var.port) == var.port\n    error_message = \"port must be an integer.\"\n  }\n\
+  }\noutput \"port\" { value = var.port }\n```\n\n**Predecir:** ¿Qué mostrará la ejecución y cuál será\
+  \ su código de salida?\n\n> [!question]- Respuesta\n> Extracto real del último comando:\n>\n> ```text\n\
+  > Error: Invalid value for variable\n> ```\n>\n> Ecódigo de salida: 1.\n\nEl valor fraccionario pasa\
+  \ la verificación de tipo numérico, pero no pasa la igualdad `floor(2048.5) == 2048.5`. El plan se detiene.\n\
+  \n```hcl\nvariable \"listen_port\" {\n  type    = number\n  default = 2048\n  validation {\n    condition\
+  \     = floor(var.listen_port) == var.listen_port && var.listen_port >= 1024 && var.listen_port <= 65535\n\
+  \    error_message = \"listen_port must be an integer in 1024..65535.\"\n  }\n}\noutput \"listen_port\"\
+  \ { value = var.listen_port }\n```\n\n`number` acepta 2048 y 2048.5. Una verificación de rango por sí\
+  \ sola no rechaza fracciones.\nUn variable independiente en un `main.tf` vacío:\n\n`tofu plan -var=listen_port=2048.5`\
+  \ falla validation; 2048 produce un exitoso plan.\n*(verificado: init -backend=false, validate y plan;\
+  \ no apply)*.\n`floor(x)==x` comprueba la integralidad; Las dos comparaciones comprueban el rango permitido.\n\
+  Ni la verificación de tipos ni el formato atractivo reemplazan esas dos condiciones.\n\n### Entrada\
+  \ validation y un ciclo complete\n\n**De un vistazo**\n- validation comprueba un valor de entrada.\n\
+  La entrada no válida conocida de - A detiene el plan.\n- A exitoso validate no significa que todas las\
+  \ entradas futuras estén permitidas.\n\n**Mini-ejemplo:** Guardar como `main.tf` en un nuevo directorio\
+  \ temporal. Después de preparar los archivos, ejecute `tofu init`, `tofu validate` y luego `tofu plan\
+  \ -input=false -no-color -var=replicas=0`.\n\n```hcl\nvariable \"replicas\" {\n  default = 2\n  validation\
+  \ {\n    condition = var.replicas >= 1\n    error_message = \"replicas must be positive.\"\n  }\n}\n\
+  output \"replicas\" { value = var.replicas }\n```\n\n**Predecir:** ¿Qué mostrará la ejecución y cuál\
+  \ será su código de salida?\n\n> [!question]- Respuesta\n> Extracto real del último comando:\n>\n> ```text\n\
+  > Error: Invalid value for variable\n> ```\n>\n> ódigo de salida: 1.\n\nEl archivo es sintácticamente\
+  \ valid. El rechazo se produce durante la planificación con el cero suministrado.\n\n> [!info]- Explicación\
+  \ más profunda\n> `validation` comprueba una variable de entrada rule. `environment=production` en el\
+  \ configuration que se muestra provocó rechazo:\n>\n> ```text\n> Error: Invalid value for variable\n\
+  > environment must be dev, test, or prod.\n> ```\n>\n> Validation rechaza una entrada no válida known;\
+  \ si su expresión depende de un valor desconocido, la verificación puede realizarse más tarde. *(verificado:\
+  \ OpenTofu 1.12.6, rechazo sin cambios infrastructure)*.\n>\n> Ciclo local exitoso:\n>\n> ```text\n\
+  > $ tofu init -backend=false\n> OpenTofu has been successfully initialized!\n> $ tofu validate\n> Success!\
+  \ The configuration is valid.\n> $ tofu plan -out=local.tfplan\n> Plan: 2 to add, 0 to change, 0 to\
+  \ destroy.\n> $ tofu apply local.tfplan\n> Apply complete! Resources: 2 added, 0 changed, 0 destroyed.\n\
+  > Outputs:\n> service_names = [\n>   \"dev-api\",\n> ]\n> ```\n>\n> El mismo archivo también pasó con\
+  \ Terraform 1.15.9:\n>\n> ```text\n> Success! The configuration is valid.\n> Plan: 2 to add, 0 to change,\
+  \ 0 to destroy.\n> Apply complete! Resources: 2 added, 0 changed, 0 destroyed.\n> ```\n>\n> *(verificado:\
+  \ ambos ciclos de borrador inicial, resource incorporado)*.\n>\n> Precedencia de valores de menor a\
+  \ mayor: `default` → `TF_VAR_name` → `terraform.tfvars` → `terraform.tfvars.json` → `*.auto.tfvars`\
+  \ y `*.auto.tfvars.json` en orden léxico → `-var` y `-var-file` en el orden de los argumentos de la\
+  \ línea de comandos. CI debe pasar valores explícitamente y deshabilitar las indicaciones interactivas.\
+  \ Un sensitive variable normal también puede aparecer en un estado plan.\n> *(según documentación)*.\
+  \ [Variables y precedencia](https://developer.hashicorp.com/terraform/language/values/variables) · [Expresiones](https://developer.hashicorp.com/terraform/language/expressions).\n\
+  \n### Bloques anidados repetidos\n\n**De un vistazo**\n- dynamic repite un bloque anidado.\n- El provider\
+  \ define qué bloques están permitidos.\n- An nombre arbitrario no se puede convertir en un argumento\
+  \ admitido.\n\n**Escenario breve**\n\nEl esquema resource permite un bloque ingress. La entrada contains\
+  \ dos ports, 80 y 443. dynamic crea un bloque ingress para cada puerto.\n\n**Predecir:** ¿Cuántos bloques\
+  \ habrá? ¿Puede esto crear lifecycle de esta manera?\n\n> [!question]- Respuesta\n> Dos bloques ingress.\
+  \ lifecycle es un bloque especial manejado por el motor; dynamic no se puede utilizar para bloques arbitrarios\
+  \ add como este. Este es un modelo de sólo texto; no se llama a ningún AWS API.\n\n**`main.tf`: un ejemplo\
+  \ de lectura que no se puede ejecutar sin una cuenta AWS:**\n\n```hcl\nterraform {\n  required_providers\
+  \ {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \">= 5.0\"\n    }\n  }\n}\n\nprovider\
+  \ \"aws\" {\n  region = \"eu-central-1\"\n}\n\nvariable \"ports\" {\n  type    = map(number)\n  default\
+  \ = { https = 443, app = 8443 }\n}\n\nresource \"aws_security_group\" \"web\" {\n  name = \"web-example\"\
+  \n\n  dynamic \"ingress\" {\n    for_each = var.ports\n    iterator = rule\n\n    content {\n      from_port\
+  \   = rule.value\n      to_port     = rule.value\n      protocol    = \"tcp\"\n      cidr_blocks = [\"\
+  203.0.113.0/24\"]\n    }\n  }\n}\n```\n\n`dynamic` crea bloques anidados permitidos por el esquema provider.\
+  \ No crea recursos independientes ni genera `lifecycle`. En este ejemplo, `rule` es el nombre iterator,\
+  \ `rule.value` el puerto actual y `content` los argumentos de un bloque `ingress` anidado. La validación\
+  \ requiere AWS provider; La planificación también necesita credenciales y una red adecuada. Este ejemplo\
+  \ de nube no se ejecutó.\n\n*(según documentación)*. [Bloques dinámicos](https://developer.hashicorp.com/terraform/language/expressions/dynamic-blocks).\n\
+  \n> [!info]- Explicación más profunda\n> > [!warning] No ampliar silenciosamente un contrato de entrada\n\
+  > >  Para un object complejo, especifique el `object({...})` y las restricciones exactas. El tipo `any`\
+  \ es útil cuando se necesitan tipos verdaderamente arbitrarios; de lo contrario, transfiere los errores\
+  \ del autor del módulo al consumidor.\n>\n> ```mermaid\n> flowchart TB\n>     V[\"variable: type, default\
+  \ value,<br/>input validation\"] --> L[\"locals: computed values\"]\n>     L --> R[\"resource: provider\
+  \ arguments\"]\n>     R --> O[\"output: result for the root<br/>or parent module\"]\n> ```\n\n### Precedencia\
+  \ de entrada en un pequeño ejemplo\n\n**De un vistazo**\n- Los valores de entrada pueden provenir de\
+  \ varias fuentes.\nEl archivo - A variable anula el valor predeterminado.\n-  En la ejecución que se\
+  \ muestra, -var anula tanto el archivo como el environment.\n\n**`main.tf` en un nuevo directorio vacío;\
+  \ adyacente `terraform.tfvars` contains `name = \"tfvars\"`:**\n\n```hcl\nvariable \"name\" { default\
+  \ = \"default\" }\nresource \"terraform_data\" \"this\" { input = var.name }\noutput \"name\" { value\
+  \ = var.name }\n```\n\nArchivo `terraform.tfvars` contains `name = \"tfvars\"`. Ejecutar: `TF_VAR_name=environment\
+  \ tofu plan -var=name=cli`.\n\n**Predecir:** de forma predeterminada, `TF_VAR_name`, `terraform.tfvars`\
+  \ y `-var` están configurados. ¿Qué nombre recibe el resource?\n> [!question]- Respuesta\n> ```text\n\
+  >       + input  = \"cli\"\n> Plan: 1 to add, 0 to change, 0 to destroy.\n>   + name = \"cli\"\n> ```\n\
+  > El argumento CLI tiene la mayor precedencia entre estas cuatro fuentes.\n\n*(verificado: OpenTofu\
+  \ 1.12.6)*.\n\n**Brevemente en inglés:** ¿Cómo se mueven los valores por HCL?\n\nLas variables reciben\
+  \ valores de entrada. Los lugareños calculan otros valores a partir de ellos. Resources usa estos valores\
+  \ y las salidas devuelven resultados a la persona que llama."
+source_hash: e1c071f9ad5ae6b9cb18db98c51557d9bfdddac00536afba4b30935dc56aedf9

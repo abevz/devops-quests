@@ -1,0 +1,81 @@
+heading: '17. PDB, desalojo y mantenimiento de nodos: prepare la disponibilidad con anticipación'
+text: "## 17. PDB, desalojo y mantenimiento de nodos: prepare la disponibilidad con anticipación\n\n**De\
+  \ un vistazo**\n- A PDB restringe el desalojo voluntario\n-  Compara réplicas listas con el budget\n\
+  - A PDB no crea réplicas faltantes.\n\n**Escenario breve**\n\nHay dos réplicas listas y minAvailable=2.\n\
+  \n**Predecir:** ¿Cuántos desalojos voluntarios permite este caso simple?\n\n> [!question]- Respuesta\n\
+  > Análisis de las condiciones dadas: Cero. Reducir la cantidad de réplicas listas violaría el budget.\n\
+  \nPDB, PodDisruptionBudget, limita el desalojo voluntario de una carga de trabajo seleccionada.\nEl\
+  \ controlador compara el pods listo con la disponibilidad requerida y registra el `disruptionsAllowed`.\n\
+  El Eviction API verifica que budget antes de terminar un Pod.\nPDB no crea réplicas, no protege contra\
+  \ el nodo failure/OOM ni bloquea un Pod DELETE directo.\nLa implementación de un controlador sigue su\
+  \ propia estrategia en lugar del permiso PDB: a Deployment rolling update\nutiliza `strategy.rollingUpdate`\
+  \ (`maxUnavailable`/`maxSurge`) sin consultar a PDB. Recuento de réplicas y distribución de nodos.\n\
+  a través de `podAntiAffinity` y `topologySpreadConstraints` protegen contra disruptions involuntario\
+  \ (fallo de nodo, OOM).\nUn PDB igual al recuento de réplicas (`minAvailable: 2` con dos réplicas) produce\
+  \ `disruptionsAllowed: 0` y bloquea\ncualquier `drain`: agregue una réplica o use un `maxUnavailable:\
+  \ 1` budget.\n*(según documentación)* — [disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/).\n\
+  \n### One budget, dos estados\n\n**De un vistazo**\n- El budget depende del estado actual\n- La misma\
+  \ configuración puede permitir diferentes acciones\n- El Eviction API verifica el budget actual.\n\n\
+  **Escenario breve**\n\nminAvailable=2. Inicialmente hay dos réplicas listas, luego tres.\n\n**Predecir:**\
+  \ ¿Cómo cambia el número permitido de desalojos en este modelo simple?\n\n> [!question]- Respuesta\n\
+  > Análisis de las condiciones dadas: De cero a uno. En cualquier caso deben quedar dos réplicas listas.\n\
+  \n**`pdb.yaml` en `/tmp/vg-k8s-work`: el budget completo para dos réplicas de `web`:**\n\n```yaml\n\
+  apiVersion: policy/v1\nkind: PodDisruptionBudget\nmetadata:\n  name: web\n  namespace: vg-k8s\nspec:\n\
+  \  minAvailable: 2\n  selector:\n    matchLabels:\n      app: web\n```\n\n> [!info]- Explicación más\
+  \ profunda\n> `minAvailable: 2` requiere mantener dos réplicas listas.\n> Con dos pods listos no se\
+  \ permite el desalojo; con tres, se podrá permitir un desalojo.\n> `maxUnavailable` es un campo alternativo\
+  \ y no se puede configurar junto con `minAvailable`.\n> En `policy/v1`, un selector vacío selecciona\
+  \ cada pod en el namespace: esta no es una omisión inofensiva de etiquetas.\n> *(según la documentación)*:\
+  \ la fuente disruptions anterior.\n>\n> **Comando desde cualquier directorio: cree y envíe una solicitud\
+  \ completa para un Pod seleccionado:**\n>\n> ```bash\n> POD=$(kubectl --kubeconfig /tmp/vg-k8s-kubeconfig\
+  \ --context kind-vg-k8s \\\n>   -n vg-k8s get pods -l app=web -o jsonpath='{.items[0].metadata.name}')\n\
+  > jq -n --arg pod \"$POD\" \\\n>   '{apiVersion:\"policy/v1\",kind:\"Eviction\",metadata:{name:$pod,namespace:\"\
+  vg-k8s\"}}' \\\n>   > /tmp/vg-k8s-work/eviction.json\n> kubectl --kubeconfig /tmp/vg-k8s-kubeconfig\
+  \ --context kind-vg-k8s \\\n>   create --raw \"/api/v1/namespaces/vg-k8s/pods/$POD/eviction\" \\\n>\
+  \   -f /tmp/vg-k8s-work/eviction.json\n> ```\n>\n> `$(...)` captura la salida del comando, `--arg` pasa\
+  \ una cadena a jq y `--raw` especifica una ruta API.\n> Seleccione un pod solo después de que la implementación\
+  \ reparada esté lista.\n>\n> **Salida recién ejecutada con dos réplicas listas: un ejemplo para leer:**\n\
+  >\n> ```text\n> Error from server (TooManyRequests): Cannot evict pod as it would violate the pod's\
+  \ disruption budget.\n> ```\n>\n> **Salida de nueva ejecución después de aumentar a tres réplicas listas:\
+  \ un ejemplo para leer:**\n>\n> ```text\n> {\"kind\":\"Status\",\"apiVersion\":\"v1\",\"metadata\":{},\"\
+  status\":\"Success\",\"code\":201}\n> ```\n>\n> Se comprobaron ambas ramas Eviction API; ReplicaSet\
+  \ reemplaza una réplica eliminada. *(verificado)*.\n\n### Por qué drain espera después de que cordon\
+  \ haya tenido éxito\n\n**De un vistazo**\n- Cordon detiene nueva programación ordinaria\n- Drain intenta\
+  \ desalojar a Pods existente\n- An disponibilidad de budget puede retrasar este paso.\n\n**Escenario\
+  \ breve**\n\nCordon tuvo éxito, pero la única réplica está protegida por minAvailable=1.\n\n**Predecir:**\
+  \ ¿Debe terminar drain inmediatamente?\n\n> [!question]- Respuesta\n> Análisis de las condiciones dadas:\
+  \ No. Eviction viola el budget; cordon exitoso no significa que la evacuación esté completa.\n\n**Comando\
+  \ desde cualquier directorio: un ejercicio restringido drain de solo `web` pods:**\n\n```bash\nkubectl\
+  \ --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s \\\n  drain vg-k8s-worker2 --pod-selector=app=web\
+  \ --ignore-daemonsets --timeout=8s\nkubectl --kubeconfig /tmp/vg-k8s-kubeconfig --context kind-vg-k8s\
+  \ \\\n  uncordon vg-k8s-worker2\n```\n\n`cordon` impide nuevas asignaciones ordinarias pero no desaloja\
+  \ a pods.\n`drain` primero hace que el nodo no sea programable, luego desaloja el pods elegible a través\
+  \ del API y espera a que se complete.\n`--ignore-daemonsets` deja DaemonSet pods; El drain ordinario\
+  \ no elimina el static/mirror Pods.\n`--delete-emptydir-data` permite perder datos de `emptyDir`, mientras\
+  \ que `--force` para pods no administrado\nno es un bypass PDB. `--disable-eviction` utiliza eliminación\
+  \ y evita la protección: esa es una operación diferente.\n*(según documentación)* — [drain](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/).\n\
+  \n> [!info]- Explicación más profunda\n> **Resultado de una ejecución nueva: el nombre de la réplica\
+  \ está abreviado:**\n>\n> ```text\n> node/vg-k8s-worker2 cordoned\n> Cannot evict pod as it would violate\
+  \ the pod's disruption budget.\n> global timeout reached: 8s\n> ```\n>\n> Verificado: drain volvió a\
+  \ intentar el desalojo, se agotó el tiempo de espera y dejó el nodo sin programación hasta `uncordon`.\n\
+  > No “desbloqueó automáticamente el nodo después de una falla”. *(verificado)*.\n> El filtro `--pod-selector`\
+  \ se utilizó únicamente para este experimento; en mantenimiento no prueba el nodo\n> está libre de otras\
+  \ aplicaciones.\n\n### Secuencia práctica de mantenimiento\n\n**De un vistazo**\n- El mantenimiento\
+  \ comienza con comprobaciones de disponibilidad y capacidad.\n- Reemplazo Pods necesita algún lugar\
+  \ para ejecutar\n- A budget no crea capacidad adicional.\n\n**Escenario breve**\n\nHay una réplica y\
+  \ un nodo disponible, con PDB minAvailable=1.\n\n**Predecir:** ¿Un PDB por sí solo garantiza un mantenimiento\
+  \ ininterrumpido?\n\n> [!question]- Respuesta\n> Análisis de las condiciones dadas: No. Sólo puede bloquear\
+  \ el desalojo voluntario; También se necesitan réplicas y capacidad para ellos.\n\nVerifique el estado\
+  \ y la capacidad adicional → elimine las réplicas de PDB/unready → cordon/drain →\nupdate el nodo →\
+  \ verifique kubelet/node y aplicaciones → uncordon → continúe con el siguiente nodo.\n`unhealthyPodEvictionPolicy:\
+  \ AlwaysAllow` puede permitir el desalojamiento de pods no preparados,\npero no reemplaza el análisis\
+  \ del recuento real de réplicas saludables.\n*(según documentación)* — [drain](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/).\n\
+  \n> [!info]- Explicación más profunda\n> **Predecir:** un Deployment tiene una réplica y PDB `minAvailable:\
+  \ 1`. ¿Puede drain preservar la disponibilidad por sí solo?\n>\n> > [!question]- Respuesta\n> > No:\
+  \ PDB bloquea el desalojo pero no crea una segunda réplica ni reserva capacidad.\n> > Arrecuerde un\
+  \ reemplazo de antemano o acuerde un tiempo de inactividad aceptable.\n> > *(según la documentación)*:\
+  \ la fuente disruptions anterior.\n>\n> **Respuesta corta en inglés:**\n>\n> > A PDB limita el desalojo\
+  \ voluntario mediante el desalojo API. No crea réplicas adicionales ni evita fallas en los nodos.\n\
+  > > Drain puede esperar en un budget bloqueado después de acordonar el nodo. Verifico la capacidad y\
+  \ las réplicas en buen estado antes del mantenimiento."
+source_hash: d27d6b8dc7300a4f32d12b07b1045b07f10ade85d95df944e0abf45e7f95473c

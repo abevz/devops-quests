@@ -1,0 +1,58 @@
+heading: '9. Errors: qué continúa y qué no hace la reversión'
+text: "## 9. Errores: qué continúa y qué no hace la reversión\n\n**De un vistazo**\n- block grupos relacionados\
+  \ tasks.\n- rescue ejecuta acciones específicas después de un failure normal en el block.\n- Recuery\
+  \ no automatically roll back cambia.\n\n**Mini-ejemplo:** guarde `mini.yml` en un directorio temporal\
+  \ separado; ejecute `ansible-playbook -i localhost, -c local mini.yml`. El ejemplo se ejecuta en localhost\
+  \ sin convertirse.\n\n```yaml\n- hosts: localhost\n  connection: local\n  become: false\n  gather_facts:\
+  \ false\n  tasks:\n    - block:\n        - ansible.builtin.fail:\n            msg: stop\n      rescue:\n\
+  \        - ansible.builtin.debug:\n            msg: recovered\n      always:\n        - ansible.builtin.debug:\n\
+  \            msg: cleanup\n```\n\n**Predecir:** ¿El código de salida final será distinto de cero después\
+  \ de un rescue exitoso? ¿Siempre correrá?\n\n> [!question]- Respuesta\n> Ecódigo de salida: 0. Extractos\
+  \ de salida estándar:\n>\n> ```text\n>     \"msg\": \"recovered\"\n>     \"msg\": \"cleanup\"\n> localhost\
+  \                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=1    ignored=0\n\
+  > ```\n\n`rescue` maneja el failure deliberado, luego se ejecuta `always`. El resumen final representa\
+  \ recovery; este ejemplo no cambia ningún archivo.\n\n`recovery.yml` completo: el failure es intencional,\
+  \ pero no se realizan cambios en el sistema operativo:\n\n```yaml\n- name: Explain recovery flow\n \
+  \ hosts: lab\n  connection: local\n  gather_facts: false\n  become: false\n  tasks:\n    - name: Protected\
+  \ operation\n      block:\n        - name: Fail deliberately\n          ansible.builtin.command:\n \
+  \           argv: [/usr/bin/false]\n          changed_when: false\n      rescue:\n        - name: Show\
+  \ failure context\n          ansible.builtin.debug:\n            msg: \"{{ ansible_failed_task.name\
+  \ }}: {{ ansible_failed_result.rc }}\"\n      always:\n        - name: Show cleanup path\n         \
+  \ ansible.builtin.debug:\n            msg: always\n    - name: Continue after recovery\n      ansible.builtin.debug:\n\
+  \        msg: next task\n```\n\n*(verificado)* Un lab combinado con un bucle, reintentos y `rescue`\
+  \ devolvió:\n\n```text\n[ERROR]: Task failed: Module failed: The command exited with a non-zero return\
+  \ code.\nTASK [Recovered]\nok: [localhost] => {\"msg\": \"rescued\"}\nTASK [Cleanup signal]\nok: [localhost]\
+  \ => {\"msg\": \"always\"}\nlocalhost : ok=4 changed=0 unreachable=0 failed=0 skipped=0 rescued=1 ignored=0\n\
+  ```\n\nUn failure ordinario elimina el host del tasks ordinario posterior en la reproducción actual;\
+  \ otros hosts pueden ser continue.\nAnsible no proporciona una transacción: los cambios realizados antes\
+  \ de failure permanecen.\n**`block`** agrupa tasks y configuraciones compartidas. **`rescue`** se ejecuta\
+  \ después de que falla un task en el block.\n**`always`** sigue a `block`/`rescue` cuando el motor puede\
+  \ ejecutar continue.\nUn error de definición de tarea o host unreachable no es un resultado normal de\
+  \ `failed` para `rescue`.\n\n`ansible_failed_task` y `ansible_failed_result` proporcionan `rescue` context.\n\
+  `rescue` exitoso cuenta como recovery: la jugada puede ser continue, con `failed` igual a 0 en el resumen\n\
+  y `rescued` igual a 1. Si recovery no debe ocultar un failed deployment, finalice `rescue` con\n`ansible.builtin.fail`\
+  \ después de las acciones requeridas. Este es un comportamiento failure separado, no un comportamiento\
+  \ automático de `rescue`.\n\n> [!info]- Explicación más profunda\n> ```mermaid\n> flowchart TB\n>  \
+  \   B[\"Block tasks\"] --> R{\"Did the task fail?\"}\n>     R -->|\"no\"| A[\"Final tasks\"]\n>    \
+  \ R -->|\"yes\"| S[\"Rescue: explicit compensating actions\"]\n>     S --> A\n>     A --> N[\"Next task\
+  \ if the error was handled\"]\n> ```\n>\n> Rollback consta de **acciones de compensación que usted escribe**:\
+  \ restaurar una copia de seguridad, revertir una versión,\n> compruebe el estado. Esas acciones también\
+  \ pueden fracasar. A `rescue` block no garantiza la base de datos recovery,\n>  actualizaciones de archivos\
+  \ atómicos o devolución de un nodo al equilibrador de carga.\n>\n> | Configuración | Qué cambia | Lo\
+  \ que no hace |\n> |---|---|---|\n> | `failed_when` | Criterio failure del resultado | No deshace una\
+  \ acción ya realizada. |\n> | `ignore_errors: true` | Continúa después de un resultado normal failed\
+  \ | No corrige `unreachable`, errores de sintaxis o errores de valores no definidos. |\n> | `ignore_unreachable:\
+  \ true` | Por separado permite continuar después de `unreachable` | No crea un connection funcional.\
+  \ |\n> | `any_errors_fatal: true` | Un failure sin controlar detiene el juego para todos después del\
+  \ actual task | No tiene éxito roll back hosts. |\n> | `max_fail_percentage` | Se detiene después de\
+  \ que la participación failed de un lote supera un umbral | Ni comprobación de estado ni reversión;\
+  \ destinado a estrategias como `linear`. |\n>\n> `max_fail_percentage: 50` con un lote de 4: dos fallas\
+  \ son exactamente del 50%, por lo que el umbral **no se excede**;\n> tres fallas son del 75%, por lo\
+  \ que la ejecución se detiene. Para detenerse en dos de cuatro, utilice un umbral inferior a 50, como\
+  \ 49.\n> A failure manejado exitosamente por `rescue` no activa este umbral o `any_errors_fatal` como\
+  \ un error no controlado.\n> *(según documentación)* [Error al manejar](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_error_handling.html).\n\
+  >\n> Pregunta: **¿`rescue` automatically roll back es un deployment?**\n>\n> > No. `rescue` ejecuta\
+  \ tasks que defino después de un task failure normal. Debo restaurar explícitamente el\n> >  estado\
+  \ anterior y verifíquelo. Si `rescue` succeeds, Ansible trata el failure como recovered y puede\n> >\
+  \ continue, por lo que es posible que necesite un error explícito task para detener la implementación."
+source_hash: 57814bba504547b48d8ae92cef943b835b1dc4050246886a78d050e73b70d430
