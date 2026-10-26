@@ -1,0 +1,87 @@
+heading: '5. Variablen: Woher ein Wert kommt und welcher gewinnt'
+text: "## 5. Variablen: woher ein Wert kommt und welcher wins\n\n**Auf einen Blick**\n- A variable benennt\
+  \ einen von tasks verwendeten Wert.\n- Mehrere Quellen können provide values für denselben Namen verwenden.\n\
+  - Extra vars, das durch -e geleitet wird, überschreibt den Playbook-Wert.\n\n**Mini-Beispiel:** `mini.yml`\
+  \ in einem separaten temporären Verzeichnis speichern; Führen Sie `ansible-playbook -i localhost, -c\
+  \ local mini.yml -e app_port=9090` aus. Das Beispiel läuft auf localhost ohne zu werden.\n\n```yaml\n\
+  - hosts: localhost\n  connection: local\n  become: false\n  gather_facts: false\n  tasks:\n    - ansible.builtin.debug:\n\
+  \        msg: \"{{ app_port }}\"\n      vars:\n        app_port: 8080\n```\n\n**Vorhersage:** Was wird\
+  \ der Lauf zeigen und wie wird sein Exit-Code lauten?\n\n> [!question]- Antwort\n> Exit-Code: 0. Stdout-Auszüge:\n\
+  >\n> ```text\n>     \"msg\": \"9090\"\n> localhost                  : ok=1    changed=0    unreachable=0\
+  \    failed=0    skipped=0    rescued=0    ignored=0\n> ```\n\nDie Aufgabe definiert 8080, aber der\
+  \ Lauf besteht `-e app_port=9090`. Der bei der Ausführung übergebene Wert wins in der Ausgabe.\n\nKomplett\
+  \ `vars.yml`:\n\n```yaml\n- name: Follow a value through tasks\n  hosts: lab\n  connection: local\n\
+  \  gather_facts: false\n  become: false\n  vars:\n    app_port: 8080\n  tasks:\n    - name: Read text\
+  \ from a process\n      ansible.builtin.command:\n        argv: [/usr/bin/printf, hello]\n      register:\
+  \ r\n      changed_when: false\n    - name: Store a derived host value\n      ansible.builtin.set_fact:\n\
+  \        answer: \"{{ r.stdout | upper }}\"\n    - name: Show values\n      ansible.builtin.debug:\n\
+  \        msg: \"{{ answer }}: {{ app_port }}\"\n    - name: Check expected input\n      ansible.builtin.assert:\n\
+  \        that:\n          - answer == 'HELLO'\n          - app_port | int == 9090\n```\n\n`r` erscheint,\
+  \ nachdem der Befehl ausgeführt wurde. `r.stdout` ist die Standardausgabe des verwalteten Prozesses;\n\
+  `r.rc` ist der Exit-Code und `r.stderr` die Fehlerausgabe. `| upper` transformiert Text auf dem Controller.\n\
+  `set_fact` speichert `answer` als variable des aktuellen inventory-Hosts, nicht als Datei auf dem verwalteten\
+  \ Knoten.\n`assert.that` ist eine Liste von Prüfungen; hier muss alles `true` lauten.\n\n*(verifiziert)*\
+  \ Lauf: `ansible-playbook vars.yml -e app_port=9090`:\n\n```text\nTASK [Show]\nok: [localhost] => {\n\
+  \    \"msg\": \"HELLO: 9090\"\n}\nlocalhost : ok=4 changed=0 unreachable=0 failed=0 skipped=0 rescued=0\
+  \ ignored=0\n```\n\nEin variable ist ein benannter Wert auf dem Controller, kein Shell-environment auf\
+  \ einem verwalteten Knoten.\nWir wählen den Namen in `app_port: 8080`; `ansible_host` hat eine motordefinierte\
+  \ Bedeutung.\n**Vorrang** bestimmt, welcher gleichnamige Wert wins ist. **Geltungsbereich** bestimmt,\
+  \ wo es verfügbar ist.\nHoch precedence macht eine Aufgabe variable nicht für jede zukünftige Aufgabe\
+  \ verfügbar.\n\nBeginnen Sie mit einem Konflikt: role Standard app_port=8080, inventory app_port=8081,\
+  \ extra var app_port=9090. Wird ausgeführt mit -e app_port=9090 erzeugt 9090. Vollständige Quelltabelle,\
+  \ connection variables und Ausnahmen: [[#Справочник приоритетов переменных|Variable precedence reference]].\
+  \ [Variable precedence](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_variables.html#understanding-variable-precedence).\n\
+  \n`-e app_port=9090` übergibt eine Zeichenfolge, sodass der Vergleich `| int` verwendet.\nUm Typen beizubehalten,\
+  \ bevorzugen Sie `-e @input.yml`, wobei `app_port: 9090` eine Ganzzahl YAML und `enabled: false` ein\
+  \ Boolescher Wert ist.\nExtra vars überschreibt sogar ein späteres `set_fact`: Verwenden Sie `-e` nicht\
+  \ wahllos.\n\n> [!info]- Ausführlichere Erklärung\n> > [!info] Kern und Referenz\n> > Core: Ein Konflikt\
+  \ zwischen Standard → inventory → extra vars, der den Gewinnwert erklärt. Die vollständigen Gegenbeispiele\
+  \ precedence und role sind Referenzmaterial und keine Merkliste.\n>\n> **Andere Quellen:** `vars_files`\
+  \ liest YAML auf dem Controller; `include_vars` lädt es als Aufgabe;\n> `lookup` liest eine Datei, environment\
+  \ oder API auf dem Controller, nicht eine beliebige environment auf einem verwalteten Host.\n> A task/play\
+  \ `environment:` legt den Modulprozess environment fest, wo er ausgeführt wird.\n> , erstellt jedoch\
+  \ nicht automatisch ein Ansible variable. `lookup('ansible.builtin.env', 'HOME')` liest den `HOME` des\
+  \ Controllers.\n>\n> `vars_prompt` ist ein Spielfeld, zum Beispiel:\n>\n> **`prompt.yml` (beliebiger\
+  \ Dateiname) neben `inventory.ini` aus §2:**\n>\n> ```yaml\n> - name: Ask for a non-secret release label\n\
+  >   hosts: lab\n>   connection: local\n>   gather_facts: false\n>   become: false\n>   vars_prompt:\n\
+  >     - name: release_name\n>       prompt: Release name\n>       private: false\n>       default: demo\n\
+  >   tasks:\n>     - name: Show selected release\n>       ansible.builtin.debug:\n>         msg: \"{{\
+  \ release_name }}\"\n> ```\n>\n> A prompt wird übersprungen, wenn `-e` den Wert bereitstellt oder die\
+  \ Sitzung nicht interaktiv ist. Eine Pipeline muss passieren\n> erfordere inputs explizit und validiere\
+  \ sie mit `assert`, anstatt auf Tastatureingaben zu warten.\n> *(laut Dokumentation)* [Prompts](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_prompts.html).\n\
+  >\nDer typische Fehler > A ist ein undefined-Wert. `vars: unused: \"{{ missing }}\"` darf nicht fehlschlagen\n\
+  > until `unused` wird verwendet: Nicht jeder Ausdruck wird ausgewertet, während YAML gelesen wird.\n\
+  > Atatsächlicher `debug: msg: \"{{ missing_port }}\"`-Lauf *(verifiziert)*:\n>\n> ```text\n> Error while\
+  \ resolving value for 'msg': 'missing_port' is undefined\n> ```\n\n### Predict 4: Befehlszeilenwert\n\
+  \n**Auf einen Blick**\n- A variable kann aus mehreren Quellen stammen.\n- Die Option -e liefert einen\
+  \ Wert für einen Lauf.\n- Bei einem values-Konflikt identifizieren Sie sowohl die Gewinnerquelle als\
+  \ auch den Werttyp.\n\n**`predict-4.yml` (beliebiger Dateiname) neben `inventory.ini` aus §2:**\n\n\
+  ```yaml\n- hosts: lab\n  connection: local\n  gather_facts: false\n  become: false\n  vars:\n    app_port:\
+  \ 8080\n  tasks:\n  - name: Probe\n    ansible.builtin.debug:\n      msg: '{{ app_port }}'\n```\n\n\
+  **Vorhersage:** Fügen Sie `-e app_port=9090` zu beiden Läufen hinzu. Welchen Wert druckt `Probe` und\
+  \ wie lauten die beiden Zusammenfassungen?\n\n> [!question]- Antwort\n> ```text\n> # Первый запуск;\
+  \ код завершения 0\n> ok: [localhost] => {\n>     \"msg\": \"9090\"\n> }\n> localhost              \
+  \    : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n> # Второй\
+  \ запуск; код завершения 0\n> ok: [localhost] => {\n>     \"msg\": \"9090\"\n> }\n> localhost      \
+  \            : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n\
+  > ```\n> Extra vars Override-Spiel `vars`; Beide Läufe geben die Zeichenfolge `9090` aus.\n\n### Vorhersage\
+  \ 5: role und inventory\n\n**Auf einen Blick**\n- A role hat defaults und separates role variables.\n\
+  - An inventory variable überschreibt nicht immer einen role-Wert.\n- Testen Sie einen Konflikt für einen\
+  \ Namen, um die Regel anzuzeigen.\n\n**`predict-5.yml` (beliebiger Dateiname) neben `inventory.ini`\
+  \ aus §2; Die folgenden Dateien role und `host_vars` befinden sich im selben Verzeichnis:**\n\n```yaml\n\
+  - hosts: lab\n  connection: local\n  gather_facts: false\n  become: false\n  roles:\n  - demo\n  tasks:\
+  \ []\n```\n\n`roles/demo/defaults/main.yml`:\n\n```yaml\nmessage: from_defaults\n```\n\n`roles/demo/vars/main.yml`:\n\
+  \n```yaml\nmessage: from_role_vars\n```\n\n`roles/demo/tasks/main.yml`:\n\n```yaml\n- name: Probe\n\
+  \  ansible.builtin.debug:\n    msg: '{{ message }}'\n```\n\n`host_vars/localhost.yml`:\n\n```yaml\n\
+  message: from_inventory\n```\n\n**Vorhersage:** Der role verfügt sowohl über `defaults` als auch über\
+  \ `vars`, und der Host verfügt über einen inventory variable. Was druckt der role und was sind die beiden\
+  \ Zusammenfassungen?\n\n> [!question]- Antwort\n> ```text\n> # Первый запуск; код завершения 0\n> ok:\
+  \ [localhost] => {\n>     \"msg\": \"from_role_vars\"\n> }\n> localhost                  : ok=1    changed=0\
+  \    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n> # Второй запуск; код завершения\
+  \ 0\n> ok: [localhost] => {\n>     \"msg\": \"from_role_vars\"\n> }\n> localhost                  :\
+  \ ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0\n> ```\n> Role\
+  \ `vars` überschreiben inventory variables; `defaults` sind schwächer als beide Quellen.\n\nFrage: **Which\
+  \ variable wins: inventory, role defaults oder extra vars?**\n\n> Role defaults provide fallback values\
+  \ und inventory können sie überschreiben. Extra vars haben die höchsten\n> variable Priorität. Role\
+  \ vars sind stärker als inventory, also configurable role inputs normally\n> belong in defaults."
+source_hash: ff8215aa5947cd3294e5f186ffd0113767dbbfca7e662c0a7b525b9d880802af

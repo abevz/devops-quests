@@ -1,0 +1,143 @@
+heading: 4. State Storage und locking [backends, locking]
+text: "## 4. Zustandsspeicher und locking [backends, locking]\n\n**Auf einen Blick**\n- A backend ist\
+  \ der Ort, an dem der Status gespeichert wird.\n- Locking schützt einen Zustand vor zwei Autoren.\n\
+  - Freigegebener Speicher allein definiert nicht jede access-Berechtigung.\n\n**Kurzes Szenario**\n\n\
+  Zwei Läufe schreiben in denselben key, prod/network.tfstate.. Der erste enthält bereits einen lock in\
+  \ diesem Zustand.\n\n**Vorhersage:** Sollte der zweite Lauf gleichzeitig schreiben?\n\n> [!question]-\
+  \ Antwort\n> Nr. Es wartet oder empfängt einen lock-Fehler. Dieser lock schützt keinen anderen Status\
+  \ key oder manuelle Änderungen in der Cloud.\n\nEin backend bestimmt den Statusspeicher und die locking-Unterstützung.\
+  \ A local backend speichert eine Datei neben configuration; Ein Remote-backend bietet gemeinsamen Speicher\
+  \ und access-Steuerung. Nicht jeder backend unterstützt locking. Ein lock serialisiert Vorgänge für\
+  \ einen Zustand, verhindert jedoch weder manuelle Objektänderungen noch erkennt er zwei Zustände, die\
+  \ denselben Computer verwalten.\n*(laut Dokumentation)*. [Storage und locking](https://developer.hashicorp.com/terraform/language/state/backends)\
+  \ · [Verriegelung](https://developer.hashicorp.com/terraform/language/state/locking).\n\n> [!info]-\
+  \ Ausführlichere Erklärung\n> | Backend | Storage | Sperren und Wiederherstellen |\n> |---|---|---|\n\
+  > | S3 | Ein durch bucket und key identifiziertes Objekt; aktivieren versioning | `use_lockfile`; Die\
+  \ DynamoDB-Einstellung von Terraform ist veraltet, während OpenTofu sie unterstützt |\n> | `azurerm`\
+  \ | Ein Blob in einem Azure Storage Container | Integrierte Blob-Leases bieten locking und Konsistenz\
+  \ |\n> | `gcs` | Ein Objekt, das durch bucket und das Präfix | identifiziert wird Verriegelung unterstützt;\
+  \ Objektversionen helfen bei der Wiederherstellung |\n> | `http` | GET liest, POST schreibt | LOCK/UNLOCK\
+  \ sind optional; Der Server muss das Protokoll | implementieren\n> | GitLab-managed Zustand | GitLab\
+  \ API über dem `http` backend | GitLab liefert die Adressen access und locking; Es gibt keinen separaten\
+  \ GitLab backend-Typ |\n> | `local` | Eine Arbeitsverzeichnisdatei | Lokale Datei locking; Kein gemeinsam\
+  \ genutzter Remote-Speicher oder Team-access-Richtlinie |\n\n### S3: locking ist eine backend-Einstellung\n\
+  \n**Auf einen Blick**\n- Der S3 backend speichert den Zustand in einem Objekt.\n- Locking muss explizit\
+  \ konfiguriert werden.\nDie Einstellungen - Backend und AWS provider sind separate Verbindungen.\n\n\
+  **Kurzes Szenario**\n\nDer S3 backend verfügt über use_lockfile=true.. Der AWS provider ist in einem\
+  \ separaten Block zum Erstellen von Ressourcen konfiguriert.\n\n**Vorhersage:** Ermittelt provider configuration\
+  \ automatisch backend access?\n\n> [!question]- Antwort\n> Nr. Der backend muss separat geeignete Anmeldeinformationen\
+  \ und Berechtigungen für den Staat und lock erhalten. Dies ist ein Nur-Text-Szenario. Es werden keine\
+  \ S3 API-Aufrufe durchgeführt.\n\n**`backend.tf`-Fragment: ein Lesebeispiel, das cannot ohne S3 bucket\
+  \ ausführt:**\n\n```hcl\nterraform {\n  backend \"s3\" {\n    bucket       = \"company-terraform-state\"\
+  \n    key          = \"prod/network.tfstate\"\n    region       = \"eu-central-1\"\n    use_lockfile\
+  \ = true\n  }\n}\n```\n\nTerraform 1.10 und OpenTofu 1.10 hinzugefügt `use_lockfile`. In der aktuellen\
+  \ Terraform-Dokumentation ist DynamoDB locking veraltet. OpenTofu 1.13 unterstützt es weiterhin und\
+  \ lässt beide Mechanismen während der Migration zu. In diesem Beispiel wurde keine Verbindung zu einem\
+  \ bucket hergestellt:\n\n*(laut Dokumentation)*. [Terraform S3](https://developer.hashicorp.com/terraform/language/backend/s3)\
+  \ · [OpenTofu S3](https://opentofu.org/docs/v1.13/language/settings/backends/s3/).\n\n> [!info]- Ausführlichere\
+  \ Erklärung\n> Legacy locking verwendet `dynamodb_table = \"terraform-locks\"`. HashiCorp testet den\
+  \ backend gegen Amazon S3; Die Kompatibilität mit einem anderen S3-Dienst erfordert separate Tests.\
+  \ Mit GitLab, read/lock/unlock gehen Adressen zu `http` backend und Anmeldeinformationen verwenden einen\
+  \ unterstützten Umgebungsmechanismus. Klartext `-backend-config` kann in den Dateien `.terraform` und\
+  \ plan gespeichert werden.\n> *(laut Dokumentation)*. [HTTP backend](https://developer.hashicorp.com/terraform/language/backend/http)\
+  \ · [GitLab Zustand](https://docs.gitlab.com/user/infrastructure/iac/terraform_state/).\n\n### Partial\
+  \ configuration: Was gehört in `backend.tf` und was muss während `init` übergeben werden\n\n**Auf einen\
+  \ Blick**\n- Partial backend-Einstellungen werden während init abgeschlossen.\nDie Datei - A tfbackend\
+  \ legt die Speicheradresse für eine Umgebung fest.\n- Die Statusadresse sollte von geheimen Anmeldeinformationen\
+  \ unterschieden werden.\n\n**Kurzes Szenario**\n\nbackend.tf setzt den Typ backend auf s3. dev.s3.tfbackend\
+  \ setzt bucket=lab und key=dev.tfstate; prod verwendet einen anderen key.\n\n**Vorhersage:** Welche\
+  \ Datei wählt den Status für dev aus?\n\n> [!question]- Antwort\n> Übergeben Sie dev.s3.tfbackend an\
+  \ init. Dateinamen ändern den backend nicht selbst; Der command liest die ausgewählten Einstellungen.\
+  \ Dies ist nur eine Erklärung; Es wird kein S3 API aufgerufen.\n\n```hcl\n# backend.tf — identical for\
+  \ all environments\nterraform {\n  backend \"s3\" {\n    encrypt      = true\n    use_lockfile = true\n\
+  \  }\n}\n```\n\n```hcl\n# envs/dev.s3.tfbackend — environment-specific, committed\nbucket = \"ACCOUNT_ID-eu-central-1-terraform-states\"\
+  \nkey    = \"project/dev/main/terraform.tfstate\"\nregion = \"eu-central-1\"\n```\n\nTerraform backend-Blöcke\
+  \ cannot parametrisiert werden: `var.` und `local.` sind innerhalb von them verboten. Da 1.8, OpenTofu\
+  \ Variablen und locals dort über early evaluation zulässt, jedoch nur, wenn Werte vor init bekannt sind;\
+  \ dass configuration nicht mehr in Terraform funktioniert *(laut Dokumentation)*. [OpenTofu 1.8: early\
+  \ evaluation](https://opentofu.org/docs/v1.8/intro/whats-new/). Der portable Ansatz übergibt umgebungsspezifische\
+  \ Einstellungen während `init`, anstatt them in Code einzubetten. Das ist *partial configuration*. Es\
+  \ gibt zwei Möglichkeiten *(laut Dokumentation)*. [Partial configuration](https://developer.hashicorp.com/terraform/language/backend#partial-configuration):\n\
+  \n- **key=value auf der command-Linie:** `tofu init -backend-config=\"bucket=...\" -backend-config=\"\
+  key=...\"`. So funktioniert der `tools/iac-wrapper.sh` von platform-iac;\n- **eine Datei:** `tofu init\
+  \ -backend-config=envs/dev.s3.tfbackend`. Verwenden Sie die HCL-Syntax, die nur backend `key = value`-Paare\
+  \ enthält. Die empfohlene Erweiterung ist `*.tfbackend`, nicht `.hcl`.\n\n> [!info]- Ausführlichere\
+  \ Erklärung\n> | Feld | Regel |\n> |---|---|\n> | `bucket` | Eine pro Konto und region. Erstellen Sie\
+  \ es **außerhalb** dieses configuration (bootstrap), um eine zirkuläre Abhängigkeit zu vermeiden. Erfordern\
+  \ versioning (das einzige Rollback nach einem fehlerhaften apply), Verschlüsselung und Blockierung public\
+  \ access. |\n> | `key` | `<project>/<environment>/<component>/terraform.tfstate`: ein Zustand pro Komponente,\
+  \ nicht einer für alles. **Nicht wiederverwenden oder stillschweigend ändern:** Ein anderer key bedeutet\
+  \ einen leeren Zustand, sodass bei der Planung möglicherweise alles neu erstellt wird. Bewegen Sie sich\
+  \ nur durch `init -migrate-state`. |\n> | `region` | Der bucket region, nicht der resource region. |\n\
+  > | Anmeldeinformationen | Niemals in dieser Datei: `AWS_PROFILE`, eine Rolle oder Umgebungsvariablen\
+  \ verwenden. |\n>\n> **Sollte `*.tfbackend` committed sein?** Es enthält keine Geheimnisse, nur die\
+  \ Statusadresse, daher wird normalerweise eine Datei pro Umgebung festgeschrieben: `envs/dev.s3.tfbackend`,\
+  \ `envs/prod.s3.tfbackend`. Ignorieren Sie es nur, wenn der Name bucket Informationen enthält, die nicht\
+  \ veröffentlicht werden dürfen. Die gleiche Regel gilt für `envs/<env>.tfvars`: Übergeben Sie nicht\
+  \ geheime Werte und übergeben Sie them mit `-var-file`. Liefergeheimnisse über SOPS, Vault oder `TF_VAR_*`;\
+  \ Lassen Sie `terraform.tfvars` für persönliche Außerkraftsetzungen automatisch geladen und ignorieren\
+  \ Sie es.\n>\n> Umschalten von Umgebungen in einem Arbeitsverzeichnis: `tofu init -reconfigure -backend-config=envs/prod.s3.tfbackend`.\
+  \ Ohne `-reconfigure` fragt init nach der Migration des dev-Status in prod, was fast nie beabsichtigt\
+  \ ist.\n>\n> > [!warning] platform-iac, bezogen auf piac-50\n> > `iac-wrapper.sh` besteht `-backend-config=\"\
+  endpoint=...\"`. Der aktuelle S3 backend ersetzt dieses Feld zugunsten von `endpoints = { s3 = \"...\"\
+  \ }`. `use_lockfile` ist dort ebenfalls nicht aktiviert. Natives locking basiert auf bedingten Schreibvorgängen\
+  \ (`If-None-Match`). Überprüfen Sie daher die RustFS-Unterstützung, bevor Sie sie aktivieren.\n>\n>\
+  \ **Kurz auf Englisch:** Why kann der backend-Block keine Variablen verwenden, und was machen Sie stattdessen?\n\
+  >\n> In Terraform wird der backend konfiguriert, bevor Variablen ausgewertet werden, also cannot reference\
+  \ them; OpenTofu allows und since 1.8, aber das beeinträchtigt die Terraform-Kompatibilität. Ich behalte\
+  \ die gemeinsamen Einstellungen in `backend.tf` und übergebe die per-environment bucket und key zur\
+  \ init-Zeit von einem committed `envs/dev.s3.tfbackend` Datei.\n\n### Blockierte Sperren und Migrationsstatus\n\
+  \n**Auf einen Blick**\n- A lock kann bestehen bleiben, nachdem ein Prozess unterbrochen wurde.\n- Stellen\
+  \ Sie zunächst fest, ob der lock-Besitzer noch läuft.\n- reconfigure ist nicht dasselbe wie der Kopierstatus.\n\
+  \n**Kurzes Szenario**\n\nDer lock gehört zu pipeline 42. Der pipeline nimmt noch Änderungen vor. Ein\
+  \ zweiter Durchlauf bietet force-unlock.\n\n**Vorhersage:** Kann der lock entfernt werden, als wäre\
+  \ er definitiv veraltet?\n\n> [!question]- Antwort\n> No: Der Eigentümer ist aktiv. Das Entfernen des\
+  \ lock würde einen konkurrierenden Schreibvorgang ermöglichen. In diesem Szenario wird force-unlock\
+  \ nicht ausgeführt.\n\nÜberprüfen Sie vor `force-unlock ID` den Besitzer und stellen Sie sicher, dass\
+  \ der Prozess beendet ist. Durch das Entsperren eines aktiven Prozesses können zwei Läufe einen Status\
+  \ schreiben. Ein aufgezeichneter OpenTofu 1.12.6-Lauf in [[Terraform-Coding-Drills-Solutions]] erzeugte\
+  \ `Error: Error acquiring the state lock` und S3 `StatusCode: 412`: Die bedingte Erstellung von `.tflock`\
+  \ erkannte ein Vorhandenes lock. *(bestätigt in diesem aufgezeichneten Lauf; ein neues local-Experiment\
+  \ folgt)*.\n\nDurch das Ändern eines backend-Blocks werden selbst keine Daten verschoben. `init -migrate-state`\
+  \ bietet das Kopieren in den neuen Speicher; `init -reconfigure` initialisiert Einstellungen ohne Migration\
+  \ neu. Speichern Sie zunächst eine Kopie, stoppen Sie andere Autoren und überprüfen Sie das neue Ziel.\
+  \ Nach der Migration überprüfen Sie den Status und eine unveränderte plan.\n*(laut Dokumentation)*.\
+  \ [Initialisierung und Migration](https://developer.hashicorp.com/terraform/cli/commands/init).\n\n\
+  ### Staatsgrenzen wählen\n\n**Auf einen Blick**\nDie - A-Staatsgrenze definiert den Umfang gemeinsamer\
+  \ Änderungen.\n- Unabhängige Umgebungen können separate Zustände haben.\n- Verbindungen zwischen Staaten\
+  \ werden zu einem separaten Vertrag.\n\n**Kurzes Szenario**\n\nDer network ändert sich selten, während\
+  \ sich die Anwendung täglich ändert. Sie haben unterschiedliche Berechtigungen und unabhängige Veröffentlichungszyklen.\n\
+  \n**Vorhersage:** Was bringt die Aufteilung von network und app in zwei Zustände?\n\n> [!question]-\
+  \ Antwort\n> Weniger gemeinsame Berechtigungen und Sperren sowie separate Pläne. Die network-Ausgaben\
+  \ und die Bereitstellungsreihenfolge der Anwendung müssen jedoch explizit koordiniert werden.\n\nGeteilte\
+  \ Zustände nach unabhängigem Lebenszyklus und access-Grenzen: `prod/network`, `prod/compute`, `dev/network`.\
+  \ Dadurch werden die plan-Größe und der Explosionsradius reduziert, es entsteht jedoch eine explizite\
+  \ Datenfreigabegrenze. `terraform_remote_state` macht die Root-Ausgaben eines anderen Staates verfügbar,\
+  \ der Verbraucher benötigt jedoch access für den gesamten Snapshot, möglicherweise einschließlich Geheimnissen.\
+  \ Veröffentlichen Sie für schmales access das erforderliche ID in einem separaten Speicher, z. B. SSM,\
+  \ Key Vault oder DNS, und lesen Sie es durch a provider Datenquelle.\n*(laut Dokumentation)*. [Sichere\
+  \ Zustandsfreigabe](https://developer.hashicorp.com/terraform/language/state/remote-state-data).\n\n\
+  > [!info]- Ausführlichere Erklärung\n> ```mermaid\n> sequenceDiagram\n>     participant A as First run\n\
+  >     participant B as State storage\n>     A->>B: Acquire the lock\n>     B-->>A: Lock acquired\n>\
+  \     A->>A: Perform operations\n>     participant B as State storage\n>     participant C as Second\
+  \ run\n>     C->>B: Request the same lock\n>     B-->>C: Already held: wait or fail\n>     participant\
+  \ A as First run\n>     participant B as State storage\n>     A->>B: Write state\n>     A->>B: Release\
+  \ the lock\n>     participant B as State storage\n>     participant C as Second run\n>     C->>B: Acquire\
+  \ the lock again\n>     B-->>C: Now available\n> ```\n>\n### Zwei gleichzeitige local-Läufe\n\n**Auf\
+  \ einen Blick**\n- Der local backend verwendet ebenfalls einen lock.\n- Der erste apply hält es beim\
+  \ Laufen.\n- A Null-Timeout beim zweiten Durchlauf führt dazu, dass es schnell fehlschlägt.\n\nDer erste\
+  \ `tofu apply -auto-approve` hielt den lock, während die Übung command schlief:\n\n**`main.tf` in einem\
+  \ neuen leeren Verzeichnis:**\n\n```hcl\nresource \"terraform_data\" \"wait\" {\n  provisioner \"local-exec\"\
+  \ { command = \"touch started; sleep 8\" }\n}\n```\n\nNachdem die Übungsdatei `started` erschienen war,\
+  \ wurde ein zweiter Prozess mit `tofu plan -lock-timeout=0s` ausgeführt.\n\n**Vorhersage:** Kann der\
+  \ zweite plan mit demselben local-Status verarbeiten, während der erste angewendet wird?\n> [!question]-\
+  \ Antwort\n> ```text\n> Error: Error acquiring the state lock\n> Error message: resource temporarily\
+  \ unavailable\n>   Operation: OperationTypeApply\n> ```\n> Der local backend sperrt seine Datei auch\
+  \ während des Betriebs. Keine Wartezeit führt zu sofortiger Ablehnung; Die local-Datei bietet immer\
+  \ noch keine gemeinsam genutzte Remote-access-Grenze.\n\nDer erste Vorgang wurde dann erfolgreich abgeschlossen.\
+  \ Durch diese Prüfung wurde weder das lock eines anderen Besitzers entfernt noch das locking deaktiviert.\
+  \ *(verifiziert: OpenTofu 1.12.6, zwei Prozesse, ein Übungsstatus)*.\n\n**Kurz auf Englisch:** Why Brauchen\
+  \ wir den Status locking?\n\nDurch das Sperren wird verhindert, dass zwei Terraform-Vorgänge gleichzeitig\
+  \ denselben Status schreiben. Manuelle Änderungen an Objekten werden dadurch nicht gestoppt. Verschiedene\
+  \ Staaten können immer noch versehentlich dasselbe Objekt verwalten."
+source_hash: ddff71df22c9d777af03a5a81ea8ce5598da4f6d31fdb7d3e97aae58cb907b6d
