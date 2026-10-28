@@ -1340,6 +1340,12 @@ function hideNavigationTooltip() {
 }
 function renderSidebar() {
   const user = state?.user.name ?? null;
+  for (const id of ["sidebar-username", "mobile-username"]) {
+    $(id).hidden = !user;
+    $(id).textContent = user ?? "";
+    $(id).title = user ?? "";
+  }
+  $("profile-username").textContent = user ?? "";
   if (user !== layoutUser) {
     layoutUser = user;
     document.body.classList.toggle(
