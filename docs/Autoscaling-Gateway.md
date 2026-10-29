@@ -22,3 +22,5 @@ kubectl top pods -l app=board
 ```sh
 kubectl get gateway,httproute,networkpolicy -o yaml
 ```
+
+В квесте 113 GatewayClass выбирает контроллер, Gateway владеет listener, а HTTPRoute прикрепляется к нему. Используйте заданный class, parent station, host north.station.internal и backend board:8080. Дождитесь принятия Gateway и условий Accepted и ResolvedRefs маршрута, затем проверьте запросы с нужным и другим Host. Один отказ не определяет его причину.

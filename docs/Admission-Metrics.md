@@ -40,3 +40,5 @@ kubectl get service board -o yaml
 url=$(jq -r .url prometheus-target.json)
 kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
 ```
+
+В квесте 121 fail-closed admission отклоняет запросы, если validating webhook недоступен; это отличается от явного отказа. Запросите ограниченное исправление restore-path, не меняя конфигурацию только для чтения, сохраните CA и область namespace и примените north-121. Проверьте готовность и HTTP, затем серверными dry-run проверьте допустимый маршрут и отказ для closed.
