@@ -1,8 +1,18 @@
 set -euo pipefail
 cd ~/quest
+failed=0
+check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
 source platform.env
-kubectl get deployment board -o json | jq -e --arg image "$PRIVATE_IMAGE" ' .spec.template.spec.containers[0].image==$image and .spec.replicas==1' >/dev/null
-kubectl get deployment board -o json | jq -e '.spec.template.spec.imagePullSecrets==[{"name":"registry-pull"}] and .spec.template.spec.containers[0].imagePullPolicy=="Always"' >/dev/null
-kubectl get secret registry-pull -o json | python3 -c 'import base64,json,os,sys; s=json.load(sys.stdin); d=json.loads(base64.b64decode(s["data"][".dockerconfigjson"])); a=d["auths"][os.environ["REGISTRY"]]; assert base64.b64decode(a["auth"]).decode()==os.environ["REGISTRY_USER"]+":"+os.environ["REGISTRY_PASSWORD"]'
-kubectl rollout status deployment/board --timeout=3s >/dev/null
-test "$(kubectl exec deployment/board -- wget -qO- http://127.0.0.1:8080)" = north-42
+board=$(kubectl get deployment board -o json 2>/dev/null || true)
+if ! jq -e --arg image "$PRIVATE_IMAGE" '.spec.template.spec.containers[0].image==$image' <<<"$board" >/dev/null 2>&1; then printf '%s\n' 'deployment/board first image = PRIVATE_IMAGE: ✗'; failed=1; fi
+check 'deployment/board replicas = 1' '.spec.replicas==1' "$board"
+check 'deployment/board imagePullSecrets = [registry-pull]' '.spec.template.spec.imagePullSecrets==[{name:"registry-pull"}]' "$board"
+check 'deployment/board imagePullPolicy = Always' '.spec.template.spec.containers[0].imagePullPolicy=="Always"' "$board"
+secret=$(kubectl get secret registry-pull -o json 2>/dev/null || true)
+check 'registry-pull type = kubernetes.io/dockerconfigjson' '.type=="kubernetes.io/dockerconfigjson"' "$secret"
+if ! printf '%s' "$secret" | python3 -c 'import base64,json,sys; data=json.load(sys.stdin)["data"][".dockerconfigjson"]; decoded=base64.b64decode(data,validate=True); assert base64.b64encode(decoded).decode()==data' >/dev/null 2>&1; then printf '%s\n' 'registry-pull dockerconfigjson = canonical base64: ✗'; failed=1; fi
+if ! printf '%s' "$secret" | python3 -c 'import base64,json,os,sys; outer=json.load(sys.stdin)["data"][".dockerconfigjson"]; data=json.loads(base64.b64decode(outer,validate=True)); auth=data["auths"][os.environ["REGISTRY"]]["auth"]; decoded=base64.b64decode(auth,validate=True); assert base64.b64encode(decoded).decode()==auth' >/dev/null 2>&1; then printf '%s\n' 'registry-pull auth = canonical base64: ✗'; failed=1; fi
+if ! printf '%s' "$secret" | python3 -c 'import base64,json,os,sys; outer=json.load(sys.stdin)["data"][".dockerconfigjson"]; data=json.loads(base64.b64decode(outer,validate=True)); auth=data["auths"][os.environ["REGISTRY"]]["auth"]; assert base64.b64decode(auth,validate=True).decode()==os.environ["REGISTRY_USER"]+":"+os.environ["REGISTRY_PASSWORD"]' >/dev/null 2>&1; then printf '%s\n' 'registry-pull auth matches platform.env: ✗'; failed=1; fi
+if ! kubectl rollout status deployment/board --timeout=3s >/dev/null 2>&1; then printf '%s\n' 'deployment/board rollout complete: ✗'; failed=1; fi
+if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -- wget -qO- -T 3 http://127.0.0.1:8080 2>/dev/null)" = north-42; then printf '%s\n' 'board Pod localhost:8080 = north-42: ✗'; failed=1; fi
+exit "$failed"

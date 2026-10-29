@@ -1,17 +1,41 @@
 set -euo pipefail
 cd ~/quest
+failed=0
+check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
 source platform.env
-kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" '.spec.source.repoURL==$url and .spec.source.path=="manifests" and .spec.source.targetRevision=="main" and .status.sync.status=="Synced" and .status.health.status=="Healthy" and .status.sync.revision==$rev' >/dev/null
-kubectl rollout status deployment/board --timeout=3s >/dev/null
-test "$(kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080)" = north-80
-image=$(jq -er .image /run/dq/facts/0/private-release.json)
-digest=$(printf %s "$image" | cut -d@ -f2)
-git -C repository fetch origin main >/dev/null 2>&1
-test "$(git -C repository rev-parse origin/main)" = "$(cat release-commit)"
-test "$(cat release-commit)" != "$(cat /run/dq/facts/0/baseline-commit)"
-git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/baseline-commit)" origin/main
-git -C repository show origin/main:manifests/board.json | jq -e --arg image "$image" '.spec.template.spec.containers[0].image==$image and .spec.template.spec.containers[0].imagePullPolicy=="Always" and .spec.template.spec.imagePullSecrets==[{name:"registry-pull"}]' >/dev/null
-kubectl get deployment board -o json | jq -e --arg image "$image" '.spec.template.spec.containers[0].image==$image and .spec.template.spec.containers[0].imagePullPolicy=="Always"' >/dev/null
-kubectl get pods -l app=board -o json | jq -e --arg digest "$digest" 'any(.items[];.metadata.deletionTimestamp==null and any(.status.containerStatuses[]?;.ready==true and (.imageID|contains($digest))))' >/dev/null
-curl -fsS --cacert registry-ca.crt -u "$REGISTRY_USER:$REGISTRY_PASSWORD" -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' "https://$REGISTRY/v2/parcel/manifests/$digest" >/dev/null
-kubectl get application board -o json | jq -e '.spec.syncPolicy.automated.selfHeal==true and .spec.syncPolicy.automated.prune==true' >/dev/null
+revision=$(cat release-commit 2>/dev/null || true)
+app=$(kubectl get application board -o json 2>/dev/null || true)
+check_app() { local label=$1 expression=$2; if ! jq -e --arg url "$GIT_URL" --arg revision "$revision" "$expression" <<<"$app" >/dev/null 2>&1; then printf '%s\n' "application/board $label: ✗"; failed=1; fi; }
+check_app 'repoURL = GIT_URL' '.spec.source.repoURL==$url'
+check_app 'source path = manifests' '.spec.source.path=="manifests"'
+check_app 'targetRevision = main' '.spec.source.targetRevision=="main"'
+check_app 'sync status = Synced' '.status.sync.status=="Synced"'
+if ! test -n "$revision"; then printf '%s\n' 'expected Git revision exists: ✗'; failed=1; fi
+check_app 'sync revision = expected revision' '.status.sync.revision==$revision'
+check_app 'selfHeal = true' '.spec.syncPolicy.automated.selfHeal==true'
+check_app 'health = Healthy' '.status.health.status=="Healthy"'
+check_app 'prune = true' '.spec.syncPolicy.automated.prune==true'
+if ! kubectl rollout status deployment/board --timeout=3s >/dev/null 2>&1; then printf '%s\n' 'deployment/board rollout complete: ✗'; failed=1; fi
+if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = north-80; then printf '%s\n' 'board:8080 = north-80: ✗'; failed=1; fi
+image=$(jq -r '.image // ""' /run/dq/facts/0/private-release.json 2>/dev/null || true)
+digest=${image##*@}
+if ! test -n "$image"; then printf '%s\n' 'private-release.json image exists: ✗'; failed=1; fi
+if ! git -C repository fetch origin main >/dev/null 2>&1; then printf '%s\n' 'git fetch origin main: ✗'; failed=1; fi
+if ! test -n "$revision" || ! test "$(git -C repository rev-parse origin/main 2>/dev/null)" = "$revision"; then printf '%s\n' 'origin/main = release-commit: ✗'; failed=1; fi
+baseline=$(cat /run/dq/facts/0/baseline-commit 2>/dev/null || true)
+if ! test -n "$revision" || ! test -n "$baseline" || test "$revision" = "$baseline"; then printf '%s\n' 'release-commit differs from baseline-commit: ✗'; failed=1; fi
+if ! test -n "$baseline" || ! git -C repository merge-base --is-ancestor "$baseline" origin/main >/dev/null 2>&1; then printf '%s\n' 'baseline-commit is ancestor of origin/main: ✗'; failed=1; fi
+manifest=$(git -C repository show origin/main:manifests/board.json 2>/dev/null || true)
+if ! test -n "$image" || ! jq -e --arg image "$image" '.spec.template.spec.containers[0].image==$image' <<<"$manifest" >/dev/null 2>&1; then printf '%s\n' 'Git board first image = frozen image: ✗'; failed=1; fi
+check 'Git board imagePullPolicy = Always' '.spec.template.spec.containers[0].imagePullPolicy=="Always"' "$manifest"
+check 'Git board imagePullSecrets = [registry-pull]' '.spec.template.spec.imagePullSecrets==[{name:"registry-pull"}]' "$manifest"
+board=$(kubectl get deployment board -o json 2>/dev/null || true)
+if ! test -n "$image" || ! jq -e --arg image "$image" '.spec.template.spec.containers[0].image==$image' <<<"$board" >/dev/null 2>&1; then printf '%s\n' 'live board first image = frozen image: ✗'; failed=1; fi
+check 'live board imagePullPolicy = Always' '.spec.template.spec.containers[0].imagePullPolicy=="Always"' "$board"
+if ! test -n "$image" || ! kubectl get pods -l app=board -o json 2>/dev/null | jq -e --arg digest "$digest" 'any(.items[];.metadata.deletionTimestamp==null and any(.status.containerStatuses[]?;.ready==true and (.imageID|contains($digest))))' >/dev/null 2>&1; then printf '%s\n' 'ready board Pod imageID contains frozen digest: ✗'; failed=1; fi
+umask 077
+config=$(mktemp)
+trap 'rm -f "$config"' EXIT
+printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD" > "$config"
+if ! test -n "$image" || ! curl -fsS --max-time 4 --config "$config" --cacert registry-ca.crt -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' "https://$REGISTRY/v2/parcel/manifests/$digest" >/dev/null 2>&1; then printf '%s\n' 'authenticated registry serves frozen digest: ✗'; failed=1; fi
+exit "$failed"
