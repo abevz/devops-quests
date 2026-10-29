@@ -15,12 +15,12 @@ dns_answer_has() {
 }
 dns_ip=$(kubectl get service station-dns -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
 client=$(kubectl get deployment client -o json 2>/dev/null || true)
-check 'deployment/client dnsPolicy = None' '.spec.template.spec.dnsPolicy=="None"' "$client"
-if ! test -n "$dns_ip" || ! jq -e --arg ip "$dns_ip" '.spec.template.spec.dnsConfig.nameservers==[$ip]' <<<"$client" >/dev/null 2>&1; then printf '%s\n' 'deployment/client nameservers = [station-dns Service IP]: ✗'; failed=1; fi
+check 'deployment/client dnsPolicy = None [DQ:dns_policy]' '.spec.template.spec.dnsPolicy=="None"' "$client"
+if ! test -n "$dns_ip" || ! jq -e --arg ip "$dns_ip" '.spec.template.spec.dnsConfig.nameservers==[$ip]' <<<"$client" >/dev/null 2>&1; then printf '%s\n' 'deployment/client nameservers = [station-dns Service IP]: ✗ [DQ:nameserver]'; failed=1; fi
 expected=$(cat /run/dq/facts/0/expected-dns-address 2>/dev/null || true)
 lookup=''
 if test -n "$dns_ip" && test -n "$expected"; then
   if ! lookup=$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- nslookup station.internal "$dns_ip" 2>/dev/null); then lookup=''; fi
 fi
-if ! test -n "$expected" || ! dns_answer_has "$lookup" "$expected"; then printf '%s\n' 'client DNS station.internal answer = expected-dns-address: ✗'; failed=1; fi
+if ! test -n "$expected" || ! dns_answer_has "$lookup" "$expected"; then printf '%s\n' 'client DNS station.internal answer = expected-dns-address: ✗ [DQ:answer]'; failed=1; fi
 exit "$failed"
