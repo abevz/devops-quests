@@ -7,3 +7,34 @@ Application Argo CD выбирает репозиторий, путь, реви�
 Генератор списка ApplicationSet передаёт параметры шаблону Go; путь вида `stations/{{.station}}` создаёт путь для каждого элемента. В задании ApplicationSet игровой опрос отправляет один из двух ограниченных манифестов из `applicationset.json` приватному контроллеру. Это адаптер с ограниченным набором изменений, а не общий API контроллера. Дождитесь созданных Application и проверьте владельца, ревизию, состояние и фактические ответы нагрузки.
 
 Источники: [загрузка приватных образов](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/), [генератор списка Argo CD](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators-List/), [шаблоны Go](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/GoTemplate/).
+
+В квесте 027 изучите события загрузки образа relay и используйте выданные игровые учетные данные registry для создания pull Secret в том же namespace, не раскрывая значения. Укажите его в `imagePullSecrets`, сохраните частный образ и `Always`, дождитесь rollout relay.
+
+В квесте 041 сравните истории release-candidate и main. Перенесите нужное сообщение в main через merge или cherry-pick, отправьте в выданный частный remote и из `~/quest` выполните `git -C repository fetch origin main release-candidate`. Проверьте `north-41` в локальной и удаленной main, baseline как предка, чистый worktree и равенство именно коммитов HEAD и remote.
+
+В квесте 042 обновите `registry-pull` выданными игровыми учетными данными, не выводя их и не сохраняя в истории оболочки. Проверьте тип Secret и каноническую закодированную авторизацию, сохраните `PRIVATE_IMAGE`, `Always`, одну реплику и один pull Secret, затем проверьте rollout и `north-42`. Base64 — кодирование, не шифрование; текущий rollout не доказывает будущие загрузки.
+
+В квесте 043 измените source path Argo Application на `manifests`, сохранив выданные repository, project, revision и destination. Синхронизируйте и сравните revision контроллера с удаленной main, затем проверьте Synced/Healthy и реальный ответ `north-43`.
+
+В квесте 049 изменяемый тег и нужный digest могут отдавать одинаковый текст, но обозначать разные артефакты. Закрепите `PRIVATE_IMAGE`, сохраните `Always` и `registry-pull`, сравните image ID готового контейнера с нужным digest и проверьте `north-49`.
+
+Для квеста 027 этот пример создает pull Secret из выданного окружения, не передавая значения учетных данных в аргументах команд и не выводя payload. Для квеста 042 замените `parcel-pull` на `registry-pull`; сохраняйте полученный Secret приватным.
+
+```bash
+set +x
+cd ~/quest
+source platform.env
+export DQ_PULL_SECRET=parcel-pull
+python3 - <<'PY' | kubectl apply -f - >/dev/null
+import base64
+import json
+import os
+import sys
+
+auth = base64.b64encode((os.environ['REGISTRY_USER'] + ':' + os.environ['REGISTRY_PASSWORD']).encode()).decode()
+config = json.dumps({'auths': {os.environ['REGISTRY']: {'auth': auth}}}).encode()
+secret = {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': os.environ['DQ_PULL_SECRET']}, 'type': 'kubernetes.io/dockerconfigjson', 'data': {'.dockerconfigjson': base64.b64encode(config).decode()}}
+json.dump(secret, sys.stdout)
+PY
+unset DQ_PULL_SECRET
+```
