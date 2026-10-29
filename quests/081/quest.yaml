@@ -7,34 +7,15 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: 'tofu state list | grep -Fx local_file.release >/dev/null
-
-      test "$(cat release.txt)" = release-81
-
-      tofu plan -input=false -detailed-exitcode -no-color >/dev/null'
+    check: "set -euo pipefail\ncd ~/quest\nfailed=0\nif ! tofu state list 2>/dev/null | grep -Fx local_file.release >/dev/null; then\n  printf '%s\\n' 'tofu state list: local_file.release missing: ✗'; failed=1\nfi\nif ! test \"$(cat release.txt 2>/dev/null)\" = release-81; then\n  printf '%s\\n' 'release.txt = release-81: ✗'; failed=1\nfi\nif ! tofu plan -input=false -detailed-exitcode -no-color >/dev/null 2>&1; then\n  printf '%s\\n' 'tofu plan exits 0: ✗'; failed=1\nfi\nexit \"$failed\"\n"
 - brief: stages.1.brief
   objectives:
   - text: stages.1.objectives.0.text
-    check: 'ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" ''test "$(cat /srv/site/message)"
-      = release-81 && test "$(stat -c %a /srv/site/message)" = 644''
-
-      ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" ''test "$(cat /srv/site/message)" =
-      release-81 && test "$(stat -c %a /srv/site/message)" = 644''
-
-      ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" ''test "$(cat /srv/site/message)" =
-      release-81 && test "$(stat -c %a /srv/site/message)" = 644''
-
-      test "$(curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8080)" = release-81
-
-      test "$(curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8080)" = release-81
-
-      test "$(curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8080)" = release-81'
+    check: "set -euo pipefail\ncd ~/quest\nfailed=0\nfor n in 1 2 3; do\n  host=\"app${n}-${DQ_NAMESPACE#dq-}\"\n  result=$(ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 \"root@$host\" 'value=$(cat /srv/site/message 2>/dev/null || true); mode=$(stat -c %a /srv/site/message 2>/dev/null || true); printf \"%s\\n%s\\n\" \"$value\" \"$mode\"' 2>/dev/null || true)\n  if ! test \"$(printf '%s\\n' \"$result\" | sed -n '1p')\" = release-81; then\n    printf '%s\\n' \"$host /srv/site/message = release-81: ✗\"; failed=1\n  fi\n  if ! test \"$(printf '%s\\n' \"$result\" | sed -n '2p')\" = 644; then\n    printf '%s\\n' \"$host /srv/site/message mode = 644: ✗\"; failed=1\n  fi\n  if ! test \"$(curl -fsS --max-time 3 \"http://$host:8080\" 2>/dev/null)\" = release-81; then\n    printf '%s\\n' \"$host:8080 = release-81: ✗\"; failed=1\n  fi\ndone\nexit \"$failed\"\n"
 - brief: stages.2.brief
   objectives:
   - text: stages.2.objectives.0.text
-    check: 'kubectl rollout status deployment/relay --timeout=3s >/dev/null
-
-      test "$(kubectl exec deployment/relay -- printenv RELEASE)" = release-81'
+    check: "set -euo pipefail\ncd ~/quest\nfailed=0\nif ! kubectl rollout status deployment/relay --timeout=3s >/dev/null 2>&1; then\n  printf '%s\\n' 'deployment/relay rollout complete: ✗'; failed=1\nfi\nif ! test \"$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/relay -- printenv RELEASE 2>/dev/null)\" = release-81; then\n  printf '%s\\n' 'deployment/relay RELEASE = release-81: ✗'; failed=1\nfi\nexit \"$failed\"\n"
 hints:
 - text: hints.0.text
   guide: terraform-3

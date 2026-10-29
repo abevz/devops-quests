@@ -1,53 +1,39 @@
 title: Полное восстановление платформы
-brief: 'Приватная цепочка доставки платформы (Gitea → приватный registry → Argo CD
-  → Vault → табло board) неисправна на двух этапах. На первом этапе Argo CD сверяет
-  неверный каталог репозитория: восстановите синхронизацию каталога manifests на ревизии
-  main, сохранив автоматические self-heal и prune. На втором этапе синхронизированная
-  нагрузка board не запускается в runtime: восстановите доступ к загрузке приватного
-  образа и доставку секрета из Vault с минимальными правами (чтение только KV-пути
-  dispatch), не меняя immutable-образ и ссылку на Secret в Git-манифесте. Все сервисы
-  принадлежат только этой временной песочнице.
-
-
-  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `platform.env`,
-  `application.json`, `repository/manifests/board.json`, `baseline-commit`, `private-release.json`,
-  `reader.hcl`, `sync-secret.sh`.
-
-
-  В песочнице нет интернета и внешнего DNS. Используйте выданные файлы, предварительно
-  загруженные образы и приватные сервисы. Менять можно только эту песочницу.
-
-
-  Цели первого этапа: Argo согласует правильный путь приватного Git и исходную ревизию
-  main с сохранением автоматики; следующий инцидент касается credentials runtime.'
-debrief: Полная цепочка Git → registry → Argo CD → Vault восстановлена без обхода
-  desired state и расширения доступа к секретам.
-stages.0.brief: 'Результат проверки: Argo согласует правильный путь приватного Git
-  и исходную ревизию main с сохранением автоматики; следующий инцидент касается credentials
-  runtime.'
-stages.0.objectives.0.text: Argo согласует правильный путь приватного Git и исходную
-  ревизию main с сохранением автоматики; следующий инцидент касается credentials runtime.
-stages.1.brief: 'Результат проверки: Git, immutable-образ registry, desired state
-  Argo и данные Vault с минимальными правами согласованы; реальное табло отдаёт north-100.'
-stages.1.objectives.0.text: Git, immutable-образ registry, desired state Argo и данные
-  Vault с минимальными правами согласованы; реальное табло отдаёт north-100.
-hints.0.text: 'Этап 1: проверьте application.json — Argo CD смотрит в устаревший путь
-  Git вместо source.path=manifests на ревизии main с включёнными self-heal и prune.'
-hints.1.text: 'Этап 2: статус Synced не означает готовность Pod — отсутствует pull
-  Secret приватного registry, а policy в reader.hcl указывает на неверный KV-путь
-  в Vault.'
-hints.2.text: Восстановите pull Secret из private-release.json, ограничьте reader.hcl
-  чтением dispatch, выполните sync-secret.sh и проверьте работающий digest образа
-  и HTTP-ответ.
+brief: Приватная цепочка доставки связывает Gitea, реестр, Argo CD, Vault и board в Kubernetes. Работайте только в `~/quest`
+  и этой офлайн-песочнице. Изучите `platform.env`, `application.json`, `repository/manifests/board.json`, `baseline-commit`,
+  `release-commit`, `private-release.json`, `reader.hcl` и `sync-secret.sh`. Application Argo описывает источник манифестов
+  и сообщает состояние согласования; политика Vault управляет доступом к секретам. Сначала исправьте согласование, затем учётные
+  данные для запуска. Проверки наблюдают выбранную конфигурацию, значения и два пути Vault; они не доказывают всю историю
+  Git или отказ для всех остальных путей Vault.
+debrief: Проверки подтвердили выбранные результаты Git, Argo, board и Vault; они не доказывают полный охват политики или неизменность
+  истории.
+stages.0.brief: 'Исправьте Application `board`: URL репозитория должен равняться `GIT_URL` из `platform.env`, путь — `manifests`,
+  ревизия — `main`, а автоматические `selfHeal` и `prune` должны быть true. Дождитесь статуса синхронизации `Synced` на зафиксированном
+  `baseline-commit`. Связанная подсказка описывает обновление Application.'
+stages.0.objectives.0.text: Источник Application, автоматика и синхронизация базовой ревизии соответствуют описанию.
+stages.1.brief: 'Получите `origin/main` в `repository`; он должен совпадать с `release-commit`. Сохраните в Application `board`
+  тот же URL, путь, ревизию и автоматику; теперь требуется `Synced` и `Healthy` на `release-commit`. Дождитесь rollout board
+  и проверьте ответ `north-100` от `board:8080`. Первый контейнер board должен использовать образ из `/run/dq/facts/0/private-release.json`,
+  `imagePullPolicy: Always`, ровно `imagePullSecrets: [{name: registry-pull}]` и ровно одну запись окружения: `ROUTE_SECRET`
+  из Secret `route-secret`, ключ `value`. imageID готового контейнера board должен содержать digest этого образа. Значение
+  Secret и значение токена Vault в `secret/data/dispatch` должны быть `north-secret`; доступ токена к `secret/data/other`
+  должен вернуть HTTP 403. Манифест Git в `origin/main:manifests/board.json` должен сохранить первый зафиксированный образ
+  и имя Secret `route-secret` в первой записи окружения. Используйте `reader.hcl` и `sync-secret.sh`, затем перезапустите
+  board. Два проверенных пути Vault не доказывают полного соблюдения минимальных привилегий.'
+stages.1.objectives.0.text: Ревизия выпуска, состояние Application, конфигурация и ответ board, выбранные поля Git и результаты
+  Vault соответствуют описанию.
+hints.0.text: 'Этап 1: проверьте application.json — Argo CD смотрит в устаревший путь Git вместо source.path=manifests на
+  ревизии main с включёнными self-heal и prune.'
+hints.1.text: 'Этап 2: статус Synced не означает готовность Pod — отсутствует pull Secret приватного registry, а policy в
+  reader.hcl указывает на неверный KV-путь в Vault.'
+hints.2.text: Восстановите pull Secret из private-release.json, ограничьте reader.hcl чтением dispatch, выполните sync-secret.sh
+  и проверьте работающий digest образа и HTTP-ответ.
 phrases.0: Я отделил сбои на каждой границе доставки.
 phrases.1: Я сохранил immutable identity образа и согласование Git.
-phrases.2: Я проверил минимальные права к секретам и реальную работу сервиса всей
-  цепочки.
-questions.0.points.0: Применённый desired state может ссылаться на недоступные образы
-  или Secrets.
+phrases.2: Я проверил минимальные права к секретам и реальную работу сервиса всей цепочки.
+questions.0.points.0: Применённый desired state может ссылаться на недоступные образы или Secrets.
 questions.0.points.1: Отдельно проверяйте sync, health, events и реальные запросы.
 questions.0.prompt: Почему Application может быть Synced при неисправных Pod?
-questions.1.points.0: Верную ревизию источника, работающий digest и ограниченные credentials
-  runtime.
+questions.1.points.0: Верную ревизию источника, работающий digest и ограниченные credentials runtime.
 questions.1.points.1: Полезный запрос успешно проходит через восстановленный сервис.
 questions.1.prompt: Что проверяет полное восстановление помимо зелёного контроллера?

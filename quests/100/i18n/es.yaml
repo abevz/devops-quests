@@ -1,44 +1,37 @@
 title: Recuperación completa de la plataforma
-brief: 'La cadena de entrega de la plataforma privada (Gitea → registry privada → Argo CD → Vault → board)
-  está fallando en dos etapas. En la etapa uno, Argo CD está conciliando la ruta del repositorio incorrecta:
-  restaurar la conciliación del directorio manifests en la revisión main mientras se preservan los self-heal
-  y prune automatizados. En la etapa dos, la carga de trabajo sincronizada board aún falla en runtime:
-  restaurar el acceso de extracción de imágenes privadas y la entrega secreta Vault con privilegios mínimos
-  (acceso de solo lectura a la ruta dispatch KV) sin alterar la imagen inmutable o Referencias de Secret
-  en el manifiesto Git. Cada servicio pertenece únicamente a esta bahía desechable.
-
-
-  Archivos de búsqueda en `~/quest` (algunos aparecen en etapas posteriores): `platform.env`, `application.json`,
-  `repository/manifests/board.json`, `baseline-commit`, `private-release.json`, `reader.hcl`, `sync-secret.sh`.
-
-
-  La bahía no tiene Internet ni DNS externo. Utilice únicamente archivos proporcionados, imágenes precargadas
-  y servicios privados. Cambie sólo esta bahía.
-
-
-  Criterios de éxito iniciales: Argo concilia la ruta privada correcta Git y la revisión original main
-  con la automatización retenida; runtime credentials son el siguiente incidente.'
-debrief: La ruta de entrega completa Git → registry → Argo CD → Vault se recuperó sin omitir el estado
-  desired ni ampliar el acceso secreto.
-stages.0.brief: 'Criterios de éxito: Argo concilia la ruta privada correcta Git y la revisión original
-  main con la automatización retenida; runtime credentials son el siguiente incidente.'
-stages.0.objectives.0.text: Argo concilia la ruta privada correcta Git y la revisión original main con
-  la automatización retenida; runtime credentials son el siguiente incidente.
-stages.1.brief: 'Criterios de éxito: Git, imagen registry inmutable, estado Argo desired y datos de privilegio
-  mínimo Vault coinciden; el verdadero board sirve para north-100.'
-stages.1.objectives.0.text: Git, imagen registry inmutable, estado Argo desired y datos de privilegio
-  mínimo Vault coinciden; el verdadero board sirve para north-100.
+brief: La cadena privada de entrega conecta Gitea, un registro, Argo CD, Vault y un board en Kubernetes. Trabaja solo en `~/quest`
+  y en esta bahía sin conexión. Lee `platform.env`, `application.json`, `repository/manifests/board.json`, `baseline-commit`,
+  `release-commit`, `private-release.json`, `reader.hcl` y `sync-secret.sh`. Una Application de Argo describe el origen de
+  los manifiestos y comunica la reconciliación; una política de Vault controla el acceso a secretos. Primero repara la reconciliación
+  y luego las credenciales de ejecución. Las comprobaciones observan configuración seleccionada, valores y dos rutas de Vault;
+  no demuestran toda la historia de Git ni la denegación de todas las demás rutas de Vault.
+debrief: Las comprobaciones verificaron resultados seleccionados de Git, Argo, board y Vault; no establecen todo el alcance
+  de la política ni una historia intacta.
+stages.0.brief: 'Repara la Application `board`: la URL del repo debe ser `GIT_URL` de `platform.env`, la ruta `manifests`,
+  la revisión `main` y `selfHeal` y `prune` automáticos deben ser true. Espera el estado `Synced` en el `baseline-commit`
+  congelado. La pista enlazada describe cómo actualizar la Application.'
+stages.0.objectives.0.text: El origen, la automatización y la sincronización base de la Application coinciden con la descripción.
+stages.1.brief: 'Obtén `origin/main` en `repository`; debe ser igual a `release-commit`. Mantén en la Application `board`
+  la misma URL, ruta, revisión y automatización, ahora `Synced` y `Healthy` en `release-commit`. Espera el rollout de board
+  y comprueba que `board:8080` devuelve `north-100`. El primer contenedor board debe usar la imagen de `/run/dq/facts/0/private-release.json`,
+  `imagePullPolicy: Always`, exactamente `imagePullSecrets: [{name: registry-pull}]` y una sola entrada de entorno: `ROUTE_SECRET`
+  del Secret `route-secret`, clave `value`. El imageID de un contenedor board listo debe contener el digest de esa imagen.
+  El valor del Secret y el valor del token de Vault en `secret/data/dispatch` deben ser `north-secret`; el acceso del token
+  a `secret/data/other` debe devolver HTTP 403. El manifiesto Git en `origin/main:manifests/board.json` debe conservar la
+  primera imagen congelada y el nombre de Secret `route-secret` de la primera entrada de entorno. Usa `reader.hcl` y `sync-secret.sh`,
+  y reinicia board. Las dos rutas de Vault comprobadas no demuestran privilegio mínimo completo.'
+stages.1.objectives.0.text: La revisión de entrega, salud de Application, configuración y respuesta de board, campos Git seleccionados
+  y resultados de Vault coinciden con la descripción.
 hints.0.text: 'Etapa 1: inspect application.json — Argo CD apunta a una ruta retired Git en lugar de source.path=manifests
   en la revisión main con self-heal y prune automatizados.'
-hints.1.text: 'Etapa 2: un Synced Application aún no está en buen estado porque falta el registry pull
-  Secret privado y reader.hcl apunta al Vault incorrecto Ruta KV.'
-hints.2.text: Restaure el registro pull Secret desde private-release.json, alcance reader.hcl a dispatch
-  de solo lectura, ejecute sync-secret.sh y verifique la imagen en ejecución digest y Respuesta HTTP.
+hints.1.text: 'Etapa 2: un Synced Application aún no está en buen estado porque falta el registry pull Secret privado y reader.hcl
+  apunta al Vault incorrecto Ruta KV.'
+hints.2.text: Restaure el registro pull Secret desde private-release.json, alcance reader.hcl a dispatch de solo lectura,
+  ejecute sync-secret.sh y verifique la imagen en ejecución digest y Respuesta HTTP.
 phrases.0: Aislé fallas en cada límite de entrega.
 phrases.1: Conservé la imagen immutable, la reconciliación identity y Git.
 phrases.2: Verifiqué el acceso secreto con privilegios mínimos y un servicio real de extremo a extremo.
-questions.0.points.0: El estado desired aplicado aún puede hacer referencia a imágenes no disponibles
-  o Secrets.
+questions.0.points.0: El estado desired aplicado aún puede hacer referencia a imágenes no disponibles o Secrets.
 questions.0.points.1: Inspeccione sync, health, events y las solicitudes reales por separado.
 questions.0.prompt: ¿Por qué un Application puede ser Synced mientras sus Pods fallan?
 questions.1.points.0: Revisión de fuente correcta, ejecutando digest y con alcance runtime credentials.

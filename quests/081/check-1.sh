@@ -1,8 +1,17 @@
 set -euo pipefail
 cd ~/quest
-ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = release-81 && test "$(stat -c %a /srv/site/message)" = 644'
-ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = release-81 && test "$(stat -c %a /srv/site/message)" = 644'
-ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = release-81 && test "$(stat -c %a /srv/site/message)" = 644'
-test "$(curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8080)" = release-81
-test "$(curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8080)" = release-81
-test "$(curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8080)" = release-81
+failed=0
+for n in 1 2 3; do
+  host="app${n}-${DQ_NAMESPACE#dq-}"
+  result=$(ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host" 'value=$(cat /srv/site/message 2>/dev/null || true); mode=$(stat -c %a /srv/site/message 2>/dev/null || true); printf "%s\n%s\n" "$value" "$mode"' 2>/dev/null || true)
+  if ! test "$(printf '%s\n' "$result" | sed -n '1p')" = release-81; then
+    printf '%s\n' "$host /srv/site/message = release-81: ✗"; failed=1
+  fi
+  if ! test "$(printf '%s\n' "$result" | sed -n '2p')" = 644; then
+    printf '%s\n' "$host /srv/site/message mode = 644: ✗"; failed=1
+  fi
+  if ! test "$(curl -fsS --max-time 3 "http://$host:8080" 2>/dev/null)" = release-81; then
+    printf '%s\n' "$host:8080 = release-81: ✗"; failed=1
+  fi
+done
+exit "$failed"

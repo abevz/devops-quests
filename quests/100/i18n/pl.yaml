@@ -1,47 +1,39 @@
 title: Pełne odzyskiwanie platformy
-brief: 'Łańcuch dostaw platformy prywatnej (obciążenie Gitea → prywatny registry → Argo CD → Vault → board)
-  ulega awarii w dwóch etapach. Na pierwszym etapie Argo CD uzgadnia niewłaściwą ścieżkę repozytorium:
-  przywróć uzgadnianie katalogu manifests w wersji main, zachowując jednocześnie automatyczne self-heal
-  i prune. Na drugim etapie zsynchronizowane obciążenie board w dalszym ciągu kończy się niepowodzeniem
-  przy runtime: przywracanie dostępu do prywatnego obrazu i dostarczania tajnego obrazu Vault z najniższymi
-  uprawnieniami (dostęp tylko do odczytu do ścieżki dispatch KV) bez zmiany niezmiennego obrazu lub odniesień
-  Secret w Manifest Git. Każda usługa należy wyłącznie do tej jednorazowej zatoki.
-
-
-  Pliki zadań w `~/quest` (niektóre pojawiają się w późniejszych etapach): `platform.env`, `application.json`,
-  `repository/manifests/board.json`, `baseline-commit`, `private-release.json`, `reader.hcl`, `sync-secret.sh`.
-
-
-  W zatoce nie ma Internetu ani zewnętrznego DNS. Korzystaj wyłącznie z dostarczonych plików, wstępnie
-  załadowanych obrazów i usług prywatnych. Zmień tylko tę zatokę.
-
-
-  Początkowe kryteria sukcesu: Argo uzgadnia poprawną prywatną ścieżkę Git i oryginalną wersję main z
-  zachowaniem automatyzacji; poświadczenia środowiska uruchomieniowego są następnym incydentem.'
-debrief: Pełna ścieżka dostawy Git → registry → Argo CD → Vault została odzyskana bez omijania desired
-  state lub poszerzania tajnego dostępu.
-stages.0.brief: 'Kryteria sukcesu: Argo uzgadnia poprawną prywatną ścieżkę Git i oryginalną wersję main
-  z zachowaniem automatyzacji; poświadczenia środowiska uruchomieniowego są następnym incydentem.'
-stages.0.objectives.0.text: Argo uzgadnia poprawną prywatną ścieżkę Git i oryginalną wersję main z zachowaniem
-  automatyzacji; poświadczenia środowiska uruchomieniowego są następnym incydentem.
-stages.1.brief: 'Kryteria sukcesu: Git, niezmienny obraz registry, pożądany stan Argo i dane Vault o najniższych
-  uprawnieniach zgadzają się; prawdziwa board służy north-100.'
-stages.1.objectives.0.text: Git, niezmienny obraz registry, pożądany stan Argo i dane Vault o najniższych
-  uprawnieniach zgadzają się; prawdziwa board służy north-100.
-hints.0.text: 'Etap 1: sprawdź application.json — Argo CD wskazuje na wycofaną ścieżkę Git zamiast source.path=manifests
-  w wersji main z automatycznymi self-heal i prune.'
-hints.1.text: 'Etap 2: aplikacja Synced nadal jest w złej kondycji, ponieważ brakuje prywatnego registry
-  pull Secret, a reader.hcl wskazuje na niewłaściwą ścieżkę Vault KV.'
-hints.2.text: Przywróć rejestr pull Secret z private-release.json, zakres reader.hcl do dispatch tylko
-  do odczytu, uruchom sync-secret.sh i sprawdź odpowiedź działającego obrazu digest i HTTP.
+brief: Prywatny łańcuch dostarczania łączy Gitea, rejestr, Argo CD, Vault i board w Kubernetes. Pracuj tylko w `~/quest` i
+  tej zatoce offline. Przeczytaj `platform.env`, `application.json`, `repository/manifests/board.json`, `baseline-commit`,
+  `release-commit`, `private-release.json`, `reader.hcl` i `sync-secret.sh`. Application Argo opisuje źródło manifestów i
+  raportuje uzgadnianie; polityka Vault steruje dostępem do sekretów. Najpierw napraw uzgadnianie, potem dane dostępu w runtime.
+  Kontrole obserwują wybraną konfigurację, wartości i dwie ścieżki Vault; nie dowodzą całej historii Git ani odmowy dla wszystkich
+  pozostałych ścieżek Vault.
+debrief: Kontrole sprawdziły wybrane wyniki Git, Argo, board i Vault; nie dowodzą pełnego zakresu polityki ani niezmienionej
+  historii.
+stages.0.brief: 'Napraw Application `board`: repo URL musi odpowiadać `GIT_URL` z `platform.env`, ścieżka to `manifests`,
+  rewizja `main`, a automatyczne `selfHeal` i `prune` muszą być true. Poczekaj na status synchronizacji `Synced` przy zamrożonym
+  `baseline-commit`. Powiązana wskazówka opisuje odświeżenie Application.'
+stages.0.objectives.0.text: Źródło Application, automatyka i synchronizacja bazowa odpowiadają opisowi.
+stages.1.brief: 'Pobierz `origin/main` w `repository`; musi odpowiadać `release-commit`. Zachowaj w Application `board` ten
+  sam URL, ścieżkę, rewizję i automatykę; stan ma być `Synced` i `Healthy` przy `release-commit`. Poczekaj na rollout board
+  i sprawdź, czy `board:8080` zwraca `north-100`. Pierwszy kontener board musi używać obrazu z `/run/dq/facts/0/private-release.json`,
+  `imagePullPolicy: Always`, dokładnie `imagePullSecrets: [{name: registry-pull}]` i dokładnie jednego wpisu środowiska: `ROUTE_SECRET`
+  z Secret `route-secret`, klucz `value`. imageID gotowego kontenera board musi zawierać digest tego obrazu. Wartość Secret
+  oraz `secret/data/dispatch` tokena Vault muszą wynosić `north-secret`; dostęp tokena do `secret/data/other` musi zwracać
+  HTTP 403. Manifest Git w `origin/main:manifests/board.json` musi zachować pierwszy zamrożony obraz i nazwę Secret `route-secret`
+  w pierwszym wpisie środowiska. Użyj `reader.hcl` i `sync-secret.sh`, następnie zrestartuj board. Dwie sprawdzone ścieżki
+  Vault nie dowodzą pełnej zasady najmniejszych uprawnień.'
+stages.1.objectives.0.text: Rewizja wydania, stan Application, konfiguracja i odpowiedź board oraz wybrane pola Git i wyniki
+  Vault odpowiadają opisowi.
+hints.0.text: 'Etap 1: sprawdź application.json — Argo CD wskazuje na wycofaną ścieżkę Git zamiast source.path=manifests w
+  wersji main z automatycznymi self-heal i prune.'
+hints.1.text: 'Etap 2: aplikacja Synced nadal jest w złej kondycji, ponieważ brakuje prywatnego registry pull Secret, a reader.hcl
+  wskazuje na niewłaściwą ścieżkę Vault KV.'
+hints.2.text: Przywróć rejestr pull Secret z private-release.json, zakres reader.hcl do dispatch tylko do odczytu, uruchom
+  sync-secret.sh i sprawdź odpowiedź działającego obrazu digest i HTTP.
 phrases.0: Wyizolowałem awarie na każdej granicy dostawy.
 phrases.1: Zachowałem niezmienną tożsamość obrazu i uzgodnienie Git.
 phrases.2: Zweryfikowałem tajny dostęp o najniższych uprawnieniach i prawdziwą kompleksową obsługę.
-questions.0.points.0: Zastosowany desired state może nadal odwoływać się do niedostępnych obrazów lub
-  Secrets.
+questions.0.points.0: Zastosowany desired state może nadal odwoływać się do niedostępnych obrazów lub Secrets.
 questions.0.points.1: Sprawdź osobno sync, health, events i rzeczywiste żądania.
 questions.0.prompt: Dlaczego Application może być Synced, podczas gdy jego kapsuły ulegają awarii?
-questions.1.points.0: Popraw wersję źródła, uruchamiając digest i poświadczenia środowiska wykonawczego
-  o określonym zakresie.
+questions.1.points.0: Popraw wersję źródła, uruchamiając digest i poświadczenia środowiska wykonawczego o określonym zakresie.
 questions.1.points.1: Przydatne żądanie zostanie zrealizowane poprzez odzyskaną usługę.
 questions.1.prompt: Co sprawdza pełne odzyskiwanie poza ekologicznym kontrolerem?
