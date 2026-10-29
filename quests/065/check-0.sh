@@ -8,43 +8,43 @@ printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN" > "$headers/reader"
 failed=0
 status=$(curl -fsS "$VAULT_ADDR/v1/sys/seal-status" 2>/dev/null || true)
 if ! jq -e '.initialized == true' <<<"$status" >/dev/null 2>&1; then
-  printf '%s\n' 'sys/seal-status initialized = true: ✗'
+  printf '%s\n' 'sys/seal-status initialized = true: ✗ [DQ:initialized]'
   failed=1
 fi
 if ! jq -e '.sealed == false' <<<"$status" >/dev/null 2>&1; then
-  printf '%s\n' 'sys/seal-status sealed = false: ✗'
+  printf '%s\n' 'sys/seal-status sealed = false: ✗ [DQ:sealed]'
   failed=1
 fi
 if ! jq -e '.t == 2' <<<"$status" >/dev/null 2>&1; then
-  printf '%s\n' 'sys/seal-status t = 2: ✗'
+  printf '%s\n' 'sys/seal-status t = 2: ✗ [DQ:threshold]'
   failed=1
 fi
 if ! jq -e '.n == 3' <<<"$status" >/dev/null 2>&1; then
-  printf '%s\n' 'sys/seal-status n = 3: ✗'
+  printf '%s\n' 'sys/seal-status n = 3: ✗ [DQ:shares]'
   failed=1
 fi
 if ! test "$(stat -c %a unseal-shares.json 2>/dev/null)" = 600; then
-  printf '%s\n' 'unseal-shares.json mode = 0600: ✗'
+  printf '%s\n' 'unseal-shares.json mode = 0600: ✗ [DQ:mode]'
   failed=1
 fi
 if ! jq -e 'type == "array"' unseal-shares.json >/dev/null 2>&1; then
-  printf '%s\n' 'unseal-shares.json type = array: ✗'
+  printf '%s\n' 'unseal-shares.json type = array: ✗ [DQ:array]'
   failed=1
 fi
 if ! jq -e 'type == "array" and length == 2' unseal-shares.json >/dev/null 2>&1; then
-  printf '%s\n' 'unseal-shares.json length = 2: ✗'
+  printf '%s\n' 'unseal-shares.json length = 2: ✗ [DQ:length]'
   failed=1
 fi
 if ! jq -e 'type == "array" and all(.[];type == "string")' unseal-shares.json >/dev/null 2>&1; then
-  printf '%s\n' 'unseal-shares.json entries type = string: ✗'
+  printf '%s\n' 'unseal-shares.json entries type = string: ✗ [DQ:types]'
   failed=1
 fi
 if ! jq -e 'type == "array" and length == 2 and .[0] != .[1]' unseal-shares.json >/dev/null 2>&1; then
-  printf '%s\n' 'unseal-shares.json [0] ≠ [1]: ✗'
+  printf '%s\n' 'unseal-shares.json [0] ≠ [1]: ✗ [DQ:distinct]'
   failed=1
 fi
 if ! test "$(curl -fsS -H @"$headers/reader" "$VAULT_ADDR/v1/secret/data/dispatch" 2>/dev/null | jq -er .data.data.value 2>/dev/null)" = north-secret; then
-  printf '%s\n' 'reader secret/data/dispatch value = north-secret: ✗'
+  printf '%s\n' 'reader secret/data/dispatch value = north-secret: ✗ [DQ:reader]'
   failed=1
 fi
 exit "$failed"

@@ -9,35 +9,35 @@ printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN" > "$headers/manager"
 failed=0
 status=$(curl -fsS "$VAULT_ADDR/v1/sys/seal-status" 2>/dev/null || true)
 if ! jq -e '.initialized == true' <<<"$status" >/dev/null 2>&1; then
-  printf '%s\n' 'sys/seal-status initialized = true: ✗'
+  printf '%s\n' 'sys/seal-status initialized = true: ✗ [DQ:initialized]'
   failed=1
 fi
 if ! jq -e '.sealed == false' <<<"$status" >/dev/null 2>&1; then
-  printf '%s\n' 'sys/seal-status sealed = false: ✗'
+  printf '%s\n' 'sys/seal-status sealed = false: ✗ [DQ:sealed]'
   failed=1
 fi
 if ! test -s /run/dq/facts/0/original-cluster-id || ! jq -e --arg id "$(cat /run/dq/facts/0/original-cluster-id 2>/dev/null)" '.cluster_id == $id' <<<"$status" >/dev/null 2>&1; then
-  printf '%s\n' 'cluster_id = /run/dq/facts/0/original-cluster-id: ✗'
+  printf '%s\n' 'cluster_id = /run/dq/facts/0/original-cluster-id: ✗ [DQ:cluster]'
   failed=1
 fi
 if ! jq -e '.t == 2' <<<"$status" >/dev/null 2>&1; then
-  printf '%s\n' 'sys/seal-status t = 2: ✗'
+  printf '%s\n' 'sys/seal-status t = 2: ✗ [DQ:threshold]'
   failed=1
 fi
 if ! jq -e '.n == 3' <<<"$status" >/dev/null 2>&1; then
-  printf '%s\n' 'sys/seal-status n = 3: ✗'
+  printf '%s\n' 'sys/seal-status n = 3: ✗ [DQ:shares]'
   failed=1
 fi
 if ! test "$(curl -fsS -H @"$headers/reader" "$VAULT_ADDR/v1/secret/data/dispatch" 2>/dev/null | jq -er .data.data.value 2>/dev/null)" = north-secret; then
-  printf '%s\n' 'reader secret/data/dispatch value = north-secret: ✗'
+  printf '%s\n' 'reader secret/data/dispatch value = north-secret: ✗ [DQ:reader]'
   failed=1
 fi
 if ! test "$(curl -sS -o /dev/null -w '%{http_code}' -H @"$headers/manager" "$VAULT_ADDR/v1/secret/data/dispatch" 2>/dev/null)" = 403; then
-  printf '%s\n' 'manager secret/data/dispatch HTTP = 403: ✗'
+  printf '%s\n' 'manager secret/data/dispatch HTTP = 403: ✗ [DQ:manager]'
   failed=1
 fi
 if ! test "$(stat -c %a unseal-shares.json 2>/dev/null)" = 600; then
-  printf '%s\n' 'unseal-shares.json mode = 0600: ✗'
+  printf '%s\n' 'unseal-shares.json mode = 0600: ✗ [DQ:mode]'
   failed=1
 fi
 exit "$failed"
