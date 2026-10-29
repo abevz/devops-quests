@@ -1,0 +1,69 @@
+heading: Almacenamiento, identidad y limpieza segura
+text: '# Almacenamiento, identidad y limpieza segura
+
+
+  Usa solo la bahía desechable. Un StatefulSet da a cada Pod un nombre ordinal estable, mientras su claim puede sobrevivir al reemplazo del Pod. Un Service headless proporciona DNS ordinal. Compara los archivos UID y manifiestos suministrados con los objetos activos; espera el Pod de reemplazo antes de probar su nombre y respuesta HTTP. La identidad estable no demuestra por sí sola el contenido del volumen.
+
+
+  PersistentVolume (PV) y PersistentVolumeClaim (PVC) son objetos diferentes. La política de recuperación `Retain` del PV conserva el volumen para recuperación manual cuando se elimina un claim; el valor predeterminado de StorageClass no cambia retroactivamente un PV existente. En la misión de recuperación, lee `volume-contract.json` y `original-claim-uid`, verifica que el claim antiguo desapareció y usa precondiciones UID con los valores suministrados antes de eliminar su referencia antigua. Espera que se vincule el claim de reemplazo. Este volumen local de práctica no es una copia fuera del host.
+
+
+  Para el ledger sintético sin escrituras, `ledger.tar` debe contener solo `ledger.txt` y coincidir con `original-ledger.sha256`; tras recuperar, compara también el archivo activo y los bytes HTTP. Una base de datos activa necesita un método de copia coherente con la aplicación, no asumir que cualquier copia de archivos es consistente.
+
+
+  Un finalizer mantiene un objeto en eliminación hasta que termina la limpieza. Lee `cleanup-contract.json`, verifica los UID y la asociación esperados, limpia el registro identificado y luego elimina solo el finalizer conocido con precondiciones. Nunca elimines un finalizer desconocido solo para hacer desaparecer el objeto. Las comprobaciones actuales no demuestran todo el orden de comandos anteriores.
+
+
+  Referencias: [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/), [política de recuperación PV](https://kubernetes.io/docs/tasks/administer-cluster/change-pv-reclaim-policy/), [finalizers](https://kubernetes.io/docs/concepts/overview/working-with-objects/finalizers/).
+
+
+  Empieza en `~/quest`. En la misión 111 inspecciona el ordinal y compara los archivos antes de cambiar el listener:
+
+
+  ```sh
+
+  cd ~/quest
+
+  kubectl get statefulset shelf -o yaml
+
+  kubectl get pod shelf-0 -o jsonpath=''{.metadata.uid}''
+
+  cat original-pod-uid
+
+  ```
+
+
+  En la misión 124 inspecciona el PV:
+
+
+  ```sh
+
+  volume=$(jq -r .volume volume-contract.json)
+
+  kubectl get pv "$volume" -o yaml
+
+  ```
+
+
+  En la misión 128, para el único archivo sintético, extrae un archivo del Pod, inspecciónalo y compara su suma. En la etapa de restauración devuélvelo solo tras verificarlo:
+
+
+  ```sh
+
+  kubectl exec deployment/ledger -- tar cf - -C /data ledger.txt > ledger.tar
+
+  tar tf ledger.tar
+
+  tar xOf ledger.tar ledger.txt | sha256sum
+
+  cat original-ledger.sha256
+
+  kubectl exec -i deployment/ledger -- tar xf - -C /data < ledger.tar
+
+  ```
+
+
+  En la misión 129, antes de limpiar, inspecciona el contrato y los objetos activos. Construye DeleteOptions con el UID fijado del hijo y un JSON Patch que pruebe el UID del padre y la lista completa esperada de finalizers antes de eliminarla. Envía DeleteOptions al endpoint del Secret en el namespace y aplica el patch al ConfigMap; si falla una prueba, detente e investiga. El finalizer conocido y la etiqueta del padre están en la descripción.
+
+  '
+source_hash: 24fa1333553bcca962e29220539fe20379d31c52225f05ec4ef4e4ef35a35835

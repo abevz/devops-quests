@@ -1,0 +1,69 @@
+heading: Хранение, идентичность и безопасная очистка
+text: '# Хранение, идентичность и безопасная очистка
+
+
+  Используйте только одноразовую песочницу задания. StatefulSet даёт каждому Pod стабильное порядковое имя, а его claim может пережить замену Pod. Headless Service предоставляет порядковый DNS. Сравните выданные файлы UID и манифесты с работающими объектами; дождитесь нового Pod перед проверкой имени и HTTP-ответа. Стабильная идентичность сама по себе не доказывает содержимое тома.
+
+
+  PersistentVolume (PV) и PersistentVolumeClaim (PVC) — разные объекты. Политика возврата PV `Retain` сохраняет том для ручного восстановления после удаления claim; настройка StorageClass по умолчанию не меняет существующий PV задним числом. В задании восстановления изучите `volume-contract.json` и `original-claim-uid`, убедитесь, что старый claim удалён, и используйте UID-предусловия с выданными значениями перед удалением старой ссылки claim. Дождитесь привязки нового claim. Этот локальный учебный том не является резервной копией вне узла.
+
+
+  Для синтетического ledger без одновременной записи `ledger.tar` должен содержать только `ledger.txt` и совпадать с `original-ledger.sha256`; после восстановления сравните также работающий файл и HTTP-байты. Работающей базе данных нужен согласованный с приложением метод резервного копирования; произвольная копия файлов не обязательно согласована.
+
+
+  Finalizer удерживает объект при удалении до завершения очистки. Изучите `cleanup-contract.json`, проверьте ожидаемые UID и связь объектов, удалите указанный ресурс и затем только известный finalizer с предусловиями. Никогда не удаляйте неизвестный finalizer только ради исчезновения объекта. Проверки текущих объектов не доказывают весь порядок прошлых команд.
+
+
+  Источники: [StatefulSet](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/), [политика возврата PV](https://kubernetes.io/docs/tasks/administer-cluster/change-pv-reclaim-policy/), [finalizer](https://kubernetes.io/docs/concepts/overview/working-with-objects/finalizers/).
+
+
+  Начните в `~/quest`. В задании 111 проверьте ordinal и сравните файлы перед изменением listener:
+
+
+  ```sh
+
+  cd ~/quest
+
+  kubectl get statefulset shelf -o yaml
+
+  kubectl get pod shelf-0 -o jsonpath=''{.metadata.uid}''
+
+  cat original-pod-uid
+
+  ```
+
+
+  В задании 124 проверьте PV:
+
+
+  ```sh
+
+  volume=$(jq -r .volume volume-contract.json)
+
+  kubectl get pv "$volume" -o yaml
+
+  ```
+
+
+  В задании 128 для одного синтетического файла получите архив из Pod, изучите его и сравните сумму. На этапе восстановления отправьте его обратно только после проверки:
+
+
+  ```sh
+
+  kubectl exec deployment/ledger -- tar cf - -C /data ledger.txt > ledger.tar
+
+  tar tf ledger.tar
+
+  tar xOf ledger.tar ledger.txt | sha256sum
+
+  cat original-ledger.sha256
+
+  kubectl exec -i deployment/ledger -- tar xf - -C /data < ledger.tar
+
+  ```
+
+
+  В задании 129 перед очисткой изучите контракт и текущие объекты. Создайте DeleteOptions с сохранённым UID дочернего объекта и JSON Patch, который перед удалением проверяет UID родителя и весь ожидаемый массив finalizer. Отправьте DeleteOptions на endpoint Secret в namespace, затем примените patch к ConfigMap; при ошибке проверки остановитесь и выясните причину. Известный finalizer и метка родителя указаны в задании.
+
+  '
+source_hash: 24fa1333553bcca962e29220539fe20379d31c52225f05ec4ef4e4ef35a35835

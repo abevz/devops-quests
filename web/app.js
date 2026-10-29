@@ -3,6 +3,7 @@ import { renderDiagrams } from "./diagrams.mjs";
 import { referenceParts } from "./reference.mjs";
 import { attemptState, canRun, filterLevels, narrative } from "./play.mjs";
 import { keySequence } from "./controls.mjs";
+import { diagnosticMessages } from "./diagnostics.mjs";
 import { scoreBreakdown } from "./score-preview.mjs";
 import { loadI18n, languageControls } from "./vendor/locale.js";
 const $ = (id) => document.getElementById(id),
@@ -947,6 +948,7 @@ function renderCheckFeedback(run, quest) {
     wrap.append(el("p", t("checks.reason", { code: item.code })));
     wrap.append(el("p", t(item.reason ?? "checks.cause.unsatisfied")));
     if (item.detail) {
+      for (const message of diagnosticMessages(item.detail, quest.diagnostics)) block(message, wrap);
       const diagnostic = el("details");
       diagnostic.append(el("summary", t("checks.diagnostic")), el("pre", item.detail));
       wrap.append(diagnostic);

@@ -73,6 +73,9 @@ async def test_preferences_are_per_user_authenticated_and_csrf_protected(tmp_pat
     await client.start_server()
     try:
         assert (await client.get("/api/locales")).status == 200
+        diagnostic_asset = await client.get("/assets/diagnostics.mjs")
+        assert diagnostic_asset.status == 200
+        assert "diagnosticMessages" in await diagnostic_asset.text()
         assert (
             await client.post(
                 "/api/preferences", json={"primary": "ru", "translation": "en"}
