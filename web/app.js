@@ -1,7 +1,7 @@
 import { storageGet, storageSet, sidebarKey, readCollapsed, saveCollapsed, installNavigationIcons } from "./navigation.mjs";
 import { renderDiagrams } from "./diagrams.mjs";
 import { referenceParts } from "./reference.mjs";
-import { attemptState, canRun, filterLevels, narrative } from "./play.mjs";
+import { attemptState, canRun, filterLevels, narrative, showHintGuide } from "./play.mjs";
 import { keySequence } from "./controls.mjs";
 import { diagnosticMessages } from "./diagnostics.mjs";
 import { scoreBreakdown } from "./score-preview.mjs";
@@ -575,14 +575,16 @@ $("preview-hint").onclick = async () => {
 };
 function renderHints(hints, node) {
   node.replaceChildren();
-  for (const hint of hints) {
+  for (const [index, hint] of hints.entries()) {
     const box = el("div", undefined, "hint");
     block(hint.text, box);
-    const link = el("a", t("guide.link", { heading: i18n.content(hint.label).text }));
-    link.href = new URL(hint.url, base);
-    link.target = "_blank";
-    link.rel = "noopener";
-    box.append(link);
+    if (showHintGuide(hints, index)) {
+      const link = el("a", t("guide.link", { heading: i18n.content(hint.label).text }));
+      link.href = new URL(hint.url, base);
+      link.target = "_blank";
+      link.rel = "noopener";
+      box.append(link);
+    }
     node.append(box);
   }
 }
