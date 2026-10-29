@@ -2,12 +2,12 @@ set -euo pipefail
 cd ~/quest
 failed=0
 if ! policies=$(kubectl get networkpolicies -o json 2>/dev/null); then
-  printf '%s\n' 'kubectl get networkpolicies: ✗'
+  printf '%s\n' 'kubectl get networkpolicies: ✗ [DQ:policies]'
   failed=1
   policies='{"items":[]}'
 fi
 if ! pods=$(kubectl get pods -l app=client -o json 2>/dev/null); then
-  printf '%s\n' 'client Pods: ✗'
+  printf '%s\n' 'client Pods: ✗ [DQ:pods]'
   failed=1
   pods='{"items":[]}'
 fi
@@ -82,43 +82,43 @@ def flows(spec, target):
 def validate(document, pods, target):
     labels = [pod["metadata"]["labels"] for pod in pods["items"]]
     if not labels:
-        return ["client Pods: ✗"]
+        return ["client Pods: ✗ [DQ:pods]"]
     expected = {("dns", "UDP", 53), ("dns", "TCP", 53), (target, "TCP", 8080)}
     items = document["items"]
     named = [p for p in items if p.get("metadata", {}).get("name") == "client-egress"]
     errors = []
     if len(named) != 1:
-        return ["networkpolicy/client-egress: ✗"]
+        return ["networkpolicy/client-egress: ✗ [DQ:named]"]
     spec = named[0]["spec"]
     if not simple_selector(spec.get("podSelector"), {"app": "client"}):
-        errors.append("client-egress podSelector = app:client: ✗")
+        errors.append("client-egress podSelector = app:client: ✗ [DQ:selector]")
     if set(spec.get("policyTypes", [])) != {"Egress"}:
-        errors.append("client-egress policyTypes = [Egress]: ✗")
+        errors.append("client-egress policyTypes = [Egress]: ✗ [DQ:types]")
     try:
         actual = flows(spec, target)
     except (KeyError, TypeError, ValueError, AttributeError):
-        errors.append("client-egress egress peers/ports: ✗")
+        errors.append("client-egress egress peers/ports: ✗ [DQ:egress]")
     else:
         for destination, protocol, port in sorted(expected - actual):
-            errors.append(f"client-egress {destination} {protocol} {port}: ✗")
+            errors.append(f"client-egress {destination} {protocol} {port}: ✗ [DQ:missing_{destination}_{protocol.lower()}_{port}]")
         for destination, protocol, port in sorted(actual - expected):
-            errors.append(f"client-egress {destination} {protocol} {port}: ✗")
+            errors.append(f"client-egress {destination} {protocol} {port}: ✗ [DQ:unexpected]")
     for policy in items:
         other = policy["spec"]
         if policy is named[0] or "Egress" not in other.get("policyTypes", []):
             continue
         try:
             if any(matches(other.get("podSelector", {}), pod_labels) for pod_labels in labels) and not flows(other, target) <= expected:
-                errors.append("networkpolicy/" + policy.get("metadata", {}).get("name", "?") + " egress: ✗")
+                errors.append("networkpolicy/" + policy.get("metadata", {}).get("name", "?") + " egress: ✗ [DQ:other_egress]")
         except (KeyError, TypeError, ValueError, AttributeError):
-            errors.append("networkpolicy/" + policy.get("metadata", {}).get("name", "?") + " selector/egress: ✗")
+            errors.append("networkpolicy/" + policy.get("metadata", {}).get("name", "?") + " selector/egress: ✗ [DQ:other_invalid]")
     return errors
 
 
 try:
     problems = validate(json.loads(sys.argv[1]), json.loads(sys.argv[2]), sys.argv[3])
 except (KeyError, TypeError, ValueError, AttributeError, json.JSONDecodeError):
-    problems = ["networkpolicies / client Pod labels: ✗"]
+    problems = ["networkpolicies / client Pod labels: ✗ [DQ:invalid_input]"]
 if problems:
     print("\n".join(problems))
     sys.exit(1)
@@ -127,20 +127,20 @@ then
   failed=1
 fi
 if ! timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- nslookup -type=A "board.$DQ_NAMESPACE.svc.cluster.local." >/dev/null 2>&1; then
-  printf '%s\n' 'deployment/client DNS board: ✗'
+  printf '%s\n' 'deployment/client DNS board: ✗ [DQ:dns]'
   failed=1
 fi
 if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = north-119; then
-  printf '%s\n' 'deployment/client → board:8080 = north-119: ✗'
+  printf '%s\n' 'deployment/client → board:8080 = north-119: ✗ [DQ:http]'
   failed=1
 fi
 closed=$(kubectl get service closed -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
 if ! test -n "$closed" || ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -- wget -qO- -T 3 "http://$closed:8080" 2>/dev/null)" = closed-119; then
-  printf '%s\n' 'deployment/board → closed:8080 = closed-119: ✗'
+  printf '%s\n' 'deployment/board → closed:8080 = closed-119: ✗ [DQ:closed_direct]'
   failed=1
 fi
 if test -n "$closed" && timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- wget -qO- -T 2 "http://$closed:8080" >/dev/null 2>&1; then
-  printf '%s\n' 'deployment/client → closed:8080 fails: ✗'
+  printf '%s\n' 'deployment/client → closed:8080 fails: ✗ [DQ:closed_denied]'
   failed=1
 fi
 exit "$failed"
