@@ -1,0 +1,9 @@
+# Восстановление приватного DNS
+
+Перед подключением клиента имя DNS преобразуется в адрес. Эти задания используют приватную копию CoreDNS, а не DNS всего кластера. `Corefile` задаёт прослушивание и плагины: `hosts` связывает имя с адресом, а `ttl` ограничивает время кэширования ответа. Выданный `expected-dns-address` содержит нужный адрес; `dns-config.json`, `dns.json`, `dns-service.json` и `client.json` показывают ConfigMap, нагрузку DNS, порты Service и настройки клиента.
+
+Pod с `dnsPolicy: None` использует явно перечисленные серверы имён. DNS Service принимает TCP и UDP запросы на порту 53 и пересылает их на порт 1053 копии. Изучите приватную конфигурацию через `kubectl get configmap station-dns -o yaml`, а Service через `kubectl get service station-dns -o yaml`. После изменения ConfigMap перезапустите только Deployment этой песочницы командой `kubectl rollout restart deployment/station-dns` и дождитесь `kubectl rollout status deployment/station-dns --timeout=90s`.
+
+Проверьте разрешение имени из клиента, затем HTTP-адрес: ответ DNS сам по себе не доказывает работу маршрутизации или приложения. Распространение адреса или истечение кэша может занять время. Не меняйте DNS `kube-system` и внешние резолверы.
+
+Источники: [настройка DNS Kubernetes](https://kubernetes.io/docs/tasks/administer-cluster/dns-custom-nameservers/), [плагин hosts CoreDNS](https://coredns.io/plugins/hosts/).
