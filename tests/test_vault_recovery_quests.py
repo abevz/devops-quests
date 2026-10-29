@@ -14,6 +14,10 @@ from devops_quests.code_translation import fenced_blocks
 def test_vault_quests_link_an_authored_localized_recovery_guide():
     catalog = Catalog()
     guide = catalog.guide("vault-recovery")
+    groups = catalog.guide_index()
+    assert any(group["id"] == "Vault-Recovery" for group in groups)
+    for language in ("en", "pl", "es", "de", "ru"):
+        assert catalog.resources.ui[language]["guide.source.Vault-Recovery"] == "Vault"
     for number in (65, 83, 93):
         assert all(hint.get("guide") == "vault-recovery" for hint in catalog.quests[number]["hints"])
     russian = (ROOT / "docs/Vault-Recovery.md").read_text()
