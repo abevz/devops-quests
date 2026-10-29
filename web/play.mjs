@@ -64,3 +64,8 @@ export function attemptState(run) {
     showReplay: !!run && !active,
   };
 }
+
+// Only compare with the previous revealed hint, so a link can reappear after a different one.
+export function showHintGuide(hints, index) {
+  return index === 0 || hints[index].url !== hints[index - 1].url;
+}

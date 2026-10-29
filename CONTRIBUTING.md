@@ -9,6 +9,11 @@ Checks must verify the requested behavior, not only search command history. Decl
 actual dependencies and cleanup only positively owned resources. Add meaningful content
 and boundary tests. Never renumber existing IDs or copy book prose/questions.
 
+When editing a quest, prefer a specific guide section or per-hint anchor for each hint
+when it helps the learner find the relevant explanation. Add any needed guide anchors
+and navigation support as part of that future edit; existing quests need no bulk rewrite.
+Consecutive revealed hints with the same link show it only once.
+
 Run real integration only on an isolated Linux host with disposable synthetic state:
 `DQ_INTEGRATION=1 .venv/bin/python -m pytest 'tests/test_quests.py::test_quest[ID]' -q`.
 Stop the app first; the fixture intentionally holds its runtime lock. Changes to levels
