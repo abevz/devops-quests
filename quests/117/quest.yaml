@@ -7,26 +7,14 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: 'jq -e --arg node "$DQ_NODE_NAME" ''.verified==true and .source=="file" and .node==$node'' /run/dq/observations/static-pod.json
-      >/dev/null
-
-      uid=$(jq -r .mirrorUID /run/dq/observations/static-pod.json)
-
-      hash=$(jq -r .configHash /run/dq/observations/static-pod.json)
-
-      kubectl get pod "static-board-$DQ_NODE_NAME" -o json | jq -e --arg node "$DQ_NODE_NAME" --arg uid "$uid" --arg
-      hash "$hash" ''.metadata.uid==$uid and .metadata.annotations["kubernetes.io/config.mirror"]==$hash
-      and .spec.nodeName==$node and any(.status.containerStatuses[]?;.ready==true)''
-      >/dev/null
-
-      test "$(kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080)" = north-117'
+    check: "set -euo pipefail\ncd ~/quest\nfailed=0\ncheck() { local id=$1 label=$2 expression=$3 document=$4; if ! jq -e \"$expression\" <<<\"$document\" >/dev/null 2>&1; then printf '%s\\n' \"$label: ✗ [DQ:$id]\"; failed=1; fi; }\nobservation=$(cat /run/dq/observations/static-pod.json 2>/dev/null || true)\ncheck verified 'static observation verified = true' '.verified==true' \"$observation\"\ncheck source 'static observation source = file' '.source==\"file\"' \"$observation\"\nif ! jq -e --arg node \"$DQ_NODE_NAME\" '.node==$node' <<<\"$observation\" >/dev/null 2>&1; then printf '%s\\n' 'static observation node = bay node: ✗ [DQ:node]'; failed=1; fi\nuid=$(jq -r '.mirrorUID // \"\"' <<<\"$observation\" 2>/dev/null || true)\nhash=$(jq -r '.configHash // \"\"' <<<\"$observation\" 2>/dev/null || true)\npod=$(timeout 2s kubectl get pod \"static-board-$DQ_NODE_NAME\" -o json 2>/dev/null || true)\nif ! test -n \"$uid\" || ! jq -e --arg uid \"$uid\" '.metadata.uid==$uid' <<<\"$pod\" >/dev/null 2>&1; then printf '%s\\n' 'mirror Pod UID = observed mirrorUID: ✗ [DQ:uid]'; failed=1; fi\nif ! test -n \"$hash\" || ! jq -e --arg hash \"$hash\" '.metadata.annotations[\"kubernetes.io/config.mirror\"]==$hash' <<<\"$pod\" >/dev/null 2>&1; then printf '%s\\n' 'mirror Pod annotation = observed configHash: ✗ [DQ:hash]'; failed=1; fi\nif ! jq -e --arg node \"$DQ_NODE_NAME\" '.spec.nodeName==$node' <<<\"$pod\" >/dev/null 2>&1; then printf '%s\\n' 'mirror Pod node = bay node: ✗ [DQ:pod_node]'; failed=1; fi\ncheck ready 'mirror Pod has a ready container' 'any(.status.containerStatuses[]?;.ready==true)' \"$pod\"\nif ! test \"$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- wget -qO- -T 3 http://board:8080 2>/dev/null)\" = north-117; then printf '%s\\n' 'board:8080 = north-117: ✗ [DQ:http]'; failed=1; fi\nexit \"$failed\"\n"
 hints:
 - text: hints.0.text
-  guide: kubernetes-20
+  guide: controllers-static
 - text: hints.1.text
-  guide: kubernetes-20
+  guide: controllers-static
 - text: hints.2.text
-  guide: kubernetes-20
+  guide: controllers-static
 debrief: debrief
 phrases:
 - phrases.0

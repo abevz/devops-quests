@@ -1,50 +1,68 @@
 title: Simulación de incidente de entrevista
-brief: 'Recupere el servicio station board en dos etapas del incidente. En la etapa uno, el board Deployment
-  no logra escalar bajo carga a pesar de que el HPA (objetivo 50% CPU, rango 1 a 2 réplicas) y las métricas
-  API están activas; restaurar el escalado real impulsado por la CPU dentro del presupuesto requerido
-  del contenedor CPU (request 100m, limit 200m). En la segunda etapa, el tráfico a través del Gateway
-  privado (preservar el GatewayClass y el host north.station.internal) no logra llegar al board:8080;
-  restaure el enrutamiento y el aislamiento de ingreso para que solo los módulos del controlador Gateway
-  (app: gateway en el controlador congelado namespace) puedan alcanzar board en el puerto 8080 mientras
-  se mantiene el acceso directo a client y otros hosts. negado. No se necesitan cambios de nodo, DNS global
-  o listener público.
+brief: 'Recupera el servicio station board en dos etapas del incidente. En la primera etapa el Deployment board no escala
+  bajo carga aunque el HPA (objetivo CPU 50%, rango 1–2 réplicas) y la API de métricas están activos; restaura el escalado
+  real según CPU dentro del presupuesto del contenedor (request 100m, limit 200m). En la segunda etapa el tráfico por el Gateway
+  privado (conserva GatewayClass y host north.station.internal) no llega a board:8080; restaura el enrutamiento y el aislamiento
+  ingress para que solo los Pods del controlador Gateway (app: gateway en el namespace fijado del controlador) puedan llegar
+  a board en el puerto 8080, mientras se deniegan el acceso directo de client y otros hosts. No hacen falta cambios de nodo,
+  DNS global ni listener público.
 
 
-  Archivos de búsqueda en `~/quest` (algunos aparecen en etapas posteriores): `board.json`, `service.json`,
-  `client.json`, `hpa.json`, `gateway.json`, `route.json`, `ingress-policy.json`, `gateway-target.json`.
+  Archivos de búsqueda en `~/quest` (algunos aparecen en etapas posteriores): `board.json`, `service.json`, `client.json`,
+  `hpa.json`, `gateway.json`, `route.json`, `ingress-policy.json`, `gateway-target.json`.
 
 
-  La bahía no tiene Internet ni DNS externo. Utilice únicamente archivos proporcionados, imágenes precargadas
-  y servicios privados. Cambie sólo esta bahía.
+  La bahía no tiene Internet ni DNS externo. Utilice únicamente archivos proporcionados, imágenes precargadas y servicios
+  privados. Cambie sólo esta bahía.
 
 
-  Criterios de éxito iniciales: las métricas reales de CPU impulsan dos réplicas listas bajo el HPA fijo
-  y el recurso limits.'
-debrief: El incidente se resolvió con escalamiento real, route status y pruebas de tráfico, preservando
-  al mismo tiempo un límite de aislamiento explícito.
-stages.0.brief: 'Criterios de éxito: las métricas reales de CPU impulsan dos réplicas listas bajo el HPA
-  fijo y el recurso limits.'
-stages.0.objectives.0.text: Las métricas reales de CPU impulsan dos réplicas listas bajo el HPA fijo y
-  el recurso limits.
-stages.1.brief: 'Criterios de éxito: El board escalado sirve a north-130 solo a través de su host Gateway
-  previsto; El acceso directo a client permanece denegado.'
-stages.1.objectives.0.text: El board escalado sirve al north-130 solo a través de su host Gateway previsto;
-  El acceso directo a client sigue denegado.
-hints.0.text: 'Etapa 1: el porcentaje de utilización de HPA requiere un CPU request distinto de cero en
-  el contenedor; inspect board.json y conjunto CPU request 100m y limit 200m sin cambiar el Especificaciones
-  HPA.'
-hints.1.text: 'Etapa 2: inspect route.json y ingress-policy.json: HTTPRoute apunta al puerto backend incorrecto
-  en lugar del puerto 8080 de Service, y NetworkPolicy utiliza una etiqueta de módulo de origen obsoleta.'
-hints.2.text: 'Configure el puerto backend HTTPRoute en 8080, permita ingress a board:8080 solo desde
-  podSelector app: gateway en el controlador namespace y verifique tanto el tráfico Gateway permitido
-  como el acceso directo bloqueado.'
+  En ambas etapas las comprobaciones requieren solicitud CPU `100m` y límite `200m` en el primer contenedor board, dos réplicas
+  listas, mínimo HPA 1 y máximo 2, primer objetivo de utilización 50, réplicas actuales y deseadas 2 y alguna utilización
+  actual de recurso superior a 50. Las comprobaciones no verifican que el primer objetivo ni la métrica actual sean de CPU;
+  el estado actual no demuestra la causa del escalado. En la segunda etapa la clase Gateway debe coincidir con `gateway-target.json`
+  y tener Accepted=True; el primer puerto backend de HTTPRoute debe ser 8080 y algún parent tener ResolvedRefs=True. La especificación
+  `board-ingress` debe coincidir con la estructura de una regla del `ingress-policy.json` proporcionado, solo con el namespace
+  fijado del controlador y el peer `app: gateway` en TCP 8080. La petición a la URL fijada con Host `north.station.internal`
+  debe devolver `north-130`; la petición directa a `board:8080` y la de Host `closed.station.internal` deben fallar. Los fallos
+  pueden tener causas distintas de la política o regla de host; las condiciones pueden ser antiguas o de otro parent.'
+debrief: El incidente se resolvió con escalamiento real, route status y pruebas de tráfico, preservando al mismo tiempo un
+  límite de aislamiento explícito.
+stages.0.brief: El presupuesto CPU de board, réplicas listas y ajustes y estado actual del HPA coinciden con la descripción.
+stages.0.objectives.0.text: El presupuesto CPU de board, réplicas listas y ajustes y estado actual del HPA coinciden con la
+  descripción.
+stages.1.brief: Las condiciones HPA siguen coincidiendo, al igual que Gateway, ruta, política ingress exacta y las tres pruebas
+  de tráfico.
+stages.1.objectives.0.text: Las condiciones HPA siguen coincidiendo, al igual que Gateway, ruta, política ingress exacta y
+  las tres pruebas de tráfico.
+hints.0.text: 'Etapa 1: el porcentaje de utilización de HPA requiere un CPU request distinto de cero en el contenedor; inspect
+  board.json y conjunto CPU request 100m y limit 200m sin cambiar el Especificaciones HPA.'
+hints.1.text: 'Etapa 2: inspect route.json y ingress-policy.json: HTTPRoute apunta al puerto backend incorrecto en lugar del
+  puerto 8080 de Service, y NetworkPolicy utiliza una etiqueta de módulo de origen obsoleta.'
+hints.2.text: 'Configure el puerto backend HTTPRoute en 8080, permita ingress a board:8080 solo desde podSelector app: gateway
+  en el controlador namespace y verifique tanto el tráfico Gateway permitido como el acceso directo bloqueado.'
 phrases.0: Aislé métricas, enrutamiento y fallas de policy.
 phrases.1: Verifiqué una ampliación real dentro de un presupuesto limitado.
 phrases.2: Probé el camino previsto y negué los caminos de circunvalación.
 questions.0.points.0: La evidencia independiente evita fijar la capa equivocada.
-questions.0.points.1: Los cambios más pequeños hacen que la recuperación y la reversión sean más fáciles
-  de evaluar.
+questions.0.points.1: Los cambios más pequeños hacen que la recuperación y la reversión sean más fáciles de evaluar.
 questions.0.prompt: ¿Por qué diagnosticar cada límite antes de cambiarlo todo?
 questions.1.points.0: No; Los caminos permitidos y prohibidos necesitan pruebas separadas.
 questions.1.points.1: La coincidencia de hosts Network policy y route impone límites diferentes.
 questions.1.prompt: ¿Una solicitud Gateway exitosa demuestra que el acceso directo está bloqueado?
+diagnostics.request: La solicitud CPU del primer contenedor board debe ser 100m.
+diagnostics.limit: El límite CPU del primer contenedor board debe ser 200m.
+diagnostics.ready: Board debe tener dos réplicas listas.
+diagnostics.minimum: HPA minReplicas debe ser 1.
+diagnostics.maximum: HPA maxReplicas debe ser 2.
+diagnostics.target: El primer objetivo de utilización del HPA debe ser 50.
+diagnostics.current: HPA currentReplicas debe ser 2.
+diagnostics.desired: HPA desiredReplicas debe ser 2.
+diagnostics.metric: Una métrica actual de recurso HPA debe tener utilización superior a 50.
+diagnostics.gateway_class: La clase Gateway debe coincidir con gateway-target.json.
+diagnostics.gateway_accepted: Gateway Accepted debe ser True.
+diagnostics.backend: El primer puerto backend de HTTPRoute debe ser 8080.
+diagnostics.resolved: Algún parent de HTTPRoute debe tener ResolvedRefs=True.
+diagnostics.policy: La especificación board-ingress debe coincidir con la política exacta de la descripción.
+diagnostics.gateway_http: La petición por gateway con Host north.station.internal debe devolver north-130.
+diagnostics.direct_denied: La petición directa a board:8080 debe fallar.
+diagnostics.wrong_host: La petición por gateway con Host closed.station.internal debe fallar.

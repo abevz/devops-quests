@@ -1,41 +1,43 @@
 title: Symulacja zdarzenia podczas rozmowy kwalifikacyjnej
-brief: 'Odzyskaj usługę station board na dwóch etapach zdarzenia. W pierwszym etapie board Deployment
-  nie skaluje się pod obciążeniem, mimo że HPA (docelowe 50% CPU, zakres 1–2 replik) i metryki API są
-  aktywne; przywrócić rzeczywiste skalowanie sterowane CPU w ramach wymaganego budżetu kontenera CPU (request
-  100m, limit 200m). W drugim etapie ruch przez prywatny Gateway (zachowaj GatewayClass i host north.station.internal)
-  nie dociera do board:8080; przywróć routing i izolację wejścia, aby tylko moduły kontrolera Gateway
-  (app: gateway w zamrożonym kontrolerze namespace) mogły uzyskać dostęp do board na porcie 8080, podczas
-  gdy bezpośredni dostęp client i innych hostów pozostaje zabroniony. Nie są potrzebne żadne zmiany węzłowe,
-  globalne DNS ani publiczne listener.
+brief: 'Odzyskaj usługę station board w dwóch etapach incydentu. W pierwszym etapie Deployment board nie skaluje się pod obciążeniem,
+  choć HPA (cel 50% CPU, zakres 1–2 replik) i API metryk działają; przywróć rzeczywiste skalowanie według CPU w wymaganym
+  budżecie kontenera (request 100m, limit 200m). W drugim etapie ruch przez prywatny Gateway (zachowaj GatewayClass i host
+  north.station.internal) nie dociera do board:8080; przywróć routing i izolację ingress, aby tylko Pody kontrolera Gateway
+  (app: gateway w zapisanym namespace kontrolera) mogły łączyć się z board na porcie 8080, a bezpośredni dostęp client i inne
+  hosty pozostały zabronione. Nie trzeba zmieniać węzłów, globalnego DNS ani publicznego listenera.
 
 
-  Pliki zadań w `~/quest` (niektóre pojawiają się w późniejszych etapach): `board.json`, `service.json`,
-  `client.json`, `hpa.json`, `gateway.json`, `route.json`, `ingress-policy.json`, `gateway-target.json`.
+  Pliki zadań w `~/quest` (niektóre pojawiają się w późniejszych etapach): `board.json`, `service.json`, `client.json`, `hpa.json`,
+  `gateway.json`, `route.json`, `ingress-policy.json`, `gateway-target.json`.
 
 
-  W zatoce nie ma Internetu ani zewnętrznego DNS. Korzystaj wyłącznie z dostarczonych plików, wstępnie
-  załadowanych obrazów i usług prywatnych. Zmień tylko tę zatokę.
+  W zatoce nie ma Internetu ani zewnętrznego DNS. Korzystaj wyłącznie z dostarczonych plików, wstępnie załadowanych obrazów
+  i usług prywatnych. Zmień tylko tę zatokę.
 
 
-  Początkowe kryteria sukcesu: Prawdziwe metryki CPU napędzają dwie gotowe repliki w ramach stałego HPA
-  i zasobu limits.'
-debrief: Incydent został rozwiązany poprzez rzeczywiste skalowanie, trasę status i testy ruchu przy zachowaniu
-  wyraźnej granicy izolacji.
-stages.0.brief: 'Kryteria sukcesu: Prawdziwe metryki CPU napędzają dwie gotowe repliki w ramach stałego
-  HPA i zasobu limits.'
-stages.0.objectives.0.text: Prawdziwe metryki CPU napędzają dwie gotowe repliki w ramach stałego HPA i
-  zasobu limits.
-stages.1.brief: 'Kryteria sukcesu: Skalowana board obsługuje north-130 tylko za pośrednictwem zamierzonego
-  hosta Gateway; bezpośredni dostęp client pozostaje zabroniony.'
-stages.1.objectives.0.text: Skalowana board obsługuje north-130 tylko poprzez zamierzony host Gateway;
-  bezpośredni dostęp client pozostaje zabroniony.
-hints.0.text: 'Etap 1: Procentowe wykorzystanie HPA wymaga niezerowego CPU request na kontenerze; sprawdź
-  board.json i ustaw CPU request 100m i limit 200m bez zmiany specyfikacji HPA.'
-hints.1.text: 'Etap 2: sprawdź route.json i ingress-policy.json — HTTPRoute wskazuje na nieprawidłowy
-  port backend port zamiast Service port 8080, a NetworkPolicy używa przestarzałej etykiety źródła.'
-hints.2.text: 'Ustaw port zaplecza HTTPRoute na 8080, zezwól ingress na board:8080 tylko z podSelector
-  app: gateway w kontrolerze namespace i sprawdź zarówno dozwolony ruch Gateway, jak i zablokowany bezpośredni
-  dostęp.'
+  W obu etapach kontrole wymagają w pierwszym kontenerze board żądania CPU `100m`, limitu `200m`, dwóch gotowych replik, minimum
+  HPA 1 i maksimum 2, pierwszej wartości docelowej wykorzystania 50, bieżącej i żądanej liczby replik 2 oraz bieżącego wykorzystania
+  jakiegoś zasobu powyżej 50. Kontrole nie sprawdzają, czy pierwsza metryka docelowa lub bieżąca metryka dotyczy CPU; stan
+  bieżący nie dowodzi przyczyny skalowania. W drugim etapie klasa Gateway musi odpowiadać `gateway-target.json` i mieć Accepted=True;
+  port pierwszego backendu HTTPRoute musi wynosić 8080, a jakiś parent musi mieć ResolvedRefs=True. Specyfikacja `board-ingress`
+  musi odpowiadać jednoregułowej strukturze dostarczonego `ingress-policy.json`, tylko z zapisanym namespace kontrolera i
+  peer `app: gateway` na TCP 8080. Żądanie do zapisanego URL z Host `north.station.internal` musi zwrócić `north-130`; bezpośrednie
+  `board:8080` i żądanie z Host `closed.station.internal` muszą się nie powieść. Niepowodzenia mogą mieć inne przyczyny niż
+  polityka lub reguła hosta; warunki statusu mogą być nieaktualne albo dotyczyć innego parenta.'
+debrief: Incydent został rozwiązany poprzez rzeczywiste skalowanie, trasę status i testy ruchu przy zachowaniu wyraźnej granicy
+  izolacji.
+stages.0.brief: Budżet CPU board, gotowe repliki oraz ustawienia i bieżący stan HPA odpowiadają opisowi.
+stages.0.objectives.0.text: Budżet CPU board, gotowe repliki oraz ustawienia i bieżący stan HPA odpowiadają opisowi.
+stages.1.brief: Warunki HPA nadal odpowiadają opisowi, podobnie jak Gateway, route, dokładna polityka ingress i trzy próby
+  ruchu.
+stages.1.objectives.0.text: Warunki HPA nadal odpowiadają opisowi, podobnie jak Gateway, route, dokładna polityka ingress
+  i trzy próby ruchu.
+hints.0.text: 'Etap 1: Procentowe wykorzystanie HPA wymaga niezerowego CPU request na kontenerze; sprawdź board.json i ustaw
+  CPU request 100m i limit 200m bez zmiany specyfikacji HPA.'
+hints.1.text: 'Etap 2: sprawdź route.json i ingress-policy.json — HTTPRoute wskazuje na nieprawidłowy port backend port zamiast
+  Service port 8080, a NetworkPolicy używa przestarzałej etykiety źródła.'
+hints.2.text: 'Ustaw port zaplecza HTTPRoute na 8080, zezwól ingress na board:8080 tylko z podSelector app: gateway w kontrolerze
+  namespace i sprawdź zarówno dozwolony ruch Gateway, jak i zablokowany bezpośredni dostęp.'
 phrases.0: Wyizolowałem metryki, routing i awarie policy.
 phrases.1: Sprawdziłem realne skalowanie w ramach ograniczonego budżetu.
 phrases.2: Udowodniłem zamierzoną ścieżkę i odmówiłem ścieżek obejściowych.
@@ -45,3 +47,20 @@ questions.0.prompt: Po co diagnozować każdą granicę przed zmianą wszystkieg
 questions.1.points.0: NIE; dozwolone i zabronione ścieżki wymagają oddzielnych testów.
 questions.1.points.1: Dopasowanie Network policy i trasy host wymusza różne granice.
 questions.1.prompt: Czy pomyślne żądanie Gateway dowodzi, że bezpośredni dostęp jest zablokowany?
+diagnostics.request: Żądanie CPU pierwszego kontenera board musi wynosić 100m.
+diagnostics.limit: Limit CPU pierwszego kontenera board musi wynosić 200m.
+diagnostics.ready: Board musi mieć dwie gotowe repliki.
+diagnostics.minimum: HPA minReplicas musi wynosić 1.
+diagnostics.maximum: HPA maxReplicas musi wynosić 2.
+diagnostics.target: Pierwsza docelowa wartość wykorzystania HPA musi wynosić 50.
+diagnostics.current: HPA currentReplicas musi wynosić 2.
+diagnostics.desired: HPA desiredReplicas musi wynosić 2.
+diagnostics.metric: Bieżąca metryka zasobu HPA musi mieć wykorzystanie powyżej 50.
+diagnostics.gateway_class: Klasa Gateway musi odpowiadać gateway-target.json.
+diagnostics.gateway_accepted: Gateway Accepted musi mieć wartość True.
+diagnostics.backend: Port pierwszego backendu HTTPRoute musi wynosić 8080.
+diagnostics.resolved: Jakiś parent HTTPRoute musi mieć ResolvedRefs=True.
+diagnostics.policy: Specyfikacja board-ingress musi odpowiadać dokładnej polityce z opisu.
+diagnostics.gateway_http: Żądanie przez gateway z Host north.station.internal musi zwrócić north-130.
+diagnostics.direct_denied: Bezpośrednie żądanie do board:8080 musi się nie powieść.
+diagnostics.wrong_host: Żądanie przez gateway z Host closed.station.internal musi się nie powieść.

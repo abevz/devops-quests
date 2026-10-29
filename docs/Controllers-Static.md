@@ -1,0 +1,25 @@
+# Контроллеры и статические Pod
+
+Используйте только офлайн-песочницу. CustomResourceDefinition добавляет тип API, а пользовательский ресурс хранит желаемое состояние. Контроллер регулярно наблюдает его и согласует принадлежащие ему ресурсы. В задании 116 ограниченный учебный оператор опрашивает `station`, затем управляет Deployment, ConfigMap и Service board. Изучите `station.json` и действующий объект, измените только желаемый маршрут и дождитесь согласования. Сравните `metadata.generation` с `status.observedGeneration`, проверьте готовность и controller ownerReference, затем HTTP. Текущий статус или ownerReference не доказывает историю изменений.
+
+Статическим Pod управляет kubelet, читающий локальный манифест узла, а не Pod, созданный через API. API показывает зеркальный Pod для наблюдения. В задании 117 измените только listener в выданном `static-pod.json`; не применяйте его через kubectl и не обращайтесь к хосту. Ограниченный адаптер проверяет всю безопасную структуру и при следующем опросе записывает её внутри одноразового узла kind. Настоящий kubelet создаёт Pod и зеркало, а наблюдение backend сравнивает sandbox CRI с зеркалом. Дождитесь адаптера и kubelet, затем изучите наблюдение, UID, hash и готовность зеркала. Одна аннотация зеркала не доказывает CRI.
+
+Источники: [шаблон оператора](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/), [статические Pod](https://kubernetes.io/docs/tasks/configure-pod-container/static-pod/).
+
+В задании 116 проверьте желаемое состояние и согласованный статус:
+
+```sh
+cd ~/quest
+cat station.json
+kubectl get stationboard station -o yaml
+kubectl get deployment board -o yaml
+```
+
+В задании 117 изучите подготовленный манифест и наблюдение адаптера:
+
+```sh
+cd ~/quest
+cat static-pod.json
+cat /run/dq/observations/static-pod.json
+kubectl get pod "static-board-$DQ_NODE_NAME" -o yaml
+```

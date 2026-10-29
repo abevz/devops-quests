@@ -1,0 +1,24 @@
+# Автомасштабирование и восстановление gateway
+
+Используйте только офлайн-песочницу. HorizontalPodAutoscaler (HPA) сравнивает наблюдаемое использование CPU с запросом CPU Pod; `100m` — одна десятая CPU. Отсутствующий или нулевой запрос не позволяет полезно вычислить использование. Изучите выданные `board.json` и `hpa.json`, API метрик, `kubectl top pods` и статус HPA. Установите нужные запрос и лимит, затем дайте время на сбор метрик, согласование HPA и готовность Pod. Текущая метрика и две реплики — наблюдения, а не доказательство истории масштабирования.
+
+На втором этапе задания 130 listener Gateway принимает соединения, а HTTPRoute выбирает backend Service по host и порту. Изучите `gateway.json`, `route.json` и сохранённые класс, URL и namespace контроллера в `gateway-target.json`. Проверьте Gateway Accepted и route ResolvedRefs, а в настоящих системах также parent и поколение; отдельное условие может устареть или относиться к другому parent.
+
+NetworkPolicy выбирает целевые Pod. Peer с namespaceSelector и podSelector выбирает Pod, удовлетворяющие обоим условиям в этом namespace; отдельные peer означали бы альтернативы. Сравните точную структуру одного правила `board-ingress` из задания с `ingress-policy.json`, затем проверьте сохранённый URL с разрешённым Host, закрытым Host и прямой доступ клиента. У неудачного запроса может быть несколько причин, поэтому сам по себе он не доказывает причину. Одноразовый адаптер и его приватные послабления TLS не являются производственной конфигурацией.
+
+Источники: [HPA](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/), [HTTPRoute](https://gateway-api.sigs.k8s.io/reference/api-types/httproute/), [NetworkPolicy](https://kubernetes.io/docs/reference/kubernetes-api/networking/network-policy-v1/).
+
+Проверьте ресурсы и состояние метрик:
+
+```sh
+cd ~/quest
+kubectl get deployment board -o yaml
+kubectl get hpa board -o yaml
+kubectl top pods -l app=board
+```
+
+На втором этапе задания 130 отдельно проверьте маршрут и политику:
+
+```sh
+kubectl get gateway,httproute,networkpolicy -o yaml
+```
