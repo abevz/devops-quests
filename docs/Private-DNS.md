@@ -7,3 +7,5 @@ Pod с `dnsPolicy: None` использует явно перечисленны�
 Проверьте разрешение имени из клиента, затем HTTP-адрес: ответ DNS сам по себе не доказывает работу маршрутизации или приложения. Распространение адреса или истечение кэша может занять время. Не меняйте DNS `kube-system` и внешние резолверы.
 
 Источники: [настройка DNS Kubernetes](https://kubernetes.io/docs/tasks/administer-cluster/dns-custom-nameservers/), [плагин hosts CoreDNS](https://coredns.io/plugins/hosts/).
+
+В квесте 110 клиент должен использовать частный DNS Service и разрешать `station.internal` в адрес Service контроллера из `expected-dns-address`. Исправьте частный Corefile, перезапустите выданный DNS Deployment и дождитесь распространения, затем отдельно проверьте маршрутизацию ingress.
