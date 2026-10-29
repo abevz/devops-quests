@@ -156,6 +156,7 @@ def make_app(
             "styles.css",
             "terminal.js",
             "controls.mjs",
+            "diagnostics.mjs",
             "navigation.mjs",
             "play.mjs",
             "reference.mjs",

@@ -1,0 +1,69 @@
+heading: Storage, identity and safe cleanup
+text: '# Storage, identity and safe cleanup
+
+
+  Use only the disposable quest bay. A StatefulSet gives each Pod a stable ordinal name, while its claim can outlive a replacement Pod. A headless Service supplies ordinal DNS. Compare the supplied UID files and manifests with live objects; wait for the replacement Pod before testing its name and HTTP response. Stable identity does not by itself prove the contents of a volume.
+
+
+  A PersistentVolume (PV) and PersistentVolumeClaim (PVC) are different objects. The PV''s `Retain` reclaim policy preserves the volume for manual recovery when a claim is removed; a StorageClass default does not retroactively change an existing PV. In the reclaim quest, read `volume-contract.json` and `original-claim-uid`, verify the old claim is gone, and use UID preconditions with the supplied values before clearing its old claim reference. Wait for the replacement claim to bind. This local practice volume is not an off-host backup.
+
+
+  For the synthetic quiescent ledger, `ledger.tar` must contain only `ledger.txt` and match `original-ledger.sha256`; after recovery compare the live file and HTTP bytes too. A live database needs an application-consistent backup method, not an assumption that an arbitrary file copy is consistent.
+
+
+  A finalizer holds an object in deletion until its cleanup is complete. Read `cleanup-contract.json`, verify the expected object UIDs and association, clean the identified record, then remove only the known finalizer with preconditions. Never remove an unknown finalizer just to make an object disappear. Current object checks cannot prove the complete order of prior commands.
+
+
+  References: [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/), [PV reclaim policy](https://kubernetes.io/docs/tasks/administer-cluster/change-pv-reclaim-policy/), [finalizers](https://kubernetes.io/docs/concepts/overview/working-with-objects/finalizers/).
+
+
+  Start in `~/quest`. In quest 111, inspect the ordinal and compare the files before changing the listener:
+
+
+  ```sh
+
+  cd ~/quest
+
+  kubectl get statefulset shelf -o yaml
+
+  kubectl get pod shelf-0 -o jsonpath=''{.metadata.uid}''
+
+  cat original-pod-uid
+
+  ```
+
+
+  In quest 124, inspect the PV:
+
+
+  ```sh
+
+  volume=$(jq -r .volume volume-contract.json)
+
+  kubectl get pv "$volume" -o yaml
+
+  ```
+
+
+  In quest 128, for the single synthetic file, stream an archive from the Pod, inspect it and compare its checksum. In the restore stage, stream it back only after verification:
+
+
+  ```sh
+
+  kubectl exec deployment/ledger -- tar cf - -C /data ledger.txt > ledger.tar
+
+  tar tf ledger.tar
+
+  tar xOf ledger.tar ledger.txt | sha256sum
+
+  cat original-ledger.sha256
+
+  kubectl exec -i deployment/ledger -- tar xf - -C /data < ledger.tar
+
+  ```
+
+
+  In quest 129, inspect the contract and live objects first. Construct DeleteOptions with the frozen child UID and a JSON Patch that tests the parent UID and the complete expected finalizer array before removing it. Send the DeleteOptions to the namespaced Secret endpoint, then apply the patch to the ConfigMap; a failed test means stop and investigate. The exact known finalizer and parent-label are in the quest brief.
+
+  '
+source_hash: 24fa1333553bcca962e29220539fe20379d31c52225f05ec4ef4e4ef35a35835

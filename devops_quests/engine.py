@@ -143,7 +143,7 @@ class Engine:
                     detail = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", detail)
                     detail = "".join(
                         c for c in detail if c.isprintable() or c in "\n\t"
-                    )[:600]
+                    )[:2000]
                     failures.append(
                         {
                             "objective": len(goals) - 1,

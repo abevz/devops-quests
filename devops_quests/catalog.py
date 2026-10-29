@@ -246,6 +246,10 @@ class Catalog:
             ]
         )
         result["facts"] = quest.get("facts", {})
+        diagnostic_keys = (key for key in self.messages[number]["en"] if key.startswith("diagnostics."))
+        result["diagnostics"] = {
+            key.removeprefix("diagnostics."): self.text(number, key) for key in diagnostic_keys
+        }
         if debrief:
             result["debrief"] = self.text(number, quest["debrief"])
             result["phrases"] = [self.text(number, key) for key in quest["phrases"]]
