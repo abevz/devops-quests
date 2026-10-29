@@ -16,7 +16,12 @@ outside Git. Verify actual entrypoints and fixture layouts before changing produ
 
 ## Delivery rules
 
-- Always: green CI and smoke after deployment. CI never starts sandboxes by default.
+- A normal task ends when its reviewed PR is merged to main after green CI; do not tag,
+  release or deploy as part of that task. The owner previews merged main locally using
+  the persistent preview worktree described in CONTRIBUTING.md.
+- A release is a separate task created and authorized by the owner. Its scope includes
+  tagging, artifacts and deployment. Always require green CI and smoke after deployment;
+  CI never starts sandboxes by default.
 - Database schema changes: rehearse rollback and compare progress hashes.
 - Interface changes: headed screenshots of the affected screens, using synthetic users.
 - Level changes: run the matrix only for affected levels; solutions are included for this proof.
