@@ -135,7 +135,8 @@ async def test_api_free_completed_hints_isolation_confirmation_csrf_and_rate_lim
         assert calls == [] and store.run(user=user) is None
         groups = await (await client.get("/devops/api/guides", headers=headers)).json()
         items = [item for group in groups["groups"] for item in group["items"]]
-        assert len(items) == len({item["id"] for item in items}) == 30
+        assert len(items) == len({item["id"] for item in items}) == 31
+        assert "kubernetes-workloads" in {item["id"] for item in items}
         assert all(not item["titles"]["en"][0].isdigit() for item in items)
         for alias, canonical in [
             ("kubernetes", "kubernetes-20"),
