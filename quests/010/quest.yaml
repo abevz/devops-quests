@@ -7,33 +7,18 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: 'ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" ''test "$(cat /srv/site/message)"
-      = release-10 && test "$(stat -c %a /srv/site/message)" = 644''
-
-      ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" ''test "$(cat /srv/site/message)" =
-      release-10 && test "$(stat -c %a /srv/site/message)" = 644''
-
-      ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" ''test "$(cat /srv/site/message)" =
-      release-10 && test "$(stat -c %a /srv/site/message)" = 644''
-
-      test "$(curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8080)" = release-10
-
-      test "$(curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8080)" = release-10
-
-      test "$(curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8080)" = release-10'
+    check: "set -euo pipefail\ncd ~/quest\nfailed=0\nfor n in 1 2 3; do\n  host=\"app${n}-${DQ_NAMESPACE#dq-}\"\n  result=$(ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 \"root@$host\" 'value=$(cat /srv/site/message 2>/dev/null || true); mode=$(stat -c %a /srv/site/message 2>/dev/null || true); if test \"$value\" = release-10; then printf \"content-ok\\n\"; fi; if test \"$mode\" = 644; then printf \"mode-ok\\n\"; fi' 2>/dev/null || true)\n  if ! grep -Fxq content-ok <<<\"$result\"; then printf '%s\\n' \"$host /srv/site/message = release-10: ✗\"; failed=1; fi\n  if ! grep -Fxq mode-ok <<<\"$result\"; then printf '%s\\n' \"$host /srv/site/message mode = 644: ✗\"; failed=1; fi\n  if ! test \"$(curl -fsS --max-time 3 \"http://$host:8080\" 2>/dev/null)\" = release-10; then\n    printf '%s\\n' \"$host:8080 = release-10: ✗\"; failed=1\n  fi\ndone\nexit \"$failed\"\n"
 - brief: stages.1.brief
   objectives:
   - text: stages.1.objectives.0.text
-    check: 'kubectl rollout status deployment/relay --timeout=3s >/dev/null
-
-      test "$(kubectl exec deployment/relay -- printenv RELEASE)" = release-10'
+    check: "set -euo pipefail\ncd ~/quest\nfailed=0\nif ! kubectl rollout status deployment/relay --timeout=3s >/dev/null 2>&1; then\n  printf '%s\\n' 'deployment/relay rollout complete: ✗'; failed=1\nfi\nif ! test \"$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/relay -- printenv RELEASE 2>/dev/null)\" = release-10; then\n  printf '%s\\n' 'deployment/relay RELEASE = release-10: ✗'; failed=1\nfi\nexit \"$failed\"\n"
 hints:
 - text: hints.0.text
   guide: ansible-10
 - text: hints.1.text
   guide: ansible-10
 - text: hints.2.text
-  guide: ansible-10
+  guide: kubernetes-12
 debrief: debrief
 phrases:
 - phrases.0
