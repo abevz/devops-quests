@@ -7,48 +7,16 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: 'source platform.env
-
-      curl -fsS -H "X-Vault-Token: $VAULT_MANAGER_TOKEN" "$VAULT_ADDR/v1/sys/policies/acl/rail-reader"
-      | jq -er .data.policy > observed-reader.hcl
-
-      python3 - <<''ACL_SCOPE''
-
-      import re
-
-      from pathlib import Path
-
-      p=Path(''observed-reader.hcl'').read_text()
-
-      p=re.sub(r''/\*.*?\*/'','''',p,flags=re.S)
-
-      p=re.sub(r''(?m)#.*$'','''',p)
-
-      assert re.fullmatch(r''\s*path\s+"secret/data/dispatch"\s*\{\s*capabilities\s*=\s*\[\s*"read"\s*\]\s*\}\s*'',p),
-      ''Keep only the named dispatch read policy''
-
-      ACL_SCOPE
-
-      test "$(curl -fsS -H "X-Vault-Token: $VAULT_READER_TOKEN" "$VAULT_ADDR/v1/secret/data/dispatch"
-      | jq -er .data.data.value)" = north-secret
-
-      cat > capability-paths.json <<''DQ_ASSET''
-
-      {"paths": ["secret/data/dispatch", "secret/data/wrong", "secret/data/other", "sys/mounts"]}
-
-      DQ_ASSET
-
-      curl -fsS -X POST -H "X-Vault-Token: $VAULT_READER_TOKEN" -H ''Content-Type: application/json''
-      --data-binary @capability-paths.json "$VAULT_ADDR/v1/sys/capabilities-self" | jq -e ''(.data //
-      .) | .["secret/data/dispatch"]==["read"] and .["secret/data/wrong"]==["deny"] and .["secret/data/other"]==["deny"]
-      and .["sys/mounts"]==["deny"]'' >/dev/null'
+    check: "set -euo pipefail\ncd ~/quest\nsource platform.env\numask 077\nheaders=$(mktemp -d)\ntrap 'rm -f \"$headers/reader\" \"$headers/manager\"; rmdir \"$headers\"' EXIT\nprintf 'X-Vault-Token: %s\\n' \"$VAULT_MANAGER_TOKEN\" > \"$headers/manager\"\nprintf 'X-Vault-Token: %s\\n' \"$VAULT_READER_TOKEN\" > \"$headers/reader\"\nfailed=0\nif ! curl -fsS -H @\"$headers/manager\" \"$VAULT_ADDR/v1/sys/policies/acl/rail-reader\" 2>/dev/null | jq -er .data.policy > observed-reader.hcl 2>/dev/null; then\n  printf '%s\\n' 'rail-reader policy read: ✗'\n  failed=1\nfi\nif ! python3 - <<'ACL_SCOPE'\nimport re\nfrom pathlib import Path\np = Path('observed-reader.hcl').read_text()\np = re.sub(r'/\\*.*?\\*/', '', p, flags=re.S)\np = re.sub(r'(?m)(#|//).*$','',p)\nblock = r'path\\s+\"secret/data/dispatch\"\\s*\\{\\s*capabilities\\s*=\\s*\\[\\s*\"read\"\\s*,?\\s*\\]\\s*\\}'\nif not re.fullmatch(r'\\s*(?:' + block + r'\\s*)+', p):\n    raise SystemExit(1)\nACL_SCOPE\nthen\n  printf '%s\\n' 'rail-reader policy:\
+      \ secret/data/dispatch [read] only: ✗'\n  failed=1\nfi\nif ! test \"$(curl -fsS -H @\"$headers/reader\" \"$VAULT_ADDR/v1/secret/data/dispatch\" 2>/dev/null | jq -er .data.data.value 2>/dev/null)\" = north-secret; then\n  printf '%s\\n' 'VAULT_READER_TOKEN secret/data/dispatch value = north-secret: ✗'\n  failed=1\nfi\ncat > capability-paths.json <<'DQ_ASSET'\n{\"paths\": [\"secret/data/dispatch\", \"secret/data/wrong\", \"secret/data/other\", \"sys/mounts\"]}\nDQ_ASSET\ncapabilities=$(curl -fsS -X POST -H @\"$headers/reader\" -H 'Content-Type: application/json' --data-binary @capability-paths.json \"$VAULT_ADDR/v1/sys/capabilities-self\" 2>/dev/null || true)\nfor path in secret/data/dispatch secret/data/wrong secret/data/other sys/mounts; do\n  expected=deny\n  if test \"$path\" = secret/data/dispatch; then expected=read; fi\n  if ! jq -e --arg path \"$path\" --arg expected \"$expected\" '(.data // .)[$path] == [$expected]' <<<\"$capabilities\" >/dev/null 2>&1; then\n    printf '%s\\n'\
+      \ \"capabilities-self $path = [$expected]: ✗\"\n    failed=1\n  fi\ndone\nexit \"$failed\"\n"
 hints:
 - text: hints.0.text
-  guide: kubernetes-11
+  guide: vault-recovery
 - text: hints.1.text
-  guide: kubernetes-11
+  guide: vault-recovery
 - text: hints.2.text
-  guide: kubernetes-11
+  guide: vault-recovery
 debrief: debrief
 phrases:
 - phrases.0

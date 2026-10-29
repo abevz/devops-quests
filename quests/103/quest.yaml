@@ -7,23 +7,10 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: 'kubectl get daemonset relay -o json | jq -e ''.spec.template.spec | .hostNetwork!=true and
-      .hostPID!=true and .hostIPC!=true and all(.volumes[]?; .hostPath==null) and .securityContext.runAsNonRoot==true
-      and .securityContext.seccompProfile.type=="RuntimeDefault" and all((.containers+(.initContainers//[]))[];
-      .securityContext.privileged!=true and .securityContext.allowPrivilegeEscalation==false and .securityContext.capabilities.drop==["ALL"])''
-      >/dev/null
-
-      kubectl get daemonset relay -o json | jq -e ''.spec.template.spec.nodeSelector=={"kubernetes.io/os":"linux"}
-      and .status.desiredNumberScheduled==1 and .status.numberReady==1 and .status.numberAvailable==1''
-      >/dev/null
-
-      uid=$(kubectl get daemonset relay -o jsonpath=''{.metadata.uid}'')
-
-      kubectl get pods -l app=relay -o json | jq -e --arg node "$DQ_NODE_NAME" --arg uid "$uid" ''any(.items[];.metadata.deletionTimestamp==null
-      and .spec.nodeName==$node and any(.metadata.ownerReferences[]?;.kind=="DaemonSet"
-      and .uid==$uid and .controller==true) and any(.status.containerStatuses[]?;.ready==true))'' >/dev/null
-
-      test "$(kubectl exec daemonset/relay -- wget -qO- -T 3 http://relay:8080)" = north-103'
+    check: "set -euo pipefail\ncd ~/quest\nfailed=0\ndaemonset=$(kubectl get daemonset relay -o json 2>/dev/null || true)\nfor field in hostNetwork hostPID hostIPC; do\n  if ! jq -e --arg field \"$field\" '.spec.template.spec[$field] != true' <<<\"$daemonset\" >/dev/null 2>&1; then\n    printf '%s\\n' \"daemonset/relay $field != true: ✗\"\n    failed=1\n  fi\ndone\nif ! jq -e 'all(.spec.template.spec.volumes[]?; .hostPath==null)' <<<\"$daemonset\" >/dev/null 2>&1; then\n  printf '%s\\n' 'daemonset/relay volumes hostPath = none: ✗'\n  failed=1\nfi\nif ! jq -e '.spec.template.spec.securityContext.runAsNonRoot==true' <<<\"$daemonset\" >/dev/null 2>&1; then\n  printf '%s\\n' 'daemonset/relay runAsNonRoot = true: ✗'\n  failed=1\nfi\nif ! jq -e '.spec.template.spec.securityContext.seccompProfile.type==\"RuntimeDefault\"' <<<\"$daemonset\" >/dev/null 2>&1; then\n  printf '%s\\n' 'daemonset/relay seccompProfile.type = RuntimeDefault: ✗'\n  failed=1\nfi\nfor field in privileged allowPrivilegeEscalation\
+      \ drop add; do\n  case \"$field\" in\n    privileged) expr='all((.spec.template.spec.containers+(.spec.template.spec.initContainers//[]))[]; .securityContext.privileged!=true)' ;;\n    allowPrivilegeEscalation) expr='all((.spec.template.spec.containers+(.spec.template.spec.initContainers//[]))[]; .securityContext.allowPrivilegeEscalation==false)' ;;\n    drop) expr='all((.spec.template.spec.containers+(.spec.template.spec.initContainers//[]))[]; (.securityContext.capabilities.drop // [] | index(\"ALL\")) != null)' ;;\n    add) expr='all((.spec.template.spec.containers+(.spec.template.spec.initContainers//[]))[]; (.securityContext.capabilities.add // [] | length)==0)' ;;\n  esac\n  if ! jq -e \"$expr\" <<<\"$daemonset\" >/dev/null 2>&1; then\n    printf '%s\\n' \"daemonset/relay containers securityContext $field: ✗\"\n    failed=1\n  fi\ndone\nif ! jq -e '.spec.template.spec.nodeSelector=={\"kubernetes.io/os\":\"linux\"}' <<<\"$daemonset\" >/dev/null 2>&1; then\n  printf '%s\\n' 'daemonset/relay\
+      \ nodeSelector = {kubernetes.io/os:linux}: ✗'\n  failed=1\nfi\nfor field in desiredNumberScheduled numberReady numberAvailable; do\n  if ! jq -e --arg field \"$field\" '.status[$field]==1' <<<\"$daemonset\" >/dev/null 2>&1; then\n    printf '%s\\n' \"daemonset/relay $field = 1: ✗\"\n    failed=1\n  fi\ndone\nuid=$(jq -r '.metadata.uid // \"\"' <<<\"$daemonset\" 2>/dev/null || true)\nif ! test -n \"$uid\" || ! kubectl get pods -l app=relay -o json 2>/dev/null | jq -e --arg node \"$DQ_NODE_NAME\" --arg uid \"$uid\" 'any(.items[];.metadata.deletionTimestamp==null and .spec.nodeName==$node and any(.metadata.ownerReferences[]?;.kind==\"DaemonSet\" and .uid==$uid and .controller==true) and any(.status.containerStatuses[]?;.ready==true))' >/dev/null 2>&1; then\n  printf '%s\\n' 'daemonset/relay owned Ready Pod on DQ_NODE_NAME: ✗'\n  failed=1\nfi\nif ! test \"$(kubectl exec --pod-running-timeout=2s daemonset/relay -- wget -qO- -T 3 http://127.0.0.1:8080 2>/dev/null)\" = north-103; then\n  printf\
+      \ '%s\\n' 'daemonset/relay Pod 127.0.0.1:8080 = north-103: ✗'\n  failed=1\nfi\nif ! test \"$(kubectl exec --pod-running-timeout=2s daemonset/relay -- wget -qO- -T 3 http://relay:8080 2>/dev/null)\" = north-103; then\n  printf '%s\\n' 'relay:8080 = north-103: ✗'\n  failed=1\nfi\nexit \"$failed\"\n"
 hints:
 - text: hints.0.text
   guide: kubernetes-20
