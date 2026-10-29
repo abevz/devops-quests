@@ -8,7 +8,7 @@ printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN" > "$headers/manager"
 printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN" > "$headers/reader"
 failed=0
 if ! curl -fsS -H @"$headers/manager" "$VAULT_ADDR/v1/sys/policies/acl/rail-reader" 2>/dev/null | jq -er .data.policy > observed-reader.hcl 2>/dev/null; then
-  printf '%s\n' 'rail-reader policy read: ✗'
+  printf '%s\n' 'rail-reader policy read: ✗ [DQ:policy_read]'
   failed=1
 fi
 if ! python3 - <<'ACL_SCOPE'
@@ -22,11 +22,11 @@ if not re.fullmatch(r'\s*(?:' + block + r'\s*)+', p):
     raise SystemExit(1)
 ACL_SCOPE
 then
-  printf '%s\n' 'rail-reader policy: secret/data/dispatch [read] only: ✗'
+  printf '%s\n' 'rail-reader policy: secret/data/dispatch [read] only: ✗ [DQ:policy_scope]'
   failed=1
 fi
 if ! test "$(curl -fsS -H @"$headers/reader" "$VAULT_ADDR/v1/secret/data/dispatch" 2>/dev/null | jq -er .data.data.value 2>/dev/null)" = north-secret; then
-  printf '%s\n' 'VAULT_READER_TOKEN secret/data/dispatch value = north-secret: ✗'
+  printf '%s\n' 'VAULT_READER_TOKEN secret/data/dispatch value = north-secret: ✗ [DQ:reader]'
   failed=1
 fi
 cat > capability-paths.json <<'DQ_ASSET'
@@ -37,7 +37,7 @@ for path in secret/data/dispatch secret/data/wrong secret/data/other sys/mounts;
   expected=deny
   if test "$path" = secret/data/dispatch; then expected=read; fi
   if ! jq -e --arg path "$path" --arg expected "$expected" '(.data // .)[$path] == [$expected]' <<<"$capabilities" >/dev/null 2>&1; then
-    printf '%s\n' "capabilities-self $path = [$expected]: ✗"
+    printf '%s\n' "capabilities-self $path = [$expected]: ✗ [DQ:cap_${path//\//_}]"
     failed=1
   fi
 done
