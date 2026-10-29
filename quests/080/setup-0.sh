@@ -2,7 +2,33 @@ set -euo pipefail
 cd ~/quest
 source platform.env
 jq -n --arg image "$PRIVATE_IMAGE" '{image:$image}' > private-release.json
-kubectl create secret docker-registry registry-pull --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" --docker-password="$REGISTRY_PASSWORD" --dry-run=client -o json > registry-pull.json
+python3 - <<'DQ_REGISTRY_SECRET'
+import base64
+import json
+import os
+import tempfile
+
+registry = os.environ['REGISTRY']
+username = os.environ['REGISTRY_USER']
+password = os.environ['REGISTRY_PASSWORD']
+auth = base64.b64encode((username + ':' + password).encode()).decode()
+config = {'auths': {registry: {'username': username, 'password': password, 'auth': auth}}}
+secret = {
+    'apiVersion': 'v1',
+    'kind': 'Secret',
+    'metadata': {'name': 'registry-pull'},
+    'type': 'kubernetes.io/dockerconfigjson',
+    'data': {'.dockerconfigjson': base64.b64encode(json.dumps(config).encode()).decode()},
+}
+fd, temporary = tempfile.mkstemp(prefix='.registry-pull-', dir='.')
+try:
+    with os.fdopen(fd, 'w') as stream:
+        json.dump(secret, stream)
+    os.replace(temporary, 'registry-pull.json')
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+DQ_REGISTRY_SECRET
 kubectl apply -f registry-pull.json >/dev/null
 source platform.env
 mkdir -p repository/manifests
