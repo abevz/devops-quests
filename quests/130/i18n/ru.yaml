@@ -1,44 +1,40 @@
 title: Комплексный инцидент для интервью
-brief: 'Восстановите сервис табло станции в два этапа. На первом этапе Deployment
-  board не масштабируется под нагрузкой, хотя HPA (цель 50% CPU, диапазон 1–2 реплики)
-  и API метрик активны; восстановите масштабирование по реальным CPU-метрикам в рамках
-  заданного бюджета контейнера (request 100m, limit 200m). На втором этапе трафик
-  через приватный Gateway (сохраните GatewayClass и host north.station.internal) не
-  доходит до board:8080; восстановите маршрутизацию и сетевую изоляцию так, чтобы
-  доступ к board на порт 8080 был разрешён только Pod''ам контроллера Gateway (метка
-  app: gateway в сохранённом namespace контроллера), а прямой доступ клиента и чужие
-  host отклонялись. Изменения узла, общего DNS и публичного listener не нужны.
+brief: 'Восстановите сервис station board в два этапа инцидента. На первом этапе Deployment board не масштабируется под нагрузкой,
+  хотя HPA (цель CPU 50%, диапазон 1–2 реплики) и API метрик активны; восстановите масштабирование по реальным CPU-метрикам
+  в заданном бюджете контейнера (request 100m, limit 200m). На втором этапе трафик через приватный Gateway не доходит до board:8080
+  (сохраните GatewayClass и host north.station.internal); восстановите маршрутизацию и изоляцию ingress так, чтобы доступ
+  к board на порт 8080 имели только Pod контроллера Gateway (app: gateway в сохранённом namespace контроллера), а прямой доступ
+  client и другие host были запрещены. Менять узлы, глобальный DNS или публичный listener не нужно.
 
 
-  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `board.json`, `service.json`,
-  `client.json`, `hpa.json`, `gateway.json`, `route.json`, `ingress-policy.json`,
-  `gateway-target.json`.
+  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `board.json`, `service.json`, `client.json`, `hpa.json`,
+  `gateway.json`, `route.json`, `ingress-policy.json`, `gateway-target.json`.
 
 
-  В песочнице нет интернета и внешнего DNS. Используйте выданные файлы, предварительно
-  загруженные образы и приватные сервисы. Менять можно только эту песочницу.
+  В песочнице нет интернета и внешнего DNS. Используйте выданные файлы, предварительно загруженные образы и приватные сервисы.
+  Менять можно только эту песочницу.
 
 
-  Цели первого этапа: Реальные CPU-метрики дают две готовые реплики при фиксированных
-  HPA и limits.'
-debrief: Инцидент решён с настоящим масштабированием, status маршрута и тестами трафика
-  при сохранении явной границы изоляции.
-stages.0.brief: 'Результат проверки: Реальные CPU-метрики дают две готовые реплики
-  при фиксированных HPA и limits.'
-stages.0.objectives.0.text: Реальные CPU-метрики дают две готовые реплики при фиксированных
-  HPA и limits.
-stages.1.brief: 'Результат проверки: Масштабированное табло отдаёт north-130 только
-  через нужный host Gateway; прямой доступ клиента запрещён.'
-stages.1.objectives.0.text: Масштабированное табло отдаёт north-130 только через нужный
-  host Gateway; прямой доступ клиента запрещён.
-hints.0.text: 'Этап 1: расчёт процентов HPA требует ненулевого CPU request у контейнера;
-  проверьте board.json и задайте CPU request 100m и limit 200m, не меняя сам HPA.'
-hints.1.text: 'Этап 2: проверьте route.json и ingress-policy.json — HTTPRoute указывает
-  на неверный backend port вместо порта Service 8080, а NetworkPolicy использует устаревшую
-  source-метку Pod.'
-hints.2.text: 'Укажите порт 8080 в HTTPRoute, разрешите ingress к board:8080 только
-  от podSelector app: gateway из namespace контроллера и проверьте как прохождение
-  запроса через Gateway, так и блокировку прямого доступа.'
+  На обоих этапах проверки требуют запрос CPU `100m` и лимит `200m` в первом контейнере board, две готовые реплики, минимум
+  HPA 1 и максимум 2, первое целевое использование 50, текущее и желаемое число реплик 2 и текущее использование некоторого
+  ресурса выше 50. Проверки не устанавливают принадлежность ни первой целевой, ни текущей метрики к CPU; текущее состояние
+  не доказывает причину масштабирования. На втором этапе класс Gateway должен совпадать с `gateway-target.json` и иметь Accepted=True;
+  первый порт backend HTTPRoute должен быть 8080, а у некоторого parent должно быть ResolvedRefs=True. Спецификация `board-ingress`
+  должна совпадать со структурой одного правила из выданного `ingress-policy.json`, только с сохранённым namespace контроллера
+  и peer `app: gateway` на TCP 8080. Запрос к сохранённому URL с Host `north.station.internal` должен вернуть `north-130`;
+  прямой запрос к `board:8080` и запрос с Host `closed.station.internal` должны завершиться ошибкой. У ошибок могут быть иные
+  причины, чем политика или правило host; условия статуса могут устареть или относиться к другому parent.'
+debrief: Инцидент решён с настоящим масштабированием, status маршрута и тестами трафика при сохранении явной границы изоляции.
+stages.0.brief: Бюджет CPU board, готовые реплики и настройки и текущий статус HPA соответствуют описанию.
+stages.0.objectives.0.text: Бюджет CPU board, готовые реплики и настройки и текущий статус HPA соответствуют описанию.
+stages.1.brief: Условия HPA, Gateway, маршрут, точная политика ingress и три сетевые проверки соответствуют описанию.
+stages.1.objectives.0.text: Условия HPA, Gateway, маршрут, точная политика ingress и три сетевые проверки соответствуют описанию.
+hints.0.text: 'Этап 1: расчёт процентов HPA требует ненулевого CPU request у контейнера; проверьте board.json и задайте CPU
+  request 100m и limit 200m, не меняя сам HPA.'
+hints.1.text: 'Этап 2: проверьте route.json и ingress-policy.json — HTTPRoute указывает на неверный backend port вместо порта
+  Service 8080, а NetworkPolicy использует устаревшую source-метку Pod.'
+hints.2.text: 'Укажите порт 8080 в HTTPRoute, разрешите ingress к board:8080 только от podSelector app: gateway из namespace
+  контроллера и проверьте как прохождение запроса через Gateway, так и блокировку прямого доступа.'
 phrases.0: Я разделил сбои метрик, маршрутизации и policy.
 phrases.1: Я проверил настоящее масштабирование в ограниченном бюджете.
 phrases.2: Я подтвердил нужный путь и запрет обходных путей.
@@ -46,6 +42,22 @@ questions.0.points.0: Независимые данные помогают не 
 questions.0.points.1: Небольшие изменения упрощают проверку восстановления и отката.
 questions.0.prompt: Зачем диагностировать каждую границу до изменения всей системы?
 questions.1.points.0: 'Нет: разрешённые и запрещённые пути проверяются отдельно.'
-questions.1.points.1: Network policy и соответствие host маршрута обеспечивают разные
-  границы.
+questions.1.points.1: Network policy и соответствие host маршрута обеспечивают разные границы.
 questions.1.prompt: Доказывает ли успешный запрос Gateway запрет прямого доступа?
+diagnostics.request: Запрос CPU первого контейнера board должен быть 100m.
+diagnostics.limit: Лимит CPU первого контейнера board должен быть 200m.
+diagnostics.ready: Board должен иметь две готовые реплики.
+diagnostics.minimum: HPA minReplicas должен быть 1.
+diagnostics.maximum: HPA maxReplicas должен быть 2.
+diagnostics.target: Первое целевое использование HPA должно быть 50.
+diagnostics.current: HPA currentReplicas должен быть 2.
+diagnostics.desired: HPA desiredReplicas должен быть 2.
+diagnostics.metric: Текущая метрика ресурса HPA должна иметь использование выше 50.
+diagnostics.gateway_class: Класс Gateway должен совпадать с gateway-target.json.
+diagnostics.gateway_accepted: Gateway Accepted должен быть True.
+diagnostics.backend: Первый порт backend HTTPRoute должен быть 8080.
+diagnostics.resolved: У некоторого parent HTTPRoute должно быть ResolvedRefs=True.
+diagnostics.policy: Спецификация board-ingress должна совпадать с точной политикой из описания.
+diagnostics.gateway_http: Запрос через gateway с Host north.station.internal должен вернуть north-130.
+diagnostics.direct_denied: Прямой запрос к board:8080 должен завершиться ошибкой.
+diagnostics.wrong_host: Запрос через gateway с Host closed.station.internal должен завершиться ошибкой.

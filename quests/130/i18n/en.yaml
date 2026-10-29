@@ -1,45 +1,43 @@
 title: Interview incident simulation
-brief: 'Recover the station board service across two incident stages. In stage one,
-  the board Deployment fails to scale under load even though the HPA (target 50% CPU,
-  range 1–2 replicas) and metrics API are active; restore real CPU-driven scaling
-  within the required container CPU budget (request 100m, limit 200m). In stage two,
-  traffic through the private Gateway (preserve the GatewayClass and host north.station.internal)
-  fails to reach board:8080; restore routing and ingress isolation so only the Gateway
-  controller pods (app: gateway in the frozen controller namespace) can reach board
-  on port 8080 while direct client access and other hosts remain denied. No node,
-  global DNS or public listener changes are needed.
+brief: 'Recover the station board service across two incident stages. In stage one, the board Deployment fails to scale under
+  load even though the HPA (target 50% CPU, range 1–2 replicas) and metrics API are active; restore real CPU-driven scaling
+  within the required container CPU budget (request 100m, limit 200m). In stage two, traffic through the private Gateway (preserve
+  the GatewayClass and host north.station.internal) fails to reach board:8080; restore routing and ingress isolation so only
+  the Gateway controller pods (app: gateway in the frozen controller namespace) can reach board on port 8080 while direct
+  client access and other hosts remain denied. No node, global DNS or public listener changes are needed.
 
 
-  Quest files in `~/quest` (some appear in later stages): `board.json`, `service.json`,
-  `client.json`, `hpa.json`, `gateway.json`, `route.json`, `ingress-policy.json`,
-  `gateway-target.json`.
+  Quest files in `~/quest` (some appear in later stages): `board.json`, `service.json`, `client.json`, `hpa.json`, `gateway.json`,
+  `route.json`, `ingress-policy.json`, `gateway-target.json`.
 
 
-  The bay has no Internet or external DNS. Use only supplied files, preloaded images
-  and private services. Change only this bay.
+  The bay has no Internet or external DNS. Use only supplied files, preloaded images and private services. Change only this
+  bay.
 
 
-  Initial success criteria: Real CPU metrics drive two ready replicas under the fixed
-  HPA and resource limits.'
-debrief: The incident was resolved with real scaling, route status and traffic tests
-  while preserving an explicit isolation boundary.
-stages.0.brief: 'Success criteria: Real CPU metrics drive two ready replicas under
-  the fixed HPA and resource limits.'
-stages.0.objectives.0.text: Real CPU metrics drive two ready replicas under the fixed
-  HPA and resource limits.
-stages.1.brief: 'Success criteria: The scaled board serves north-130 only through
-  its intended Gateway host; direct client access remains denied.'
-stages.1.objectives.0.text: The scaled board serves north-130 only through its intended
-  Gateway host; direct client access remains denied.
-hints.0.text: 'Stage 1: HPA percentage utilization requires a non-zero CPU request
-  on the container; inspect board.json and set CPU request 100m and limit 200m without
-  changing the HPA spec.'
-hints.1.text: 'Stage 2: inspect route.json and ingress-policy.json — HTTPRoute points
-  to the wrong backend port instead of Service port 8080, and NetworkPolicy uses an
-  obsolete source pod label.'
-hints.2.text: 'Set the HTTPRoute backend port to 8080, allow ingress to board:8080
-  only from podSelector app: gateway in the controller namespace, and verify both
-  allowed Gateway traffic and blocked direct access.'
+  In both stages the checks require board first-container CPU request `100m`, limit `200m`, two ready replicas, HPA minimum
+  1 and maximum 2, first target utilization 50, current and desired replicas 2 and some current resource utilization above
+  50. The checks do not verify that either the first target or the current metric is CPU; current state does not prove the
+  cause of scaling. In stage two the Gateway class must match `gateway-target.json` and have Accepted=True; the first HTTPRoute
+  backend port must be 8080 and some parent must have ResolvedRefs=True. The `board-ingress` spec must match the one-rule
+  structure of supplied `ingress-policy.json`, with only the frozen controller namespace and `app: gateway` peer on TCP 8080.
+  A request through the frozen URL with Host `north.station.internal` must return `north-130`; direct `board:8080` and Host
+  `closed.station.internal` requests must fail. These failed requests can have causes other than the policy or host rule;
+  status conditions may be stale or for another parent.'
+debrief: The incident was resolved with real scaling, route status and traffic tests while preserving an explicit isolation
+  boundary.
+stages.0.brief: The board CPU budget, ready replicas and HPA settings and current status match the brief.
+stages.0.objectives.0.text: The board CPU budget, ready replicas and HPA settings and current status match the brief.
+stages.1.brief: The HPA conditions still match, and the Gateway, route, exact ingress policy and three traffic probes match
+  the brief.
+stages.1.objectives.0.text: The HPA conditions still match, and the Gateway, route, exact ingress policy and three traffic
+  probes match the brief.
+hints.0.text: 'Stage 1: HPA percentage utilization requires a non-zero CPU request on the container; inspect board.json and
+  set CPU request 100m and limit 200m without changing the HPA spec.'
+hints.1.text: 'Stage 2: inspect route.json and ingress-policy.json — HTTPRoute points to the wrong backend port instead of
+  Service port 8080, and NetworkPolicy uses an obsolete source pod label.'
+hints.2.text: 'Set the HTTPRoute backend port to 8080, allow ingress to board:8080 only from podSelector app: gateway in the
+  controller namespace, and verify both allowed Gateway traffic and blocked direct access.'
 phrases.0: I isolated metrics, routing and policy failures.
 phrases.1: I verified real scale-up within a bounded budget.
 phrases.2: I proved the intended path and denied bypass paths.
@@ -49,3 +47,20 @@ questions.0.prompt: Why diagnose each boundary before changing everything?
 questions.1.points.0: No; permitted and forbidden paths need separate tests.
 questions.1.points.1: Network policy and route host matching enforce different boundaries.
 questions.1.prompt: Does a successful Gateway request prove direct access is blocked?
+diagnostics.request: First board CPU request must equal 100m.
+diagnostics.limit: First board CPU limit must equal 200m.
+diagnostics.ready: Board must have two ready replicas.
+diagnostics.minimum: HPA minReplicas must equal 1.
+diagnostics.maximum: HPA maxReplicas must equal 2.
+diagnostics.target: HPA first target utilization must equal 50.
+diagnostics.current: HPA currentReplicas must equal 2.
+diagnostics.desired: HPA desiredReplicas must equal 2.
+diagnostics.metric: A current HPA resource metric must have utilization above 50.
+diagnostics.gateway_class: Gateway class must match gateway-target.json.
+diagnostics.gateway_accepted: Gateway Accepted must be True.
+diagnostics.backend: The first HTTPRoute backend port must be 8080.
+diagnostics.resolved: An HTTPRoute parent must have ResolvedRefs=True.
+diagnostics.policy: The board-ingress spec must match the exact policy in the brief.
+diagnostics.gateway_http: The gateway request with Host north.station.internal must return north-130.
+diagnostics.direct_denied: The direct request to board:8080 must fail.
+diagnostics.wrong_host: The gateway request with Host closed.station.internal must fail.
