@@ -7,26 +7,14 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: "kubectl get deployment reader -o json | jq -e '.spec.template.spec.automountServiceAccountToken==false\
-      \ and .spec.template.spec.volumes[0].projected.sources[0].serviceAccountToken=={path:\"token\",expirationSeconds:600,audience:\"\
-      https://kubernetes.default.svc.cluster.local\"}' >/dev/null\ntoken=$(kubectl exec deployment/reader\
-      \ -- cat /credential/token)\napi=$(cat /run/dq/facts/0/api-endpoint)\nstatus=$(curl --cacert /run/dq/facts/0/api-ca.pem\
-      \ -sS -o /tmp/route-result -w '%{http_code}' -H \"Authorization: Bearer $token\" \"$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route\"\
-      )\ntest \"$status\" = 200\njq -e '.data.route==\"north-114\"' /tmp/route-result >/dev/null\nfor\
-      \ resource in configmaps secrets; do\n test \"$(curl --cacert /run/dq/facts/0/api-ca.pem -sS -o\
-      \ /dev/null -w '%{http_code}' -H \"Authorization: Bearer $token\" \"$api/api/v1/namespaces/$DQ_NAMESPACE/$resource\"\
-      )\" = 403\ndone\nunset token\ntest \"$(curl --cacert /run/dq/facts/0/api-ca.pem -sS -o /dev/null\
-      \ -w '%{http_code}' -H \"Authorization: Bearer $(kubectl exec deployment/reader -- cat /credential/token)\"\
-      \ \"$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/offlimits\")\" = 403\nkubectl get role reader\
-      \ -o json | jq -e '.rules==[{apiGroups:[\"\"],resources:[\"configmaps\"],resourceNames:[\"route\"\
-      ],verbs:[\"get\"]}]' >/dev/null"
+    check: "set -euo pipefail\ncd ~/quest\nfailed=0\ncheck() { local label=$1 expression=$2 document=$3; if ! jq -e \"$expression\" <<<\"$document\" >/dev/null 2>&1; then printf '%s\\n' \"$label: ✗\"; failed=1; fi; }\numask 077\nscratch=$(mktemp -d)\ntrap 'rm -rf \"$scratch\"' EXIT\napi=$(cat /run/dq/facts/0/api-endpoint 2>/dev/null || true)\nrequest() {\n  local credential=$1 path=$2 output=$3\n  if ! [[ \"$credential\" =~ ^[A-Za-z0-9._-]+$ ]] || ! test -n \"$api\"; then return 1; fi\n  printf 'header = \"Authorization: Bearer %s\"\\n' \"$credential\" | timeout 2s curl --config - --cacert /run/dq/facts/0/api-ca.pem -sS -o \"$output\" -w '%{http_code}' \"$api/api/v1/namespaces/$DQ_NAMESPACE/$path\" 2>/dev/null\n}\nreader=$(timeout 2s kubectl get deployment reader -o json 2>/dev/null || true)\ncheck 'reader automountServiceAccountToken = false [DQ:automount]' '.spec.template.spec.automountServiceAccountToken==false' \"$reader\"\ncheck 'reader first projected token = path token, audience and 600 seconds [DQ:projection]' '.spec.template.spec.volumes[0].projected.sources[0].serviceAccountToken=={path:\"token\",expirationSeconds:600,audience:\"https://kubernetes.default.svc.cluster.local\"}' \"$reader\"\nrole=$(timeout 2s kubectl get role reader -o json 2>/dev/null || true)\ncheck 'role/reader rules = named route get only [DQ:role]' '.rules==[{apiGroups:[\"\"],resources:[\"configmaps\"],resourceNames:[\"route\"],verbs:[\"get\"]}]' \"$role\"\ntoken=$(timeout 2s kubectl exec --pod-running-timeout=2s deployment/reader -- cat /credential/token 2>/dev/null || true)\nstatus=$(request \"$token\" configmaps/route \"$scratch/route\" || true)\nif ! test \"$status\" = 200; then printf '%s\\n' 'reader GET configmaps/route status = 200: ✗ [DQ:allowed]'; failed=1; fi\nif ! jq -e '.data.route==\"north-114\"' \"$scratch/route\" >/dev/null 2>&1; then printf '%s\\n' 'reader route data = north-114: ✗ [DQ:value]'; failed=1; fi\nfor path in configmaps secrets configmaps/offlimits; do\n  status=$(request \"$token\" \"$path\" /dev/null || true)\n  if ! test \"$status\" = 403; then printf '%s\\n' \"reader GET $path status = 403: ✗ [DQ:denied_${path//\\//_}]\"; failed=1; fi\ndone\nunset token\nexit \"$failed\"\n"
 hints:
 - text: hints.0.text
-  guide: kubernetes-20
+  guide: workload-access
 - text: hints.1.text
-  guide: kubernetes-20
+  guide: workload-access
 - text: hints.2.text
-  guide: kubernetes-20
+  guide: workload-access
 debrief: debrief
 phrases:
 - phrases.0

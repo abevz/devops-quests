@@ -79,7 +79,7 @@ def test_rehash_after_editing_russian_text_marks_lesson_and_translation_stale(
         name: (docs / name).read_bytes()
         for name in ("guide-lessons.yaml", "guide-topics.yaml")
     }
-    assert guide_excerpts.refresh(root=tmp_path) == 34
+    assert guide_excerpts.refresh(root=tmp_path) == 35
     assert (docs / "guides/kubernetes-20/i18n/ru.yaml").read_bytes() == (
         ROOT / "docs/guides/kubernetes-20/i18n/ru.yaml"
     ).read_bytes()
@@ -87,7 +87,7 @@ def test_rehash_after_editing_russian_text_marks_lesson_and_translation_stale(
     values = yaml.safe_load(russian.read_text())
     values["text"] += "\nEdited text.\n"
     russian.write_text(yaml.safe_dump(values, allow_unicode=True, sort_keys=False))
-    assert guide_excerpts.refresh(root=tmp_path) == 34
+    assert guide_excerpts.refresh(root=tmp_path) == 35
     for name, expected in before.items():
         assert (docs / name).read_bytes() == expected
     catalog.guides = json.loads((docs / "guide-excerpts.json").read_text())
