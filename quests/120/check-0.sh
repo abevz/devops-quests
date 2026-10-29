@@ -2,20 +2,20 @@ set -euo pipefail
 cd ~/quest
 failed=0
 if ! test -s /run/dq/facts/0/original-pvc-uid || ! test "$(kubectl get pvc ledger-shelf-0 -o jsonpath='{.metadata.uid}' 2>/dev/null)" = "$(cat /run/dq/facts/0/original-pvc-uid 2>/dev/null)"; then
-  printf '%s\n' 'ledger-shelf-0 UID = /run/dq/facts/0/original-pvc-uid: ✗'
+  printf '%s\n' 'ledger-shelf-0 UID = /run/dq/facts/0/original-pvc-uid: ✗ [DQ:pvc]'
   failed=1
 fi
 if ! kubectl get service shelf -o json 2>/dev/null | jq -e '.spec.clusterIP=="None" and .spec.selector=={app:"shelf"}' >/dev/null 2>&1; then
-  printf '%s\n' 'service/shelf clusterIP = None, selector = app:shelf: ✗'
+  printf '%s\n' 'service/shelf clusterIP = None, selector = app:shelf: ✗ [DQ:shelf_service]'
   failed=1
 fi
 if ! policies=$(kubectl get networkpolicies -o json 2>/dev/null); then
-  printf '%s\n' 'kubectl get networkpolicies: ✗'
+  printf '%s\n' 'kubectl get networkpolicies: ✗ [DQ:policies]'
   failed=1
   policies='{"items":[]}'
 fi
 if ! pods=$(kubectl get pods -l app=client -o json 2>/dev/null); then
-  printf '%s\n' 'client Pods: ✗'
+  printf '%s\n' 'client Pods: ✗ [DQ:pods]'
   failed=1
   pods='{"items":[]}'
 fi
@@ -90,43 +90,43 @@ def flows(spec, target):
 def validate(document, pods, target):
     labels = [pod["metadata"]["labels"] for pod in pods["items"]]
     if not labels:
-        return ["client Pods: ✗"]
+        return ["client Pods: ✗ [DQ:pods]"]
     expected = {("dns", "UDP", 53), ("dns", "TCP", 53), (target, "TCP", 8080)}
     items = document["items"]
     named = [p for p in items if p.get("metadata", {}).get("name") == "client-egress"]
     errors = []
     if len(named) != 1:
-        return ["networkpolicy/client-egress: ✗"]
+        return ["networkpolicy/client-egress: ✗ [DQ:named]"]
     spec = named[0]["spec"]
     if not simple_selector(spec.get("podSelector"), {"app": "client"}):
-        errors.append("client-egress podSelector = app:client: ✗")
+        errors.append("client-egress podSelector = app:client: ✗ [DQ:selector]")
     if set(spec.get("policyTypes", [])) != {"Egress"}:
-        errors.append("client-egress policyTypes = [Egress]: ✗")
+        errors.append("client-egress policyTypes = [Egress]: ✗ [DQ:types]")
     try:
         actual = flows(spec, target)
     except (KeyError, TypeError, ValueError, AttributeError):
-        errors.append("client-egress egress peers/ports: ✗")
+        errors.append("client-egress egress peers/ports: ✗ [DQ:egress]")
     else:
         for destination, protocol, port in sorted(expected - actual):
-            errors.append(f"client-egress {destination} {protocol} {port}: ✗")
+            errors.append(f"client-egress {destination} {protocol} {port}: ✗ [DQ:missing_{destination}_{protocol.lower()}_{port}]")
         for destination, protocol, port in sorted(actual - expected):
-            errors.append(f"client-egress {destination} {protocol} {port}: ✗")
+            errors.append(f"client-egress {destination} {protocol} {port}: ✗ [DQ:unexpected]")
     for policy in items:
         other = policy["spec"]
         if policy is named[0] or "Egress" not in other.get("policyTypes", []):
             continue
         try:
             if any(matches(other.get("podSelector", {}), pod_labels) for pod_labels in labels) and not flows(other, target) <= expected:
-                errors.append("networkpolicy/" + policy.get("metadata", {}).get("name", "?") + " egress: ✗")
+                errors.append("networkpolicy/" + policy.get("metadata", {}).get("name", "?") + " egress: ✗ [DQ:other_egress]")
         except (KeyError, TypeError, ValueError, AttributeError):
-            errors.append("networkpolicy/" + policy.get("metadata", {}).get("name", "?") + " selector/egress: ✗")
+            errors.append("networkpolicy/" + policy.get("metadata", {}).get("name", "?") + " selector/egress: ✗ [DQ:other_invalid]")
     return errors
 
 
 try:
     problems = validate(json.loads(sys.argv[1]), json.loads(sys.argv[2]), sys.argv[3])
 except (KeyError, TypeError, ValueError, AttributeError, json.JSONDecodeError):
-    problems = ["networkpolicies / client Pod labels: ✗"]
+    problems = ["networkpolicies / client Pod labels: ✗ [DQ:invalid_input]"]
 if problems:
     print("\n".join(problems))
     sys.exit(1)
@@ -135,11 +135,11 @@ then
   failed=1
 fi
 if ! timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local." >/dev/null 2>&1; then
-  printf '%s\n' 'deployment/client DNS shelf-0.shelf: ✗'
+  printf '%s\n' 'deployment/client DNS shelf-0.shelf: ✗ [DQ:dns]'
   failed=1
 fi
 if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- wget -qO- -T 3 http://shelf-0.shelf:8080 2>/dev/null)" = ledger-120; then
-  printf '%s\n' 'deployment/client → shelf-0.shelf:8080 = ledger-120: ✗'
+  printf '%s\n' 'deployment/client → shelf-0.shelf:8080 = ledger-120: ✗ [DQ:http]'
   failed=1
 fi
 exit "$failed"
