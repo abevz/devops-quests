@@ -10,11 +10,11 @@ stages:
     check: "set -euo pipefail\ncd ~/quest\nfailed=0\ncron=$(kubectl get cronjob route-audit -o json 2>/dev/null || true)\nfor field in suspend schedule timeZone concurrencyPolicy startingDeadlineSeconds successfulJobsHistoryLimit failedJobsHistoryLimit; do\n  case \"$field\" in\n    suspend) expression='.spec.suspend==false'; expected=false ;;\n    schedule) expression='.spec.schedule==\"* * * * *\"'; expected='* * * * *' ;;\n    timeZone) expression='.spec.timeZone==\"Etc/UTC\"'; expected=Etc/UTC ;;\n    concurrencyPolicy) expression='.spec.concurrencyPolicy==\"Forbid\"'; expected=Forbid ;;\n    startingDeadlineSeconds) expression='.spec.startingDeadlineSeconds==20'; expected=20 ;;\n    successfulJobsHistoryLimit|failedJobsHistoryLimit) expression=\".spec.$field==1\"; expected=1 ;;\n  esac\n  if ! jq -e \"$expression\" <<<\"$cron\" >/dev/null 2>&1; then\n    printf '%s\\n' \"cronjob/route-audit $field = $expected: ✗ [DQ:field_${field,,}]\"; failed=1\n  fi\ndone\nuid=$(jq -r '.metadata.uid // \"\"' <<<\"$cron\" 2>/dev/null || true)\nscheduled=$(jq -r '.status.lastScheduleTime // \"\"' <<<\"$cron\" 2>/dev/null || true)\nif ! test -n \"$scheduled\"; then\n  printf '%s\\n' 'cronjob/route-audit lastScheduleTime: ✗ [DQ:last_time]'; failed=1\nfi\njobs=$(kubectl get jobs -o json 2>/dev/null || true)\nowned=$(jq -c --arg uid \"$uid\" '[.items[]?|select(any(.metadata.ownerReferences[]?;.kind==\"CronJob\" and .uid==$uid and .controller==true))]' <<<\"$jobs\" 2>/dev/null || echo '[]')\nif ! test -n \"$uid\" || ! jq -e 'length>0' <<<\"$owned\" >/dev/null 2>&1; then printf '%s\\n' 'Job owned by cronjob/route-audit: ✗ [DQ:owned]'; failed=1; fi\nlatest=$(jq -c --arg at \"$scheduled\" '[.[]|select(.metadata.annotations[\"batch.kubernetes.io/cronjob-scheduled-timestamp\"]==$at)]' <<<\"$owned\" 2>/dev/null || echo '[]')\nif ! test -n \"$scheduled\" || ! jq -e 'length>0' <<<\"$latest\" >/dev/null 2>&1; then printf '%s\\n' 'owned Job scheduled timestamp = lastScheduleTime: ✗ [DQ:scheduled]'; failed=1; fi\njob=$(jq -r '[.[]|select(.status.succeeded==1)][0].metadata.name // \"\"' <<<\"$latest\" 2>/dev/null || true)\nif ! test -n \"$job\"; then printf '%s\\n' 'latest scheduled Job succeeded = 1: ✗ [DQ:succeeded]'; failed=1; fi\nif ! test -n \"$job\" || ! test \"$(kubectl logs \"job/$job\" 2>/dev/null)\" = north-104; then\n  printf '%s\\n' 'latest scheduled Job logs = north-104: ✗ [DQ:logs]'; failed=1\nfi\nexit \"$failed\"\n"
 hints:
 - text: hints.0.text
-  guide: kubernetes-20
+  guide: kubernetes-workloads
 - text: hints.1.text
-  guide: kubernetes-20
+  guide: kubernetes-workloads
 - text: hints.2.text
-  guide: kubernetes-20
+  guide: kubernetes-workloads
 debrief: debrief
 phrases:
 - phrases.0

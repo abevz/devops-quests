@@ -42,3 +42,5 @@ printf 'header = "Authorization: Bearer %s"\n' "$token" |
   curl --config - --cacert api-ca.pem -sS "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route" | jq .data.route
 unset token
 ```
+
+В квесте 037 привяжите ServiceAccount reader к Role в namespace, которая разрешает только `get` именованного ConfigMap `route` в основной API group. Проверяйте от имени workload: чтение `route` должно быть разрешено, а чтение `restricted` и список Secrets — запрещены. Доступ администратора не доказывает права workload.
