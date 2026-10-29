@@ -1,5 +1,8 @@
 # Development and delivery
 
+For every quest-editing task, follow [docs/quest-authoring.md](docs/quest-authoring.md)
+and cite the relevant principle numbers in the PR.
+
 Work only in the authorized scope. Preserve accounts, progress, pending briefing hints,
 Lab files and unrelated Docker resources. Never add AI attribution or contributor trailers.
 No default credentials, personal infrastructure, user databases, logs or private keys belong here.
