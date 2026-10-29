@@ -1,49 +1,37 @@
 title: Full platform recovery
-brief: 'The private platform delivery chain (Gitea → private registry → Argo CD →
-  Vault → board workload) is failing across two stages. On stage one, Argo CD is reconciling
-  the wrong repository path: restore reconciliation of the manifests directory on
-  the main revision while preserving automated self-heal and prune. On stage two,
-  the synced board workload still fails at runtime: restore private image pull access
-  and least-privilege Vault secret delivery (read-only access to the dispatch KV path)
-  without altering the immutable image or Secret references in the Git manifest. Every
-  service belongs only to this disposable bay.
-
-
-  Quest files in `~/quest` (some appear in later stages): `platform.env`, `application.json`,
-  `repository/manifests/board.json`, `baseline-commit`, `private-release.json`, `reader.hcl`,
-  `sync-secret.sh`.
-
-
-  The bay has no Internet or external DNS. Use only supplied files, preloaded images
-  and private services. Change only this bay.
-
-
-  Initial success criteria: Argo reconciles the correct private Git path and original
-  main revision with automation retained; runtime credentials are the next incident.'
-debrief: The complete Git → registry → Argo CD → Vault delivery path was recovered
-  without bypassing desired state or widening secret access.
-stages.0.brief: 'Success criteria: Argo reconciles the correct private Git path and
-  original main revision with automation retained; runtime credentials are the next
-  incident.'
-stages.0.objectives.0.text: Argo reconciles the correct private Git path and original
-  main revision with automation retained; runtime credentials are the next incident.
-stages.1.brief: 'Success criteria: Git, immutable registry image, Argo desired state
-  and least-privilege Vault data agree; the real board serves north-100.'
-stages.1.objectives.0.text: Git, immutable registry image, Argo desired state and
-  least-privilege Vault data agree; the real board serves north-100.
-hints.0.text: 'Stage 1: inspect application.json — Argo CD points to a retired Git
-  path instead of source.path=manifests on revision main with automated self-heal
-  and prune.'
-hints.1.text: 'Stage 2: a Synced Application is still unhealthy because the private
-  registry pull Secret is missing and reader.hcl points to the wrong Vault KV path.'
-hints.2.text: Restore the registry pull Secret from private-release.json, scope reader.hcl
-  to dispatch read-only, run sync-secret.sh, and verify the running image digest and
-  HTTP response.
+brief: The private delivery chain connects Gitea, a registry, Argo CD, Vault and a Kubernetes board. Work only in `~/quest`
+  and this offline bay. Read `platform.env`, `application.json`, `repository/manifests/board.json`, `baseline-commit`, `release-commit`,
+  `private-release.json`, `reader.hcl` and `sync-secret.sh`. An Argo Application describes where desired manifests come from
+  and reports reconciliation; a Vault policy controls secret access. First repair reconciliation, then restore the runtime
+  credentials. The checks observe selected configuration, values and two Vault paths; they cannot prove the entire Git history
+  or that every other Vault path is denied.
+debrief: The checks verified selected Git, Argo, board and Vault results; they do not establish complete policy scope or unchanged
+  history.
+stages.0.brief: 'Repair Application `board`: its repo URL must equal `GIT_URL` from `platform.env`, path `manifests`, revision
+  `main`, and automated `selfHeal` and `prune` must be true. Wait for sync status `Synced` at the frozen `baseline-commit`.
+  The linked hint describes refreshing the Application.'
+stages.0.objectives.0.text: The Application source, automation and baseline synchronization match the brief.
+stages.1.brief: 'Fetch `origin/main` in `repository`; it must equal `release-commit`. Keep Application `board` at the same
+  URL, path, revision and automation, now `Synced` and `Healthy` at `release-commit`. Wait for the board rollout and verify
+  `board:8080` returns `north-100`. The first board container must use the image in `/run/dq/facts/0/private-release.json`,
+  `imagePullPolicy: Always`, exactly `imagePullSecrets: [{name: registry-pull}]`, and exactly one environment entry: `ROUTE_SECRET`
+  from Secret `route-secret`, key `value`. A ready board container imageID must contain that image digest. The Secret value
+  and Vault token''s `secret/data/dispatch` value must be `north-secret`; token access to `secret/data/other` must return
+  HTTP 403. The Git manifest at `origin/main:manifests/board.json` must retain the frozen first image and first environment
+  Secret name `route-secret`. Use `reader.hcl` and `sync-secret.sh` to repair delivery, then restart the board. The two tested
+  Vault paths do not establish complete least privilege.'
+stages.1.objectives.0.text: The release revision, Application health, board configuration and response, selected Git fields
+  and Vault results match the brief.
+hints.0.text: 'Stage 1: inspect application.json — Argo CD points to a retired Git path instead of source.path=manifests on
+  revision main with automated self-heal and prune.'
+hints.1.text: 'Stage 2: a Synced Application is still unhealthy because the private registry pull Secret is missing and reader.hcl
+  points to the wrong Vault KV path.'
+hints.2.text: Restore the registry pull Secret from private-release.json, scope reader.hcl to dispatch read-only, run sync-secret.sh,
+  and verify the running image digest and HTTP response.
 phrases.0: I isolated failures at each delivery boundary.
 phrases.1: I retained immutable image identity and Git reconciliation.
 phrases.2: I verified least-privilege secret access and real end-to-end service.
-questions.0.points.0: Applied desired state can still reference unavailable images
-  or Secrets.
+questions.0.points.0: Applied desired state can still reference unavailable images or Secrets.
 questions.0.points.1: Inspect sync, health, events and real requests separately.
 questions.0.prompt: Why can an Application be Synced while its Pods fail?
 questions.1.points.0: Correct source revision, running digest and scoped runtime credentials.
