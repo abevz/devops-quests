@@ -50,7 +50,7 @@ def test_all_published_lessons_have_bilingual_runnable_routes_and_block_coverage
                     .read_text()
                     .startswith("#!/bin/bash\nset -euo pipefail")
                 )
-        blocks = fences(catalog.guide_messages[name]["ru"]["text"])
+        blocks = fences(catalog.guide_messages[name]["en"]["text"])
         assert [(b["block"], b["language"]) for b in row["reference_blocks"]] == [
             (i, language) for i, (language, _) in enumerate(blocks, 1)
         ]
@@ -63,7 +63,7 @@ def test_all_published_lessons_have_bilingual_runnable_routes_and_block_coverage
     assert count == 378
 
 
-def test_rehash_after_editing_russian_text_marks_lesson_and_translation_stale(
+def test_rehash_after_editing_english_text_marks_lesson_and_translation_stale(
     tmp_path,
 ):
     from scripts.validate_i18n import audit
@@ -80,13 +80,13 @@ def test_rehash_after_editing_russian_text_marks_lesson_and_translation_stale(
         for name in ("guide-lessons.yaml", "guide-topics.yaml")
     }
     assert guide_excerpts.refresh(root=tmp_path) == 39
-    assert (docs / "guides/kubernetes-20/i18n/ru.yaml").read_bytes() == (
-        ROOT / "docs/guides/kubernetes-20/i18n/ru.yaml"
+    assert (docs / "guides/kubernetes-20/i18n/en.yaml").read_bytes() == (
+        ROOT / "docs/guides/kubernetes-20/i18n/en.yaml"
     ).read_bytes()
-    russian = docs / "guides/kubernetes-20/i18n/ru.yaml"
-    values = yaml.safe_load(russian.read_text())
+    english = docs / "guides/kubernetes-20/i18n/en.yaml"
+    values = yaml.safe_load(english.read_text())
     values["text"] += "\nEdited text.\n"
-    russian.write_text(yaml.safe_dump(values, allow_unicode=True, sort_keys=False))
+    english.write_text(yaml.safe_dump(values, allow_unicode=True, sort_keys=False))
     assert guide_excerpts.refresh(root=tmp_path) == 39
     for name, expected in before.items():
         assert (docs / name).read_bytes() == expected
@@ -100,7 +100,7 @@ def test_rehash_after_editing_russian_text_marks_lesson_and_translation_stale(
     assert not any(e.get("error") == "original_hash_mismatch" for e in result["errors"])
     assert {
         "guide": "kubernetes-20",
-        "language": "en",
+        "language": "ru",
         "reason": "snapshot_changed",
     } in result["stale"]
 

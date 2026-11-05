@@ -153,12 +153,13 @@ def test_display_labels_and_file_layout_comments_are_not_commands():
 
 def test_module_guide_descriptions_are_english_and_contract_is_preserved():
     folder = ROOT / "docs/guides/terraform-7.1/i18n"
-    original = yaml.safe_load((folder / "ru.yaml").read_text())["text"]
     english = yaml.safe_load((folder / "en.yaml").read_text())["text"]
+    russian = yaml.safe_load((folder / "ru.yaml").read_text())["text"]
     assert 'description = "Component name"' in english
     assert 'error_message = "name must contain at least 3 characters."' in english
     assert 'description = "Имя компонента"' not in english
-    assert same_code(original, english)
+    assert same_code(english, russian)
+    assert same_code(russian, english)
 
 
 def test_sequence_diagram_aliases_and_messages_preserve_actor_identity():
@@ -277,8 +278,15 @@ def test_print_configuration_arguments_cannot_be_translated(keyword):
     [
         ("pod app-frontend-1", "pod app-other-frontend-1"),
         ("--all-namespaces", "--watch all-namespaces"),
+        ("--all-namespaces", "все пространства"),
+        ("--namespace=default", "--namespace=other"),
+        ("--namespace=default", "--namespace"),
         ("custom-harness config", "custom harness config"),
         ("option=value", "option value"),
+        ("option=value", "параметр"),
+        ("aws_s3_bucket", "бакет"),
+        ("local_file.notice", "local_file.other"),
+        ("local_file.notice", "local_file"),
         ("cat config && restart service", "cat config restart service"),
     ],
 )
@@ -286,6 +294,9 @@ def test_embedded_identifier_flag_and_operator_boundaries_are_preserved(before, 
     source = f'```yaml\ndebug:\n  msg: "Проверьте {before}"\n```'
     target = f'```yaml\ndebug:\n  msg: "Check {after}"\n```'
     assert not same_code(source, target)
+    en_source = f'```yaml\ndebug:\n  msg: "Check {before}"\n```'
+    ru_target = f'```yaml\ndebug:\n  msg: "Проверьте {after}"\n```'
+    assert not same_code(en_source, ru_target)
 
 
 @pytest.mark.parametrize(

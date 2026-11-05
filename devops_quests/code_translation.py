@@ -37,9 +37,12 @@ PROTECTED = re.compile(
     r"%(?:\([^)]+\))?[-+ #0-9.*\[\]$hljztL]*[a-zA-Z%]|\\.|"
     r"</?[A-Za-z][^<>]*>|&&|\|\||[;&<>|]|"
     r"https?://[^\s\"']+|(?<![\w>])(?:~|\.{1,2})?/[^\s\"',;<>]+|"
-    r"\b[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+\b|`[^`]+`|[0-9]+"
+    r"--[A-Za-z0-9][A-Za-z0-9_-]*(?:=[A-Za-z0-9_./:@~-]+)?|"
+    r"\b[A-Za-z_][A-Za-z0-9_-]*=[A-Za-z0-9_./:@~-]+|"
+    r"\b[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+\b|"
+    r"\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+\b|`[^`]+`|[0-9]+"
 )
-# Existing Latin fragments in a Russian explanation can be commands, flags or
+# Existing Latin fragments in a Cyrillic explanation can be commands, flags or
 # identifiers. Preserve them generically rather than guessing command names.
 LATIN_FRAGMENT = re.compile(
     r"[-+./]*[A-Za-z_][A-Za-z_0-9./:=+@~-]*"
@@ -385,10 +388,13 @@ def quoted_body(lines, depth):
 def preserves_fragments(original, translated):
     """Retain existing technical text even when it is not marked as inline code.
 
-    A Latin phrase already present in the source is not Russian prose needing
-    translation. Require it verbatim and in order. This intentionally fails
-    closed on ambiguous mixed prose, without a command-name allowlist.
+    A Latin phrase already present in a Cyrillic explanation is not prose needing
+    translation. Require it verbatim and in order in both directions. This
+    intentionally fails closed on ambiguous mixed prose, without a command-name
+    allowlist.
     """
+    if not re.search(r"[А-Яа-яЁё]", original) and re.search(r"[А-Яа-яЁё]", translated):
+        original, translated = translated, original
     cursor = 0
     for match in LATIN_FRAGMENT.finditer(original):
         fragment = match[0]

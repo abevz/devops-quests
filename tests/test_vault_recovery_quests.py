@@ -22,7 +22,8 @@ def test_vault_quests_link_an_authored_localized_recovery_guide():
         assert all(hint.get("guide") == "vault-recovery" for hint in catalog.quests[number]["hints"])
     russian = (ROOT / "docs/Vault-Recovery.md").read_text()
     assert russian == catalog.guide_messages["vault-recovery"]["ru"]["text"]
-    assert hashlib.sha256(russian.encode()).hexdigest() == guide["source_hash"]
+    english = catalog.guide_messages["vault-recovery"]["en"]["text"]
+    assert hashlib.sha256(english.encode()).hexdigest() == guide["source_hash"]
     for language in ("en", "pl", "es", "de", "ru"):
         text = guide["content"][language]
         assert "/v1/sys/unseal" in text
