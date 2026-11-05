@@ -287,6 +287,8 @@ def test_print_configuration_arguments_cannot_be_translated(keyword):
         ("aws_s3_bucket", "бакет"),
         ("local_file.notice", "local_file.other"),
         ("local_file.notice", "local_file"),
+        ("--log.level", "--log.format"),
+        ("--log.level=debug", "--log"),
         ("cat config && restart service", "cat config restart service"),
     ],
 )
@@ -331,3 +333,30 @@ def test_mermaid_display_markup_remains_exact():
     assert same_code(source, translated)
     assert not same_code(source, translated.replace("<br/>", "<hr/>"))
     assert not same_code(source, translated.replace("<br/>", '<br class="other"/>'))
+
+
+@pytest.mark.parametrize(
+    ("english", "russian"),
+    [
+        ("Use --log-level=debug", "Используйте подробный уровень"),
+        ("Set replicas=3 now", "Задайте нужное число реплик"),
+        ("Edit modules/notice/main.tf", "Отредактируйте модуль"),
+        ("Import aws_s3_bucket.logs", "Импортируйте бакет"),
+    ],
+)
+def test_english_source_technical_tokens_must_survive_in_cyrillic(english, russian):
+    source = f'```yaml\ndebug:\n  msg: "{english}"\n```'
+    target = f'```yaml\ndebug:\n  msg: "{russian}"\n```'
+    assert not same_code(source, target)
+
+
+def test_english_source_prose_words_may_be_translated():
+    source = '```hcl\n# shared values for the new main.tf configuration.\n```'
+    target = '```hcl\n# общие значения для новой main.tf конфигурации.\n```'
+    assert same_code(source, target)
+
+
+def test_dotted_mermaid_flag_cannot_change():
+    source = '```mermaid\nflowchart LR\n  A["Use --log.level"]\n```'
+    target = '```mermaid\nflowchart LR\n  A["Use --log.format"]\n```'
+    assert not same_code(source, target)

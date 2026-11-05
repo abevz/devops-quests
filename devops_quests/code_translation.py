@@ -37,7 +37,7 @@ PROTECTED = re.compile(
     r"%(?:\([^)]+\))?[-+ #0-9.*\[\]$hljztL]*[a-zA-Z%]|\\.|"
     r"</?[A-Za-z][^<>]*>|&&|\|\||[;&<>|]|"
     r"https?://[^\s\"']+|(?<![\w>])(?:~|\.{1,2})?/[^\s\"',;<>]+|"
-    r"--[A-Za-z0-9][A-Za-z0-9_-]*(?:=[A-Za-z0-9_./:@~-]+)?|"
+    r"--[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*(?:=[A-Za-z0-9_./:@~-]+)?|"
     r"\b[A-Za-z_][A-Za-z0-9_-]*=[A-Za-z0-9_./:@~-]+|"
     r"\b[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+\b|"
     r"\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+\b|`[^`]+`|[0-9]+"
@@ -48,6 +48,21 @@ LATIN_FRAGMENT = re.compile(
     r"[-+./]*[A-Za-z_][A-Za-z_0-9./:=+@~-]*"
     r"(?:[ \t]+[-+./]*[A-Za-z_][A-Za-z_0-9./:=+@~-]*)*"
 )
+LATIN_TOKEN = re.compile(r"[-+./]*[A-Za-z_][A-Za-z_0-9./:=+@~-]*")
+CYRILLIC = re.compile(r"[А-Яа-яЁё]")
+
+
+def technical_token(token):
+    """Flags, assignments, identifiers and paths; plain English words are prose."""
+    token = token.rstrip(".:")
+    return bool(re.search(r"[0-9_./:=@~]|^-|[a-z][A-Z]", token))
+
+
+def contains_fragment(fragment, text, start=0):
+    return re.search(
+        r"(?<![\w./:=+@~-])" + re.escape(fragment) + r"(?![\w./:=+@~-])",
+        text[start:],
+    )
 
 
 def fenced_blocks(text):
@@ -393,15 +408,18 @@ def preserves_fragments(original, translated):
     intentionally fails closed on ambiguous mixed prose, without a command-name
     allowlist.
     """
-    if not re.search(r"[А-Яа-яЁё]", original) and re.search(r"[А-Яа-яЁё]", translated):
+    if not CYRILLIC.search(original) and CYRILLIC.search(translated):
+        # English source, Cyrillic translation: technical tokens of the source
+        # must survive. Plain words cannot be told apart from prose without an
+        # allowlist, so they are checked only in the reverse direction below.
+        for match in LATIN_TOKEN.finditer(original):
+            token = match[0].rstrip(".:")
+            if technical_token(token) and contains_fragment(token, translated) is None:
+                return False
         original, translated = translated, original
     cursor = 0
     for match in LATIN_FRAGMENT.finditer(original):
-        fragment = match[0]
-        found = re.search(
-            r"(?<![\w./:=+@~-])" + re.escape(fragment) + r"(?![\w./:=+@~-])",
-            translated[cursor:],
-        )
+        found = contains_fragment(match[0], translated, cursor)
         if found is None:
             return False
         cursor += found.end()
