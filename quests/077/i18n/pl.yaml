@@ -1,35 +1,52 @@
 title: Konserwacja PDB
-brief: 'Dwie repliki board są sprawne, ale minAvailable: 2 blokuje każdy dobrowolny eviction. Skonfiguruj
-  board-budget do minAvailable: 1 bez zmiany selector lub zwiększania liczby replik. W celu przeprowadzenia
-  testu bezpiecznej konserwacji bash evict-one.sh przesyła żądanie Eviction API z bieżącym Pod UID jako
-  precondition i sondami HTTP podczas wymiany. Sprawdzonym rezultatem jest zaobserwowane przez serwer
-  użycie Eviction API, wymiana jednego oryginalnego Pod i przywrócenie wymaganego zdrowego minimum. Zakończ
-  z dwiema zdrowymi replikami i jedną dozwoloną disruption. PDB reguluje dobrowolne eviction; nie zapobiega
-  to utracie węzła, bezpośredniemu usunięciu Pod ani wdrożeniu Deployment.
+brief: |
+  Usługa potrzebuje bezpiecznego okna dobrowolnej konserwacji z zachowaniem dostępności. Zachowaj dostarczony 10-sekundowy hook preStop, aby zakończenie pozostało obserwowalne.
 
+  Pracuj w `~/quest` na workstation. Dostarczone pliki wejściowe: `board.json`, `service.json`, `client.json`, `pdb.json`, `evict-one.sh`, `original-pod-uids.json`.
 
-  Pliki zadań w `~/quest` (niektóre pojawiają się w późniejszych etapach): `board.json`, `service.json`,
-  `client.json`, `pdb.json`, `evict-one.sh`, `eviction.json`.
+  **Wymagania:**
+  - Wewnątrz kontenera `worker` Deployment `client` żądanie HTTP do `http://board:8080` zwraca `north-77`.
+  - PDB `board-budget` chroni Pody z etykietą `app=board` i wymaga co najmniej jednego zdrowego Poda.
+  - Deployment `board` ma dokładnie dwie repliki, obie gotowe.
+  - PDB `board-budget` zgłasza:
+    - Zdrowe: `2`
+    - Wymagane zdrowe: `1`
+    - Dozwolone zakłócenia: `1`
+  - W `~/quest` na workstation plik `eviction.json` zapisuje żądanie Eviction API dla oryginalnego Poda w tym środowisku:
+    - API: `policy/v1`
+    - Rodzaj: `Eviction`
+    - Przestrzeń nazw: `$DQ_NAMESPACE`
+    - Warunek UID: UID oryginalnego Poda
+  - Wybrany Pod już nie istnieje i pozostaje dokładnie jeden oryginalny Pod. Oryginalna lista UID jest chroniona na workstation:
+    - `/run/dq/facts/0/original-pod-uids.json`
+  - Serwer potwierdza usunięcie wybranego oryginalnego Poda przez Eviction API; potwierdzenie tylko do odczytu jest na workstation:
+    - `/run/dq/observations/evictions.json`
+  - Twoje konto środowiska nie może zmieniać statusu Podów przez patch.
 
+  **Sprawdź samodzielnie przed Check & finish:**
+  Wykonaj te polecenia obserwacyjne w `~/quest` na workstation.
+  - `kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://board:8080` — Odbiorca usługi otrzymuje `north-77`.
+  - Selektor oraz liczby zdrowych Podów i zakłóceń odpowiadają wymaganiom, obie repliki są gotowe, a odpowiedź autoryzacji to `no`.
 
-  W zatoce nie ma Internetu ani zewnętrznego DNS. Korzystaj wyłącznie z dostarczonych plików, wstępnie
-  załadowanych obrazów i usług prywatnych. Zmień tylko tę zatokę.
+    ```sh
+    kubectl get pdb board-budget -o yaml
+    kubectl get deployment board
+    kubectl auth can-i patch pods --subresource=status
+    ```
+  - Żądanie wskazuje to środowisko i UID oryginalnego Poda jako warunek wstępny. Tego UID nie ma wśród bieżących Podów, ale znajduje się w potwierdzeniu serwera; pozostaje dokładnie jeden oryginalny Pod.
 
+    ```sh
+    cat eviction.json
+    cat /run/dq/facts/0/original-pod-uids.json
+    kubectl get pods -l app=board -o json
+    cat /run/dq/observations/evictions.json
+    ```
 
-  Osoba sprawdzająca sprawdza również, czy UID w `eviction.json` należy do oryginalnego Pod i czy dokładnie
-  jeden oryginalny Pod został wymieniony.
-
-
-  backend musi przestrzegać warunku DisruptionTarget należącego do serwera z reason EvictionByEvictionAPI,
-  podczas gdy stary Pod kończy działanie. Bezpośrednie usunięcie i edycja pliku JSON nie powodują utworzenia
-  tego paragonu.
-
-
-  Dostarczony 10-sekundowy preStop hook umożliwia zaobserwowanie zakończenia podczas zwykłego 2,5-sekundowego
-  odpytywania backend; zachowaj ten hook.'
+  PDB reguluje dobrowolne usuwanie; nie zapobiega utracie węzła, bezpośredniemu usunięciu Poda ani rollout Deployment, a zmieniony plik żądania nie dowodzi usunięcia zaobserwowanego przez serwer.
 debrief: Konserwacja ma teraz wyraźnie określone, zdrowe minimum, zweryfikowane przez prawdziwy eviction
   i sondy serwisowe.
-stages.0.brief: Zmień tylko tę zatokę.
+stages.0.brief: |
+  Zakończ obserwowalną dobrowolną konserwację i przywróć obie zdrowe repliki.
 stages.0.objectives.0.text: PDB `board-budget` chroni Pody z etykietą `app=board` i wymaga co najmniej
   jednego zdrowego Poda.
 stages.0.objectives.1.text: Deployment `board` ma dokładnie dwie repliki, obie gotowe.
@@ -45,7 +62,8 @@ stages.0.objectives.6.text: Serwer potwierdza, że oryginalny Pod wybrany w `evi
 stages.0.objectives.7.text: Konto środowiska nie może zmieniać statusu Podów przez patch.
 hints.0.text: Budżet dwa z dwóch nie pozostawia miejsca na dobrowolne utrzymanie.
 hints.1.text: Napraw selector i repliki; zmień tylko zdrowe minimum.
-hints.2.text: Poczekaj na disruptionsAllowed=1, użyj pomocnika Eviction API i sprawdź odzyskiwanie.
+hints.2.text: |
+  Poczekaj na disruptionsAllowed=1; następnie bash evict-one.sh wysyła żądanie Eviction API z warunkiem UID i sprawdza HTTP podczas wymiany. Sprawdź przywrócenie działania. Backend obserwuje DisruptionTarget z powodem EvictionByEvictionAPI podczas kończenia; bezpośrednie usunięcie lub edycja JSON nie tworzą tego potwierdzenia. Dostarczony 10-sekundowy hook preStop zapewnia obserwowalność przy odpytywaniu co 2.5 sekundy; zachowaj go.
 phrases.0: Dopasowałem disruption budget do dostępnej pojemności repliki.
 phrases.1: Zamiast bezpośredniego usuwania użyłem Eviction API.
 phrases.2: Rozróżniłem dobrowolne zabezpieczenie konserwacyjne od odzyskiwania po awarii.

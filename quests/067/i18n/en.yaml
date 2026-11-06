@@ -1,23 +1,40 @@
 title: Helm upgrades
-brief: 'A Helm upgrade changed readinessPort from 8080 to 9090 while the actual board still listens on
-  8080. Inspect the release history, effective values and rendered chart. Correct the release through
-  helm upgrade with readinessPort=8080, preserving the Deployment identity and pinned image. Do not replace
-  the release or merely patch the live probe: Helm values must describe the healthy state.
+brief: |
+  The installed Helm release is not providing a ready HTTP workload. Keep the original Deployment identity and the supplied pinned image.
 
+  Work in `~/quest` on the workstation. Supplied inputs: `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/board.yaml`, `original-deployment-uid`.
 
-  Quest files in `~/quest` (some appear in later stages): `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/board.yaml`,
-  `original-deployment-uid`.
+  **Requirements:**
+  - Deployment `board` completes its rollout.
+  - The fix is applied through Helm release `board` values, not by editing the Deployment.
+  - Helm release `board` has at least three revisions; the latest status is `deployed`.
+  - The original Deployment `board` is kept. Its UID matches the protected reference on the workstation:
+    - `/run/dq/facts/0/original-deployment-uid`
+  - Inside Deployment `board`, container `worker` has an HTTP readiness probe on port `8080`.
+  - Inside container `worker` of Deployment `board`, HTTP to `http://127.0.0.1:8080` returns `north-67`.
 
+  **Verify yourself before Check & finish:**
+  Run these observation commands from `~/quest` on the workstation.
+  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080` — Inside the application container, the HTTP response is `north-67`.
+  - There are at least three revisions, the latest is `deployed`, and release values describe the healthy workload.
 
-  The bay has no Internet or external DNS. Use only supplied files, preloaded images and private services.
-  Change only this bay.
+    ```sh
+    helm history board
+    helm get values board
+    ```
+  - The rollout is complete, the HTTP readiness probe uses port `8080`, and the Deployment UID matches the protected reference.
 
+    ```sh
+    kubectl rollout status deployment/board --timeout=3s
+    kubectl get deployment board -o yaml
+    cat /run/dq/facts/0/original-deployment-uid
+    ```
 
-  The authoritative setup evidence is read-only under `/run/dq/facts/0/`; matching files in `~/quest`
-  are working copies.'
+  Setup evidence under `/run/dq/facts/0/` on the workstation is authoritative and read-only; matching files in `~/quest` are working copies.
 debrief: Release intent and live readiness now agree without replacing the managed
   Deployment.
-stages.0.brief: Change only this bay.
+stages.0.brief: |
+  Keep the original workload while the Helm release and HTTP endpoint recover.
 stages.0.objectives.0.text: The fix is applied through Helm release `board` values, not by editing the
   Deployment.
 stages.0.objectives.1.text: Helm release `board` has at least 3 revisions and its latest status is `deployed`.
@@ -27,8 +44,8 @@ stages.0.objectives.4.text: Deployment `board` completes its rollout.
 stages.0.objectives.5.text: HTTP from Deployment `board` to `http://127.0.0.1:8080` returns `north-67`.
 hints.0.text: A deployed Helm revision can still contain an unhealthy workload.
 hints.1.text: Compare helm get values and helm template with the live readiness probe.
-hints.2.text: Upgrade the same release with the corrected readinessPort and wait for
-  readiness.
+hints.2.text: |
+  The upgrade changed readinessPort from 8080 to 9090 while the application still listens on 8080. Inspect release history, effective values and the rendered chart. Upgrade the same release with readinessPort=8080 and wait for readiness; do not replace the release or merely patch the live probe.
 phrases.0: I compared Helm history, effective values and rendered manifests.
 phrases.1: I corrected the release contract rather than hiding live drift.
 phrases.2: I verified readiness independently of the Helm revision status.

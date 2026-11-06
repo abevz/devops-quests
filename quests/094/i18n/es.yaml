@@ -1,24 +1,39 @@
 title: Actuación
-brief: 'Una única réplica de board sirve a HTTP pero desperdicia su presupuesto de 50m CPU en un fondo
-  accidental busy loop. Inspeccione desde /sys/fs/cgroup/cpu.stat hasta measure.sh y Deployment command.
-  Elimine solo el busy loop, manteniendo una réplica, el contenido de HTTP y las solicitudes y límites
-  exactos de CPU/memory. La muestra inicial congelada registra al menos diez en realidad throttled periods.
-  El muestreador lee ambos counters dentro de un exec; su propio trabajo y health probes todavía puede
-  gastar algo de CPU quota. La muestra final de dos segundos debe mostrar como máximo cinco throttled
-  periods nuevos. Este es un diagnóstico de limitación de CPU (throttling), no un punto de referencia
-  de latencia genérico; agregar réplicas o aumentar los límites oculta la causa.
+brief: |
+  La carga HTTP sufre throttling de CPU incluso durante un intervalo tranquilo. Recupera el servicio requerido dentro del presupuesto de recursos existente.
 
+  Trabaja en `~/quest` en la workstation. Archivos de entrada suministrados: `board.json`, `service.json`, `measure.sh`.
 
-  Archivos de búsqueda en `~/quest` (algunos aparecen en etapas posteriores): `board.json`, `service.json`,
-  `measure.sh`, `initial-throttled`.
+  **Requisitos:**
+  - Dentro del contenedor `worker` del Deployment `board`, HTTP a `http://board:8080` devuelve `north-94`.
+  - La muestra inicial congelada en la workstation registra al menos diez períodos con throttling:
+    - `/run/dq/facts/0/initial-throttled`
+  - El Deployment `board` conserva exactamente una réplica y esta está lista.
+  - Dentro del Deployment `board`, el contenedor `worker` conserva estos ajustes de recursos:
+    - Solicitud de CPU: `50m`
+    - Límite de CPU: `50m`
+    - Solicitud de memoria: `8Mi`
+    - Límite de memoria: `32Mi`
+  - Su comando sigue sirviendo `north-94` sin el bucle activo en segundo plano.
+  - Desde `~/quest` en la workstation, la muestra de dos segundos de `bash measure.sh` indica como máximo cinco nuevos períodos con throttling.
 
+  **Verifica antes de Check & finish:**
+  Ejecuta estos comandos de observación desde `~/quest` en la workstation.
+  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080` — El consumidor del servicio recibe `north-94`.
+  - `kubectl get deployment board -o yaml` — Hay exactamente una réplica lista; los ajustes de recursos coinciden con Requisitos y el comando del servicio no contiene un bucle activo en segundo plano.
+  - La cantidad inicial congelada es al menos `10`; la nueva cantidad de dos segundos es como máximo `5`.
 
-  La bahía no tiene Internet ni DNS externo. Utilice únicamente archivos proporcionados, imágenes precargadas
-  y servicios privados. Cambie sólo esta bahía.'
+    ```sh
+    cat /run/dq/facts/0/initial-throttled
+    bash measure.sh
+    ```
+
+  Esto mide throttling de CPU, no latencia general; el muestreador y las sondas de salud aún pueden consumir cuota de CPU.
 debrief: La eliminación del trabajo desperdiciado redujo throttling dentro del presupuesto de recursos
   original. Un muestreador y health checks también consumen quota; esta medida de enseñanza acotada no
   es una latencia production SLO.
-stages.0.brief: Cambie sólo esta bahía.
+stages.0.brief: |
+  Conserva una réplica lista y el presupuesto de recursos original, reduciendo el throttling medido.
 stages.0.objectives.0.text: La muestra inicial registrada contiene al menos diez periodos de throttling.
 stages.0.objectives.1.text: El Deployment `board` mantiene exactamente una réplica.
 stages.0.objectives.2.text: El contenedor board conserva la solicitud y el límite de CPU en `50m`, la
@@ -32,7 +47,8 @@ stages.0.objectives.6.text: HTTP desde Deployment `board` a `http://board:8080` 
 hints.0.text: Los límites de CPU pueden restringir la ejecución del trabajo listo para ejecutarse (throttling),
   incluso cuando el nodo tiene CPU disponible.
 hints.1.text: Separe el trabajo de publicación útil del proceso accidental en segundo plano.
-hints.2.text: Elimine el bucle y compare un intervalo cpu.stat nuevo sin cambiar réplicas ni límites.
+hints.2.text: |
+  Inspecciona el comando del Deployment y /sys/fs/cgroup/cpu.stat dentro del contenedor worker del Deployment board. Elimina solo el bucle activo accidental en segundo plano sin cambiar réplicas ni límites; compara un intervalo nuevo de cpu.stat. El measure.sh suministrado lee ambos contadores en un exec para que procesos de muestreo separados no gasten cuota adicional entre lecturas.
 phrases.0: Medí CPU throttling antes de cambiar la capacidad.
 phrases.1: Eliminé el trabajo innecesario en lugar de escalar el síntoma.
 phrases.2: Conservé el recurso limits y verifiqué el comportamiento útil de HTTP.
