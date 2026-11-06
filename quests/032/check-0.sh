@@ -1,12 +1,36 @@
 set -euo pipefail
 cd ~/quest
+failed=0
+set +e
+(
+set -e
 test "$(cat fleet.txt)" = "$(printf 'app1
 app2
 app3')"
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
 test "$(stat -c %a fleet.txt)" = 644
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
 ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'set -eu; test ! -e /srv/site/fleet.txt'
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
 ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'set -eu; test ! -e /srv/site/fleet.txt'
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
 ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'set -eu; test ! -e /srv/site/fleet.txt'
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
 python3 - <<'DQ_DELEGATION'
 from pathlib import Path
 import jinja2, yaml
@@ -19,3 +43,6 @@ content=task['ansible.builtin.copy']['content']
 rendered=jinja2.Environment().from_string(content).render(groups={'fleet':['probe-b','probe-a']}, inventory_hostname='probe-a')
 assert rendered.splitlines()==['probe-a','probe-b'], 'Derive the report from sorted fleet inventory membership'
 DQ_DELEGATION
+)
+[ $? -eq 0 ] || failed=1
+exit "$failed"

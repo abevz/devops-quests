@@ -1,5 +1,39 @@
 set -euo pipefail
 cd ~/quest
+failed=0
+set +e
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-ready'
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/message)" = 644'
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-ready'
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/message)" = 644'
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-ready'
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/message)" = 644'
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
 ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-ready && test "$(stat -c %a /srv/site/message)" = 644'
 ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-ready && test "$(stat -c %a /srv/site/message)" = 644'
 ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-ready && test "$(stat -c %a /srv/site/message)" = 644'
@@ -14,3 +48,6 @@ assert h[-3:]==['app1','app2','app3']
 starts=[x for x in e if 'host' not in x and x['task']=='Deliver the route message']
 assert len(starts)>=3
 CHECK
+)
+[ $? -eq 0 ] || failed=1
+exit "$failed"
