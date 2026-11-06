@@ -60,6 +60,9 @@ def test_migrated_brief_structure(number, language):
     if language == "en":
         assert REQUIREMENTS in brief and VERIFY in brief
         assert brief.index(REQUIREMENTS) < brief.index(VERIFY)
+        requirements = brief.split(REQUIREMENTS, 1)[1].split(VERIFY, 1)[0]
+        # Requirements describe the result for a person; exact objects belong to checks (045).
+        assert not MACHINE.search(requirements), "Requirements use check notation"
     # Translations keep the list structure even when headings are localized.
     assert brief.count("\n- ") >= 2, "Requirements and checks must be bulleted lists"
     assert BOILERPLATE not in brief, "Bay facts already state the offline rules"
