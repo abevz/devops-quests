@@ -9,6 +9,22 @@ import pytest
 from devops_quests.catalog import ROOT, Catalog
 
 
+def assert_stage_matches_objectives(source, objectives):
+    checks = [objective["check"] for objective in objectives]
+    prelude = "set -euo pipefail\ncd ~/quest\n"
+    if len(checks) == 1:
+        expected = checks[0]
+        if not expected.startswith(prelude):
+            expected = prelude + expected
+        expected = expected.rstrip("\n") + "\n"
+    else:
+        expected = prelude + "failed=0\nset +e\n"
+        for check in checks:
+            expected += "(\nset -e\n" + check + "\n)\n[ $? -eq 0 ] || failed=1\n"
+        expected += 'exit "$failed"\n'
+    assert source == expected
+
+
 @pytest.fixture(scope="module")
 def catalog():
     return Catalog()
@@ -61,7 +77,7 @@ def test_fleet_checks_separate_actual_content_and_mode(
         "TEST_VALUE": expected,
     }
     source = (ROOT / f"quests/{number:03}/check-{stage}.sh").read_text()
-    assert source == catalog.quests[number]["stages"][stage]["objectives"][0]["check"]
+    assert_stage_matches_objectives(source, catalog.quests[number]["stages"][stage]["objectives"])
     result = subprocess.run(
         ["bash", "-c", source],
         text=True,
@@ -97,7 +113,7 @@ def test_failed_conditions_have_translations(
         binary.write_text("#!/bin/sh\nexit 1\n")
         binary.chmod(0o755)
     source = (ROOT / f"quests/{number:03}/check-{stage}.sh").read_text()
-    assert source == catalog.quests[number]["stages"][stage]["objectives"][0]["check"]
+    assert_stage_matches_objectives(source, catalog.quests[number]["stages"][stage]["objectives"])
     environment = {
         **os.environ,
         "HOME": str(home),

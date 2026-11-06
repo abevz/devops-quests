@@ -1,38 +1,62 @@
 title: Modulwiederherstellung
-brief: 'Lies in `~/quest` die Dateien `main.tf`, `modules/ledger/main.tf`, `safe-state.json`, `safe-state.sha256` und `original-id`.
-  Ein sicherer Zustandsexport beschreibt das Ledger unter `module.north.local_file.ledger`; eine irrtümliche Zustandsverschiebung
-  benannte es in module.orphan um, während die Konfiguration es nun module.station nennt. Nutze die Sicherung als Karte und
-  gleiche den aktuellen Zustand ab; der Offline-Provider des Kindmoduls ist bereits deklariert. Die verlinkte Anleitung führt
-  in Moduladressen ein; `tofu state mv` ändert eine Adresse im Zustand.
+brief: |
+  Das Register ist über die erforderliche verwaltete Adresse nicht verfügbar.
 
+  Arbeite auf der Workstation in `~/quest` mit `main.tf`, `modules/ledger/main.tf`, `safe-state.json`.
 
-  Lass `safe-state.json` unverändert: Seine SHA-256-Summe muss `/run/dq/facts/0/safe-state.sha256` entsprechen, und seine
-  JSON-Ressourcen müssen `module.north.local_file.ledger` enthalten. Speichere einen binären Plan und exportiere ihn mit `tofu
-  show -json` nach `recovery-plan.json`, dann wende ihn an. Prüfe, dass `tofu state list` genau `module.station.local_file.ledger`
-  enthält, die Root-Ausgabe `ledger_id` `/run/dq/facts/0/original-id` entspricht und `ledger.txt` `north-92` enthält. Der
-  gespeicherte JSON-Plan muss genau eine Ressourcenänderung mit Aktionen `["no-op"]` enthalten. Schließlich muss `tofu plan
-  -input=false -detailed-exitcode -no-color` mit Code 0 enden (keine Änderungen). Die Prüfung untersucht Sicherung, aktuellen
-  Zustand und gespeichertes JSON; sie beweist weder die Wiederherstellungsgeschichte noch den Speicherzeitpunkt des Plans.
-  Arbeite nur in der Offline-Umgebung.'
-debrief: Prüfsumme der Sicherung, aktuelle Zustandsadresse, Ledger-ID und -Datei sowie gespeicherter Plan entsprechen dem
-  Wiederherstellungsvertrag; der abschließende Plan enthält keine Änderungen.
-stages.0.brief: Sicherung, Zustandsadresse, Ledger-ID und -Datei, gespeicherter und abschließender Plan stimmen mit der Aufgabe
-  überein.
-stages.0.objectives.0.text: Sicherung, Zustandsadresse, Ledger-ID und -Datei, gespeicherter und abschließender Plan stimmen
-  mit der Aufgabe überein.
-hints.0.text: Eine staatliche Sicherung ist ein Beweis; Durch das Wiederherstellen der gesamten Datei kann der neuere gültige
-  Status verworfen werden.
+  **Anforderungen:**
+  - Sicherung auf der Workstation:
+    - Pfad: `~/quest/safe-state.json`.
+    - Eingefrorener SHA-256-Beleg: `/run/dq/facts/0/safe-state.sha256`.
+    - Enthält `module.north.local_file.ledger`.
+  - OpenTofu-State:
+    - Genaues Inventar: `module.station.local_file.ledger`.
+  - Root-Ausgaben:
+    - Ausgabename: `ledger_id`.
+    - Passender Beleg auf der Workstation: `/run/dq/facts/0/original-id`.
+  - Dateien auf der Workstation:
+    - `~/quest/ledger.txt`: `north-92`.
+  - Gespeicherter Wiederherstellungsplan auf der Workstation:
+    - Pfad: `~/quest/recovery-plan.json`.
+    - Genau `1` Ressourceneintrag mit Aktion `no-op`.
+  - Infrastrukturkonvergenz:
+    - Keine ausstehenden Infrastrukturänderungen; Exit-Code des detaillierten Plans `0`.
+
+  **Selbstprüfung vor Check & finish:**
+  - `sha256sum safe-state.json; cat /run/dq/facts/0/safe-state.sha256; jq -r '.resources[] | select(.type=="local_file" and .name=="ledger") | .module + "." + .type + "." + .name' safe-state.json` — Die Prüfsummen stimmen überein und die Sicherung enthält `module.north.local_file.ledger`.
+  - `tofu output -raw ledger_id; printf '\n'; cat /run/dq/facts/0/original-id; cat ledger.txt; tofu show -no-color` — Die IDs stimmen überein; `ledger.txt` zeigt `north-92`; der State enthält nur `module.station.local_file.ledger`.
+  - `jq -r '.resource_changes[] | .address + " " + (.change.actions | join(","))' recovery-plan.json; tofu plan -input=false -detailed-exitcode -no-color` — Genau ein gespeicherter Eintrag hat Aktion `no-op`; die aktuelle Planung endet mit `0`.
+
+  Die Prüfung untersucht Sicherung, aktuellen State und gespeicherten Plan; sie beweist weder die Wiederherstellungshistorie noch den Speicherzeitpunkt des Plans.
+debrief: Prüfsumme der Sicherung, aktuelle Zustandsadresse, Ledger-ID und -Datei sowie gespeicherter Plan entsprechen
+  dem Wiederherstellungsvertrag; der abschließende Plan enthält keine Änderungen.
+stages.0.brief: Das Register muss den Ergebnisvertrag mit aufgezeichneter Identität und unveränderter Sicherung
+  erfüllen.
+hints.0.text: Eine staatliche Sicherung ist ein Beweis; Durch das Wiederherstellen der gesamten Datei kann der neuere
+  gültige Status verworfen werden.
 hints.1.text: Vergleichen Sie module.north im backup mit module.orphan im aktuellen Zustand.
-hints.2.text: Verschieben Sie die aktuelle Moduladresse auf module.station und dann auf inspect, eine No-Op-Ressource plan.
+hints.2.text: |-
+  Verschiebe die aktuelle Moduladresse nach module.station.
+  Speichere den binären Plan und exportiere ihn mit tofu show -json in das angeforderte JSON-Artefakt.
 phrases.0: Ich habe einen backup verifiziert, bevor ich ihn als Wiederherstellungsbeweis verwendet habe.
 phrases.1: Ich habe die Moduladressen abgeglichen, ohne die Ressource zu ersetzen.
 phrases.2: Ich habe identity, outputs und einen leeren endgültigen plan überprüft.
-diagnostics.condition_0: /run/dq/facts/0/safe-state.sha256 darf nicht leer sein und sha256(safe-state.json) muss dem Inhalt
-  entsprechen.
+diagnostics.condition_0: /run/dq/facts/0/safe-state.sha256 darf nicht leer sein und sha256(safe-state.json) muss
+  dem Inhalt entsprechen.
 diagnostics.condition_1: safe-state.json resources muss module.north.local_file.ledger enthalten.
 diagnostics.condition_2: tofu state list muss module.station.local_file.ledger entsprechen.
-diagnostics.condition_3: /run/dq/facts/0/original-id darf nicht leer sein und tofu output -raw ledger_id muss dem Inhalt entsprechen.
+diagnostics.condition_3: /run/dq/facts/0/original-id darf nicht leer sein und tofu output -raw ledger_id muss dem
+  Inhalt entsprechen.
 diagnostics.condition_4: ledger.txt muss north-92 entsprechen.
 diagnostics.condition_5: recovery-plan.json resource_changes length muss 1 entsprechen.
 diagnostics.condition_6: Jeder Eintrag in recovery-plan.json resource_changes muss actions ["no-op"] haben.
 diagnostics.condition_7: Der OpenTofu-Plan mit detailed-exitcode muss mit Code 0 enden.
+stages.0.objectives.0.text: Die Workstation-Datei `safe-state.json` stimmt mit `/run/dq/facts/0/safe-state.sha256`
+  überein und enthält `module.north.local_file.ledger`.
+stages.0.objectives.1.text: Der OpenTofu-State enthält genau `module.station.local_file.ledger`.
+stages.0.objectives.2.text: Die Ausgabe `ledger_id` stimmt mit `/run/dq/facts/0/original-id` auf der Workstation
+  überein.
+stages.0.objectives.3.text: 'Auf der Workstation: `ledger.txt` enthält `north-92`.'
+stages.0.objectives.4.text: Die Workstation-Datei `recovery-plan.json` enthält genau einen Ressourceneintrag mit
+  Aktion `no-op`.
+stages.0.objectives.5.text: OpenTofu meldet keine ausstehenden Infrastrukturänderungen.

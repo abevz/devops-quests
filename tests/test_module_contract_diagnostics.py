@@ -42,8 +42,9 @@ def test_each_003_failure_has_one_diagnostic_in_both_entrypoints(
         (module_probe / "north.txt").write_text("wrong\n")
     catalog = Catalog()
     standalone = catalog.script(3, 0, "check")
-    objective = catalog.quests[3]["stages"][0]["objectives"][0]["check"]
-    for check in (standalone, objective):
+    index = ("state", "file", "output", "plan").index(condition)
+    objective = catalog.quests[3]["stages"][0]["objectives"][index]["check"]
+    for check in (standalone, "set -euo pipefail\ncd ~/quest\n" + objective):
         result = subprocess.run(["bash", "-c", check], capture_output=True, text=True)
         assert result.returncode != 0
         assert len(result.stdout.splitlines()) == 1
@@ -115,7 +116,8 @@ def test_container_checks_reject_a_different_state_id(
     catalog = Catalog()
     checks = (
         catalog.script(number, 0, "check"),
-        catalog.quests[number]["stages"][0]["objectives"][0]["check"],
+        "set -euo pipefail\ncd ~/quest\n"
+        + catalog.quests[number]["stages"][0]["objectives"][1]["check"],
     )
     for check in checks:
         result = subprocess.run(["bash", "-c", check], capture_output=True, text=True)
