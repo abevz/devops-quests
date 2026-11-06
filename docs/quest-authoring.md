@@ -134,6 +134,13 @@ without a technique and without repeating the brief.
 
 **Objectives (`stages.N.objectives`):** one objective per independently checked condition,
 each with its own check (a condition that is one thing for the learner stays one objective).
+Do not split one learner condition per host, file or item: on a fleet, one objective states the
+property on every managed host ("On every managed host (`app1`, `app2`, `app3`), `/srv/routes/north`,
+`/srv/routes/south` and `/srv/routes/east` are directories with mode `0750`"); use separate
+objectives only when hosts or items must differ in the result, and let `[DQ:...]` name the failing
+host or path. An objective or requirement never states the structure of the solution ("the playbook
+separates delivery and inspection tags"); state the observable result instead ("running the
+inspection selection changes nothing on any host").
 Write them for a person: no jsonpath, JSON, array positions, ready YAML/HCL or commands. Name
 the exact names and values of the result; never the solution or the diagnosis (082: "The fix
 is applied through Helm release `board` values, not by editing the Deployment", not "uses
