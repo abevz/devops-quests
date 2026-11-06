@@ -43,7 +43,8 @@ def test_005_brief_does_not_disclose_the_permission_answer(language):
     assert not re.search(r"\b0?644\b", values["stages.0.objectives.0.text"])
     assert "prepare.yml" not in brief
     assert not re.search(r"\b0?644\b|\bstat\b", brief)
-    commands = re.findall(r"^- `(.*)` —", brief, re.MULTILINE)
+    assert not re.search(r"^- `.*` —", brief, re.MULTILINE)
+    commands = re.findall(r"^- `(.*)` —", values["hints.2.text"], re.MULTILINE)
     assert len(commands) == 2
     assert all("runuser -u nobody --" in command for command in commands)
     assert any("cat /srv/site/message" in command for command in commands)
