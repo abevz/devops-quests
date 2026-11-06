@@ -1,19 +1,45 @@
 title: Vault to pod secret
-brief: 'Work in `~/quest` with `platform.env`, `reader.hcl`, `sync-secret.sh` and `deployment.json`. The disposable game Vault
-  is already initialized and unsealed. Its `rail-reader` policy points to the wrong KV-v2 path. The manager token can update
-  that policy; the reader token must be allowed to read `secret/data/dispatch`. Never print tokens or secret responses. The
-  linked Vault guide explains policy paths and safe KV-v2 reads.
+brief: |-
+  The relay cannot consume its Vault-backed value. Restore the expected value along the delivery chain.
 
+  Work on the workstation in `~/quest` with `platform.env`, `reader.hcl`, `sync-secret.sh`, `deployment.yaml`.
 
-  Repair `rail-reader`, run the supplied on-demand `sync-secret.sh`, and wait for `deployment/relay` to roll out. Verify that
-  the reader receives `north-secret` as `.data.data.value`, Kubernetes Secret `route-secret` has a `value` key decoding to
-  `north-secret`, and the `relay` process has `ROUTE_SECRET=north-secret`. The rollout must succeed. The check observes these
-  results; it does not prove which policy edits or synchronization steps produced them. Work only in the offline bay.'
-stages.0.brief: The reader value, Secret key, relay environment and rollout match the brief.
-stages.0.objectives.0.text: The reader value, Secret key, relay environment and rollout match the brief.
-hints.0.text: Inspect the Vault HTTP status without printing tokens.
-hints.1.text: KV-v2 reads require the secret/data/dispatch policy path.
-hints.2.text: Repair rail-reader through the manager token, run sync-secret.sh, then inspect the Secret and pod environment.
+  Unless stated otherwise, Kubernetes resources live in the bay namespace (`DQ_NAMESPACE`); `~/quest` paths are on the workstation.
+
+  **Requirements:**
+
+  - The supplied Vault identity, the delivered Kubernetes configuration and the running `relay` process all provide the dispatch value `north-secret`.
+  - Deployment `relay` completes its rollout in the bay namespace.
+
+  The check observes these results; it does not prove which policy edits or synchronization steps produced them.
+stages.0.brief: All delivery observations must agree on the same value.
+hints.0.text: Authorization, delivered configuration and the running process are separate links in a delivery
+  chain.
+hints.1.text: |-
+  Follow the supplied synchronization helper and the workload’s configuration references.
+
+  ```bash
+  cat sync-secret.sh
+  kubectl describe deployment relay
+  ```
+hints.2.text: |-
+  Repair rail-reader through the manager token, run sync-secret.sh, then inspect the Secret and pod environment. KV-v2 reads require the secret/data/dispatch policy path.
+
+  Verify from `~/quest` on the workstation:
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+
+  Exit `0`; no credential or secret value is printed.
+
+  - `kubectl get secret route-secret -o json | jq -e '.data.value | @base64d == "north-secret"' >/dev/null`
+
+  Exit `0`; no credential or secret value is printed.
+
+  - `kubectl exec deployment/relay -- sh -c 'test "$ROUTE_SECRET" = north-secret'`
+  - `kubectl rollout status deployment/relay --timeout=3s`
+
+  Exit `0`; no credential or secret value is printed. The rollout completes.
 debrief: The reader value, Secret key, relay environment and rollout matched the checks.
 phrases.0: I checked the running state before making a change.
 phrases.1: I found the cause and changed one thing at a time.
@@ -24,3 +50,6 @@ diagnostics.reader: The reader token must read north-secret from secret/data/dis
 diagnostics.secret: The decoded route-secret value must equal north-secret.
 diagnostics.env: The relay container ROUTE_SECRET must equal north-secret.
 diagnostics.rollout: The relay Deployment rollout must complete.
+stages.0.objectives.0.text: The supplied Vault identity, the delivered Kubernetes configuration and the
+  running `relay` process all provide the dispatch value `north-secret`.
+stages.0.objectives.1.text: Deployment `relay` completes its rollout in the bay namespace.

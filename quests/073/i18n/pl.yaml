@@ -1,31 +1,50 @@
 title: Audyt Vault
-brief: 'Gra reader otrzymała prawdziwą odmowę pozwolenia na Vault. Kontrola plików jest włączona w log_raw=false;
-  backend eksportuje tylko metadane odmów z listy dozwolonych do audit-events.json i zamraża je w /run/dq/facts/0/.
-  Raw audit records, pola uwierzytelniania i tajne wartości pozostają poza workstation. Zidentyfikuj odrzucone
-  żądanie w incident.json za pomocą dokładnie request_id, path, operation i reason. Następnie napraw reader.hcl
-  dla dispatch tylko do odczytu i zaktualizuj tę grę policy. Nie kopiuj tokens ani tajnych wartości do
-  swojego rekordu zdarzenia.
+brief: |-
+  Konsument Vault otrzymuje odmowę dostępu. Przywróć wymagany dostęp i zapisz incydent identyfikujący odrzucone żądanie.
 
+  Pracuj na workstation w `~/quest` z plikami `platform.env`, `audit-events.json`, `incident.json`, `reader.hcl`.
 
-  Pliki zadań w `~/quest` (niektóre pojawiają się w późniejszych etapach): `platform.env`, `audit-events.json`,
-  `incident.json`, `reader.hcl`, `reader-policy.json`.
+  **Requirements:**
 
+  - Plik `~/quest/incident.json` na workstation identyfikuje odrzucone żądanie z dostarczonych metadanych audytu i zawiera dokładnie `request_id`, `path`, `operation` oraz `reason`.
+  - Dostarczona tożsamość reader odczytuje istniejące dane dispatch i zgłasza `deny` dla prób `secret/data/other` oraz `sys/audit`.
+  - Dostarczona tożsamość reader pobiera z Vault istniejącą wartość dispatch `north-secret`.
 
-  W zatoce nie ma Internetu ani zewnętrznego DNS. Korzystaj wyłącznie z dostarczonych plików, wstępnie
-  załadowanych obrazów i usług prywatnych. Zmień tylko tę zatokę.
-
-
-  Początkowe kryteria sukcesu: incydent dokładnie odpowiada zamrożonym rzeczywistym metadanym odmowy;
-  reader może read dispatch i odmówiono mu niepowiązanego administrowania secrets i audit.'
+  Próby negatywne obejmują dwie wskazane ścieżki; nie dowodzą odmowy dla każdej ścieżki Vault.
 debrief: Odrzucone żądanie zostało zdiagnozowane za pomocą prawdziwego audit metadata, podczas gdy tajemnice
   pozostały poza artefaktem incydentu.
-stages.0.brief: 'Kryteria sukcesu: incydent dokładnie odpowiada zamrożonym rzeczywistym metadanym odmowy;
-  reader może odczytać dispatch i odmówiono mu niepowiązanego administrowania secrets i audit.'
-stages.0.objectives.0.text: Incydent dokładnie odpowiada zamrożonym metadanym prawdziwej odmowy; reader
-  może odczytać dispatch i odmówiono mu niepowiązanego administrowania secrets i audit.
+stages.0.brief: Zapis incydentu nie zawiera danych uwierzytelniania ani tajnych wartości.
 hints.0.text: Operational logs i żądanie audit records odpowiadają na różne pytania.
-hints.1.text: Skoreluj request_id, path i operation bez kopiowania danych uwierzytelniających.
-hints.2.text: Zapisz tylko cztery wyeksportowane pola i napraw ścieżkę odczytu KV v2 bez poszerzania dostępu.
+hints.1.text: |-
+  Sprawdź wyeksportowane metadane audytu i dostarczoną politykę bez wyświetlania danych dostępu.
+
+  ```bash
+  jq 'map({request_id,path,operation,reason})' audit-events.json
+  cat reader.hcl
+  ```
+hints.2.text: |-
+  Zapisz tylko cztery wyeksportowane pola i napraw ścieżkę odczytu KV v2 bez poszerzania dostępu. Po edycji `reader.hcl` zaktualizuj działającą politykę ćwiczebną tożsamością manager. Audyt plikowy używa `log_raw=false`; do `audit-events.json` i zamrożonych faktów trafiają tylko dozwolone metadane odmowy. Surowe rekordy audytu, pola uwierzytelniania i tajne wartości pozostają poza workstation. Skoreluj request_id, path i operation bez kopiowania danych uwierzytelniających.
+
+  Sprawdź z `~/quest` na workstation:
+
+  - `jq -e 'keys == ["operation","path","reason","request_id"]' incident.json >/dev/null`
+
+  Kod `0`; incydent ma dokładnie cztery wymagane pola.
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+
+  Kod `0`; dane uwierzytelniające i tajne wartości nie są wyświetlane.
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") -H 'Content-Type: application/json' --request POST --data '{"paths":["secret/data/dispatch","secret/data/other","sys/audit"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '{dispatch:."secret/data/dispatch",other:."secret/data/other",audit:."sys/audit"}'`
+
+  `dispatch: ["read"]`; `other` i `audit`: `["deny"]`.
 phrases.0: Skorelowałem odrzucone żądanie poprzez audyt request ID.
 phrases.1: Nie umieściłem danych uwierzytelniających ani tajnych wartości w raporcie o incydencie.
 phrases.2: Zweryfikowałem poprawione read i negatywne kontrole autoryzacyjne.
+stages.0.objectives.0.text: Plik `~/quest/incident.json` na workstation identyfikuje odrzucone żądanie
+  z dostarczonych metadanych audytu i zawiera dokładnie `request_id`, `path`, `operation` oraz `reason`.
+stages.0.objectives.1.text: Dostarczona tożsamość reader odczytuje istniejące dane dispatch i zgłasza
+  `deny` dla prób `secret/data/other` oraz `sys/audit`.
+stages.0.objectives.2.text: Dostarczona tożsamość reader pobiera z Vault istniejącą wartość dispatch `north-secret`.

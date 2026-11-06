@@ -1,27 +1,59 @@
 title: Argo CD ApplicationSet
-brief: 'Trabaja en `~/quest` con `platform.env`, `appset-target.json`, `applicationset.json`, `repository/stations/north/board.json`,
-  `repository/stations/south/board.json`, `release-commit` y `wait-apps.sh`. Un generador de lista de ApplicationSet proporciona
-  valores a una plantilla Go. Establece la ruta exactamente en `stations/{{.station}}`, conserva `goTemplate: true` y las
-  estaciones ordenadas `[north, south]`. El sondeo normal del juego envía uno de dos manifiestos limitados al namespace privado
-  del controlador de `appset-target.json`; espera el envío y la reconciliación. Este adaptador solo admite esos cambios limitados,
-  no ediciones arbitrarias por API.
+brief: |-
+  La flota station no entrega ambos servicios esperados. Recupera las aplicaciones generadas y sus resultados de versión observables.
 
+  Trabaja en la workstation en `~/quest` con `platform.env`, `appset-target.json`, `applicationset.yaml`, `repository/`, `release-commit`, `wait-apps.sh`.
 
-  Las Applications generadas north y south deben pertenecer a este ApplicationSet, estar `Synced` y `Healthy` en `release-commit`
-  y conservar el proyecto, repositorio, ruta por entrada y namespace de la bahía que muestran `wait-apps.sh` y `appset-target.json`.
-  Cada Deployment debe tener una réplica lista; `north:8080` y `south:8080` deben devolver `north-123` y `south-123`. El estado
-  generado actual no demuestra que solo se editó la ruta de plantilla. Usa solo la bahía sin conexión.'
-debrief: ApplicationSet genera especificaciones Application; cada Application todavía concilia su carga de trabajo. El adaptador
-  de envío limitado conserva los project, repository y destination privados, mientras que un controlador con ámbito de espacio
-  de nombres real realiza la generación.
-stages.0.brief: La plantilla ApplicationSet, propiedad y estado de las Applications generadas y respuestas de ambos Deployments
-  coinciden con la descripción.
-stages.0.objectives.0.text: La plantilla ApplicationSet, propiedad y estado de las Applications generadas y respuestas de
-  ambos Deployments coinciden con la descripción.
-hints.0.text: El generador de listas suministra station; la plantilla la expande en cada ruta de origen Application.
-hints.1.text: Inspeccione applicationset.json y las aplicaciones generadas de solo lectura en namespace desde appset-target.json.
-hints.2.text: Utilice stations/{{.station}}, mantenga todos los campos de alcance sin cambios, luego compare el propietario
-  UID, las revisiones y ambas respuestas de HTTP.
+  Salvo indicación contraria, los recursos Kubernetes están en el namespace de la bahía (`DQ_NAMESPACE`); las rutas bajo `~/quest` están en la workstation.
+
+  **Requirements:**
+
+  - El ApplicationSet existente genera exactamente las Applications `north` y `south`, cada una con el contenido de su estación del repositorio suministrado, conservando el proyecto y destino de la bahía previstos.
+  - Ambas Applications generadas siguen perteneciendo al ApplicationSet existente.
+  - Ambas Applications generadas están `Synced` y `Healthy` en la revisión suministrada de la versión.
+  - Los Deployments `north` y `south` tienen exactamente `1` réplica lista cada uno.
+  - Dentro de sus Pods, `http://north:8080` y `http://south:8080` devuelven `north-123` y `south-123`, respectivamente.
+
+    - Las Applications generadas y su ApplicationSet permanecen en el namespace del controlador suministrado; los Deployments y Services permanecen en el namespace de la bahía.
+
+  El estado generado actual no demuestra que solo se editara la ruta de la plantilla.
+debrief: ApplicationSet genera especificaciones Application; cada Application todavía concilia su carga
+  de trabajo. El adaptador de envío limitado conserva los project, repository y destination privados,
+  mientras que un controlador con ámbito de espacio de nombres real realiza la generación.
+stages.0.brief: Conserva el ámbito del controlador suministrado y la propiedad generada.
+hints.0.text: El generador de listas suministra station; la plantilla la expande en cada ruta de origen
+  Application.
+hints.1.text: |-
+  Inspecciona el ApplicationSet suministrado y las Applications generadas en su namespace del controlador.
+
+  ```bash
+  cat applicationset.yaml
+  ns=$(jq -r .namespace appset-target.json)
+  kubectl -n "$ns" get applications north south -o yaml
+  ```
+hints.2.text: |-
+  Utilice stations/{{.station}}, mantenga todos los campos de alcance sin cambios, luego compare el propietario UID, las revisiones y ambas respuestas de HTTP. La consulta normal de objetivos envía `applicationset.yaml` mediante el adaptador limitado. Conserva `goTemplate: true` y las estaciones ordenadas `[north, south]`; solo acepta el manifiesto original o su corrección de ruta de plantilla. Inspeccione applicationset.yaml y las aplicaciones generadas de solo lectura en namespace desde appset-target.json.
+
+  Verifica desde `~/quest` en la workstation:
+
+  - `ns=$(jq -r .namespace appset-target.json)`
+  - `kubectl -n "$ns" get applications north south -o json | jq '.items[] | {name:.metadata.name,sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision,project:.spec.project,repo:.spec.source.repoURL,path:.spec.source.path,destination:.spec.destination.namespace,owners:.metadata.ownerReferences}'`
+
+  Ambas están `Synced` y `Healthy` en `release-commit`. Ambas usan proyecto `station`, el repositorio registrado, sus rutas respectivas `stations/north` / `stations/south`, destino `DQ_NAMESPACE` y un propietario `ApplicationSet`.
+
+  - `kubectl get deployments north south -o json | jq '.items[] | {name:.metadata.name,ready:.status.readyReplicas}'`
+
+  Cada uno informa `ready: 1`.
+
+  ```bash
+  for station in north south; do
+    kubectl exec deployment/"$station" -- wget -qO- -T 3 "http://$station:8080"
+  done
+  ```
+
+  `north-123`, `south-123`.
+
+  - `bash wait-apps.sh` — código `0`; pasan las comprobaciones de la versión suministrada.
 phrases.0: Separé la generación Application de la conciliación de cargas de trabajo.
 phrases.1: Revisé los valores del generador y la expansión de la plantilla.
 phrases.2: Mantuve los permisos del controlador y los destinos dentro del alcance.
@@ -53,9 +85,21 @@ diagnostics.source_north: application/north source.path debe ser igual a station
 diagnostics.source_south: application/south source.path debe ser igual a stations/south.
 diagnostics.destination_north: application/north destination.namespace debe ser igual a DQ_NAMESPACE.
 diagnostics.destination_south: application/south destination.namespace debe ser igual a DQ_NAMESPACE.
-diagnostics.owner_north: application/north debe tener ownerReference de tipo ApplicationSet con el UID de ApplicationSet station.
-diagnostics.owner_south: application/south debe tener ownerReference de tipo ApplicationSet con el UID de ApplicationSet station.
+diagnostics.owner_north: application/north debe tener ownerReference de tipo ApplicationSet con el UID
+  de ApplicationSet station.
+diagnostics.owner_south: application/south debe tener ownerReference de tipo ApplicationSet con el UID
+  de ApplicationSet station.
 diagnostics.ready_north: deployment/north readyReplicas debe ser igual a 1.
 diagnostics.ready_south: deployment/south readyReplicas debe ser igual a 1.
 diagnostics.http_north: La petición a north:8080 debe devolver north-123.
 diagnostics.http_south: La petición a south:8080 debe devolver south-123.
+stages.0.objectives.0.text: El ApplicationSet existente genera exactamente las Applications `north` y
+  `south`, cada una con el contenido de su estación del repositorio suministrado, conservando el proyecto
+  y destino de la bahía previstos.
+stages.0.objectives.1.text: Ambas Applications generadas siguen perteneciendo al ApplicationSet existente.
+stages.0.objectives.2.text: Ambas Applications generadas están `Synced` y `Healthy` en la revisión suministrada
+  de la versión.
+stages.0.objectives.3.text: Los Deployments `north` y `south` tienen exactamente `1` réplica lista cada
+  uno.
+stages.0.objectives.4.text: Dentro de sus Pods, `http://north:8080` y `http://south:8080` devuelven `north-123`
+  y `south-123`, respectivamente.

@@ -1,36 +1,57 @@
 title: Incydent związany z poświadczeniem
-brief: 'Prywatna aplikacja board zależy od szkoleniowego tokenu reader w Vault, który uznano za przejęty.
-  Wymień wyłącznie ten token reader: użyj wystawcy rail-rotation o ograniczonych uprawnieniach, aby utworzyć
-  nieodnawialny token rail-reader z czasem życia 300s i explicit_max_ttl 600s. Zapisz go jako station-token
-  z mode 0600 i unieważnij przejęty accessor wskazany w zapisanym potwierdzeniu. Menedżer może wystawiać
-  tokeny tej roli i unieważnić tylko ten accessor; nie może odczytywać KV ani edytować policies. sync-secret.sh
-  korzysta ze station-token. Przywróć istniejący board w przepływie Git → private image → Argo za pomocą
-  nowego poświadczenia i potwierdź, że stary token otrzymuje HTTP 403. Nigdy nie zapisuj tokenów w Git.
+brief: |-
+  Dane dostępu board do Vault uznano za przejęte. Przywróć prywatne dostarczanie z ograniczonym zamiennikiem i odbierz dostęp starym danym.
 
+  Pracuj na workstation w `~/quest` z plikami `platform.env`, `compromised-accessor`, `station-token`, `sync-secret.sh`, `private-release.json`, `release-commit`, `repository/`.
 
-  Pliki zadań w `~/quest` (niektóre pojawiają się w późniejszych etapach): `platform.env`, `compromised-accessor`,
-  `station-token`, `sync-secret.sh`, `private-release.json`, `repository/manifests/board.json`.
+  O ile nie wskazano inaczej, zasoby Kubernetes znajdują się w przestrzeni nazw zatoki (`DQ_NAMESPACE`); ścieżki w `~/quest` są na workstation.
 
+  **Requirements:**
 
-  W zatoce nie ma Internetu ani zewnętrznego DNS. Korzystaj wyłącznie z dostarczonych plików, wstępnie
-  załadowanych obrazów i usług prywatnych. Zmień tylko tę zatokę.
+  - Opublikowane `origin/main` odpowiada plikowi `~/quest/release-commit` na workstation.
+  - Application `board` zachowuje dostarczone prywatne źródło Git, gałąź wydania i istniejący katalog obciążenia.
+  - Application `board` zgłasza `Synced` i `Healthy` dla commita w `~/quest/release-commit` na workstation.
+  - Wewnątrz Poda Deployment `board` adres `http://board:8080` zwraca `north-99`.
+  - Deployment `board` i gotowy kontener używają istniejącego niezmiennego prywatnego obrazu wydania z polityką pobierania `Always`; rollout kończy się.
+  - Istniejąca konfiguracja Kubernetes dla `board` zawiera wartość dispatch `north-secret` i jest dostarczana obciążeniu.
+  - Zamienne dane dostępu w pliku `~/quest/station-token` na workstation są prywatne (`0600`), różnią się od poprzednich, odczytują istniejącą wartość dispatch `north-secret`, zachowują dostarczony zestaw polityk reader i mają TTL większy niż `0` i nie większy niż `600` sekund.
+  - Poprzednie dostarczone dane dostępu otrzymują HTTP `403`, żądając istniejących danych dispatch.
 
-
-  Początkowe kryteria sukcesu: stary reader zostaje unieważniony, jego zamiennik o najniższych uprawnieniach
-  jest prywatny i ograniczony, a istniejąca board GitOps obsługuje north-99 z przypiętych private image
-  i Vault wspieranych przez Secret.'
+  Bieżąca odmowa nie dowodzi, jak ani kiedy poprzednie dane utraciły dostęp.
 debrief: Skompromitowany plik credential został unieważniony, a prywatna dostawa odzyskana dzięki ograniczonej
   wymianie o najniższych uprawnieniach.
-stages.0.brief: 'Kryteria sukcesu: stary reader zostaje unieważniony, jego zamiennik o najniższych uprawnieniach
-  jest prywatny i ograniczony, a istniejąca board GitOps obsługuje north-99 z przypiętego obrazu prywatnego
-  i Vault wspieranego przez Secret.'
-stages.0.objectives.0.text: Stary reader zostaje unieważniony, jego zamiennik o najniższych uprawnieniach
-  jest prywatny i ograniczony, a istniejąca board GitOps obsługuje north-99 z przypiętego prywatnego obrazu
-  i Vault wspieranego przez Secret.
+stages.0.brief: Zamiennik pozostaje prywatny i ograniczony; poprzednie dane tracą dostęp.
 hints.0.text: Utworzenie zamiennika nie unieważnia skompromitowanego token.
-hints.1.text: Wydaj ograniczony plik reader, rozprowadź go prywatnie, a następnie unieważnij zamrożony
-  plik accessor.
-hints.2.text: Zweryfikuj stary token 403 i dostawę na żywo, używając nowego token bez poszerzania policy.
+hints.1.text: |-
+  Sprawdź skrypt synchronizacji i bieżące odwołania do konfiguracji obciążenia bez wyświetlania danych dostępu.
+
+  ```bash
+  cat sync-secret.sh
+  kubectl describe deployment board
+  ```
+hints.2.text: |-
+  Zweryfikuj stary token 403 i dostawę na żywo, używając nowego token bez poszerzania policy. Ograniczony wystawca to `rail-rotation`: wystaw nieodnawialny token `rail-reader` na `300s` z `explicit_max_ttl` równym `600s`, zapisz go prywatnie w `station-token` i odwołaj accessor z zamrożonego pokwitowania. `sync-secret.sh` odczytuje `station-token`. Nigdy nie umieszczaj tokenów w Git. Wydaj ograniczony plik reader, rozprowadź go prywatnie, a następnie unieważnij zamrożony plik accessor.
+
+  Sprawdź z `~/quest` na workstation:
+
+  - `source platform.env`
+  - `git -C repository ls-remote origin refs/heads/main`
+  - `cat release-commit`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$(cat station-token)") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+  - `curl -sS -o /dev/null -w '%{http_code}\n' -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$(cat station-token)") "$VAULT_ADDR/v1/auth/token/lookup-self" | jq '{policies:.data.policies,ttl:.data.ttl}'`
+  - `stat -c %a station-token`
+
+  Hash zdalnego `main` odpowiada `release-commit`. Zamiennik odczytuje poprawnie bez wyświetlania wartości; stary token zgłasza `403`. Polityki to dokładnie `default` / `rail-reader`, `0 < ttl <= 600`; tryb pliku to `600`.
+
+  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
+
+  `Synced`, `Healthy` i rewizja z `release-commit`. Źródłem jest dostarczone prywatne repozytorium, `manifests`, `main`.
+
+  - `kubectl rollout status deployment/board --timeout=3s`
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080`
+
+  Rollout kończy się; `north-99`.
 phrases.0: Obróciłem credential i wyraźnie unieważniłem skompromitowany.
 phrases.1: Trzymałem tajne wartości poza Git i dziennikami.
 phrases.2: Zweryfikowałem zarówno odmowę dostępu, jak i kompleksowe dostarczanie.
@@ -40,3 +61,18 @@ questions.0.prompt: Czy wydanie nowego token unieważnia stary token?
 questions.1.points.0: Odzyskiwanie nie powinno zapewniać nowego nieograniczonego tajnego administratora.
 questions.1.points.1: Ogranicz policy, okres istnienia i cel odwołania.
 questions.1.prompt: Po co wiązać odzyskiwanie issuer?
+stages.0.objectives.0.text: Opublikowane `origin/main` odpowiada plikowi `~/quest/release-commit` na workstation.
+stages.0.objectives.1.text: Application `board` zachowuje dostarczone prywatne źródło Git, gałąź wydania
+  i istniejący katalog obciążenia.
+stages.0.objectives.2.text: Application `board` zgłasza `Synced` i `Healthy` dla commita w `~/quest/release-commit`
+  na workstation.
+stages.0.objectives.3.text: Wewnątrz Poda Deployment `board` adres `http://board:8080` zwraca `north-99`.
+stages.0.objectives.4.text: Deployment `board` i gotowy kontener używają istniejącego niezmiennego prywatnego
+  obrazu wydania z polityką pobierania `Always`; rollout kończy się.
+stages.0.objectives.5.text: Istniejąca konfiguracja Kubernetes dla `board` zawiera wartość dispatch `north-secret`
+  i jest dostarczana obciążeniu.
+stages.0.objectives.6.text: Zamienne dane dostępu w pliku `~/quest/station-token` na workstation są prywatne
+  (`0600`), różnią się od poprzednich, odczytują istniejącą wartość dispatch `north-secret`, zachowują
+  dostarczony zestaw polityk reader i mają TTL większy niż `0` i nie większy niż `600` sekund.
+stages.0.objectives.7.text: Poprzednie dostarczone dane dostępu otrzymują HTTP `403`, żądając istniejących
+  danych dispatch.

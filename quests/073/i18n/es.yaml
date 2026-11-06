@@ -1,34 +1,52 @@
 title: Auditoría Vault
-brief: 'El juego reader recibió una denegación de permiso real Vault. La auditoría de archivos está habilitada
-  con log_raw=false; backend exporta solo metadatos de denegación incluidos en la lista permitida a audit-events.json
-  y los congela en /run/dq/facts/0/. Raw audit records, los campos de autenticación y los valores secretos
-  permanecen fuera de workstation. Identifique la solicitud denegada en incident.json con exactamente
-  request_id, ruta, operation y reason. Luego repare reader.hcl para dispatch de solo lectura y actualice
-  ese juego policy. No copie tokens ni valores secretos en su registro de incidentes.
+brief: |-
+  Un consumidor de Vault recibe una denegación de acceso. Restablece el acceso previsto y deja un registro que identifique la solicitud denegada.
 
+  Trabaja en la workstation en `~/quest` con `platform.env`, `audit-events.json`, `incident.json`, `reader.hcl`.
 
-  Archivos de búsqueda en `~/quest` (algunos aparecen en etapas posteriores): `platform.env`, `audit-events.json`,
-  `incident.json`, `reader.hcl`, `reader-policy.json`.
+  **Requirements:**
 
+  - El archivo `~/quest/incident.json` en la workstation identifica la solicitud denegada de los metadatos de auditoría suministrados, con exactamente `request_id`, `path`, `operation` y `reason`.
+  - La identidad reader suministrada puede leer los datos dispatch existentes e informa `deny` para las pruebas de `secret/data/other` y `sys/audit`.
+  - La identidad reader suministrada obtiene de Vault el valor dispatch existente `north-secret`.
 
-  La bahía no tiene Internet ni DNS externo. Utilice únicamente archivos proporcionados, imágenes precargadas
-  y servicios privados. Cambie sólo esta bahía.
-
-
-  Criterios de éxito iniciales: el incidente coincide exactamente con los metadatos de denegación reales
-  congelados; el reader puede leer dispatch y se le niega la administración no relacionada de secrets
-  y audit.'
+  Las pruebas negativas cubren las dos rutas indicadas; no demuestran denegación en todas las rutas Vault.
 debrief: Se diagnosticó una solicitud denegada a través de audit metadata real mientras que los secretos
   permanecían fuera del artefacto del incidente.
-stages.0.brief: 'Criterios de éxito: el incidente coincide exactamente con los metadatos de denegación
-  reales congelados; el reader puede leer dispatch y se le niega la administración no relacionada de secrets
-  y audit.'
-stages.0.objectives.0.text: El incidente coincide exactamente con los metadatos de negación real congelados;
-  el reader puede leer dispatch y se le niega la administración no relacionada de secrets y audit.
+stages.0.brief: El registro del incidente no contiene datos de autenticación ni valores secretos.
 hints.0.text: Operational logs y solicite audit records respondan diferentes preguntas.
-hints.1.text: Correlacione request_id, ruta y operation sin copiar datos de autenticación.
-hints.2.text: Registre solo los cuatro campos exportados y repare la ruta de lectura KV v2 sin ampliar
-  el acceso.
+hints.1.text: |-
+  Inspecciona los metadatos de auditoría exportados y la política suministrada sin mostrar credenciales.
+
+  ```bash
+  jq 'map({request_id,path,operation,reason})' audit-events.json
+  cat reader.hcl
+  ```
+hints.2.text: |-
+  Registre solo los cuatro campos exportados y repare la ruta de lectura KV v2 sin ampliar el acceso. Tras editar `reader.hcl`, actualiza la política activa de práctica con la identidad manager. La auditoría de archivo usa `log_raw=false`; solo se exportan metadatos de denegación permitidos a `audit-events.json` y a los hechos congelados. Los registros de auditoría sin procesar, campos de autenticación y valores secretos quedan fuera de la workstation. Correlacione request_id, ruta y operation sin copiar datos de autenticación.
+
+  Verifica desde `~/quest` en la workstation:
+
+  - `jq -e 'keys == ["operation","path","reason","request_id"]' incident.json >/dev/null`
+
+  Código `0`; el incidente contiene exactamente los cuatro campos requeridos.
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+
+  Código `0`; no se muestran credenciales ni valores secretos.
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") -H 'Content-Type: application/json' --request POST --data '{"paths":["secret/data/dispatch","secret/data/other","sys/audit"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '{dispatch:."secret/data/dispatch",other:."secret/data/other",audit:."sys/audit"}'`
+
+  `dispatch: ["read"]`; `other` y `audit`: `["deny"]`.
 phrases.0: Correlacioné un request denegado por su auditoría request ID.
 phrases.1: Mantuve los datos de autenticación y los valores secretos fuera del informe de incidente.
 phrases.2: Verifiqué las verificaciones de autorización negativa y de lectura corregidas.
+stages.0.objectives.0.text: El archivo `~/quest/incident.json` en la workstation identifica la solicitud
+  denegada de los metadatos de auditoría suministrados, con exactamente `request_id`, `path`, `operation`
+  y `reason`.
+stages.0.objectives.1.text: La identidad reader suministrada puede leer los datos dispatch existentes
+  e informa `deny` para las pruebas de `secret/data/other` y `sys/audit`.
+stages.0.objectives.2.text: La identidad reader suministrada obtiene de Vault el valor dispatch existente
+  `north-secret`.

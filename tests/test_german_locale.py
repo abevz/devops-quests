@@ -38,8 +38,12 @@ def test_german_machine_translation_covers_all_public_content_and_keeps_code():
         (94, "brief", "50m"),
     ]:
         visible = catalog.text(number, key)["de"]
-        if (number, key, literal) == (129, "brief", "training.devops-quests.local/cleanup"):
-            # The cleanup technique may live in hints instead of revealing it in the brief.
+        if (number, key, literal) in {
+            (129, "brief", "training.devops-quests.local/cleanup"),
+            (99, "brief", "rail-rotation"),
+            (99, "brief", "rail-reader"),
+        }:
+            # The cleanup/credential technique may live in hints instead of revealing it in the brief.
             visible += "\n" + "\n".join(
                 catalog.text(number, hint["text"])["de"]
                 for hint in catalog.quests[number]["hints"]

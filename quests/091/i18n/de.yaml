@@ -1,34 +1,55 @@
 title: Git-Herkunft
-brief: 'Der board ist fehlerfrei, aber sein Vorfallbericht verwechselt den Bildquellen-Commit mit dem
-  späteren Deployment-Manifest-Commit. Verfolgen Sie das laufende unveränderliche Image über die privaten
-  Quellen registry manifest und config label org.opencontainers.image.revision zur privaten Quelle Git.
-  Schreiben Sie provenance.json mit exaktem Image, Commit und Repo. Der eingefrorene Freigabebeleg identifiziert
-  den erwarteten artifact; Überprüfen Sie die tatsächlichen registry-Bytes und die Quelle ancestry. Hierbei
-  handelt es sich um Rückverfolgbarkeitsmetadaten, nicht um eine Signatur oder einen Beweis für einen
-  vertrauenswürdigen Build.
+brief: |-
+  Board bedient Anfragen, aber dem Release fehlt ein prüfbarer Herkunftsnachweis. Ermitteln Sie die Quelle des laufenden unveränderlichen Images getrennt von der Deployment-Revision.
 
+  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `release-evidence.json`, `provenance.json`, `release-commit`, `repository/`.
 
-  Questdateien in `~/quest` (einige erscheinen in späteren Phasen): `platform.env`, `release-evidence.json`,
-  `provenance.json`, `source-commit`, `release-commit`, `repository/site/index.html`.
+  Sofern nicht anders angegeben, liegen Kubernetes-Ressourcen im Bay-Namespace (`DQ_NAMESPACE`); Pfade unter `~/quest` liegen auf der Workstation.
 
+  **Requirements:**
 
-  Der Schacht verfügt über kein Internet oder externes DNS. Verwenden Sie nur bereitgestellte Dateien,
-  vorinstallierte Bilder und private Dienste. Ändern Sie nur diese Bucht.
+  - Veröffentlichtes `origin/main` entspricht der Workstation-Datei `~/quest/release-commit`.
+  - Application `board` behält die bereitgestellte private Git-Quelle, den Release-Branch und das vorhandene Workload-Verzeichnis bei.
+  - Application `board` meldet `Synced` und `Healthy` für den Commit in der Workstation-Datei `~/quest/release-commit`.
+  - Deployment `board` schließt seinen Rollout im Bay-Namespace ab.
+  - In einem Pod von Deployment `board` liefert `http://board:8080` den Wert `north-91`.
+  - Die Workstation-Datei `~/quest/provenance.json` verknüpft das laufende Image, seine tatsächlichen Registry-Bytes und den Quell-Commit korrekt mit der privaten Git-Quellhistorie.
 
+    - Die Workstation-Datei `provenance.json` enthält genau `image`, `commit` und `repo`. Die Image-Quelle unterscheidet sich von `release-commit`, geht dem veröffentlichten Release in der Git-Historie voraus und enthält im Repository `site/index.html` mit `north-91`. Bericht, laufender Digest, tatsächliche Registry-Bytes, Registry-Quellmetadaten und bereitgestellter Release-Nachweis stimmen überein.
 
-  Erste Erfolgskriterien: Der Bericht entspricht der real laufenden digest-, registry config-Quelle revision
-  und der privaten Git-Quelle; Der board bleibt gesund.'
+  Dies sind Rückverfolgbarkeitsmetadaten, keine Signatur und kein Nachweis eines vertrauenswürdigen Builds.
 debrief: Der Vorfall verknüpft nun laufende Bytes mit der Quellrevision, während die Build-Vertrauensstellung
   eine separate Frage bleibt.
-stages.0.brief: 'Erfolgskriterien: Der Bericht entspricht der real laufenden digest-, registry config-Quelle
-  revision und der privaten Git-Quelle; Der board bleibt gesund.'
-stages.0.objectives.0.text: Der Bericht entspricht der tatsächlich laufenden Quelle digest, registry config
-  revision und der privaten Quelle Git. Der board bleibt gesund.
+stages.0.brief: Trennen Sie die Herkunft des Image-Quellcodes von der Deployment-Historie.
 hints.0.text: Ein Manifest-Commit kann auf ein Image verweisen, das aus einem früheren Commit erstellt
   wurde.
-hints.1.text: Auflösen manifest → config blob → OCI revision label; Vergleiche Git ancestry.
-hints.2.text: Zeichnen Sie das Image digest, das Quell-Commit und das private Repo URL auf, ohne ein label
-  als Signatur zu behandeln.
+hints.1.text: |-
+  Prüfen Sie Quellhistorie und Bericht; verfolgen Sie das unveränderliche Image über Registry-Metadaten.
+
+  ```bash
+  git -C repository log --oneline -5
+  cat provenance.json
+  ```
+hints.2.text: |-
+  Zeichnen Sie das Image digest, das Quell-Commit und das private Repo URL auf, ohne ein label als Signatur zu behandeln. Das genaue OCI-Label ist `org.opencontainers.image.revision`; ermitteln Sie es über Manifest und Konfiguration des laufenden unveränderlichen Images. Auflösen manifest → config blob → OCI revision label; Vergleiche Git ancestry.
+
+  Prüfen Sie in `~/quest` auf der Workstation:
+
+  - `source platform.env`
+  - `git -C repository ls-remote origin refs/heads/main`
+  - `cat release-commit`
+  - `cat provenance.json`
+
+  Der Hash von Remote-`main` entspricht `release-commit`. Der Bericht enthält genau `image`, `commit` und `repo`; `commit` bezeichnet die Image-Quelle und unterscheidet sich von `release-commit`.
+
+  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
+
+  `Synced`, `Healthy` und die Revision aus `release-commit`. Die Quelle ist das bereitgestellte private Repository, `manifests`, `main`.
+
+  - `kubectl rollout status deployment/board --timeout=3s`
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080`
+
+  Der Rollout ist abgeschlossen; `north-91`.
 phrases.0: Ich habe die Quellrevision von der Bereitstellungsrevision unterschieden.
 phrases.1: Ich habe den manifest digest und das Bild config im registry überprüft.
 phrases.2: Ich habe die nicht unterschriebene Provenienz als Rückverfolgbarkeit und nicht als Bescheinigung
@@ -41,3 +62,12 @@ questions.1.points.0: Ein Commit erstellt den artifact; Bei einem späteren Comm
   ausgewählt.
 questions.1.points.1: Verfolgen Sie beide Revisionen und behalten Sie ihre Beziehung bei.
 questions.1.prompt: Warum kann GitOps revision vom Bild revision abweichen?
+stages.0.objectives.0.text: Veröffentlichtes `origin/main` entspricht der Workstation-Datei `~/quest/release-commit`.
+stages.0.objectives.1.text: Application `board` behält die bereitgestellte private Git-Quelle, den Release-Branch
+  und das vorhandene Workload-Verzeichnis bei.
+stages.0.objectives.2.text: Application `board` meldet `Synced` und `Healthy` für den Commit in der Workstation-Datei
+  `~/quest/release-commit`.
+stages.0.objectives.3.text: Deployment `board` schließt seinen Rollout im Bay-Namespace ab.
+stages.0.objectives.4.text: In einem Pod von Deployment `board` liefert `http://board:8080` den Wert `north-91`.
+stages.0.objectives.5.text: Die Workstation-Datei `~/quest/provenance.json` verknüpft das laufende Image,
+  seine tatsächlichen Registry-Bytes und den Quell-Commit korrekt mit der privaten Git-Quellhistorie.

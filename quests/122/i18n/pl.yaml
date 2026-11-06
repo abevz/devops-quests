@@ -1,26 +1,52 @@
 title: Argo CD App-of-Apps
-brief: 'Pracuj w `~/quest` z `platform.env`, `repository/apps/child.json`, `repository/manifests/board.json`, `parent.json`,
-  `baseline-commit`, `parent-uid` i `wait-apps.sh`. W app-of-apps rodzicielska Application Argo uzgadnia potomną Application,
-  która uzgadnia workload. Popraw zatwierdzoną potomną `Application` o nazwie `board` na ścieżkę źródła `manifests`, zatwierdź
-  potomka różnego od `baseline-commit` i wyślij go do prywatnego `origin/main`; musi on odpowiadać lokalnemu HEAD. Poczekaj,
-  aż obie Application będą `Synced` przy HEAD, a potomna `Healthy`.
+brief: |-
+  Hierarchia aplikacji nie dostarcza board. Przywróć wydanie zapisane w Git, w którym aplikacje nadrzędna i podrzędna odpowiadają działającej usłudze.
 
+  Pracuj na workstation w `~/quest` z plikami `platform.env`, `repository/apps/child.yaml`, `repository/`, `parent.yaml`, `wait-apps.sh`.
 
-  Zachowaj UID rodzica z `parent-uid` i ścieżkę `apps`. Potomna Application musi używać projektu `station`, przestrzeni nazw
-  zatoki i ścieżki `manifests`; jej adnotacja śledzenia musi wynosić `${DQ_NAMESPACE}_parent:argoproj.io/Application:${DQ_NAMESPACE}/board`.
-  Deployment board musi mieć jedną gotową replikę, a `board:8080` musi zwracać `north-122`. `wait-apps.sh` pokazuje oczekiwane
-  kontrole synchronizacji i stanu. Bieżące śledzenie i stan nie dowodzą, że obiektów nigdy nie zastosowano bezpośrednio. Używaj
-  tylko zatoki offline.'
-debrief: App-of-Apps uzgadnia zasoby Application jako obiekty zarządzane przez Git. Synchronizacja nadrzędna nie zastępuje
-  kontroli synchronizacji podrzędnej, stanu i zachowania obciążenia.
-stages.0.brief: Potomek Git i manifest, tożsamość rodzica, stany obu Application, zakres potomnej i odpowiedź board odpowiadają
-  opisowi.
-stages.0.objectives.0.text: Potomek Git i manifest, tożsamość rodzica, stany obu Application, zakres potomnej i odpowiedź
-  board odpowiadają opisowi.
-hints.0.text: Podążaj za rodzicem source → dzieckiem source → obciążeniem; zdrowy rodzic sam nie udowodni, że jego dziecko
-  jest gotowe.
-hints.1.text: Sprawdź manifest dziecka Application w repository/apps/, a nie tylko żywe dziecko.
-hints.2.text: Zmień dziecko source path na manifests/, commit i push; odśwież element nadrzędny i sprawdź obie wersje.
+  O ile nie wskazano inaczej, zasoby Kubernetes znajdują się w przestrzeni nazw zatoki (`DQ_NAMESPACE`); ścieżki w `~/quest` są na workstation.
+
+  **Requirements:**
+
+  - `HEAD` repozytorium na workstation jest opublikowany jako `origin/main` w nowym commicie zachowującym istniejącą historię repozytorium.
+  - Zapisana w Git i działająca potomna Application `board` używają istniejącej zawartości obciążenia z repozytorium, zachowują właściwy projekt i cel w zatoce oraz pozostają zarządzane przez istniejącego rodzica.
+  - Applications `parent` i `board` mają stan `Synced` dla `HEAD` repozytorium na workstation, a `board` ma stan `Healthy`.
+  - Istniejąca nadrzędna Application zachowuje tożsamość i pierwotny katalog źródłowy.
+  - Deployment `board` ma dokładnie `1` gotową replikę.
+  - Wewnątrz Poda Deployment `board` adres `http://board:8080` zwraca `north-122`.
+
+  Bieżące śledzenie i stan nie dowodzą, że obiekty nigdy nie były stosowane bezpośrednio.
+debrief: App-of-Apps uzgadnia zasoby Application jako obiekty zarządzane przez Git. Synchronizacja nadrzędna
+  nie zastępuje kontroli synchronizacji podrzędnej, stanu i zachowania obciążenia.
+stages.0.brief: Zachowaj tożsamość i źródło istniejącego rodzica.
+hints.0.text: Podążaj za rodzicem source → dzieckiem source → obciążeniem; zdrowy rodzic sam nie udowodni,
+  że jego dziecko jest gotowe.
+hints.1.text: |-
+  Sprawdź dokument dziecka w Git i działającą relację rodzica z dzieckiem.
+
+  ```bash
+  cat repository/apps/child.yaml
+  kubectl get applications parent board -o yaml
+  ```
+hints.2.text: |-
+  Zmień dziecko source path na manifests/, commit i push; odśwież element nadrzędny i sprawdź obie wersje. Sprawdź manifest dziecka Application w repository/apps/, a nie tylko żywe dziecko.
+
+  Sprawdź z `~/quest` na workstation:
+
+  - `git -C repository ls-remote origin refs/heads/main`
+  - `git -C repository rev-parse HEAD`
+
+  Oba hashe są identyczne.
+
+  - `kubectl get applications parent board -o json | jq '.items[] | {name:.metadata.name,sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision,uid:.metadata.uid,path:.spec.source.path,project:.spec.project,destination:.spec.destination.namespace,tracking:.metadata.annotations["argocd.argoproj.io/tracking-id"]}'`
+
+  Obie mają stan `Synced` dla lokalnego HEAD; `board` ma stan `Healthy`. UID/ścieżka rodzica oraz projekt/ścieżka/cel/tracking dziecka odpowiadają Requirements.
+
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080`
+
+  `north-122`.
+
+  - `bash wait-apps.sh` — kod `0`; sprawdzenia dostarczonego wydania przechodzą.
 phrases.0: Postępowałem zgodnie z łańcuchem pojednania rodzic-dziecko.
 phrases.1: Naprawiłem żądany stan w Git, a nie w wygenerowanym dziecku.
 phrases.2: Sprawdziłem obie wersje i rzeczywistą reakcję na obciążenie.
@@ -49,3 +75,13 @@ diagnostics.sync_parent: application/parent sync.status musi być równe Synced.
 diagnostics.sync_board: application/board sync.status musi być równe Synced.
 diagnostics.revision_parent: application/parent sync.revision musi być równe HEAD.
 diagnostics.revision_board: application/board sync.revision musi być równe HEAD.
+stages.0.objectives.0.text: '`HEAD` repozytorium na workstation jest opublikowany jako `origin/main` w
+  nowym commicie zachowującym istniejącą historię repozytorium.'
+stages.0.objectives.1.text: Zapisana w Git i działająca potomna Application `board` używają istniejącej
+  zawartości obciążenia z repozytorium, zachowują właściwy projekt i cel w zatoce oraz pozostają zarządzane
+  przez istniejącego rodzica.
+stages.0.objectives.2.text: Applications `parent` i `board` mają stan `Synced` dla `HEAD` repozytorium
+  na workstation, a `board` ma stan `Healthy`.
+stages.0.objectives.3.text: Istniejąca nadrzędna Application zachowuje tożsamość i pierwotny katalog źródłowy.
+stages.0.objectives.4.text: Deployment `board` ma dokładnie `1` gotową replikę.
+stages.0.objectives.5.text: Wewnątrz Poda Deployment `board` adres `http://board:8080` zwraca `north-122`.

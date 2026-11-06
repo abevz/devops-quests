@@ -1,38 +1,64 @@
 title: Argo CD App-of-Apps
-brief: 'Arbeite in `~/quest` mit `platform.env`, `repository/apps/child.json`, `repository/manifests/board.json`, `parent.json`,
-  `baseline-commit`, `parent-uid` und `wait-apps.sh`. Bei app-of-apps gleicht eine Parent-Argo-Application eine Child-Application
-  ab, die den Workload abgleicht. Repariere die committete Child-`Application` namens `board` auf Quellpfad `manifests`, committe
-  einen von `baseline-commit` verschiedenen Nachfahren und pushe ihn nach privatem `origin/main`; dieser muss dem lokalen
-  HEAD entsprechen. Warte, bis beide Applications bei HEAD `Synced` und die Child-Application `Healthy` sind.
+brief: |-
+  Die Anwendungshierarchie liefert board nicht aus. Stellen Sie ein in Git gespeichertes Release her, dessen übergeordnete und untergeordnete Anwendung zum laufenden Dienst passen.
 
+  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `repository/apps/child.yaml`, `repository/`, `parent.yaml`, `wait-apps.sh`.
 
-  Bewahre die Parent-UID aus `parent-uid` und Quellpfad `apps`. Die Child-Application muss Projekt `station`, den Namespace
-  der Umgebung und Pfad `manifests` nutzen; ihre Tracking-Annotation muss `${DQ_NAMESPACE}_parent:argoproj.io/Application:${DQ_NAMESPACE}/board`
-  entsprechen. Deployment board muss ein bereites Replikat haben und `board:8080` `north-122` liefern. `wait-apps.sh` zeigt
-  die erwarteten Sync- und Health-Prüfungen. Aktuelle Verfolgung und Status beweisen nicht, dass Objekte nie direkt angewendet
-  wurden. Nutze nur die Offline-Umgebung.'
-debrief: App-of-Apps gleicht Application-Ressourcen als von Git verwaltete Objekte ab. Eine übergeordnete Synchronisierung
-  ersetzt nicht die Überprüfung der untergeordneten Synchronisierung, des Zustands und des Arbeitslastverhaltens.
-stages.0.brief: Git-Abstammung und Child-Manifest, Parent-Identität, Status beider Applications, Child-Bereich und Board-Antwort
-  entsprechen der Beschreibung.
-stages.0.objectives.0.text: Git-Abstammung und Child-Manifest, Parent-Identität, Status beider Applications, Child-Bereich
-  und Board-Antwort entsprechen der Beschreibung.
-hints.0.text: Folgen Sie der übergeordneten Quelle → untergeordneten Quelle → Arbeitslast; Ein gesunder Elternteil allein
-  beweist nicht, dass sein Kind bereit ist.
-hints.1.text: Untersuchen Sie das untergeordnete Application-Manifest in repository/apps/, nicht nur das lebende untergeordnete
-  Element.
-hints.2.text: Ändern Sie den untergeordneten Quellpfad in manifests/, Commit und push; Aktualisieren Sie die übergeordneten
-  und inspect beiden Revisionen.
+  Sofern nicht anders angegeben, liegen Kubernetes-Ressourcen im Bay-Namespace (`DQ_NAMESPACE`); Pfade unter `~/quest` liegen auf der Workstation.
+
+  **Requirements:**
+
+  - `HEAD` des Workstation-Repositorys ist als `origin/main` in einem neuen Commit veröffentlicht, der die vorhandene Repository-Historie erhält.
+  - Die committete und laufende Child-Application `board` nutzen den vorhandenen Workload-Inhalt des Repositorys, behalten das vorgesehene Projekt und Bay-Ziel und bleiben vom vorhandenen Parent verwaltet.
+  - Applications `parent` und `board` sind für `HEAD` des Workstation-Repositorys `Synced`, und `board` ist `Healthy`.
+  - Die vorhandene Parent-Application behält ihre Identität und ihr ursprüngliches Quellverzeichnis.
+  - Deployment `board` hat genau `1` bereite Replik.
+  - In einem Pod von Deployment `board` liefert `http://board:8080` den Wert `north-122`.
+
+  Aktuelles Tracking und aktueller Status beweisen nicht, dass Objekte nie direkt angewendet wurden.
+debrief: App-of-Apps gleicht Application-Ressourcen als von Git verwaltete Objekte ab. Eine übergeordnete
+  Synchronisierung ersetzt nicht die Überprüfung der untergeordneten Synchronisierung, des Zustands und
+  des Arbeitslastverhaltens.
+stages.0.brief: Erhalten Sie Identität und Quelle des vorhandenen Parents.
+hints.0.text: Folgen Sie der übergeordneten Quelle → untergeordneten Quelle → Arbeitslast; Ein gesunder
+  Elternteil allein beweist nicht, dass sein Kind bereit ist.
+hints.1.text: |-
+  Prüfen Sie das Child-Dokument in Git und die laufende Parent-Child-Beziehung.
+
+  ```bash
+  cat repository/apps/child.yaml
+  kubectl get applications parent board -o yaml
+  ```
+hints.2.text: |-
+  Ändern Sie den untergeordneten Quellpfad in manifests/, Commit und push; Aktualisieren Sie die übergeordneten und inspect beiden Revisionen. Untersuchen Sie das untergeordnete Application-Manifest in repository/apps/, nicht nur das lebende untergeordnete Element.
+
+  Prüfen Sie in `~/quest` auf der Workstation:
+
+  - `git -C repository ls-remote origin refs/heads/main`
+  - `git -C repository rev-parse HEAD`
+
+  Beide Hashes sind identisch.
+
+  - `kubectl get applications parent board -o json | jq '.items[] | {name:.metadata.name,sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision,uid:.metadata.uid,path:.spec.source.path,project:.spec.project,destination:.spec.destination.namespace,tracking:.metadata.annotations["argocd.argoproj.io/tracking-id"]}'`
+
+  Beide sind am lokalen HEAD `Synced`; `board` ist `Healthy`. Parent-UID/Pfad und Child-Projekt/Pfad/Ziel/Tracking entsprechen Requirements.
+
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080`
+
+  `north-122`.
+
+  - `bash wait-apps.sh` — Exit `0`; die Prüfungen des bereitgestellten Releases bestehen.
 phrases.0: Ich folgte der Versöhnungskette zwischen Eltern und Kind.
 phrases.1: Ich habe den gewünschten Zustand in Git und nicht im generierten untergeordneten Element repariert.
 phrases.2: Ich habe beide Revisionen und die tatsächliche Workload-Reaktion überprüft.
-questions.0.points.0: Das übergeordnete Objekt hat seine eigenen verwalteten Objekte, einschließlich untergeordneter Anwendungen,
-  abgeglichen.
+questions.0.points.0: Das übergeordnete Objekt hat seine eigenen verwalteten Objekte, einschließlich untergeordneter
+  Anwendungen, abgeglichen.
 questions.0.points.1: Überprüfen Sie jede untergeordnete Revision, den Zustand und die Arbeitslast separat.
 questions.0.prompt: Was beweist ein synchronisiertes übergeordnetes Element in App-of-Apps?
 questions.1.points.0: Das übergeordnete Element besitzt das gewünschte untergeordnete Manifest in Git.
 questions.1.points.1: Self-heal kann Live-Drift überschreiben; Reparieren Sie das Quell-Commit.
-questions.1.prompt: Warum kann die direkte Bearbeitung eines untergeordneten Elements Application nur von kurzer Dauer sein?
+questions.1.prompt: Warum kann die direkte Bearbeitung eines untergeordneten Elements Application nur
+  von kurzer Dauer sein?
 diagnostics.ancestor: baseline-commit muss ein Vorfahr von HEAD sein.
 diagnostics.changed: HEAD muss sich von baseline-commit unterscheiden.
 diagnostics.origin: origin/main muss HEAD entsprechen.
@@ -52,3 +78,14 @@ diagnostics.sync_parent: application/parent sync.status muss Synced entsprechen.
 diagnostics.sync_board: application/board sync.status muss Synced entsprechen.
 diagnostics.revision_parent: application/parent sync.revision muss HEAD entsprechen.
 diagnostics.revision_board: application/board sync.revision muss HEAD entsprechen.
+stages.0.objectives.0.text: '`HEAD` des Workstation-Repositorys ist als `origin/main` in einem neuen Commit
+  veröffentlicht, der die vorhandene Repository-Historie erhält.'
+stages.0.objectives.1.text: Die committete und laufende Child-Application `board` nutzen den vorhandenen
+  Workload-Inhalt des Repositorys, behalten das vorgesehene Projekt und Bay-Ziel und bleiben vom vorhandenen
+  Parent verwaltet.
+stages.0.objectives.2.text: Applications `parent` und `board` sind für `HEAD` des Workstation-Repositorys
+  `Synced`, und `board` ist `Healthy`.
+stages.0.objectives.3.text: Die vorhandene Parent-Application behält ihre Identität und ihr ursprüngliches
+  Quellverzeichnis.
+stages.0.objectives.4.text: Deployment `board` hat genau `1` bereite Replik.
+stages.0.objectives.5.text: In einem Pod von Deployment `board` liefert `http://board:8080` den Wert `north-122`.

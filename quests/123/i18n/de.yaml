@@ -1,27 +1,58 @@
 title: Argo CD ApplicationSet
-brief: 'Arbeite in `~/quest` mit `platform.env`, `appset-target.json`, `applicationset.json`, `repository/stations/north/board.json`,
-  `repository/stations/south/board.json`, `release-commit` und `wait-apps.sh`. Ein ApplicationSet-Listengenerator liefert
-  Werte an eine Go-Vorlage. Setze den Vorlagenpfad genau auf `stations/{{.station}}`, behalte `goTemplate: true` und die geordneten
-  Stationen `[north, south]`. Die normale Spielabfrage sendet eines von zwei begrenzten Manifesten an den privaten Controller-Namespace
-  aus `appset-target.json`; warte darauf und auf den Abgleich. Dieser Adapter erlaubt nur diese begrenzten Änderungen, keine
-  beliebigen API-Edits.
+brief: |-
+  Die Station-Flotte liefert nicht beide erwarteten Dienste aus. Stellen Sie die generierten Anwendungen und ihre beobachtbaren Release-Ergebnisse wieder her.
 
+  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `appset-target.json`, `applicationset.yaml`, `repository/`, `release-commit`, `wait-apps.sh`.
 
-  Die erzeugten Applications north und south müssen diesem ApplicationSet gehören, bei `release-commit` `Synced` und `Healthy`
-  sein und Projekt, Repository, eintragsbezogenen Pfad und Namespace der Umgebung aus `wait-apps.sh` und `appset-target.json`
-  behalten. Jedes Deployment muss ein bereites Replikat haben; `north:8080` und `south:8080` müssen `north-123` und `south-123`
-  liefern. Der aktuelle erzeugte Zustand beweist nicht, dass nur der Vorlagenpfad geändert wurde. Nutze nur die Offline-Umgebung.'
-debrief: ApplicationSet generiert Application-Spezifikationen; Jeder Application gleicht weiterhin seine Arbeitslast ab. Der
-  begrenzte Übermittlungsadapter behält die privaten Werte project, repository und destination bei, während ein echter Namespace-Controller
-  die Generierung durchführt.
-stages.0.brief: ApplicationSet-Vorlage, Eigentümer und Status der erzeugten Applications und Antworten beider Deployments
-  entsprechen der Beschreibung.
-stages.0.objectives.0.text: ApplicationSet-Vorlage, Eigentümer und Status der erzeugten Applications und Antworten beider
-  Deployments entsprechen der Beschreibung.
+  Sofern nicht anders angegeben, liegen Kubernetes-Ressourcen im Bay-Namespace (`DQ_NAMESPACE`); Pfade unter `~/quest` liegen auf der Workstation.
+
+  **Requirements:**
+
+  - Das vorhandene ApplicationSet generiert genau die Applications `north` und `south`, jeweils mit dem zugehörigen Stationsinhalt aus dem bereitgestellten Repository und unverändertem vorgesehenem Projekt und Bay-Ziel.
+  - Beide generierten Applications gehören weiterhin zum vorhandenen ApplicationSet.
+  - Beide generierten Applications sind für die bereitgestellte Release-Revision `Synced` und `Healthy`.
+  - Deployments `north` und `south` haben jeweils genau `1` bereite Replik.
+  - In ihren Pods liefern `http://north:8080` und `http://south:8080` jeweils `north-123` und `south-123`.
+
+    - Die generierten Applications und ihr ApplicationSet bleiben im bereitgestellten Controller-Namespace; Deployments und Services bleiben im Bay-Namespace.
+
+  Der aktuelle generierte Zustand beweist nicht, dass nur der Vorlagenpfad geändert wurde.
+debrief: ApplicationSet generiert Application-Spezifikationen; Jeder Application gleicht weiterhin seine
+  Arbeitslast ab. Der begrenzte Übermittlungsadapter behält die privaten Werte project, repository und
+  destination bei, während ein echter Namespace-Controller die Generierung durchführt.
+stages.0.brief: Erhalten Sie den bereitgestellten Controller-Geltungsbereich und die generierte Eigentümerschaft.
 hints.0.text: Der Listengenerator liefert station; Die Vorlage erweitert es in jeden Application-Quellpfad.
-hints.1.text: Überprüfen Sie applicationset.json und die schreibgeschützten generierten Anwendungen im namespace von appset-target.json.
-hints.2.text: Verwenden Sie stations/{{.station}}, lassen Sie alle Bereichsfelder unverändert und vergleichen Sie dann Besitzer
-  UID, Revisionen und beide HTTP-Antworten.
+hints.1.text: |-
+  Prüfen Sie das bereitgestellte ApplicationSet und die generierten Applications in ihrem Controller-Namespace.
+
+  ```bash
+  cat applicationset.yaml
+  ns=$(jq -r .namespace appset-target.json)
+  kubectl -n "$ns" get applications north south -o yaml
+  ```
+hints.2.text: |-
+  Verwenden Sie stations/{{.station}}, lassen Sie alle Bereichsfelder unverändert und vergleichen Sie dann Besitzer UID, Revisionen und beide HTTP-Antworten. Die normale Zielabfrage übermittelt `applicationset.yaml` durch den begrenzten Adapter. Behalten Sie `goTemplate: true` und die geordneten Stationen `[north, south]` bei; akzeptiert werden nur das ursprüngliche Manifest oder seine Vorlagenpfadkorrektur. Überprüfen Sie applicationset.yaml und die schreibgeschützten generierten Anwendungen im namespace von appset-target.json.
+
+  Prüfen Sie in `~/quest` auf der Workstation:
+
+  - `ns=$(jq -r .namespace appset-target.json)`
+  - `kubectl -n "$ns" get applications north south -o json | jq '.items[] | {name:.metadata.name,sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision,project:.spec.project,repo:.spec.source.repoURL,path:.spec.source.path,destination:.spec.destination.namespace,owners:.metadata.ownerReferences}'`
+
+  Beide sind am Commit aus `release-commit` `Synced` und `Healthy`. Beide nutzen Projekt `station`, das aufgezeichnete Repository, ihre jeweiligen Pfade `stations/north` / `stations/south`, Ziel `DQ_NAMESPACE` und einen `ApplicationSet`-Eigentümer.
+
+  - `kubectl get deployments north south -o json | jq '.items[] | {name:.metadata.name,ready:.status.readyReplicas}'`
+
+  Jedes meldet `ready: 1`.
+
+  ```bash
+  for station in north south; do
+    kubectl exec deployment/"$station" -- wget -qO- -T 3 "http://$station:8080"
+  done
+  ```
+
+  `north-123`, `south-123`.
+
+  - `bash wait-apps.sh` — Exit `0`; die Prüfungen des bereitgestellten Releases bestehen.
 phrases.0: Ich habe die Application-Generierung von der Workload-Abstimmung getrennt.
 phrases.1: Ich habe die Generatorwerte und die Vorlagenerweiterung überprüft.
 phrases.2: Ich habe die Controller-Berechtigungen und Ziele begrenzt gehalten.
@@ -53,11 +84,20 @@ diagnostics.source_north: application/north source.path muss stations/north ents
 diagnostics.source_south: application/south source.path muss stations/south entsprechen.
 diagnostics.destination_north: application/north destination.namespace muss DQ_NAMESPACE entsprechen.
 diagnostics.destination_south: application/south destination.namespace muss DQ_NAMESPACE entsprechen.
-diagnostics.owner_north: application/north muss eine ownerReference vom Typ ApplicationSet mit der UID des ApplicationSet
-  station haben.
-diagnostics.owner_south: application/south muss eine ownerReference vom Typ ApplicationSet mit der UID des ApplicationSet
-  station haben.
+diagnostics.owner_north: application/north muss eine ownerReference vom Typ ApplicationSet mit der UID
+  des ApplicationSet station haben.
+diagnostics.owner_south: application/south muss eine ownerReference vom Typ ApplicationSet mit der UID
+  des ApplicationSet station haben.
 diagnostics.ready_north: deployment/north readyReplicas muss 1 entsprechen.
 diagnostics.ready_south: deployment/south readyReplicas muss 1 entsprechen.
 diagnostics.http_north: Die Anfrage an north:8080 muss north-123 liefern.
 diagnostics.http_south: Die Anfrage an south:8080 muss south-123 liefern.
+stages.0.objectives.0.text: Das vorhandene ApplicationSet generiert genau die Applications `north` und
+  `south`, jeweils mit dem zugehörigen Stationsinhalt aus dem bereitgestellten Repository und unverändertem
+  vorgesehenem Projekt und Bay-Ziel.
+stages.0.objectives.1.text: Beide generierten Applications gehören weiterhin zum vorhandenen ApplicationSet.
+stages.0.objectives.2.text: Beide generierten Applications sind für die bereitgestellte Release-Revision
+  `Synced` und `Healthy`.
+stages.0.objectives.3.text: Deployments `north` und `south` haben jeweils genau `1` bereite Replik.
+stages.0.objectives.4.text: In ihren Pods liefern `http://north:8080` und `http://south:8080` jeweils
+  `north-123` und `south-123`.

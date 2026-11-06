@@ -1,38 +1,60 @@
 title: Verfügbarkeit der Registrierung
-brief: 'Der Einweg-registry-Prozess wurde nach dem Seeding seines Images tatsächlich gestoppt. Consumers
-  werden bewusst auf null Replikate gehalten. Senden Sie zunächst registry-repair.json, das genau {"action":"start"}
-  enthält. Der Bay-Agent kann bei der nächsten Zielabfrage nur diesen unveränderten, zur Installation
-  gehörenden registry starten; Zusätzliche Felder und andere Aktionen werden abgelehnt. Dieses schmale
-  Spiel control bietet keinen Host Docker socket oder allgemeinen Service control. Überprüfen Sie vor
-  Schritt zwei den authentifizierten TLS /v2/. Stellen Sie dann board in einem Replikat wieder her, indem
-  Sie das bereits angeheftete private Image und pull Secret verwenden. Es ist kein VM oder Live-Service
-  beteiligt.
+brief: |-
+  Die private Registry ist nicht erreichbar und board bedient keine Anfragen. Stellen Sie zuerst den Registry-Zugriff und dann den Board-Dienst wieder her.
 
+  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `registry-ca.crt`, `registry-repair.json`, `registry-pull.yaml`, `board.yaml`.
 
-  Questdateien in `~/quest` (einige erscheinen in späteren Stadien): `platform.env`, `registry-ca.crt`,
-  `registry-target.json`, `registry-repair.json`, `registry-agent-status.json`, `registry-pull.json`,
-  `board.json`.
+  Sofern nicht anders angegeben, liegen Kubernetes-Ressourcen im Bay-Namespace (`DQ_NAMESPACE`); Pfade unter `~/quest` liegen auf der Workstation.
 
+  **Requirements:**
 
-  Der Schacht verfügt über kein Internet oder externes DNS. Verwenden Sie nur bereitgestellte Dateien,
-  vorinstallierte Bilder und private Dienste. Ändern Sie nur diese Bucht.
+  - Stufe 1:
+    - Der bereitgestellte Registry-Endpunkt akzeptiert einen authentifizierten `/v2/`-Lesezugriff über geprüftes TLS.
 
+  - Stufe 2:
+    - Der bereitgestellte Registry-Endpunkt akzeptiert einen authentifizierten `/v2/`-Lesezugriff über geprüftes TLS.
+    - Deployment `board` und ein bereiter Container in einem aktiven Pod verwenden das vorhandene unveränderliche private Release-Image mit Pull-Policy `Always`.
+    - Deployment `board` hat Replikazahl `1` und schließt seinen Rollout ab.
+    - In einem Pod von Deployment `board` liefert `http://127.0.0.1:8080` den Wert `north-78`.
 
-  Anfängliche Erfolgskriterien: Die festgelegte Registrierungsstartanforderung ist gültig und der tatsächlich
-  authentifizierte Endpunkt registry /v2/ ist mit verifiziertem TLS erreichbar.'
+  Die aktuelle Dienstverfügbarkeit beweist keine Wiederherstellung nach Verlust des Registry-Speichers.
 debrief: Das echte registry wurde wiederhergestellt, bevor das private Image consumer zurückgebracht wurde.
-stages.0.brief: 'Erfolgskriterien: Die festgelegte Registrierungsstartanforderung ist gültig und der tatsächlich
-  authentifizierte Endpunkt registry /v2/ ist mit verifiziertem TLS erreichbar.'
-stages.0.objectives.0.text: Die festgelegte Registrierungsstartanforderung ist gültig und der tatsächlich
-  authentifizierte Endpunkt registry /v2/ ist mit verifiziertem TLS erreichbar.
-stages.1.brief: 'Erfolgskriterien: Ein fertiger board verwendet den eingefrorenen private digest mit Always
-  und den pull Secret, dessen imageID übereinstimmt und HTTP gibt north-78 zurück.'
-stages.1.objectives.0.text: Ein fertiger board verwendet den eingefrorenen private digest mit Always und
-  den pull Secret, dessen imageID übereinstimmt und HTTP gibt north-78 zurück.
+stages.0.brief: Stellen Sie den authentifizierten Zugriff auf die vorhandene private Registry wieder her.
+stages.1.brief: Stellen Sie den Board-Dienst mit seinem vorgesehenen privaten Release wieder her.
 hints.0.text: Stellen Sie den registry endpoint wieder her, bevor Sie consumers starten, der pull benötigt.
-hints.1.text: Schreiben Sie nur die dokumentierte Startaktion; Der Agent zielt auf einen festen Spielcontainer.
-hints.2.text: Überprüfen Sie zuerst TLS und die Authentifizierung, stellen Sie dann ein board-Replikat
-  wieder her und überprüfen Sie dessen digest und HTTP.
+hints.1.text: |-
+  Prüfen Sie den Registry-Agentenstatus und die Workload-Ereignisse.
+
+  ```bash
+  cat registry-agent-status.json
+  kubectl describe deployment board
+  ```
+hints.2.text: |-
+  Überprüfen Sie zuerst TLS und die Authentifizierung, stellen Sie dann ein board-Replikat wieder her und überprüfen Sie dessen digest und HTTP. Schreiben Sie genau `{"action":"start"}` in `registry-repair.json`. Die nächste Zielabfrage startet nur die unveränderte Registry dieser Installation; andere Aktionen und zusätzliche Felder werden abgelehnt. Das bereitgestellte Pull-Secret heißt `registry-pull`. Schreiben Sie nur die dokumentierte Startaktion; Der Agent zielt auf einen festen Spielcontainer.
+
+  Prüfen Sie in `~/quest` auf der Workstation:
+
+  - `source platform.env`
+  - `curl -fsS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") "https://$(jq -r .endpoint /run/dq/facts/0/registry-target.json)/v2/"`
+
+  Stufe 1: Authentifizierte TLS-Antwort: `{}`.
+
+  - `kubectl get deployment board -o json | jq '{replicas:.spec.replicas, ready:.status.readyReplicas,image:.spec.template.spec.containers[0].image,pullPolicy:.spec.template.spec.containers[0].imagePullPolicy}'`
+
+  Stufe 2: `replicas: 1`, `ready: 1`. Das Image entspricht dem eingefrorenen Release und die Pull-Policy ist `Always`.
+
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://127.0.0.1:8080`
+
+  Stufe 2: `north-78`.
 phrases.0: Ich habe den Image-Dienst wiederhergestellt, bevor ich seinen consumers neu gestartet habe.
 phrases.1: Ich habe eine Wiederherstellung mit engem Umfang control ohne Hostzugriff verwendet.
 phrases.2: Ich habe registry TLS, Bild identity und Anwendung HTTP separat überprüft.
+stages.0.objectives.0.text: Der bereitgestellte Registry-Endpunkt akzeptiert einen authentifizierten `/v2/`-Lesezugriff
+  über geprüftes TLS.
+stages.1.objectives.0.text: Der bereitgestellte Registry-Endpunkt akzeptiert einen authentifizierten `/v2/`-Lesezugriff
+  über geprüftes TLS.
+stages.1.objectives.1.text: Deployment `board` und ein bereiter Container in einem aktiven Pod verwenden
+  das vorhandene unveränderliche private Release-Image mit Pull-Policy `Always`.
+stages.1.objectives.2.text: Deployment `board` hat Replikazahl `1` und schließt seinen Rollout ab.
+stages.1.objectives.3.text: In einem Pod von Deployment `board` liefert `http://127.0.0.1:8080` den Wert
+  `north-78`.

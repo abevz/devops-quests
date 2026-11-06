@@ -1,39 +1,59 @@
 title: Доступность реестра
-brief: 'Одноразовый процесс registry действительно остановлен после загрузки образа.
-  Consumers намеренно оставлены с нулём реплик. Сначала запишите registry-repair.json
-  ровно с {"action":"start"}. При следующем опросе целей агент песочницы может запустить
-  только этот неизменённый registry данной установки; лишние поля и другие действия
-  отклоняются. Узкий игровой control не даёт host Docker socket и общего управления
-  сервисами. Перед вторым этапом подтвердите TLS /v2/ с аутентификацией. Затем верните
-  board одну реплику с уже закреплённым приватным образом и pull Secret. VM и живые
-  сервисы не затрагиваются.
+brief: |-
+  Приватный реестр недоступен, board не обслуживает запросы. Восстановите доступ к реестру перед возвращением board в работу.
 
+  Работайте на workstation в `~/quest` с файлами `platform.env`, `registry-ca.crt`, `registry-repair.json`, `registry-pull.yaml`, `board.yaml`.
 
-  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `platform.env`,
-  `registry-ca.crt`, `registry-target.json`, `registry-repair.json`, `registry-agent-status.json`,
-  `registry-pull.json`, `board.json`.
+  Если не указано иное, ресурсы Kubernetes находятся в namespace песочницы (`DQ_NAMESPACE`); пути в `~/quest` — на workstation.
 
+  **Requirements:**
 
-  В песочнице нет интернета и внешнего DNS. Используйте выданные файлы, предварительно
-  загруженные образы и приватные сервисы. Менять можно только эту песочницу.
+  - Этап 1:
+    - Предоставленный endpoint реестра принимает аутентифицированное чтение `/v2/` через TLS с проверкой сертификата.
 
+  - Этап 2:
+    - Предоставленный endpoint реестра принимает аутентифицированное чтение `/v2/` через TLS с проверкой сертификата.
+    - Deployment `board` и готовый контейнер в активном Pod используют существующий неизменяемый приватный образ релиза с политикой загрузки `Always`.
+    - Deployment `board` имеет число реплик `1` и завершает rollout.
+    - Внутри Pod Deployment `board` адрес `http://127.0.0.1:8080` возвращает `north-78`.
 
-  Цели первого этапа: Запрос запуска registry корректен, реальный /v2/ доступен с
-  аутентификацией и проверенным TLS.'
+  Текущая доступность сервисов не доказывает восстановление после потери хранилища реестра.
 debrief: Реальный registry восстановлен до запуска consumer приватного образа.
-stages.0.brief: 'Результат проверки: Запрос запуска registry корректен, реальный /v2/
-  доступен с аутентификацией и проверенным TLS.'
-stages.0.objectives.0.text: Запрос запуска registry корректен, реальный /v2/ доступен
-  с аутентификацией и проверенным TLS.
-stages.1.brief: 'Результат проверки: Готовый board использует сохранённый private
-  digest с Always и pull Secret, imageID совпадает, HTTP возвращает north-78.'
-stages.1.objectives.0.text: Готовый board использует сохранённый private digest с
-  Always и pull Secret, imageID совпадает, HTTP возвращает north-78.
+stages.0.brief: Восстановите аутентифицированный доступ к существующему приватному реестру.
+stages.1.brief: Восстановите сервис board с требуемым приватным релизом.
 hints.0.text: Восстановите endpoint registry до запуска consumers, которым нужен pull.
-hints.1.text: Запишите только описанное действие start; агент работает с одним фиксированным
-  игровым контейнером.
-hints.2.text: Сначала проверьте TLS и аутентификацию, затем верните одну реплику board
-  и проверьте digest и HTTP.
+hints.1.text: |-
+  Изучите состояние агента реестра и события нагрузки.
+
+  ```bash
+  cat registry-agent-status.json
+  kubectl describe deployment board
+  ```
+hints.2.text: |-
+  Сначала проверьте TLS и аутентификацию, затем верните одну реплику board и проверьте digest и HTTP. Запишите в `registry-repair.json` ровно `{"action":"start"}`. Следующий опрос целей запускает только неизменённый реестр этой установки; другие действия и лишние поля отклоняются. Предоставленный pull Secret — `registry-pull`. Запишите только описанное действие start; агент работает с одним фиксированным игровым контейнером.
+
+  Проверьте из `~/quest` на workstation:
+
+  - `source platform.env`
+  - `curl -fsS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") "https://$(jq -r .endpoint /run/dq/facts/0/registry-target.json)/v2/"`
+
+  Этап 1: Ответ через аутентифицированный TLS: `{}`.
+
+  - `kubectl get deployment board -o json | jq '{replicas:.spec.replicas, ready:.status.readyReplicas,image:.spec.template.spec.containers[0].image,pullPolicy:.spec.template.spec.containers[0].imagePullPolicy}'`
+
+  Этап 2: `replicas: 1`, `ready: 1`. Образ совпадает с замороженным релизом, политика загрузки — `Always`.
+
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://127.0.0.1:8080`
+
+  Этап 2: `north-78`.
 phrases.0: Я восстановил сервис образов до запуска consumers.
 phrases.1: Я использовал узкий control восстановления без доступа к хосту.
 phrases.2: Я отдельно проверил TLS registry, identity образа и HTTP приложения.
+stages.0.objectives.0.text: Предоставленный endpoint реестра принимает аутентифицированное чтение `/v2/`
+  через TLS с проверкой сертификата.
+stages.1.objectives.0.text: Предоставленный endpoint реестра принимает аутентифицированное чтение `/v2/`
+  через TLS с проверкой сертификата.
+stages.1.objectives.1.text: Deployment `board` и готовый контейнер в активном Pod используют существующий
+  неизменяемый приватный образ релиза с политикой загрузки `Always`.
+stages.1.objectives.2.text: Deployment `board` имеет число реплик `1` и завершает rollout.
+stages.1.objectives.3.text: Внутри Pod Deployment `board` адрес `http://127.0.0.1:8080` возвращает `north-78`.

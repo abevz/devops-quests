@@ -1,41 +1,69 @@
 title: Git provenance
-brief: 'The board is healthy, but its incident report confuses the image source commit
-  with the later deployment-manifest commit. Trace the running immutable image through
-  the private registry manifest and config label org.opencontainers.image.revision
-  to the private Git source. Write provenance.json with exactly image, commit and
-  repo. The frozen release receipt identifies the expected artifact; verify its actual
-  registry bytes and source ancestry. This is traceability metadata, not a signature
-  or proof of a trusted build.
+brief: |-
+  The board is serving traffic, but its release needs a verifiable source record. Identify the source of the running immutable image without confusing it with the deployment revision.
 
+  Work on the workstation in `~/quest` with `platform.env`, `release-evidence.json`, `provenance.json`, `release-commit`, `repository/`.
 
-  Quest files in `~/quest` (some appear in later stages): `platform.env`, `release-evidence.json`,
-  `provenance.json`, `source-commit`, `release-commit`, `repository/site/index.html`.
+  Unless stated otherwise, Kubernetes resources live in the bay namespace (`DQ_NAMESPACE`); `~/quest` paths are on the workstation.
 
+  **Requirements:**
 
-  The bay has no Internet or external DNS. Use only supplied files, preloaded images
-  and private services. Change only this bay.
+  - Published `origin/main` equals workstation `~/quest/release-commit`.
+  - Application `board` retains the supplied private Git source, release branch and existing workload directory.
+  - Application `board` reports `Synced` and `Healthy` at the commit in workstation `~/quest/release-commit`.
+  - Deployment `board` completes its rollout in the bay namespace.
+  - Inside a Pod of Deployment `board`, `http://board:8080` returns `north-91`.
+  - Workstation `~/quest/provenance.json` correctly links the running image, its actual registry bytes and source commit, and the private Git source history.
 
+    - Workstation `provenance.json` contains exactly `image`, `commit` and `repo`. The image source differs from `release-commit`, precedes the published release in Git history, and contains `site/index.html` with `north-91` in the repository. The report, running digest, actual registry bytes, registry source metadata and supplied release evidence agree.
 
-  Initial success criteria: The report matches the real running digest, registry config
-  source revision and private Git source; the board remains healthy.'
-debrief: The incident now links running bytes to the source revision while keeping
-  build trust a separate question.
-stages.0.brief: 'Success criteria: The report matches the real running digest, registry
-  config source revision and private Git source; the board remains healthy.'
-stages.0.objectives.0.text: The report matches the real running digest, registry config
-  source revision and private Git source; the board remains healthy.
+  This is traceability metadata, not a signature or proof of a trusted build.
+debrief: The incident now links running bytes to the source revision while keeping build trust a separate
+  question.
+stages.0.brief: Keep image-source provenance distinct from deployment history.
 hints.0.text: A manifest commit can reference an image built from an earlier commit.
-hints.1.text: Resolve manifest → config blob → OCI revision label; compare Git ancestry.
-hints.2.text: Record the image digest, source commit and private repo URL, without
-  treating a label as a signature.
+hints.1.text: |-
+  Inspect the source history and the report; trace the immutable image through registry metadata.
+
+  ```bash
+  git -C repository log --oneline -5
+  cat provenance.json
+  ```
+hints.2.text: |-
+  Record the image digest, source commit and private repo URL, without treating a label as a signature. The exact OCI label is `org.opencontainers.image.revision`; follow the running immutable image’s manifest and config to find it. Resolve manifest → config blob → OCI revision label; compare Git ancestry.
+
+  Verify from `~/quest` on the workstation:
+
+  - `source platform.env`
+  - `git -C repository ls-remote origin refs/heads/main`
+  - `cat release-commit`
+  - `cat provenance.json`
+
+  The remote `main` hash equals `release-commit`. The report contains exactly `image`, `commit` and `repo`; `commit` identifies the image source, distinct from `release-commit`.
+
+  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
+
+  `Synced`, `Healthy`, and the revision from `release-commit`. The source is the supplied private repository, `manifests`, `main`.
+
+  - `kubectl rollout status deployment/board --timeout=3s`
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080`
+
+  The rollout completes; `north-91`.
 phrases.0: I distinguished source revision from deployment revision.
 phrases.1: I verified the manifest digest and image config in the registry.
 phrases.2: I treated unsigned provenance as traceability, not attestation.
 questions.0.points.0: No; labels are supplied by the builder.
-questions.0.points.1: A digest identifies bytes; signatures and attestations add separate
-  trust evidence.
+questions.0.points.1: A digest identifies bytes; signatures and attestations add separate trust evidence.
 questions.0.prompt: Does a matching OCI revision label prove a trusted build?
-questions.1.points.0: One commit builds the artifact; a later commit selects it in
-  deployment configuration.
+questions.1.points.0: One commit builds the artifact; a later commit selects it in deployment configuration.
 questions.1.points.1: Trace both revisions and retain their relationship.
 questions.1.prompt: Why can GitOps revision differ from image revision?
+stages.0.objectives.0.text: Published `origin/main` equals workstation `~/quest/release-commit`.
+stages.0.objectives.1.text: Application `board` retains the supplied private Git source, release branch
+  and existing workload directory.
+stages.0.objectives.2.text: Application `board` reports `Synced` and `Healthy` at the commit in workstation
+  `~/quest/release-commit`.
+stages.0.objectives.3.text: Deployment `board` completes its rollout in the bay namespace.
+stages.0.objectives.4.text: Inside a Pod of Deployment `board`, `http://board:8080` returns `north-91`.
+stages.0.objectives.5.text: Workstation `~/quest/provenance.json` correctly links the running image, its
+  actual registry bytes and source commit, and the private Git source history.

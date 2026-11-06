@@ -1,21 +1,45 @@
 title: Vault bis pod Geheimnis
-brief: 'Arbeite in `~/quest` mit `platform.env`, `reader.hcl`, `sync-secret.sh` und `deployment.json`. Der kurzlebige Spiel-Vault
-  ist bereits initialisiert und entsiegelt. Seine Policy `rail-reader` zeigt auf einen falschen KV-v2-Pfad. Das manager-Token
-  kann diese Policy ändern; das reader-Token muss `secret/data/dispatch` lesen dürfen. Gib niemals Tokens oder Secret-Antworten
-  aus. Die verlinkte Vault-Anleitung erklärt Policy-Pfade und sichere KV-v2-Lesezugriffe.
+brief: |-
+  Relay kann seinen Wert aus Vault nicht nutzen. Stellen Sie den erwarteten Wert entlang der Lieferkette wieder her.
 
+  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `reader.hcl`, `sync-secret.sh`, `deployment.yaml`.
 
-  Korrigiere `rail-reader`, führe das bereitgestellte bedarfsweise `sync-secret.sh` aus und warte auf den Rollout von `deployment/relay`.
-  Prüfe, dass reader `north-secret` als `.data.data.value` erhält, das Kubernetes-Secret `route-secret` einen Schlüssel `value`
-  hat, der zu `north-secret` dekodiert wird, und der Prozess `relay` `ROUTE_SECRET=north-secret` besitzt. Der Rollout muss
-  erfolgreich sein. Die Prüfung beobachtet diese Ergebnisse, beweist aber nicht, welche Policy-Änderungen oder Synchronisierungsschritte
-  sie erzeugt haben. Arbeite nur in der Offline-Umgebung.'
-stages.0.brief: Reader-Wert, Secret-Schlüssel, relay-Umgebung und Rollout stimmen mit der Aufgabe überein.
-stages.0.objectives.0.text: Reader-Wert, Secret-Schlüssel, relay-Umgebung und Rollout stimmen mit der Aufgabe überein.
-hints.0.text: Prüfe den HTTP-Status von Vault, ohne Tokens auszugeben.
-hints.1.text: KV-v2-Lesezugriffe benötigen den Policy-Pfad secret/data/dispatch.
-hints.2.text: Korrigiere rail-reader mit dem manager-Token, führe sync-secret.sh aus und prüfe anschließend das Secret und
-  die Pod-Umgebung.
+  Sofern nicht anders angegeben, liegen Kubernetes-Ressourcen im Bay-Namespace (`DQ_NAMESPACE`); Pfade unter `~/quest` liegen auf der Workstation.
+
+  **Requirements:**
+
+  - Die bereitgestellte Vault-Identität, die ausgelieferte Kubernetes-Konfiguration und der laufende Prozess `relay` liefern den Dispatch-Wert `north-secret`.
+  - Deployment `relay` schließt seinen Rollout im Bay-Namespace ab.
+
+  Die Prüfung beobachtet diese Ergebnisse; sie beweist nicht, welche Richtlinienänderungen oder Synchronisierungsschritte sie erzeugt haben.
+stages.0.brief: Alle Auslieferungsbeobachtungen müssen denselben Wert bestätigen.
+hints.0.text: Autorisierung, ausgelieferte Konfiguration und laufender Prozess sind getrennte Glieder
+  einer Lieferkette.
+hints.1.text: |-
+  Verfolgen Sie das bereitgestellte Synchronisierungsskript und die Konfigurationsreferenzen des Workloads.
+
+  ```bash
+  cat sync-secret.sh
+  kubectl describe deployment relay
+  ```
+hints.2.text: |-
+  Korrigiere rail-reader mit dem manager-Token, führe sync-secret.sh aus und prüfe anschließend das Secret und die Pod-Umgebung. KV-v2-Lesezugriffe benötigen den Policy-Pfad secret/data/dispatch.
+
+  Prüfen Sie in `~/quest` auf der Workstation:
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+
+  Exit `0`; keine Zugangsdaten oder geheimen Werte werden ausgegeben.
+
+  - `kubectl get secret route-secret -o json | jq -e '.data.value | @base64d == "north-secret"' >/dev/null`
+
+  Exit `0`; keine Zugangsdaten oder geheimen Werte werden ausgegeben.
+
+  - `kubectl exec deployment/relay -- sh -c 'test "$ROUTE_SECRET" = north-secret'`
+  - `kubectl rollout status deployment/relay --timeout=3s`
+
+  Exit `0`; keine Zugangsdaten oder geheimen Werte werden ausgegeben. Der Rollout ist abgeschlossen.
 debrief: Reader-Wert, Secret-Schlüssel, relay-Umgebung und Rollout entsprachen den Prüfungen.
 phrases.0: Ich habe den Betriebsstatus überprüft, bevor ich eine Änderung vorgenommen habe.
 phrases.1: Ich habe die Ursache gefunden und eine Sache nach der anderen geändert.
@@ -26,3 +50,6 @@ diagnostics.reader: Das Reader-Token muss north-secret aus secret/data/dispatch 
 diagnostics.secret: Der dekodierte Wert von route-secret muss north-secret sein.
 diagnostics.env: ROUTE_SECRET des relay-Containers muss north-secret sein.
 diagnostics.rollout: Der Rollout des Deployment relay muss abgeschlossen sein.
+stages.0.objectives.0.text: Die bereitgestellte Vault-Identität, die ausgelieferte Kubernetes-Konfiguration
+  und der laufende Prozess `relay` liefern den Dispatch-Wert `north-secret`.
+stages.0.objectives.1.text: Deployment `relay` schließt seinen Rollout im Bay-Namespace ab.

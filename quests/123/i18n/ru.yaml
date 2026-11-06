@@ -1,25 +1,58 @@
 title: Argo CD ApplicationSet
-brief: 'Работайте в `~/quest` с `platform.env`, `appset-target.json`, `applicationset.json`, `repository/stations/north/board.json`,
-  `repository/stations/south/board.json`, `release-commit` и `wait-apps.sh`. Генератор списка ApplicationSet передаёт значения
-  шаблону Go. Установите путь шаблона ровно в `stations/{{.station}}`, сохраните `goTemplate: true` и порядок станций `[north,
-  south]`. Обычный игровой опрос отправляет один из двух ограниченных манифестов в приватное пространство контроллера из `appset-target.json`;
-  дождитесь отправки и согласования. Этот адаптер допускает только указанные изменения, а не произвольное редактирование API.
+brief: |-
+  Флот station не предоставляет оба ожидаемых сервиса. Восстановите создаваемые приложения и наблюдаемые результаты релиза.
 
+  Работайте на workstation в `~/quest` с файлами `platform.env`, `appset-target.json`, `applicationset.yaml`, `repository/`, `release-commit`, `wait-apps.sh`.
 
-  Созданные Application north и south должны принадлежать этому ApplicationSet, быть `Synced` и `Healthy` на `release-commit`
-  и сохранять проект, репозиторий, путь каждого элемента и пространство песочницы из `wait-apps.sh` и `appset-target.json`.
-  Каждый Deployment должен иметь одну готовую реплику; `north:8080` и `south:8080` должны возвращать `north-123` и `south-123`.
-  Текущее созданное состояние не доказывает, что изменён только путь шаблона. Используйте только офлайн-песочницу.'
-debrief: ApplicationSet генерирует спецификации Application; каждое Application по-прежнему согласует свою нагрузку. Ограниченная
-  передача манифеста сохраняет приватные project, repository и destination, а генерацию выполняет настоящий контроллер с областью
-  одного namespace.
-stages.0.brief: Шаблон ApplicationSet, владелец и статусы созданных Application и ответы обоих Deployment соответствуют описанию.
-stages.0.objectives.0.text: Шаблон ApplicationSet, владелец и статусы созданных Application и ответы обоих Deployment соответствуют
-  описанию.
+  Если не указано иное, ресурсы Kubernetes находятся в namespace песочницы (`DQ_NAMESPACE`); пути в `~/quest` — на workstation.
+
+  **Requirements:**
+
+  - Существующий ApplicationSet создаёт ровно Applications `north` и `south`, каждый использует содержимое соответствующей станции из предоставленного репозитория, сохраняя предназначенные проект и назначение в песочнице.
+  - Оба созданных Application остаются во владении существующего ApplicationSet.
+  - Оба созданных Application имеют статусы `Synced` и `Healthy` для предоставленной ревизии релиза.
+  - Deployments `north` и `south` имеют ровно по `1` готовой реплике.
+  - Внутри их Pod адреса `http://north:8080` и `http://south:8080` возвращают соответственно `north-123` и `south-123`.
+
+    - Созданные Applications и их ApplicationSet остаются в предоставленном namespace контроллера; Deployments и Services — в namespace песочницы.
+
+  Текущее созданное состояние не доказывает, что менялся только путь шаблона.
+debrief: ApplicationSet генерирует спецификации Application; каждое Application по-прежнему согласует
+  свою нагрузку. Ограниченная передача манифеста сохраняет приватные project, repository и destination,
+  а генерацию выполняет настоящий контроллер с областью одного namespace.
+stages.0.brief: Сохраните предоставленную область контроллера и владение созданными объектами.
 hints.0.text: List-генератор задаёт station; шаблон подставляет его в source path каждого Application.
-hints.1.text: Изучите applicationset.json и созданные Application только для чтения в namespace из appset-target.json.
-hints.2.text: Укажите stations/{{.station}}, сохраните все поля области доступа, затем сравните UID владельца, ревизии и оба
-  HTTP-ответа.
+hints.1.text: |-
+  Изучите предоставленный ApplicationSet и созданные Applications в их namespace контроллера.
+
+  ```bash
+  cat applicationset.yaml
+  ns=$(jq -r .namespace appset-target.json)
+  kubectl -n "$ns" get applications north south -o yaml
+  ```
+hints.2.text: |-
+  Укажите stations/{{.station}}, сохраните все поля области доступа, затем сравните UID владельца, ревизии и оба HTTP-ответа. Обычный опрос целей отправляет `applicationset.yaml` через ограниченный адаптер. Сохраните `goTemplate: true` и порядок станций `[north, south]`; принимается только исходный манифест или исправление пути его шаблона. Изучите applicationset.yaml и созданные Application только для чтения в namespace из appset-target.json.
+
+  Проверьте из `~/quest` на workstation:
+
+  - `ns=$(jq -r .namespace appset-target.json)`
+  - `kubectl -n "$ns" get applications north south -o json | jq '.items[] | {name:.metadata.name,sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision,project:.spec.project,repo:.spec.source.repoURL,path:.spec.source.path,destination:.spec.destination.namespace,owners:.metadata.ownerReferences}'`
+
+  Оба имеют статусы `Synced` и `Healthy` для `release-commit`. Оба используют проект `station`, записанный репозиторий, соответствующие пути `stations/north` / `stations/south`, назначение `DQ_NAMESPACE` и владельца `ApplicationSet`.
+
+  - `kubectl get deployments north south -o json | jq '.items[] | {name:.metadata.name,ready:.status.readyReplicas}'`
+
+  Каждый сообщает `ready: 1`.
+
+  ```bash
+  for station in north south; do
+    kubectl exec deployment/"$station" -- wget -qO- -T 3 "http://$station:8080"
+  done
+  ```
+
+  `north-123`, `south-123`.
+
+  - `bash wait-apps.sh` — код `0`; проверки предоставленного релиза проходят.
 phrases.0: Я разделил генерацию Application и согласование нагрузки.
 phrases.1: Я проверил значения генератора и развёртывание шаблона.
 phrases.2: Я сохранил ограниченную область прав контроллера и назначений.
@@ -51,9 +84,20 @@ diagnostics.source_north: application/north source.path должен совпа�
 diagnostics.source_south: application/south source.path должен совпадать с stations/south.
 diagnostics.destination_north: application/north destination.namespace должен совпадать с DQ_NAMESPACE.
 diagnostics.destination_south: application/south destination.namespace должен совпадать с DQ_NAMESPACE.
-diagnostics.owner_north: У application/north должна быть ownerReference типа ApplicationSet с UID ApplicationSet station.
-diagnostics.owner_south: У application/south должна быть ownerReference типа ApplicationSet с UID ApplicationSet station.
+diagnostics.owner_north: У application/north должна быть ownerReference типа ApplicationSet с UID ApplicationSet
+  station.
+diagnostics.owner_south: У application/south должна быть ownerReference типа ApplicationSet с UID ApplicationSet
+  station.
 diagnostics.ready_north: deployment/north readyReplicas должен совпадать с 1.
 diagnostics.ready_south: deployment/south readyReplicas должен совпадать с 1.
 diagnostics.http_north: Запрос к north:8080 должен вернуть north-123.
 diagnostics.http_south: Запрос к south:8080 должен вернуть south-123.
+stages.0.objectives.0.text: Существующий ApplicationSet создаёт ровно Applications `north` и `south`,
+  каждый использует содержимое соответствующей станции из предоставленного репозитория, сохраняя предназначенные
+  проект и назначение в песочнице.
+stages.0.objectives.1.text: Оба созданных Application остаются во владении существующего ApplicationSet.
+stages.0.objectives.2.text: Оба созданных Application имеют статусы `Synced` и `Healthy` для предоставленной
+  ревизии релиза.
+stages.0.objectives.3.text: Deployments `north` и `south` имеют ровно по `1` готовой реплике.
+stages.0.objectives.4.text: Внутри их Pod адреса `http://north:8080` и `http://south:8080` возвращают
+  соответственно `north-123` и `south-123`.

@@ -1,35 +1,51 @@
 title: Vault audit
-brief: 'The game reader received a real Vault permission denial. File auditing is
-  enabled with log_raw=false; the backend exports only allowlisted denial metadata
-  into audit-events.json and freezes it under /run/dq/facts/0/. Raw audit records,
-  authentication fields and secret values stay outside the workstation. Identify the
-  denied request in incident.json with exactly request_id, path, operation and reason.
-  Then repair reader.hcl for dispatch read only and update that game policy. Do not
-  copy tokens or secret values into your incident record.
+brief: |-
+  A Vault consumer receives a permission denial. Restore the intended access and leave an incident record that identifies the denied request.
 
+  Work on the workstation in `~/quest` with `platform.env`, `audit-events.json`, `incident.json`, `reader.hcl`.
 
-  Quest files in `~/quest` (some appear in later stages): `platform.env`, `audit-events.json`,
-  `incident.json`, `reader.hcl`, `reader-policy.json`.
+  **Requirements:**
 
+  - Workstation `~/quest/incident.json` identifies the denied request from the supplied audit metadata, with exactly `request_id`, `path`, `operation` and `reason`.
+  - The supplied reader identity can read the existing dispatch data and reports `deny` for probes of `secret/data/other` and `sys/audit`.
+  - The supplied reader identity can retrieve the existing dispatch value `north-secret` from Vault.
 
-  The bay has no Internet or external DNS. Use only supplied files, preloaded images
-  and private services. Change only this bay.
-
-
-  Initial success criteria: The incident matches the frozen real denial metadata exactly;
-  the reader can read dispatch and is denied unrelated secrets and audit administration.'
-debrief: A denied request was diagnosed through real audit metadata while secrets
-  remained outside the incident artifact.
-stages.0.brief: 'Success criteria: The incident matches the frozen real denial metadata
-  exactly; the reader can read dispatch and is denied unrelated secrets and audit
-  administration.'
-stages.0.objectives.0.text: The incident matches the frozen real denial metadata exactly;
-  the reader can read dispatch and is denied unrelated secrets and audit administration.
+  The negative probes cover the two named paths; they do not establish denial for every Vault path.
+debrief: A denied request was diagnosed through real audit metadata while secrets remained outside the
+  incident artifact.
+stages.0.brief: The incident artifact contains no authentication data or secret values.
 hints.0.text: Operational logs and request audit records answer different questions.
-hints.1.text: Correlate request_id, path and operation without copying authentication
-  data.
-hints.2.text: Record only the four exported fields and repair the KV v2 read path
-  without widening access.
+hints.1.text: |-
+  Inspect the exported audit metadata and the supplied policy without printing credentials.
+
+  ```bash
+  jq 'map({request_id,path,operation,reason})' audit-events.json
+  cat reader.hcl
+  ```
+hints.2.text: |-
+  Record only the four exported fields and repair the KV v2 read path without widening access. After editing `reader.hcl`, update the live game policy with the manager identity. File auditing uses `log_raw=false`; only allowlisted denial metadata is exported to `audit-events.json` and frozen facts. Raw audit records, authentication fields and secret values stay outside the workstation. Correlate request_id, path and operation without copying authentication data.
+
+  Verify from `~/quest` on the workstation:
+
+  - `jq -e 'keys == ["operation","path","reason","request_id"]' incident.json >/dev/null`
+
+  Exit `0`; the incident has exactly the four required fields.
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+
+  Exit `0`; no credential or secret value is printed.
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") -H 'Content-Type: application/json' --request POST --data '{"paths":["secret/data/dispatch","secret/data/other","sys/audit"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '{dispatch:."secret/data/dispatch",other:."secret/data/other",audit:."sys/audit"}'`
+
+  `dispatch: ["read"]`; `other` and `audit`: `["deny"]`.
 phrases.0: I correlated a denied request by its audit request ID.
 phrases.1: I kept authentication data and secret values out of the incident report.
 phrases.2: I verified the corrected read and negative authorization checks.
+stages.0.objectives.0.text: Workstation `~/quest/incident.json` identifies the denied request from the
+  supplied audit metadata, with exactly `request_id`, `path`, `operation` and `reason`.
+stages.0.objectives.1.text: The supplied reader identity can read the existing dispatch data and reports
+  `deny` for probes of `secret/data/other` and `sys/audit`.
+stages.0.objectives.2.text: The supplied reader identity can retrieve the existing dispatch value `north-secret`
+  from Vault.

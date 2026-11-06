@@ -1,30 +1,53 @@
 title: Powrót Argo
-brief: 'W prywatnym wydaniu Git wprowadzono zły readiness probe. Argo CD, który ciągle go uzgadnia, więc
-  izolowany live rollback zostałby nadpisany. Sprawdź healthy-commit i faulty-commit, następnie utwórz
-  i wypchnij nowy Git revert na main. Zachowaj błędne zatwierdzenie w historii, zachowaj automatyczne
-  self-heal/prune i zapisz nowe HEAD w release-commit. Przywróć oryginalny zdrowy manifest i wynik HTTP.
-  Nie resetuj historii ani nie wykonuj force-push. Nie wyłączaj GitOps i nie wycofuj wyłącznie Deployment.
+brief: |-
+  Najnowsze wydanie z prywatnego Git nie działa poprawnie. Przywróć znaną poprawną zawartość, zachowując historię incydentu.
 
+  Pracuj na workstation w `~/quest` z plikami `platform.env`, `application.yaml`, `healthy-commit`, `faulty-commit`, `release-commit`, `repository/`.
 
-  Pliki zadań w `~/quest` (niektóre pojawiają się w późniejszych etapach): `application.json`, `healthy-commit`,
-  `faulty-commit`, `release-commit`, `repository/manifests/board.json`.
+  O ile nie wskazano inaczej, zasoby Kubernetes znajdują się w przestrzeni nazw zatoki (`DQ_NAMESPACE`); ścieżki w `~/quest` są na workstation.
 
+  **Requirements:**
 
-  W zatoce nie ma Internetu ani zewnętrznego DNS. Korzystaj wyłącznie z dostarczonych plików, wstępnie
-  załadowanych obrazów i usług prywatnych. Zmień tylko tę zatokę.
+  - Opublikowane `origin/main` odpowiada plikowi `release-commit` na workstation, różni się od zamrożonego wadliwego commita i zachowuje go jako przodka.
+  - Application `board` zachowuje dostarczone prywatne źródło Git, gałąź wydania i istniejący katalog obciążenia.
+  - Application `board` zgłasza `Synced` i `Healthy` dla commita w `~/quest/release-commit` na workstation.
+  - Deployment `board` kończy rollout w przestrzeni nazw zatoki.
+  - Wewnątrz Poda Deployment `board` adres `http://board:8080` zwraca `north-95`.
+  - Opublikowany plik Git `manifests/board.yaml` przywraca znaną poprawną konfigurację obciążenia.
 
-
-  Początkowe kryteria sukcesu: nowe zatwierdzenie potomka przywraca zdrowy manifest; Argo pozostaje zautomatyzowany,
-  ze stanami Synced i Healthy, z odpowiedzią north-95 przez HTTP.'
+  Bieżąca zawartość i historia przodków Git nie dowodzą, którego polecenia odzyskiwania użyto.
 debrief: Wycofanie zostało wyrażone jako zmiana w przód w stosunku do desired state, zachowując błędną
   wersję do zbadania.
-stages.0.brief: 'Kryteria sukcesu: nowe zatwierdzenie potomka przywraca zdrowy manifest; Argo pozostaje
-  zautomatyzowany, ze stanami Synced i Healthy, z odpowiedzią north-95 przez HTTP.'
-stages.0.objectives.0.text: Nowe zatwierdzenie potomka przywraca zdrowy manifest; Argo pozostaje zautomatyzowany,
-  ze stanami Synced i Healthy, z odpowiedzią north-95 przez HTTP.
+stages.0.brief: Zachowaj wadliwy commit w opublikowanej historii.
 hints.0.text: Self-heal uzgadnia Git desired state, łącznie z błędami.
-hints.1.text: Przywrócenie rejestruje nowe zatwierdzenie korygujące i przechowuje historię incydentów.
-hints.2.text: Cofnij zamrożone błędne zatwierdzenie, wciśnij main i sprawdź zaobserwowane revision i health.
+hints.1.text: |-
+  Sprawdź historię wydania i bieżące objawy awarii obciążenia.
+
+  ```bash
+  git -C repository log --oneline -5
+  kubectl describe deployment board
+  ```
+hints.2.text: |-
+  Cofnij zamrożone błędne zatwierdzenie, wciśnij main i sprawdź zaobserwowane revision i health. Przywrócenie rejestruje nowe zatwierdzenie korygujące i przechowuje historię incydentów.
+
+  Sprawdź z `~/quest` na workstation:
+
+  - `source platform.env`
+  - `git -C repository ls-remote origin refs/heads/main`
+  - `cat release-commit`
+  - `git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/faulty-commit)" "$(cat release-commit)"`
+  - `git -C repository show --stat --oneline "$(cat release-commit)"`
+
+  Hash zdalnego `main` odpowiada `release-commit`. Odczyt przodka kończy się kodem `0`; nowy commit zachowuje historię incydentu.
+
+  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
+
+  `Synced`, `Healthy` i rewizja z `release-commit`. Źródłem jest dostarczone prywatne repozytorium, `manifests`, `main`.
+
+  - `kubectl rollout status deployment/board --timeout=3s`
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080`
+
+  Rollout kończy się; `north-95`.
 phrases.0: Przywróciłem desired state za pomocą Git revert.
 phrases.1: Podczas odzyskiwania miałem włączone reconciliation.
 phrases.2: Sprawdziłem zaobserwowaną wersję i stan aplikacji.
@@ -34,3 +57,13 @@ questions.0.prompt: Dlaczego live rollout undo może być tymczasowy w ramach Gi
 questions.1.points.0: Błędne zatwierdzenie pozostaje osiągalne w historii main.
 questions.1.points.1: Powrót do zdrowia to nowa zmiana, którą można sprawdzić.
 questions.1.prompt: Co zachowuje revert, co traci reset?
+stages.0.objectives.0.text: Opublikowane `origin/main` odpowiada plikowi `release-commit` na workstation,
+  różni się od zamrożonego wadliwego commita i zachowuje go jako przodka.
+stages.0.objectives.1.text: Application `board` zachowuje dostarczone prywatne źródło Git, gałąź wydania
+  i istniejący katalog obciążenia.
+stages.0.objectives.2.text: Application `board` zgłasza `Synced` i `Healthy` dla commita w `~/quest/release-commit`
+  na workstation.
+stages.0.objectives.3.text: Deployment `board` kończy rollout w przestrzeni nazw zatoki.
+stages.0.objectives.4.text: Wewnątrz Poda Deployment `board` adres `http://board:8080` zwraca `north-95`.
+stages.0.objectives.5.text: Opublikowany plik Git `manifests/board.yaml` przywraca znaną poprawną konfigurację
+  obciążenia.

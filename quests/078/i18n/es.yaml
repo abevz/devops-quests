@@ -1,37 +1,60 @@
 title: Disponibilidad de registro
-brief: 'El proceso desechable registry realmente se detuvo después de que se sembró su imagen. Consumers
-  se mantienen deliberadamente en cero réplicas. Primero envíe registry-repair.json que contenga exactamente
-  {"action":"start"}. El agente de la bahía, en la siguiente encuesta objetiva, sólo puede iniciar este
-  registry propiedad de la instalación sin cambios; Se rechazan campos adicionales y otras acciones. Este
-  juego restringido control no proporciona host Docker socket ni servicio general control. Verifique el
-  TLS /v2/ autenticado antes de la etapa dos. Luego restaure el board en una réplica usando su imagen
-  privada ya fijada y pull Secret. No hay ningún VM ni servicio en vivo involucrado.
+brief: |-
+  El registro privado no está disponible y board no atiende solicitudes. Restablece el acceso al registro antes de recuperar el servicio board.
 
+  Trabaja en la workstation en `~/quest` con `platform.env`, `registry-ca.crt`, `registry-repair.json`, `registry-pull.yaml`, `board.yaml`.
 
-  Archivos de búsqueda en `~/quest` (algunos aparecen en etapas posteriores): `platform.env`, `registry-ca.crt`,
-  `registry-target.json`, `registry-repair.json`, `registry-agent-status.json`, `registry-pull.json`,
-  `board.json`.
+  Salvo indicación contraria, los recursos Kubernetes están en el namespace de la bahía (`DQ_NAMESPACE`); las rutas bajo `~/quest` están en la workstation.
 
+  **Requirements:**
 
-  La bahía no tiene Internet ni DNS externo. Utilice únicamente archivos proporcionados, imágenes precargadas
-  y servicios privados. Cambie sólo esta bahía.
+  - Etapa 1:
+    - El endpoint del registro suministrado acepta una lectura autenticada de `/v2/` mediante TLS verificado.
 
+  - Etapa 2:
+    - El endpoint del registro suministrado acepta una lectura autenticada de `/v2/` mediante TLS verificado.
+    - El Deployment `board` y un contenedor listo en un Pod activo usan la imagen privada inmutable existente de la versión, con política de descarga `Always`.
+    - El Deployment `board` tiene el número de réplicas `1` y completa su rollout.
+    - Dentro de un Pod del Deployment `board`, `http://127.0.0.1:8080` devuelve `north-78`.
 
-  Criterios de éxito inicial: la solicitud de inicio de registro fija es válida y se puede acceder al
-  punto final registry /v2/ autenticado real con TLS verificado.'
+  La disponibilidad actual del servicio no demuestra recuperación tras perder el almacenamiento del registro.
 debrief: El registry real se restauró antes de que se recuperara la imagen privada consumer.
-stages.0.brief: 'Criterios de éxito: la solicitud de inicio de registro fija es válida y se puede acceder
-  al punto final registry /v2/ autenticado real con TLS verificado.'
-stages.0.objectives.0.text: La solicitud de inicio de registro fija es válida y se puede acceder al punto
-  final registry /v2/ autenticado real con TLS verificado.
-stages.1.brief: 'Criterios de éxito: Un board listo utiliza el private digest congelado con Always y el
-  pull Secret, su imageID coincide y HTTP devuelve north-78.'
-stages.1.objectives.0.text: Un board listo utiliza el private digest congelado con Always y el pull Secret,
-  su imageID coincide y HTTP devuelve north-78.
+stages.0.brief: Recupera el acceso autenticado al registro privado existente.
+stages.1.brief: Recupera el servicio board con su versión privada prevista.
 hints.0.text: Recupere el registry endpoint antes de iniciar consumers que necesita pull.
-hints.1.text: Escriba sólo la acción inicial documentada; el agente apunta a un contenedor de juego fijo.
-hints.2.text: Primero verifique TLS y la autenticación, luego restaure una réplica de board y verifique
-  su digest y HTTP.
+hints.1.text: |-
+  Inspecciona el estado del agente del registro y los eventos de la carga.
+
+  ```bash
+  cat registry-agent-status.json
+  kubectl describe deployment board
+  ```
+hints.2.text: |-
+  Primero verifique TLS y la autenticación, luego restaure una réplica de board y verifique su digest y HTTP. Escribe exactamente `{"action":"start"}` en `registry-repair.json`. La siguiente consulta de objetivos inicia solo el registro sin cambios de esta instalación; se rechazan otras acciones y campos adicionales. El Secret de descarga suministrado es `registry-pull`. Escriba sólo la acción inicial documentada; el agente apunta a un contenedor de juego fijo.
+
+  Verifica desde `~/quest` en la workstation:
+
+  - `source platform.env`
+  - `curl -fsS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") "https://$(jq -r .endpoint /run/dq/facts/0/registry-target.json)/v2/"`
+
+  Etapa 1: Respuesta TLS autenticada: `{}`.
+
+  - `kubectl get deployment board -o json | jq '{replicas:.spec.replicas, ready:.status.readyReplicas,image:.spec.template.spec.containers[0].image,pullPolicy:.spec.template.spec.containers[0].imagePullPolicy}'`
+
+  Etapa 2: `replicas: 1`, `ready: 1`. La imagen coincide con la versión congelada y la política de descarga es `Always`.
+
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://127.0.0.1:8080`
+
+  Etapa 2: `north-78`.
 phrases.0: Restauré el servicio de imágenes antes de reiniciar su consumers.
 phrases.1: Utilicé una recuperación de alcance limitado control sin acceso al host.
 phrases.2: Verifiqué registry TLS, imagen identity y aplicación HTTP por separado.
+stages.0.objectives.0.text: El endpoint del registro suministrado acepta una lectura autenticada de `/v2/`
+  mediante TLS verificado.
+stages.1.objectives.0.text: El endpoint del registro suministrado acepta una lectura autenticada de `/v2/`
+  mediante TLS verificado.
+stages.1.objectives.1.text: El Deployment `board` y un contenedor listo en un Pod activo usan la imagen
+  privada inmutable existente de la versión, con política de descarga `Always`.
+stages.1.objectives.2.text: El Deployment `board` tiene el número de réplicas `1` y completa su rollout.
+stages.1.objectives.3.text: Dentro de un Pod del Deployment `board`, `http://127.0.0.1:8080` devuelve
+  `north-78`.

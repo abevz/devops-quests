@@ -1,25 +1,55 @@
 title: Восстановление Vault
-brief: 'Работайте в `~/quest` с `platform.env`, `vault-agent-status.json`, `unseal-shares.json` и `original-cluster-id`. Приватный
-  процесс игрового Vault остановлен, но инициализированное хранилище предоставлено. Запишите ровно `{"action":"start"}` в
-  `vault-repair.json`; ограниченный агент песочницы запускает её существующий Vault. Дождитесь доступности точки инициализации.
-  Не выводите доли или токены, не вызывайте sys/init для повторной инициализации и не заменяйте хранилище. Руководство Vault
-  объясняет агента, запросы unseal и чтение KV-v2.
+brief: |-
+  Существующий приватный Vault недоступен. Восстановите его исходную идентичность и доступ к сохранённым данным.
 
+  Работайте на workstation в `~/quest` с файлами `platform.env`, `vault-repair.json`, `vault-agent-status.json`, `unseal-shares.json`.
 
-  После запуска передайте две разные выданные доли в `/v1/sys/unseal` и сохраните режим `0600` файла `unseal-shares.json`.
-  Проверьте, что `/v1/sys/seal-status` сообщает `initialized=true`, `sealed=false`, `t=2` и `n=3`, а ID кластера совпадает
-  с `/run/dq/facts/0/original-cluster-id`. Токен reader должен получить `north-secret` в `.data.data.value` из `secret/data/dispatch`;
-  токен manager должен получить HTTP 403 по тому же пути. Проверки наблюдают текущее состояние, идентичность и доступ, но
-  не доказывают точный запрос запуска или всю историю хранилища. Используйте только эту игровую офлайн-песочницу.'
-debrief: Инициализация, состояние печати, записанный ID кластера, результаты доступа и режим файла долей соответствовали проверкам.
-stages.0.brief: Точка инициализации доступна и сообщает initialized=true.
-stages.0.objectives.0.text: Точка инициализации доступна и сообщает initialized=true.
-stages.1.brief: Состояние печати и ID кластера, значение reader, отказ manager и режим файла долей соответствуют заданию.
-stages.1.objectives.0.text: Состояние печати и ID кластера, значение reader, отказ manager и режим файла долей соответствуют
-  заданию.
+  **Requirements:**
+
+  - Этап 1:
+    - Endpoint инициализации учебного Vault доступен и сообщает initialized `true`.
+
+  - Этап 2:
+    - Существующий Vault инициализирован и unsealed, сохраняя исходную идентичность кластера и конфигурацию unseal.
+    - Предоставленная идентичность reader получает из Vault существующее значение dispatch `north-secret`.
+    - Предоставленная идентичность manager получает HTTP `403` при запросе существующих данных dispatch.
+    - Файл `~/quest/unseal-shares.json` на workstation имеет режим `0600`.
+
+  Проверки наблюдают текущее состояние, идентичность и доступ, но не доказывают точный запрос запуска или полную историю хранилища.
+debrief: Инициализация, состояние печати, записанный ID кластера, результаты доступа и режим файла долей
+  соответствовали проверкам.
+stages.0.brief: Восстановите endpoint инициализации существующего Vault.
+stages.1.brief: Восстановите исходный unsealed Vault с требуемой границей доступа.
 hints.0.text: Остановленное, запечатанное и неинициализированное состояния различаются.
-hints.1.text: До использования двух долей запустите существующий процесс.
-hints.2.text: После распечатывания проверьте исходный ID кластера и существующие данные, доступные reader.
+hints.1.text: |-
+  Изучите состояние существующего процесса и seal, не выводя доли и токены.
+
+  ```bash
+  cat vault-agent-status.json
+  source platform.env
+  curl -fsS "$VAULT_ADDR/v1/sys/seal-status"
+  ```
+hints.2.text: |-
+  После распечатывания проверьте исходный ID кластера и существующие данные, доступные reader. Запишите ровно `{"action":"start"}` в `vault-repair.json`; ограниченный агент запускает существующий Vault при следующем опросе. Передайте две разные предоставленные доли в `/v1/sys/unseal`; не выполняйте повторную инициализацию и не заменяйте хранилище. До использования двух долей запустите существующий процесс.
+
+  Проверьте из `~/quest` на workstation:
+
+  - `source platform.env`
+  - `curl -fsS "$VAULT_ADDR/v1/sys/init" | jq -e '.initialized == true'`
+
+  Этап 1: `true`.
+
+  - `source platform.env`
+  - `curl -fsS "$VAULT_ADDR/v1/sys/seal-status" | jq '{initialized,sealed,t,n,cluster_id}'`
+
+  Этап 2: `initialized: true`, `sealed: false`, `t: 2`, `n: 3`; `cluster_id` совпадает с исходным замороженным значением.
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+  - `curl -sS -o /dev/null -w '%{http_code}\n' -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"`
+  - `stat -c %a unseal-shares.json`
+
+  Этап 2: Код `0`; учётные данные и секретные значения не выводятся. Manager сообщает `403`; файл долей сообщает `600`.
 phrases.0: Я различил доступность процесса и состояние печати.
 phrases.1: Я проверил инициализированное и распечатанное состояние, не выводя доли.
 phrases.2: Я сравнил ID кластера и проверил доступ reader и manager.
@@ -32,3 +62,11 @@ diagnostics.shares: Vault sys/seal-status n должен быть 3.
 diagnostics.reader: Токен читателя должен прочитать north-secret из secret/data/dispatch.
 diagnostics.manager: Запрос с токеном manager к secret/data/dispatch должен вернуть HTTP 403.
 diagnostics.mode: Права unseal-shares.json должны быть 0600.
+stages.0.objectives.0.text: Endpoint инициализации учебного Vault доступен и сообщает initialized `true`.
+stages.1.objectives.0.text: Существующий Vault инициализирован и unsealed, сохраняя исходную идентичность
+  кластера и конфигурацию unseal.
+stages.1.objectives.1.text: Предоставленная идентичность reader получает из Vault существующее значение
+  dispatch `north-secret`.
+stages.1.objectives.2.text: Предоставленная идентичность manager получает HTTP `403` при запросе существующих
+  данных dispatch.
+stages.1.objectives.3.text: Файл `~/quest/unseal-shares.json` на workstation имеет режим `0600`.

@@ -1,5 +1,9 @@
 set -euo pipefail
 cd ~/quest
+failed=0
+set +e
+(
+set -e
 source platform.env
 umask 077
 headers=$(mktemp -d)
@@ -10,16 +14,27 @@ if ! test "$(curl -fsS -H @"$headers/reader" "$VAULT_ADDR/v1/secret/data/dispatc
   printf '%s\n' 'reader secret/data/dispatch value = north-secret: ✗ [DQ:reader]'
   failed=1
 fi
+
 if ! test "$(kubectl get secret route-secret -o jsonpath='{.data.value}' 2>/dev/null | base64 -d 2>/dev/null)" = north-secret; then
   printf '%s\n' 'Secret route-secret value = north-secret: ✗ [DQ:secret]'
   failed=1
 fi
+
 if ! test "$(kubectl exec deployment/relay -- printenv ROUTE_SECRET 2>/dev/null)" = north-secret; then
   printf '%s\n' 'deployment/relay ROUTE_SECRET = north-secret: ✗ [DQ:env]'
   failed=1
 fi
+exit "$failed"
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+failed=0
 if ! kubectl rollout status deployment/relay --timeout=3s >/dev/null 2>&1; then
   printf '%s\n' 'deployment/relay rollout → 0: ✗ [DQ:rollout]'
   failed=1
 fi
+exit "$failed"
+)
+[ $? -eq 0 ] || failed=1
 exit "$failed"

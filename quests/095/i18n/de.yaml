@@ -1,34 +1,53 @@
 title: Argo-Rollback
-brief: 'Eine Änderung im privaten Git hat eine fehlerhafte Readiness-Probe eingeführt. Argo CD gleicht
-  sie weiterhin ab und würde deshalb ein isoliertes Rollback des laufenden Zustands überschreiben. Prüfe
-  healthy-commit und faulty-commit, erstelle anschließend auf main einen neuen Git-Revert-Commit und pushe
-  ihn in das private Repository. Bewahre den fehlerhaften Commit im Verlauf, erhalte automatisches self-heal/prune
-  und halte den neuen HEAD in release-commit fest. Stelle das ursprüngliche gesunde Manifest und das HTTP-Ergebnis
-  wieder her. Setze den Verlauf nicht zurück und führe keinen force-push aus. Deaktiviere GitOps nicht
-  und rolle nicht nur das Deployment zurück.
+brief: |-
+  Das neueste Release aus dem privaten Git ist nicht gesund. Stellen Sie den bekannten gesunden Inhalt wieder her und erhalten Sie die Vorfallhistorie.
 
+  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `application.yaml`, `healthy-commit`, `faulty-commit`, `release-commit`, `repository/`.
 
-  Questdateien in `~/quest` (einige erscheinen in späteren Phasen): `application.json`, `healthy-commit`,
-  `faulty-commit`, `release-commit`, `repository/manifests/board.json`.
+  Sofern nicht anders angegeben, liegen Kubernetes-Ressourcen im Bay-Namespace (`DQ_NAMESPACE`); Pfade unter `~/quest` liegen auf der Workstation.
 
+  **Requirements:**
 
-  Der Schacht verfügt über kein Internet oder externes DNS. Verwenden Sie nur bereitgestellte Dateien,
-  vorinstallierte Bilder und private Dienste. Ändern Sie nur diese Bucht.
+  - Veröffentlichtes `origin/main` entspricht der Workstation-Datei `release-commit`, unterscheidet sich vom eingefrorenen fehlerhaften Commit und erhält ihn als Vorfahren.
+  - Application `board` behält die bereitgestellte private Git-Quelle, den Release-Branch und das vorhandene Workload-Verzeichnis bei.
+  - Application `board` meldet `Synced` und `Healthy` für den Commit in der Workstation-Datei `~/quest/release-commit`.
+  - Deployment `board` schließt seinen Rollout im Bay-Namespace ab.
+  - In einem Pod von Deployment `board` liefert `http://board:8080` den Wert `north-95`.
+  - Das veröffentlichte Git `manifests/board.yaml` stellt die bekannte gesunde Workload-Konfiguration wieder her.
 
-
-  Anfängliche Erfolgskriterien: Ein neuer nachfolgender Commit stellt das gesunde Manifest wieder her;
-  Argo bleibt automatisiert und in den Zuständen Synced und Healthy, mit north-95 über HTTP.'
+  Aktueller Git-Inhalt und Abstammung beweisen nicht, welcher Wiederherstellungsbefehl verwendet wurde.
 debrief: Rollback wurde als Vorwärtsänderung des desired-Status ausgedrückt, wobei die fehlerhafte Revision
   zur Untersuchung beibehalten wurde.
-stages.0.brief: 'Erfolgskriterien: Ein neuer nachfolgender Commit stellt das gesunde Manifest wieder her;
-  Argo bleibt automatisiert und in den Zuständen Synced und Healthy, mit north-95 über HTTP.'
-stages.0.objectives.0.text: Ein neuer nachfolgender Commit stellt das gesunde Manifest wieder her; Argo
-  bleibt automatisiert und in den Zuständen Synced und Healthy, mit north-95 über HTTP.
+stages.0.brief: Erhalten Sie den fehlerhaften Commit in der veröffentlichten Historie.
 hints.0.text: Self-heal gleicht den Git desired-Status ab, einschließlich Fehlern.
-hints.1.text: Bei einem Zurücksetzen wird ein neuer korrigierender Commit aufgezeichnet und der Vorfallverlauf
-  gespeichert.
-hints.2.text: Erstelle einen Revert des festgehaltenen fehlerhaften Commits, pushe main und prüfe beobachtete
-  Revision und Zustand.
+hints.1.text: |-
+  Prüfen Sie die Release-Historie und die aktuellen Fehlersymptome des Workloads.
+
+  ```bash
+  git -C repository log --oneline -5
+  kubectl describe deployment board
+  ```
+hints.2.text: |-
+  Erstelle einen Revert des festgehaltenen fehlerhaften Commits, pushe main und prüfe beobachtete Revision und Zustand. Bei einem Zurücksetzen wird ein neuer korrigierender Commit aufgezeichnet und der Vorfallverlauf gespeichert.
+
+  Prüfen Sie in `~/quest` auf der Workstation:
+
+  - `source platform.env`
+  - `git -C repository ls-remote origin refs/heads/main`
+  - `cat release-commit`
+  - `git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/faulty-commit)" "$(cat release-commit)"`
+  - `git -C repository show --stat --oneline "$(cat release-commit)"`
+
+  Der Hash von Remote-`main` entspricht `release-commit`. Die Abstammungsprüfung endet mit Exit `0`; der neue Commit erhält die Vorfallhistorie.
+
+  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
+
+  `Synced`, `Healthy` und die Revision aus `release-commit`. Die Quelle ist das bereitgestellte private Repository, `manifests`, `main`.
+
+  - `kubectl rollout status deployment/board --timeout=3s`
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080`
+
+  Der Rollout ist abgeschlossen; `north-95`.
 phrases.0: Ich habe den desired-Status mit einem Git revert wiederhergestellt.
 phrases.1: Ich habe reconciliation während der Wiederherstellung aktiviert gelassen.
 phrases.2: Ich habe die beobachtete Revision und den Anwendungszustand überprüft.
@@ -38,3 +57,13 @@ questions.0.prompt: Warum kann ein Live-rollout undo unter GitOps vorübergehend
 questions.1.points.0: Der fehlerhafte Commit bleibt im main-Verlauf erreichbar.
 questions.1.points.1: Bei der Wiederherstellung handelt es sich um eine überprüfbare neue Änderung.
 questions.1.prompt: Was behält revert, was reset verliert?
+stages.0.objectives.0.text: Veröffentlichtes `origin/main` entspricht der Workstation-Datei `release-commit`,
+  unterscheidet sich vom eingefrorenen fehlerhaften Commit und erhält ihn als Vorfahren.
+stages.0.objectives.1.text: Application `board` behält die bereitgestellte private Git-Quelle, den Release-Branch
+  und das vorhandene Workload-Verzeichnis bei.
+stages.0.objectives.2.text: Application `board` meldet `Synced` und `Healthy` für den Commit in der Workstation-Datei
+  `~/quest/release-commit`.
+stages.0.objectives.3.text: Deployment `board` schließt seinen Rollout im Bay-Namespace ab.
+stages.0.objectives.4.text: In einem Pod von Deployment `board` liefert `http://board:8080` den Wert `north-95`.
+stages.0.objectives.5.text: Das veröffentlichte Git `manifests/board.yaml` stellt die bekannte gesunde
+  Workload-Konfiguration wieder her.
