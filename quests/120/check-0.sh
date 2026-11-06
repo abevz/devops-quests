@@ -1,14 +1,38 @@
 set -euo pipefail
 cd ~/quest
 failed=0
+set +e
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
 if ! test -s /run/dq/facts/0/original-pvc-uid || ! test "$(kubectl get pvc ledger-shelf-0 -o jsonpath='{.metadata.uid}' 2>/dev/null)" = "$(cat /run/dq/facts/0/original-pvc-uid 2>/dev/null)"; then
   printf '%s\n' 'ledger-shelf-0 UID = /run/dq/facts/0/original-pvc-uid: ✗ [DQ:pvc]'
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
 if ! kubectl get service shelf -o json 2>/dev/null | jq -e '.spec.clusterIP=="None" and .spec.selector=={app:"shelf"}' >/dev/null 2>&1; then
   printf '%s\n' 'service/shelf clusterIP = None, selector = app:shelf: ✗ [DQ:shelf_service]'
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
 if ! policies=$(kubectl get networkpolicies -o json 2>/dev/null); then
   printf '%s\n' 'kubectl get networkpolicies: ✗ [DQ:policies]'
   failed=1
@@ -134,12 +158,34 @@ DQ_POLICY
 then
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
 if ! timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local." >/dev/null 2>&1; then
   printf '%s\n' 'deployment/client DNS shelf-0.shelf: ✗ [DQ:dns]'
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
 if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- wget -qO- -T 3 http://shelf-0.shelf:8080 2>/dev/null)" = ledger-120; then
   printf '%s\n' 'deployment/client → shelf-0.shelf:8080 = ledger-120: ✗ [DQ:http]'
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
 exit "$failed"

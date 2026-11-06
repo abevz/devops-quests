@@ -1,25 +1,67 @@
 title: Station entry incident
-brief: 'Work in `~/quest` with `components.env`, `expected-dns-address`, `Corefile`, `dns-config.json`, `dns.json`, `dns-service.json`,
-  `client.json`, `ingress-target.json` and `ingress.json`. A private DNS fault and an Ingress backend fault interrupt the
-  path to board. First repair the private `station.internal` record to the controller Service IP in `expected-dns-address`,
-  restart `deployment/station-dns` and wait for DNS propagation. The client must retain `dnsPolicy: None` and exactly the
-  private DNS Service IP as nameserver; its DNS answer must contain the complete expected address.
-
-
-  Then repair Ingress `board`: its private class comes from `ingress-target.json`, its first host is `station.internal`, path
-  `/`, path type `Prefix`, and first backend is exactly Service `board` port 8080. Wait for controller reconciliation. From
-  the client, `http://station.internal:8000` with Host `station.internal` must return `north-110`; the same request with Host
-  `wrong.station.internal` must fail. Failure does not establish the cause, and current checks do not prove which changes
-  or restarts occurred. Use only the offline bay.'
+brief: "The consumer cannot yet reach the service through its private name and entrypoint.\n\nWork in `~/quest`\
+  \ on the workstation. Inputs by stage:\n- Stage 1: `components.env`, `expected-dns-address`, `Corefile`, `dns-config.yaml`,\
+  \ `dns.yaml`, `dns-service.yaml`, `client.yaml`.\n- Stage 2: `ingress-target.json`, `ingress.yaml`.\n\n**Requirements:**\n\
+  \n- Stage 1:\n  - Deployment `client` uses only the supplied private DNS resolver.\n  - From Deployment `client`,\
+  \ `station.internal` resolves to the complete intended private-entrypoint address.\n- Stage 2:\n  - Deployment\
+  \ `client` uses only the supplied private DNS resolver.\n  - From Deployment `client`, `station.internal` resolves\
+  \ to the complete intended private-entrypoint address.\n  - The private Ingress routes `/` for `station.internal`\
+  \ to the application.\n  - From Deployment `client`, `http://station.internal:8000` returns `north-110` for Host\
+  \ `station.internal` and rejects Host `wrong.station.internal`.\n\nRequest failure does not establish its cause,\
+  \ and current DNS and Ingress observations do not prove which changes or restarts occurred."
 debrief: The checks observed the client DNS and private routing results.
-stages.0.brief: The client DNS policy, nameserver and lookup match the brief.
-stages.0.objectives.0.text: The client DNS policy, nameserver and lookup match the brief.
-stages.1.brief: The DNS result, Ingress fields, matching-host response and failed wrong-host request match the brief.
-stages.1.objectives.0.text: The DNS result, Ingress fields, matching-host response and failed wrong-host request match the
-  brief.
+stages.0.brief: The requester must receive the complete supplied private DNS address.
+stages.1.brief: The private entrypoint must distinguish the intended host from an unrelated host.
 hints.0.text: Test the name-resolution boundary before interpreting an HTTP routing failure.
-hints.1.text: The DNS answer must be the controller Service, not the application Service.
-hints.2.text: Repair DNS, then the Ingress backend; verify both the correct and unrelated Host headers.
+hints.1.text: 'The DNS answer must be the controller Service, not the application Service. After updating the private
+  record, restart `deployment/station-dns` and wait for propagation.
+
+
+  Inspect the supplied definitions, resource descriptions and events for the relevant stage.
+
+
+  ```sh
+
+  cat Corefile
+
+  kubectl describe deployment client
+
+  kubectl describe ingress board
+
+  ```
+
+
+  Stage 1/2: Inspect these resource definitions for this stage.
+
+
+  ```sh
+
+  kubectl get deployment client -o yaml
+
+  ```
+
+
+  Stage 2: Inspect these resource definitions for this stage.
+
+
+  ```sh
+
+  kubectl get ingress board -o yaml
+
+  cat ingress-target.json
+
+  ```'
+hints.2.text: "Repair DNS, then the Ingress backend; verify both the correct and unrelated Host headers.\n\nVerify\
+  \ the repaired stage and compare the observed result.\n\nStage 1/2: The complete DNS answer matches the supplied\
+  \ expected address.\n\n```sh\nkubectl get service station-dns -o wide\ncat expected-dns-address\nkubectl exec\
+  \ deployment/client -- nslookup station.internal \"$(kubectl get service station-dns -o jsonpath='{.spec.clusterIP}')\"\
+  \n```\n\nStage 2: The intended Host returns `north-110`; the unrelated Host request fails.\n\n```sh\nkubectl exec\
+  \ deployment/client -- wget -qO- -T 3 --header='Host: station.internal' http://station.internal:8000\nif kubectl\
+  \ exec deployment/client -- wget -qO- -T 3 --header='Host: wrong.station.internal' http://station.internal:8000\
+  \ >/dev/null 2>&1; then\n  printf 'Unexpected Host accepted\\n' >&2; exit 1\nelse\n  printf 'Unrelated Host rejected\\\
+  n'\nfi\n```\n\nExpected observations for the complete stage:\n- Stage 1/2: The DNS configuration matches Requirements\
+  \ and the complete answer equals `expected-dns-address`.\n- Stage 2: The private class, host, path and backend\
+  \ match Requirements."
 phrases.0: I isolated DNS resolution from ingress routing.
 phrases.1: I retained the intended request path instead of bypassing a boundary.
 phrases.2: I observed the wrong-Host request fail.
@@ -39,3 +81,12 @@ diagnostics.path_type: ingress/board paths[0].pathType must equal Prefix.
 diagnostics.backend: ingress/board backend must equal board:8080.
 diagnostics.http: The request with Host station.internal must return north-110.
 diagnostics.wrong: The request with Host wrong.station.internal must fail.
+stages.0.objectives.0.text: Deployment `client` uses only the supplied private DNS resolver.
+stages.0.objectives.1.text: From Deployment `client`, `station.internal` resolves to the complete intended private-entrypoint
+  address.
+stages.1.objectives.0.text: Deployment `client` uses only the supplied private DNS resolver.
+stages.1.objectives.1.text: From Deployment `client`, `station.internal` resolves to the complete intended private-entrypoint
+  address.
+stages.1.objectives.2.text: The private Ingress routes `/` for `station.internal` to the application.
+stages.1.objectives.3.text: From Deployment `client`, `http://station.internal:8000` returns `north-110` for Host
+  `station.internal` and rejects Host `wrong.station.internal`.

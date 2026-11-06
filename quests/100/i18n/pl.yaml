@@ -1,40 +1,147 @@
 title: Pełne odzyskiwanie platformy
-brief: Prywatny łańcuch dostarczania łączy Gitea, rejestr, Argo CD, Vault i board w Kubernetes. Pracuj tylko w `~/quest` i
-  tej zatoce offline. Przeczytaj `platform.env`, `application.json`, `repository/manifests/board.json`, `baseline-commit`,
-  `release-commit`, `private-release.json`, `reader.hcl` i `sync-secret.sh`. Application Argo opisuje źródło manifestów i
-  raportuje uzgadnianie; polityka Vault steruje dostępem do sekretów. Najpierw napraw uzgadnianie, potem dane dostępu w runtime.
-  Kontrole obserwują wybraną konfigurację, wartości i dwie ścieżki Vault; nie dowodzą całej historii Git ani odmowy dla wszystkich
-  pozostałych ścieżek Vault.
+brief: "Prywatny łańcuch dostarczania nie udostępnia jeszcze wymaganego wydania. Opublikowana rewizja, działający\
+  \ artefakt i dostęp do sekretu muszą być zgodne.\n\nPracuj w `~/quest` na stacji roboczej. Dane wejściowe według\
+  \ etapu:\n- Etap 1: `platform.env`, `application.yaml`, `repository/manifests/board.yaml`, `repository/manifests/service.yaml`,\
+  \ `release-commit`, `private-release.json`.\n- Etap 2: `reader.hcl`, `sync-secret.sh`.\n\n**Wymagania:**\n\n-\
+  \ Etap 1:\n  - Application `board` zgłasza `Synced` dla właściwej opublikowanej rewizji. Automatycznie usuwa dryf\
+  \ i zasoby, których nie ma już w pożądanym wydaniu.\n- Etap 2:\n  - Zdalna `main` odpowiada rewizji zapisanej\
+  \ w `release-commit`.\n  - Opublikowane obciążenie używa dostarczonego zamrożonego obrazu i pobiera sekret runtime\
+  \ przez właściwe odwołanie Secret.\n  - Application `board` zgłasza `Synced` i `Healthy` dla opublikowanej rewizji\
+  \ wydania. Automatycznie usuwa dryf i zasoby, których nie ma już w pożądanym wydaniu.\n  - Deployment `board`\
+  \ używa dostarczonego zamrożonego obrazu, zachowuje pierwotne wymagania pobierania i pobiera sekret runtime bez\
+  \ osadzania wartości.\n  - Secret obciążenia zawiera wartość właściwego wpisu Vault.\n  - Token dostępu Vault\
+  \ zwraca właściwy sekret dostarczania i odmawia dostępu do obcego wpisu danych.\n  - Deployment `board` kończy\
+  \ rollout z gotowym kontenerem aplikacji używającym dostarczonego zamrożonego digestu obrazu.\n  - Z Deployment\
+  \ `board` adres `http://board:8080` zwraca `north-100`.\n\nSprawdzenie obserwuje wybraną konfigurację, wartości\
+  \ i dwie ścieżki Vault; nie dowodzi całej historii Git ani blokady wszystkich pozostałych ścieżek Vault."
 debrief: Kontrole sprawdziły wybrane wyniki Git, Argo, board i Vault; nie dowodzą pełnego zakresu polityki ani niezmienionej
   historii.
-stages.0.brief: 'Napraw Application `board`: repo URL musi odpowiadać `GIT_URL` z `platform.env`, ścieżka to `manifests`,
-  rewizja `main`, a automatyczne `selfHeal` i `prune` muszą być true. Poczekaj na status synchronizacji `Synced` przy zamrożonym
-  `baseline-commit`. Powiązana wskazówka opisuje odświeżenie Application.'
-stages.0.objectives.0.text: Źródło Application, automatyka i synchronizacja bazowa odpowiadają opisowi.
-stages.1.brief: 'Pobierz `origin/main` w `repository`; musi odpowiadać `release-commit`. Zachowaj w Application `board` ten
-  sam URL, ścieżkę, rewizję i automatykę; stan ma być `Synced` i `Healthy` przy `release-commit`. Poczekaj na rollout board
-  i sprawdź, czy `board:8080` zwraca `north-100`. Pierwszy kontener board musi używać obrazu z `/run/dq/facts/0/private-release.json`,
-  `imagePullPolicy: Always`, dokładnie `imagePullSecrets: [{name: registry-pull}]` i dokładnie jednego wpisu środowiska: `ROUTE_SECRET`
-  z Secret `route-secret`, klucz `value`. imageID gotowego kontenera board musi zawierać digest tego obrazu. Wartość Secret
-  oraz `secret/data/dispatch` tokena Vault muszą wynosić `north-secret`; dostęp tokena do `secret/data/other` musi zwracać
-  HTTP 403. Manifest Git w `origin/main:manifests/board.json` musi zachować pierwszy zamrożony obraz i nazwę Secret `route-secret`
-  w pierwszym wpisie środowiska. Użyj `reader.hcl` i `sync-secret.sh`, następnie zrestartuj board. Dwie sprawdzone ścieżki
-  Vault nie dowodzą pełnej zasady najmniejszych uprawnień.'
-stages.1.objectives.0.text: Rewizja wydania, stan Application, konfiguracja i odpowiedź board oraz wybrane pola Git i wyniki
-  Vault odpowiadają opisowi.
-hints.0.text: 'Etap 1: sprawdź application.json — Argo CD wskazuje na wycofaną ścieżkę Git zamiast source.path=manifests w
-  wersji main z automatycznymi self-heal i prune.'
-hints.1.text: 'Etap 2: aplikacja Synced nadal jest w złej kondycji, ponieważ brakuje prywatnego registry pull Secret, a reader.hcl
-  wskazuje na niewłaściwą ścieżkę Vault KV.'
-hints.2.text: Przywróć rejestr pull Secret z private-release.json, zakres reader.hcl do dispatch tylko do odczytu, uruchom
-  sync-secret.sh i sprawdź odpowiedź działającego obrazu digest i HTTP.
+stages.0.brief: Zachowaj pierwotną rewizję podczas przywracania uzgadniania.
+stages.1.brief: Opublikowane wydanie musi być zgodne na granicach dostarczania i runtime.
+hints.0.text: Uzgodnione źródło i zdrowy runtime to osobne wyniki. Porównaj granicę dostarczania z granicą odbiorcy.
+hints.1.text: 'Etap 1: sprawdź application.yaml — Argo CD wskazuje na wycofaną ścieżkę Git zamiast source.path=manifests
+  w wersji main z automatycznymi self-heal i prune.
+
+
+  Etap 2: aplikacja Synced nadal jest w złej kondycji, ponieważ brakuje prywatnego registry pull Secret, a reader.hcl
+  wskazuje na niewłaściwą ścieżkę Vault KV.
+
+
+  Sprawdź dostarczone definicje, opisy zasobów i zdarzenia odpowiedniego etapu.
+
+
+  ```sh
+
+  git -C repository log --all --oneline
+
+  cat reader.hcl
+
+  kubectl describe application board
+
+  kubectl describe deployment board
+
+  kubectl describe pod -l app=board
+
+  ```
+
+
+  Etap 1/2: Sprawdź te definicje zasobów dla tego etapu.
+
+
+  ```sh
+
+  kubectl get application board -o yaml
+
+  kubectl get deployment board -o yaml
+
+  kubectl get pods -l app=board -o yaml
+
+  ```
+
+
+  Etap 2: Sprawdź te definicje zasobów dla tego etapu.
+
+
+  ```sh
+
+  git -C repository show origin/main:manifests/board.yaml
+
+  ```'
+hints.2.text: 'Przywróć rejestr pull Secret z private-release.json, zakres reader.hcl do dispatch tylko do odczytu,
+  uruchom sync-secret.sh i sprawdź odpowiedź działającego obrazu digest i HTTP.
+
+
+  Sprawdź naprawiony etap i porównaj obserwowany wynik.
+
+
+  Etap 1/2: Kontroler zgłasza `Synced` dla oczekiwanej rewizji; w ostatnim etapie zgłasza też `Healthy`, a obciążenie
+  jest gotowe.
+
+
+  ```sh
+
+  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
+  printf ''\n''
+
+  kubectl get deployment board
+
+  ```
+
+
+  Etap 2: Opublikowany hash odpowiada zapisanemu wydaniu; sprawdzenie pochodzenia, jeśli występuje, kończy się kodem
+  `0`.
+
+
+  ```sh
+
+  source platform.env
+
+  cat release-commit
+
+  git -C repository ls-remote origin refs/heads/main
+
+  ```
+
+
+  Etap 2: Secret i dozwolony wpis Vault zawierają `north-secret`, HTTP zwraca `north-100`, a druga ścieżka Vault
+  zwraca HTTP `403`.
+
+
+  ```sh
+
+  source platform.env
+
+  kubectl get secret route-secret -o jsonpath=''{.data.value}'' | base64 -d
+
+  printf ''\n''
+
+  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
+
+  printf ''\n''
+
+  curl -fsS --max-time 3 -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
+
+  curl -sS --max-time 3 -o /dev/null -w ''%{http_code}\n'' -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN")
+  "$VAULT_ADDR/v1/secret/data/other"
+
+  ```
+
+
+  Oczekiwane obserwacje dla całego etapu:
+
+  - Etap 1/2: Wyświetlone uzgodnienie, konfiguracja obciążenia i obserwacje działającego obrazu spełniają wymagania
+  tego etapu.
+
+  - Etap 2: Zdalny hash odpowiada `release-commit`; manifest Git zawiera dostarczony zamrożony obraz i odwołanie
+  do Secret `route-secret`.'
 phrases.0: Wyizolowałem awarie na każdej granicy dostawy.
 phrases.1: Zachowałem niezmienną tożsamość obrazu i uzgodnienie Git.
 phrases.2: Zweryfikowałem tajny dostęp o najniższych uprawnieniach i prawdziwą kompleksową obsługę.
 questions.0.points.0: Zastosowany desired state może nadal odwoływać się do niedostępnych obrazów lub Secrets.
 questions.0.points.1: Sprawdź osobno sync, health, events i rzeczywiste żądania.
 questions.0.prompt: Dlaczego Application może być Synced, podczas gdy jego kapsuły ulegają awarii?
-questions.1.points.0: Popraw wersję źródła, uruchamiając digest i poświadczenia środowiska wykonawczego o określonym zakresie.
+questions.1.points.0: Popraw wersję źródła, uruchamiając digest i poświadczenia środowiska wykonawczego o określonym
+  zakresie.
 questions.1.points.1: Przydatne żądanie zostanie zrealizowane poprzez odzyskaną usługę.
 questions.1.prompt: Co sprawdza pełne odzyskiwanie poza ekologicznym kontrolerem?
 diagnostics.repo: application/board repoURL musi być równe GIT_URL.
@@ -62,3 +169,18 @@ diagnostics.reader: Token czytelnika (reader) Vault musi odczytać north-secret 
 diagnostics.denied: Żądanie Vault reader do secret/data/other musi zwrócić HTTP 403.
 diagnostics.git_image: Pierwszy obraz board w manifeście Git musi odpowiadać obrazowi z private-release.json.
 diagnostics.git_env: Pierwszy wpis środowiska w manifeście Git musi wskazywać Secret route-secret.
+stages.0.objectives.0.text: Application `board` zgłasza `Synced` dla właściwej opublikowanej rewizji. Automatycznie
+  usuwa dryf i zasoby, których nie ma już w pożądanym wydaniu.
+stages.1.objectives.0.text: Zdalna `main` odpowiada rewizji zapisanej w `release-commit`.
+stages.1.objectives.1.text: Opublikowane obciążenie używa dostarczonego zamrożonego obrazu i pobiera sekret runtime
+  przez właściwe odwołanie Secret.
+stages.1.objectives.2.text: Application `board` zgłasza `Synced` i `Healthy` dla opublikowanej rewizji wydania.
+  Automatycznie usuwa dryf i zasoby, których nie ma już w pożądanym wydaniu.
+stages.1.objectives.3.text: Deployment `board` używa dostarczonego zamrożonego obrazu, zachowuje pierwotne wymagania
+  pobierania i pobiera sekret runtime bez osadzania wartości.
+stages.1.objectives.4.text: Secret obciążenia zawiera wartość właściwego wpisu Vault.
+stages.1.objectives.5.text: Token dostępu Vault zwraca właściwy sekret dostarczania i odmawia dostępu do obcego
+  wpisu danych.
+stages.1.objectives.6.text: Deployment `board` kończy rollout z gotowym kontenerem aplikacji używającym dostarczonego
+  zamrożonego digestu obrazu.
+stages.1.objectives.7.text: Z Deployment `board` adres `http://board:8080` zwraca `north-100`.

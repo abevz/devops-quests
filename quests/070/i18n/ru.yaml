@@ -1,37 +1,111 @@
 title: Доставка секретов
-brief: 'Заблокированы приватный Git-релиз и его runtime secret из Vault. Сначала верните
-  Application путь manifests и подтвердите Synced для записанного commit; до второго
-  этапа workload останется неисправным. Затем исправьте игровую reader policy только
-  для dispatch, явно выполните sync-secret.sh и проверьте HTTP board, использующий
-  secret. Helper — синхронизатор по запросу, не фоновый оператор; Vault token не должен
-  попадать в workload.
+brief: "Записанный Git-релиз и потребляющий секрет сервис ещё не доступны вместе.\n\nРаботайте в `~/quest` на рабочей\
+  \ станции. Входные файлы по этапам:\n- Этап 1: `platform.env`, `application.yaml`, `repository/manifests/board.yaml`,\
+  \ `repository/manifests/service.yaml`.\n- Этап 2: `reader.hcl`, `reader-policy.json`, `sync-secret.sh`.\n\n**Требования:**\n\
+  \n- Этап 1:\n  - Application `board` сообщает `Synced` для требуемой опубликованной ревизии.\n  - Deployment `board`\
+  \ получает значение runtime только через поставленную ссылку на Secret, а не как встроенное значение.\n- Этап\
+  \ 2:\n  - Application `board` сообщает `Synced` и `Healthy` для опубликованной ревизии релиза.\n  - Deployment\
+  \ `board` завершает развёртывание.\n  - Deployment `board` получает значение runtime только через поставленную\
+  \ ссылку на Secret, а не как встроенное значение.\n  - Secret нагрузки содержит значение требуемой записи Vault.\n\
+  \  - Токен доступа Vault имеет доступ только на чтение к требуемой записи доставки; отдельная посторонняя запись\
+  \ и управление mount запрещены.\n  - Из Deployment `board` адрес `http://board:8080` возвращает `north-70`.\n\n\
+  Проверка наблюдает записанную ревизию, выбранную ссылку Secret и три пути capabilities читателя; она не доказывает\
+  \ фоновую синхронизацию или права на все остальные пути Vault."
+debrief: GitOps и доставка runtime secret восстановлены отдельными этапами с общим проверенным результатом.
+stages.0.brief: Записанный релиз должен согласоваться до оценки его runtime.
+stages.1.brief: Согласованный сервис должен потреблять нужный секрет при ограниченном доступе читателя.
+hints.0.text: Согласование источника и доставка секрета runtime — разные границы. Одна записанная ревизия не доказывает,
+  что её потребитель сможет запуститься.
+hints.1.text: 'Восстановите синхронизацию Git до анализа недостающего runtime Secret. Каталог источника Application
+  — `manifests`; согласуйте записанную ревизию, прежде чем ожидать здоровый runtime.
 
 
-  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `platform.env`,
-  `reader.hcl`, `reader-policy.json`, `sync-secret.sh`, `application.json`, `repository/manifests/board.json`,
-  `repository/manifests/service.json`, `release-commit`.
+  Используйте data path KV v2 и read только для dispatch.
 
 
-  В песочнице нет интернета и внешнего DNS. Используйте выданные файлы, предварительно
-  загруженные образы и приватные сервисы. Менять можно только эту песочницу.
+  Изучите поставленные определения, описания ресурсов и события соответствующего этапа.
 
 
-  Цели первого этапа: Записанный Git revision Synced из manifests, Deployment запрашивает
-  только route-secret/value.'
-debrief: GitOps и доставка runtime secret восстановлены отдельными этапами с общим
-  проверенным результатом.
-stages.0.brief: 'Результат проверки: Записанный Git revision Synced из manifests,
-  Deployment запрашивает только route-secret/value.'
-stages.0.objectives.0.text: Записанный Git revision Synced из manifests, Deployment
-  запрашивает только route-secret/value.
-stages.1.brief: 'Результат проверки: Reader с минимальными правами доставляет Secret;
-  Argo Healthy, board реально отдаёт north-70 без Vault token в workload.'
-stages.1.objectives.0.text: Reader с минимальными правами доставляет Secret; Argo
-  Healthy, board реально отдаёт north-70 без Vault token в workload.
-hints.0.text: Восстановите синхронизацию Git до анализа недостающего runtime Secret.
-hints.1.text: Используйте data path KV v2 и read только для dispatch.
-hints.2.text: Явно запустите выданный синхронизатор, проверьте capabilities, ссылку
-  Secret, health и HTTP.
+  ```sh
+
+  cat application.yaml
+
+  cat reader.hcl
+
+  kubectl describe application board
+
+  kubectl describe deployment board
+
+  kubectl describe pod -l app=board
+
+  ```
+
+
+  Этап 1/2: Изучите определения этих ресурсов для данного этапа.
+
+
+  ```sh
+
+  kubectl get application board -o yaml
+
+  kubectl get deployment board -o yaml
+
+  kubectl get pods -l app=board -o yaml
+
+  ```'
+hints.2.text: 'Явно запустите выданный синхронизатор, проверьте capabilities, ссылку Secret, health и HTTP. Синхронизатор
+  запускается по запросу, а не в фоне; не помещайте токены Vault в нагрузку.
+
+
+  Проверьте исправленный этап и сравните наблюдаемый результат.
+
+
+  Этап 1/2: Контроллер сообщает `Synced` для ожидаемой ревизии; на последнем этапе также сообщает `Healthy`, нагрузка
+  готова.
+
+
+  ```sh
+
+  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
+  printf ''\n''
+
+  kubectl get deployment board
+
+  ```
+
+
+  Этап 2: Значение Secret выводит `north-secret`; потребитель приложения получает `north-70`.
+
+
+  ```sh
+
+  kubectl get secret route-secret -o jsonpath=''{.data.value}'' | base64 -d
+
+  printf ''\n''
+
+  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  Этап 2: Запрос capabilities возвращает `read` для `secret/data/dispatch` и `deny` для `secret/data/unrelated`
+  и `sys/mounts`; он не меняет политику.
+
+
+  ```sh
+
+  source platform.env
+
+  curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") -H ''Content-Type: application/json'' --request
+  POST --data ''{"paths":["secret/data/dispatch","secret/data/unrelated","sys/mounts"]}'' "$VAULT_ADDR/v1/sys/capabilities-self"
+
+  ```
+
+
+  Ожидаемые наблюдения для этапа целиком:
+
+  - Этап 1/2: Показанные согласование, конфигурация нагрузки и наблюдения работающего образа соответствуют требованиям
+  этого этапа.'
 phrases.0: Я разделил сверку Git и доставку runtime secret.
 phrases.1: Я не передавал credentials Vault в workload.
 phrases.2: Я проверил минимальные права и endpoint, использующий secret.
@@ -43,3 +117,14 @@ questions.1.points.0: Доставлять только нужное прило�
 questions.1.points.1: Ограничить полномочия provider и держать их вне workload environment.
 questions.1.points.2: Проверять запрещённый доступ наряду с нужным read.
 questions.1.prompt: Нужно ли передавать приложению административный token Vault?
+stages.0.objectives.0.text: Application `board` сообщает `Synced` для требуемой опубликованной ревизии.
+stages.0.objectives.1.text: Deployment `board` получает значение runtime только через поставленную ссылку на Secret,
+  а не как встроенное значение.
+stages.1.objectives.0.text: Application `board` сообщает `Synced` и `Healthy` для опубликованной ревизии релиза.
+stages.1.objectives.1.text: Deployment `board` завершает развёртывание.
+stages.1.objectives.2.text: Deployment `board` получает значение runtime только через поставленную ссылку на Secret,
+  а не как встроенное значение.
+stages.1.objectives.3.text: Secret нагрузки содержит значение требуемой записи Vault.
+stages.1.objectives.4.text: Токен доступа Vault имеет доступ только на чтение к требуемой записи доставки; отдельная
+  посторонняя запись и управление mount запрещены.
+stages.1.objectives.5.text: Из Deployment `board` адрес `http://board:8080` возвращает `north-70`.

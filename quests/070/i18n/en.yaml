@@ -1,46 +1,130 @@
 title: Secrets delivery
-brief: 'A private Git release and its Vault-backed runtime secret are both blocked.
-  First restore the Application source path to manifests and prove the recorded commit
-  is Synced; it will remain unhealthy until stage two. Then repair the game reader
-  policy for dispatch only, explicitly run sync-secret.sh and verify the secret-consuming
-  HTTP board. The helper is an on-demand synchronizer, not a background operator;
-  no Vault token may enter the workload.
+brief: "The recorded Git release and its secret-consuming service are not yet available together.\n\nWork in `~/quest`\
+  \ on the workstation. Inputs by stage:\n- Stage 1: `platform.env`, `application.yaml`, `repository/manifests/board.yaml`,\
+  \ `repository/manifests/service.yaml`.\n- Stage 2: `reader.hcl`, `reader-policy.json`, `sync-secret.sh`.\n\n**Requirements:**\n\
+  \n- Stage 1:\n  - Application `board` reports `Synced` at the intended published revision.\n  - Deployment `board`\
+  \ obtains its runtime value only through the supplied Secret reference, never as an embedded value.\n- Stage 2:\n\
+  \  - Application `board` reports `Synced` and `Healthy` at the published release revision.\n  - Deployment `board`\
+  \ completes its rollout.\n  - Deployment `board` obtains its runtime value only through the supplied Secret reference,\
+  \ never as an embedded value.\n  - The workload Secret contains the value of the intended Vault record.\n  - The\
+  \ Vault access token has read-only access to the intended delivery record; a separate unrelated record and mount\
+  \ management are denied.\n  - From Deployment `board`, `http://board:8080` returns `north-70`.\n\nThe check observes\
+  \ the recorded revision, selected Secret reference and three token-capability paths; it does not prove background\
+  \ synchronization or permissions on every other Vault path."
+debrief: GitOps delivery and runtime secret delivery were recovered as separate stages with a shared verified outcome.
+stages.0.brief: The recorded release must reconcile before its runtime is evaluated.
+stages.1.brief: The reconciled service must consume the intended secret with bounded token access.
+hints.0.text: Source reconciliation and runtime secret delivery are separate boundaries. A recorded revision alone
+  does not prove that its consumer can start.
+hints.1.text: 'Restore Git synchronization before diagnosing the missing runtime Secret. The Application source
+  directory is `manifests`; keep the recorded revision synchronized before expecting runtime health.
 
 
-  Quest files in `~/quest` (some appear in later stages): `platform.env`, `reader.hcl`,
-  `reader-policy.json`, `sync-secret.sh`, `application.json`, `repository/manifests/board.json`,
-  `repository/manifests/service.json`, `release-commit`.
+  Use the KV v2 data path and grant read only to dispatch.
 
 
-  The bay has no Internet or external DNS. Use only supplied files, preloaded images
-  and private services. Change only this bay.
+  Inspect the supplied definitions, resource descriptions and events for the relevant stage.
 
 
-  Initial success criteria: The recorded Git revision is Synced from manifests and
-  the Deployment requests only route-secret/value.'
-debrief: GitOps delivery and runtime secret delivery were recovered as separate stages
-  with a shared verified outcome.
-stages.0.brief: 'Success criteria: The recorded Git revision is Synced from manifests
-  and the Deployment requests only route-secret/value.'
-stages.0.objectives.0.text: The recorded Git revision is Synced from manifests and
-  the Deployment requests only route-secret/value.
-stages.1.brief: 'Success criteria: The least-privilege reader delivers the Secret;
-  Argo is Healthy and the real board returns north-70 without workload Vault tokens.'
-stages.1.objectives.0.text: The least-privilege reader delivers the Secret; Argo is
-  Healthy and the real board returns north-70 without workload Vault tokens.
-hints.0.text: Restore Git synchronization before diagnosing the missing runtime Secret.
-hints.1.text: Use the KV v2 data path and grant read only to dispatch.
-hints.2.text: Run the supplied synchronizer explicitly, then check capabilities, Secret
-  reference, health and HTTP.
+  ```sh
+
+  cat application.yaml
+
+  cat reader.hcl
+
+  kubectl describe application board
+
+  kubectl describe deployment board
+
+  kubectl describe pod -l app=board
+
+  ```
+
+
+  Stage 1/2: Inspect these resource definitions for this stage.
+
+
+  ```sh
+
+  kubectl get application board -o yaml
+
+  kubectl get deployment board -o yaml
+
+  kubectl get pods -l app=board -o yaml
+
+  ```'
+hints.2.text: 'Run the supplied synchronizer explicitly, then check capabilities, Secret reference, health and HTTP.
+  The synchronizer runs on demand, not in the background; keep Vault tokens out of the workload.
+
+
+  Verify the repaired stage and compare the observed result.
+
+
+  Stage 1/2: The controller reports `Synced` at the expected revision; in the final stage it also reports `Healthy`
+  and the workload is ready.
+
+
+  ```sh
+
+  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
+  printf ''\n''
+
+  kubectl get deployment board
+
+  ```
+
+
+  Stage 2: The Secret value prints `north-secret`; the application consumer receives `north-70`.
+
+
+  ```sh
+
+  kubectl get secret route-secret -o jsonpath=''{.data.value}'' | base64 -d
+
+  printf ''\n''
+
+  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  Stage 2: The capability query returns `read` for `secret/data/dispatch` and `deny` for `secret/data/unrelated`
+  and `sys/mounts`; it changes no policy.
+
+
+  ```sh
+
+  source platform.env
+
+  curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") -H ''Content-Type: application/json'' --request
+  POST --data ''{"paths":["secret/data/dispatch","secret/data/unrelated","sys/mounts"]}'' "$VAULT_ADDR/v1/sys/capabilities-self"
+
+  ```
+
+
+  Expected observations for the complete stage:
+
+  - Stage 1/2: The displayed reconciliation, workload configuration and running-image observations match this stage’s
+  Requirements.'
 phrases.0: I separated Git reconciliation from runtime secret delivery.
 phrases.1: I kept Vault credentials out of the workload.
 phrases.2: I verified least privilege and the secret-consuming endpoint.
 questions.0.points.0: The manifests and runtime Secret have separate delivery paths.
 questions.0.points.1: A Secret reference does not create the referenced value.
 questions.0.points.2: Inspect events, provider authorization and the explicit synchronizer.
-questions.0.prompt: Why can Git synchronization succeed while a secret-consuming Pod
-  stays blocked?
+questions.0.prompt: Why can Git synchronization succeed while a secret-consuming Pod stays blocked?
 questions.1.points.0: Deliver only the value needed by the application.
 questions.1.points.1: Keep provider authority scoped and outside workload environment.
 questions.1.points.2: Verify denied access as well as the intended read.
 questions.1.prompt: Should the application receive a Vault administrative token?
+stages.0.objectives.0.text: Application `board` reports `Synced` at the intended published revision.
+stages.0.objectives.1.text: Deployment `board` obtains its runtime value only through the supplied Secret reference,
+  never as an embedded value.
+stages.1.objectives.0.text: Application `board` reports `Synced` and `Healthy` at the published release revision.
+stages.1.objectives.1.text: Deployment `board` completes its rollout.
+stages.1.objectives.2.text: Deployment `board` obtains its runtime value only through the supplied Secret reference,
+  never as an embedded value.
+stages.1.objectives.3.text: The workload Secret contains the value of the intended Vault record.
+stages.1.objectives.4.text: The Vault access token has read-only access to the intended delivery record; a separate
+  unrelated record and mount management are denied.
+stages.1.objectives.5.text: From Deployment `board`, `http://board:8080` returns `north-70`.

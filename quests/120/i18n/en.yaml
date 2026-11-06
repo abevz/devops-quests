@@ -1,26 +1,88 @@
 title: Stateful route recovery
-brief: 'Work in `~/quest`; read `shelf.json`, `service.json`, `client.json`, `egress.json` and `original-pvc-uid`. The shelf
-  storage exists, but the headless Service selector and requesting Pod egress are broken. Keep the original PVC. The linked
-  guide introduces Kubernetes network diagnosis.
-
-
-  Make Service `shelf` headless (`clusterIP: None`) with selector `app: shelf`. Configure `client-egress` with a `podSelector`
-  selecting exactly `app: client` and only `Egress`; use `matchLabels` or an equivalent single-value `In` expression: allow
-  UDP and TCP 53 to one peer combining namespace label `kubernetes.io/metadata.name: kube-system` and Pod label `k8s-app:
-  kube-dns`, and TCP 8080 to the same-namespace Pod label `app: shelf`. These exact label selectors identify the supplied
-  targets; rules and ports may be reordered or split. Other policies selecting that Pod must not add broader egress.
-
-
-  Verify the `ledger-shelf-0` PVC UID matches `/run/dq/facts/0/original-pvc-uid`, DNS from that Pod resolves `shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local.`,
-  and HTTP from that Pod to `shelf-0.shelf:8080` returns `ledger-120`. These checks observe identity, policy configuration
-  and current connectivity, not the entire storage history. Work only in the offline bay.'
+brief: "The shelf data must remain available to its consumer under a bounded network policy. Current discovery and\
+  \ connectivity are incomplete.\n\nWork in `~/quest` on the workstation. Inputs by stage:\n- Stage 1: `shelf.yaml`,\
+  \ `service.yaml`, `client.yaml`, `egress.yaml`.\n\n**Requirements:**\n\n- Stage 1:\n  - The existing data claim\
+  \ keeps its identity and is not recreated.\n  - The existing data service supports stable Pod discovery.\n  -\
+  \ Outbound access from the requesting workload is limited to DNS and the existing data service on TCP `8080`;\
+  \ no other policy broadens it.\n  - From Deployment `client`, the existing storage Pod’s stable DNS name resolves.\n\
+  \  - From Deployment `client`, the existing storage Pod serves `ledger-120` on port `8080`.\n\nThe check observes\
+  \ claim identity, policy configuration and current connectivity, not the entire storage history."
 debrief: Persistence, discovery and network access were verified independently before the complete path passed.
-stages.0.brief: The original PVC UID, headless Service, bounded egress policy, ordinal DNS and ledger response match the brief.
-stages.0.objectives.0.text: The original PVC UID, headless Service, bounded egress policy, ordinal DNS and ledger response
-  match the brief.
+stages.0.brief: Keep the original data claim while restoring bounded consumer access.
 hints.0.text: Check stable storage separately from discovery and egress.
-hints.1.text: Headless DNS depends on matching ready endpoints.
-hints.2.text: Repair the selector, then allow DNS and only the shelf Pod port.
+hints.1.text: 'Headless DNS depends on matching ready endpoints.
+
+
+  Inspect the supplied definitions, resource descriptions and events for the relevant stage.
+
+
+  ```sh
+
+  kubectl get pvc
+
+  kubectl describe deployment client
+
+  kubectl describe service shelf
+
+  kubectl get networkpolicies -o yaml
+
+  ```
+
+
+  Stage 1: Inspect these resource definitions for this stage.
+
+
+  ```sh
+
+  kubectl get pvc ledger-shelf-0 -o yaml
+
+  kubectl get service shelf -o yaml
+
+  kubectl get networkpolicies -o yaml
+
+  ```'
+hints.2.text: 'Repair the selector, then allow DNS and only the shelf Pod port.
+
+
+  Verify the repaired stage and compare the observed result.
+
+
+  Stage 1: The current claim UID equals the original recorded UID.
+
+
+  ```sh
+
+  cat original-pvc-uid
+
+  kubectl get pvc ledger-shelf-0 -o jsonpath=''{.metadata.uid}''; printf ''\n''
+
+  ```
+
+
+  Stage 1: The requester resolves the full shelf Pod DNS name.
+
+
+  ```sh
+
+  kubectl exec deployment/client -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."
+
+  ```
+
+
+  Stage 1: The requester receives `ledger-120`.
+
+
+  ```sh
+
+  kubectl exec deployment/client -- wget -qO- -T 3 http://shelf-0.shelf:8080
+
+  ```
+
+
+  Expected observations for the complete stage:
+
+  - Stage 1: The claim UID is unchanged, Service `shelf` is headless, and the policies provide only the required
+  egress.'
 phrases.0: I preserved the stateful claim during network recovery.
 phrases.1: I verified ordinal DNS from the isolated client.
 phrases.2: I restored only the required dependency flows.
@@ -40,12 +102,19 @@ diagnostics.named: There must be exactly one NetworkPolicy named client-egress.
 diagnostics.selector: The client-egress podSelector must match exactly app:client.
 diagnostics.types: The client-egress policyTypes must contain only Egress.
 diagnostics.egress: client-egress peers and ports must use the bounded form described in the brief.
-diagnostics.unexpected: client-egress must have no unexpected flow; the original diagnostic identifies its destination, protocol
-  and port.
-diagnostics.other_egress: Another NetworkPolicy selecting a client must not permit extra egress; its name is in the original
+diagnostics.unexpected: client-egress must have no unexpected flow; the original diagnostic identifies its destination,
+  protocol and port.
+diagnostics.other_egress: Another NetworkPolicy selecting a client must not permit extra egress; its name is in
+  the original diagnostic.
+diagnostics.other_invalid: Another NetworkPolicy has an invalid selector or egress; its name is in the original
   diagnostic.
-diagnostics.other_invalid: Another NetworkPolicy has an invalid selector or egress; its name is in the original diagnostic.
 diagnostics.invalid_input: NetworkPolicies and client Pod labels must be readable in the expected format.
 diagnostics.missing_dns_udp_53: client-egress must allow dns UDP 53.
 diagnostics.missing_dns_tcp_53: client-egress must allow dns TCP 53.
 diagnostics.missing_shelf_tcp_8080: client-egress must allow shelf TCP 8080.
+stages.0.objectives.0.text: The existing data claim keeps its identity and is not recreated.
+stages.0.objectives.1.text: The existing data service supports stable Pod discovery.
+stages.0.objectives.2.text: Outbound access from the requesting workload is limited to DNS and the existing data
+  service on TCP `8080`; no other policy broadens it.
+stages.0.objectives.3.text: From Deployment `client`, the existing storage Pod’s stable DNS name resolves.
+stages.0.objectives.4.text: From Deployment `client`, the existing storage Pod serves `ledger-120` on port `8080`.

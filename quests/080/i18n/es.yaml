@@ -1,32 +1,133 @@
 title: Recuperación de entrega
-brief: 'Trabaja en `~/quest` con `platform.env`, `registry-ca.crt`, `private-release.json`, `baseline-commit`, `application.json`,
-  `release-commit`, `repository/manifests/board.json`, `repository/manifests/service.json` y `registry-pull.json`. Argo CD
-  compara de forma asíncrona una revisión Git con recursos activos. Primero configura Application `board` con el repositorio
-  `GIT_URL`, ruta `manifests`, destino `main`, `selfHeal: true` y espera `Synced` en `baseline-commit`. El Deployment activo
-  debe conservar exactamente `imagePullSecrets: [{name: registry-pull}]` e `imagePullPolicy: Always` del primer contenedor.
-
-
-  Después confirma y envía un descendiente del baseline a `origin/main` privado; escribe su hash en `release-commit`. La primera
-  imagen confirmada y la activa deben ser la imagen congelada de `private-release.json` y usar `Always`; el manifiesto confirmado
-  debe conservar exactamente `registry-pull`. La Application debe estar `Synced` y `Healthy` en `release-commit`, con `selfHeal`
-  y `prune` true. Espera el rollout de board y HTTP `north-80` en `board:8080`; el imageID de un Pod listo no terminante debe
-  contener el digest congelado, y el acceso autenticado con `registry-ca.crt` y `platform.env` debe obtener ese digest. La
-  comprobación no demuestra que el Secret de descarga activo no haya cambiado. Protege las credenciales y trabaja solo en
-  la bahía sin conexión.'
-debrief: La recuperación se unió a la intención private Git, registry identity y al comportamiento real de workload sin un
-  parche solo en vivo.
-stages.0.brief: El origen de Application, la sincronización base, self-heal y los ajustes activos de descarga coinciden con
-  la descripción.
-stages.0.objectives.0.text: El origen de Application, la sincronización base, self-heal y los ajustes activos de descarga
-  coinciden con la descripción.
-stages.1.brief: La revisión descendiente, estado de Application, campos de imagen Git y activa comprobados, acceso al registro
-  y respuesta de board coinciden con la descripción.
-stages.1.objectives.0.text: La revisión descendiente, estado de Application, campos de imagen Git y activa comprobados, acceso
-  al registro y respuesta de board coinciden con la descripción.
+brief: "La versión privada no llega de forma fiable a los consumidores. La reconciliación y el artefacto en ejecución\
+  \ deben coincidir.\n\nTrabaja en `~/quest` en la estación de trabajo. Entradas por etapa:\n- Etapa 1: `platform.env`,\
+  \ `application.yaml`, `private-release.json`, `registry-pull.yaml`, `registry-ca.crt`, `repository/manifests/board.yaml`,\
+  \ `repository/manifests/service.yaml`.\n- Etapa 2: `release-commit`.\n\n**Requisitos:**\n\n- Etapa 1:\n  - La\
+  \ Application `board` informa `Synced` en la revisión publicada prevista. Restaura automáticamente las desviaciones.\n\
+  \  - El Deployment `board` comprueba siempre su imagen al iniciar usando solo la credencial existente del registry\
+  \ privado.\n- Etapa 2:\n  - La Application `board` informa `Synced` y `Healthy` en la revisión de la versión publicada.\
+  \ Restaura automáticamente las desviaciones y elimina los recursos que ya no están en la versión deseada.\n  -\
+  \ El `main` remoto coincide con `release-commit`, difiere del commit original y lo conserva como antecesor.\n\
+  \  - El manifiesto de carga publicado usa la imagen congelada suministrada y conserva los requisitos de descarga\
+  \ al inicio y acceso al registry privado.\n  - La imagen en ejecución de `board` coincide con la versión congelada\
+  \ suministrada y se comprueba en cada inicio.\n  - El Deployment `board` completa su rollout.\n  - Un contenedor\
+  \ listo de un Pod no terminante de la aplicación ejecuta el digest de la imagen congelada suministrada.\n  - El\
+  \ acceso autenticado al registry privado sirve el digest de la versión congelada suministrada.\n  - Desde el Deployment\
+  \ `board`, `http://board:8080` devuelve `north-80`.\n\nLa comprobación no demuestra que el Secret de descarga\
+  \ en vivo no cambiara; la revisión actual, el digest del contenedor listo y el acceso autenticado al registry\
+  \ son observaciones separadas."
+debrief: La recuperación se unió a la intención private Git, registry identity y al comportamiento real de workload
+  sin un parche solo en vivo.
+stages.0.brief: Conserva la identidad de versión y las credenciales de descarga suministradas.
+stages.1.brief: La versión descendiente publicada debe llegar a un consumidor listo.
 hints.0.text: Corrija la conciliación de fuentes antes de diagnosticar la recuperación de imágenes.
-hints.1.text: Una confirmación Git puede ser Synced mientras su imagen tag no exista.
-hints.2.text: Confirme el immutable digest suministrado, conserve el pull credentials y verifique tanto el Git como el imageID
-  en ejecución.
+hints.1.text: 'Una confirmación Git puede ser Synced mientras su imagen tag no exista.
+
+
+  Inspecciona las definiciones suministradas, descripciones de recursos y eventos de la etapa correspondiente.
+
+
+  ```sh
+
+  git -C repository log --all --oneline
+
+  kubectl describe application board
+
+  kubectl describe deployment board
+
+  kubectl describe pod -l app=board
+
+  ```
+
+
+  Etapa 1/2: Inspecciona estas definiciones de recursos para esta etapa.
+
+
+  ```sh
+
+  kubectl get application board -o yaml
+
+  kubectl get deployment board -o yaml
+
+  kubectl get pods -l app=board -o yaml
+
+  ```
+
+
+  Etapa 2: Inspecciona estas definiciones de recursos para esta etapa.
+
+
+  ```sh
+
+  git -C repository show origin/main:manifests/board.yaml
+
+  ```'
+hints.2.text: 'Confirme el immutable digest suministrado, conserve el pull credentials y verifique tanto el Git
+  como el imageID en ejecución. Publica un commit descendiente en `origin/main` y registra su hash en `release-commit`.
+
+
+  Verifica la etapa reparada y compara el resultado observado.
+
+
+  Etapa 1/2: El controlador informa `Synced` en la revisión esperada; en la etapa final también informa `Healthy`
+  y la carga está lista.
+
+
+  ```sh
+
+  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
+  printf ''\n''
+
+  kubectl get deployment board
+
+  ```
+
+
+  Etapa 2: El hash publicado coincide con la versión registrada; la comprobación de ascendencia, cuando existe,
+  termina con código `0`.
+
+
+  ```sh
+
+  source platform.env
+
+  cat release-commit
+
+  git -C repository ls-remote origin refs/heads/main
+
+  git -C repository merge-base --is-ancestor "$(cat baseline-commit)" origin/main
+
+  ```
+
+
+  Etapa 2: La aplicación devuelve `north-80`; la obtención autenticada del digest registrado del registry devuelve
+  HTTP `200`.
+
+
+  ```sh
+
+  source platform.env
+
+  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
+
+  printf ''\n''
+
+  image=$(jq -r .image private-release.json)
+
+  curl -fsS --max-time 4 --config <(printf ''user = "%s:%s"\n'' "$REGISTRY_USER" "$REGISTRY_PASSWORD") --cacert
+  registry-ca.crt -H ''Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json''
+  -o /dev/null -w ''%{http_code}\n'' "https://$REGISTRY/v2/parcel/manifests/${image##*@}"
+
+  ```
+
+
+  Observaciones esperadas para la etapa completa:
+
+  - Etapa 1/2: La reconciliación, configuración de carga y observaciones de la imagen en ejecución mostradas cumplen
+  los requisitos de esta etapa.
+
+  - Etapa 2: El hash remoto coincide con `release-commit`, el manifiesto cumple los requisitos y la comprobación
+  de ascendencia termina con código `0` con un hash de versión diferente.'
 phrases.0: Aislé el error en la ruta de origen de la recuperación de imágenes private.
 phrases.1: Fijé y verifiqué la versión immutable en Git y en runtime.
 phrases.2: Mantuve intactas la autenticación y la conciliación automática durante la recuperación.
@@ -61,6 +162,23 @@ diagnostics.git_policy: imagePullPolicy de board en Git debe ser Always.
 diagnostics.git_secrets: imagePullSecrets de board en Git debe ser [registry-pull].
 diagnostics.live_image: deployment/board containers[0].image debe ser igual a private-release.json image.
 diagnostics.live_policy: deployment/board imagePullPolicy debe ser igual a Always.
-diagnostics.image_id: Un Pod board no marcado para eliminación debe tener un contenedor listo cuyo imageID contenga el digest
-  fijado.
+diagnostics.image_id: Un Pod board no marcado para eliminación debe tener un contenedor listo cuyo imageID contenga
+  el digest fijado.
 diagnostics.registry: El registro autenticado debe servir el digest fijado.
+stages.0.objectives.0.text: La Application `board` informa `Synced` en la revisión publicada prevista. Restaura
+  automáticamente las desviaciones.
+stages.0.objectives.1.text: El Deployment `board` comprueba siempre su imagen al iniciar usando solo la credencial
+  existente del registry privado.
+stages.1.objectives.0.text: La Application `board` informa `Synced` y `Healthy` en la revisión de la versión publicada.
+  Restaura automáticamente las desviaciones y elimina los recursos que ya no están en la versión deseada.
+stages.1.objectives.1.text: El `main` remoto coincide con `release-commit`, difiere del commit original y lo conserva
+  como antecesor.
+stages.1.objectives.2.text: El manifiesto de carga publicado usa la imagen congelada suministrada y conserva los
+  requisitos de descarga al inicio y acceso al registry privado.
+stages.1.objectives.3.text: La imagen en ejecución de `board` coincide con la versión congelada suministrada y se
+  comprueba en cada inicio.
+stages.1.objectives.4.text: El Deployment `board` completa su rollout.
+stages.1.objectives.5.text: Un contenedor listo de un Pod no terminante de la aplicación ejecuta el digest de la
+  imagen congelada suministrada.
+stages.1.objectives.6.text: El acceso autenticado al registry privado sirve el digest de la versión congelada suministrada.
+stages.1.objectives.7.text: Desde el Deployment `board`, `http://board:8080` devuelve `north-80`.

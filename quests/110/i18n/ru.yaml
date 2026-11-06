@@ -1,24 +1,66 @@
 title: Инцидент входа на станцию
-brief: 'Работайте в `~/quest` с `components.env`, `expected-dns-address`, `Corefile`, `dns-config.json`, `dns.json`, `dns-service.json`,
-  `client.json`, `ingress-target.json` и `ingress.json`. Ошибки приватного DNS и backend Ingress прерывают путь к board. Сначала
-  исправьте приватную запись `station.internal` на IP Service контроллера из `expected-dns-address`, перезапустите `deployment/station-dns`
-  и дождитесь распространения DNS. Клиент должен сохранить `dnsPolicy: None` и ровно IP приватного DNS Service как сервер
-  имён; ответ DNS должен содержать полный ожидаемый адрес.
-
-
-  Затем исправьте Ingress `board`: приватный класс берётся из `ingress-target.json`, первый хост — `station.internal`, путь
-  — `/`, тип — `Prefix`, первый backend — ровно Service `board` порт 8080. Дождитесь согласования контроллера. Из клиента
-  `http://station.internal:8000` с Host `station.internal` должен вернуть `north-110`; тот же запрос с Host `wrong.station.internal`
-  должен завершиться ошибкой. Ошибка не доказывает причину, а текущие проверки не доказывают прошлые изменения или перезапуски.
-  Используйте только офлайн-песочницу.'
+brief: "Клиент ещё не может обратиться к станции через её приватное имя и точку входа.\n\nРаботайте в `~/quest`\
+  \ на рабочей станции. Входные файлы по этапам:\n- Этап 1: `components.env`, `expected-dns-address`, `Corefile`,\
+  \ `dns-config.yaml`, `dns.yaml`, `dns-service.yaml`, `client.yaml`.\n- Этап 2: `ingress-target.json`, `ingress.yaml`.\n\
+  \n**Требования:**\n\n- Этап 1:\n  - Deployment `client` использует только поставленный приватный DNS-resolver.\n\
+  \  - Из Deployment `client` имя `station.internal` разрешается в полный требуемый адрес приватной точки входа.\n\
+  - Этап 2:\n  - Deployment `client` использует только поставленный приватный DNS-resolver.\n  - Из Deployment `client`\
+  \ имя `station.internal` разрешается в полный требуемый адрес приватной точки входа.\n  - Приватный Ingress направляет\
+  \ `/` для `station.internal` к приложению.\n  - Из Deployment `client` адрес `http://station.internal:8000` возвращает\
+  \ `north-110` для Host `station.internal` и отклоняет Host `wrong.station.internal`.\n\nНеуспех запроса не устанавливает\
+  \ его причину, а текущие наблюдения DNS и Ingress не доказывают, какие изменения или перезапуски произошли."
 debrief: Проверки наблюдали DNS клиента и результаты приватной маршрутизации.
-stages.0.brief: DNS-политика, сервер имён и ответ клиента соответствуют описанию.
-stages.0.objectives.0.text: DNS-политика, сервер имён и ответ клиента соответствуют описанию.
-stages.1.brief: Результат DNS, поля Ingress, правильный ответ и ошибка запроса неверного хоста соответствуют описанию.
-stages.1.objectives.0.text: Результат DNS, поля Ingress, правильный ответ и ошибка запроса неверного хоста соответствуют описанию.
+stages.0.brief: Клиент должен получать полный поставленный приватный DNS-адрес.
+stages.1.brief: Приватная точка входа должна различать целевой и посторонний хост.
 hints.0.text: Проверьте разрешение имени до анализа отказа HTTP-маршрутизации.
-hints.1.text: DNS должен возвращать Service контроллера, а не Service приложения.
-hints.2.text: Исправьте DNS, затем backend Ingress; проверьте подходящий и посторонний Host headers.
+hints.1.text: 'DNS должен возвращать Service контроллера, а не Service приложения. После обновления приватной записи
+  перезапустите `deployment/station-dns` и дождитесь распространения.
+
+
+  Изучите поставленные определения, описания ресурсов и события соответствующего этапа.
+
+
+  ```sh
+
+  cat Corefile
+
+  kubectl describe deployment client
+
+  kubectl describe ingress board
+
+  ```
+
+
+  Этап 1/2: Изучите определения этих ресурсов для данного этапа.
+
+
+  ```sh
+
+  kubectl get deployment client -o yaml
+
+  ```
+
+
+  Этап 2: Изучите определения этих ресурсов для данного этапа.
+
+
+  ```sh
+
+  kubectl get ingress board -o yaml
+
+  cat ingress-target.json
+
+  ```'
+hints.2.text: "Исправьте DNS, затем backend Ingress; проверьте подходящий и посторонний Host headers.\n\nПроверьте\
+  \ исправленный этап и сравните наблюдаемый результат.\n\nЭтап 1/2: Полный DNS-ответ совпадает с поставленным ожидаемым\
+  \ адресом.\n\n```sh\nkubectl get service station-dns -o wide\ncat expected-dns-address\nkubectl exec deployment/client\
+  \ -- nslookup station.internal \"$(kubectl get service station-dns -o jsonpath='{.spec.clusterIP}')\"\n```\n\n\
+  Этап 2: Целевой Host возвращает `north-110`; запрос постороннего Host завершается неуспешно.\n\n```sh\nkubectl\
+  \ exec deployment/client -- wget -qO- -T 3 --header='Host: station.internal' http://station.internal:8000\nif\
+  \ kubectl exec deployment/client -- wget -qO- -T 3 --header='Host: wrong.station.internal' http://station.internal:8000\
+  \ >/dev/null 2>&1; then\n  printf 'Unexpected Host accepted\\n' >&2; exit 1\nelse\n  printf 'Unrelated Host rejected\\\
+  n'\nfi\n```\n\nОжидаемые наблюдения для этапа целиком:\n- Этап 1/2: Конфигурация DNS соответствует требованиям,\
+  \ полный ответ равен `expected-dns-address`.\n- Этап 2: Приватный класс, хост, путь и backend соответствуют требованиям."
 phrases.0: Я отделил разрешение DNS от ingress routing.
 phrases.1: Я сохранил требуемый путь запроса без обхода границ.
 phrases.2: Я наблюдал ошибку запроса с неверным Host.
@@ -38,3 +80,12 @@ diagnostics.path_type: ingress/board paths[0].pathType должен совпад
 diagnostics.backend: ingress/board backend должен совпадать с board:8080.
 diagnostics.http: Запрос с Host station.internal должен вернуть north-110.
 diagnostics.wrong: Запрос с Host wrong.station.internal должен завершиться ошибкой.
+stages.0.objectives.0.text: Deployment `client` использует только поставленный приватный DNS-resolver.
+stages.0.objectives.1.text: Из Deployment `client` имя `station.internal` разрешается в полный требуемый адрес приватной
+  точки входа.
+stages.1.objectives.0.text: Deployment `client` использует только поставленный приватный DNS-resolver.
+stages.1.objectives.1.text: Из Deployment `client` имя `station.internal` разрешается в полный требуемый адрес приватной
+  точки входа.
+stages.1.objectives.2.text: Приватный Ingress направляет `/` для `station.internal` к приложению.
+stages.1.objectives.3.text: Из Deployment `client` адрес `http://station.internal:8000` возвращает `north-110` для
+  Host `station.internal` и отклоняет Host `wrong.station.internal`.

@@ -1,33 +1,140 @@
 title: Full platform recovery
-brief: The private delivery chain connects Gitea, a registry, Argo CD, Vault and a Kubernetes board. Work only in `~/quest`
-  and this offline bay. Read `platform.env`, `application.json`, `repository/manifests/board.json`, `baseline-commit`, `release-commit`,
-  `private-release.json`, `reader.hcl` and `sync-secret.sh`. An Argo Application describes where desired manifests come from
-  and reports reconciliation; a Vault policy controls secret access. First repair reconciliation, then restore the runtime
-  credentials. The checks observe selected configuration, values and two Vault paths; they cannot prove the entire Git history
-  or that every other Vault path is denied.
-debrief: The checks verified selected Git, Argo, board and Vault results; they do not establish complete policy scope or unchanged
-  history.
-stages.0.brief: 'Repair Application `board`: its repo URL must equal `GIT_URL` from `platform.env`, path `manifests`, revision
-  `main`, and automated `selfHeal` and `prune` must be true. Wait for sync status `Synced` at the frozen `baseline-commit`.
-  The linked hint describes refreshing the Application.'
-stages.0.objectives.0.text: The Application source, automation and baseline synchronization match the brief.
-stages.1.brief: 'Fetch `origin/main` in `repository`; it must equal `release-commit`. Keep Application `board` at the same
-  URL, path, revision and automation, now `Synced` and `Healthy` at `release-commit`. Wait for the board rollout and verify
-  `board:8080` returns `north-100`. The first board container must use the image in `/run/dq/facts/0/private-release.json`,
-  `imagePullPolicy: Always`, exactly `imagePullSecrets: [{name: registry-pull}]`, and exactly one environment entry: `ROUTE_SECRET`
-  from Secret `route-secret`, key `value`. A ready board container imageID must contain that image digest. The Secret value
-  and Vault token''s `secret/data/dispatch` value must be `north-secret`; token access to `secret/data/other` must return
-  HTTP 403. The Git manifest at `origin/main:manifests/board.json` must retain the frozen first image and first environment
-  Secret name `route-secret`. Use `reader.hcl` and `sync-secret.sh` to repair delivery, then restart the board. The two tested
-  Vault paths do not establish complete least privilege.'
-stages.1.objectives.0.text: The release revision, Application health, board configuration and response, selected Git fields
-  and Vault results match the brief.
-hints.0.text: 'Stage 1: inspect application.json — Argo CD points to a retired Git path instead of source.path=manifests on
-  revision main with automated self-heal and prune.'
-hints.1.text: 'Stage 2: a Synced Application is still unhealthy because the private registry pull Secret is missing and reader.hcl
-  points to the wrong Vault KV path.'
-hints.2.text: Restore the registry pull Secret from private-release.json, scope reader.hcl to dispatch read-only, run sync-secret.sh,
-  and verify the running image digest and HTTP response.
+brief: "The private delivery chain is not yet serving the intended release. Its published revision, runtime artifact\
+  \ and secret access must agree.\n\nWork in `~/quest` on the workstation. Inputs by stage:\n- Stage 1: `platform.env`,\
+  \ `application.yaml`, `repository/manifests/board.yaml`, `repository/manifests/service.yaml`, `release-commit`,\
+  \ `private-release.json`.\n- Stage 2: `reader.hcl`, `sync-secret.sh`.\n\n**Requirements:**\n\n- Stage 1:\n  -\
+  \ Application `board` reports `Synced` at the intended published revision. It automatically restores drift and\
+  \ removes resources no longer present in the desired release.\n- Stage 2:\n  - Remote `main` equals the revision\
+  \ recorded in `release-commit`.\n  - The published workload uses the supplied frozen image and obtains its runtime\
+  \ secret through the intended Secret reference.\n  - Application `board` reports `Synced` and `Healthy` at the\
+  \ published release revision. It automatically restores drift and removes resources no longer present in the desired\
+  \ release.\n  - Deployment `board` uses the supplied frozen image, preserves its original pull requirements and\
+  \ obtains its runtime secret without embedding the value.\n  - The workload Secret contains the value of the intended\
+  \ Vault record.\n  - The Vault access token returns the intended delivery secret and denies an unrelated data\
+  \ record.\n  - Deployment `board` completes its rollout with a ready application container running the supplied\
+  \ frozen image digest.\n  - From Deployment `board`, `http://board:8080` returns `north-100`.\n\nThe check observes\
+  \ selected configuration, values and two Vault paths; it cannot prove the entire Git history or that every other\
+  \ Vault path is denied."
+debrief: The checks verified selected Git, Argo, board and Vault results; they do not establish complete policy
+  scope or unchanged history.
+stages.0.brief: Retain the original revision while restoring reconciliation.
+stages.1.brief: The published release must agree across delivery and runtime boundaries.
+hints.0.text: A reconciled source and a healthy runtime are separate outcomes. Compare the delivery boundary with
+  the consumer boundary.
+hints.1.text: 'Stage 1: inspect application.yaml — Argo CD points to a retired Git path instead of source.path=manifests
+  on revision main with automated self-heal and prune.
+
+
+  Stage 2: a Synced Application is still unhealthy because the private registry pull Secret is missing and reader.hcl
+  points to the wrong Vault KV path.
+
+
+  Inspect the supplied definitions, resource descriptions and events for the relevant stage.
+
+
+  ```sh
+
+  git -C repository log --all --oneline
+
+  cat reader.hcl
+
+  kubectl describe application board
+
+  kubectl describe deployment board
+
+  kubectl describe pod -l app=board
+
+  ```
+
+
+  Stage 1/2: Inspect these resource definitions for this stage.
+
+
+  ```sh
+
+  kubectl get application board -o yaml
+
+  kubectl get deployment board -o yaml
+
+  kubectl get pods -l app=board -o yaml
+
+  ```
+
+
+  Stage 2: Inspect these resource definitions for this stage.
+
+
+  ```sh
+
+  git -C repository show origin/main:manifests/board.yaml
+
+  ```'
+hints.2.text: 'Restore the registry pull Secret from private-release.json, scope reader.hcl to dispatch read-only,
+  run sync-secret.sh, and verify the running image digest and HTTP response.
+
+
+  Verify the repaired stage and compare the observed result.
+
+
+  Stage 1/2: The controller reports `Synced` at the expected revision; in the final stage it also reports `Healthy`
+  and the workload is ready.
+
+
+  ```sh
+
+  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
+  printf ''\n''
+
+  kubectl get deployment board
+
+  ```
+
+
+  Stage 2: The published hash matches the recorded release; the ancestry check, when present, exits `0`.
+
+
+  ```sh
+
+  source platform.env
+
+  cat release-commit
+
+  git -C repository ls-remote origin refs/heads/main
+
+  ```
+
+
+  Stage 2: The Secret and allowed Vault record contain `north-secret`, HTTP returns `north-100`, and the other Vault
+  path returns HTTP `403`.
+
+
+  ```sh
+
+  source platform.env
+
+  kubectl get secret route-secret -o jsonpath=''{.data.value}'' | base64 -d
+
+  printf ''\n''
+
+  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
+
+  printf ''\n''
+
+  curl -fsS --max-time 3 -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
+
+  curl -sS --max-time 3 -o /dev/null -w ''%{http_code}\n'' -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN")
+  "$VAULT_ADDR/v1/secret/data/other"
+
+  ```
+
+
+  Expected observations for the complete stage:
+
+  - Stage 1/2: The displayed reconciliation, workload configuration and running-image observations match this stage’s
+  Requirements.
+
+  - Stage 2: The remote hash equals `release-commit`; the Git manifest has the supplied frozen image and Secret
+  `route-secret` reference.'
 phrases.0: I isolated failures at each delivery boundary.
 phrases.1: I retained immutable image identity and Git reconciliation.
 phrases.2: I verified least-privilege secret access and real end-to-end service.
@@ -62,3 +169,18 @@ diagnostics.reader: The Vault reader token must read north-secret from secret/da
 diagnostics.denied: The Vault reader request to secret/data/other must return HTTP 403.
 diagnostics.git_image: The first board image in the Git manifest must equal the image in private-release.json.
 diagnostics.git_env: The first environment entry in the Git manifest must reference secret route-secret.
+stages.0.objectives.0.text: Application `board` reports `Synced` at the intended published revision. It automatically
+  restores drift and removes resources no longer present in the desired release.
+stages.1.objectives.0.text: Remote `main` equals the revision recorded in `release-commit`.
+stages.1.objectives.1.text: The published workload uses the supplied frozen image and obtains its runtime secret
+  through the intended Secret reference.
+stages.1.objectives.2.text: Application `board` reports `Synced` and `Healthy` at the published release revision.
+  It automatically restores drift and removes resources no longer present in the desired release.
+stages.1.objectives.3.text: Deployment `board` uses the supplied frozen image, preserves its original pull requirements
+  and obtains its runtime secret without embedding the value.
+stages.1.objectives.4.text: The workload Secret contains the value of the intended Vault record.
+stages.1.objectives.5.text: The Vault access token returns the intended delivery secret and denies an unrelated
+  data record.
+stages.1.objectives.6.text: Deployment `board` completes its rollout with a ready application container running
+  the supplied frozen image digest.
+stages.1.objectives.7.text: From Deployment `board`, `http://board:8080` returns `north-100`.

@@ -1,29 +1,90 @@
 title: Zustandsbehaftete route-Wiederherstellung
-brief: 'Arbeite in `~/quest`; lies `shelf.json`, `service.json`, `client.json`, `egress.json` und `original-pvc-uid`. Der
-  shelf-Speicher ist vorhanden, aber der Headless-Service-Selektor und das Client-Egress sind defekt. Bewahre den ursprünglichen
-  PVC. Die verlinkte Anleitung führt in die Kubernetes-Netzwerkdiagnose ein.
-
-
-  Mache Service `shelf` headless (`clusterIP: None`) mit Selektor `app: shelf`. Konfiguriere `client-egress` mit einem `podSelector`,
-  der genau `app: client` auswählt, und nur `Egress`; nutze `matchLabels` oder einen gleichwertigen `In`-Ausdruck mit einem
-  Wert: Erlaube UDP und TCP 53 zu einem gemeinsamen Ziel mit Namespace-Label `kubernetes.io/metadata.name: kube-system` und
-  Pod-Label `k8s-app: kube-dns` sowie TCP 8080 zum Pod-Label `app: shelf` im selben Namespace. Diese genauen Label-Selektoren
-  identifizieren die bereitgestellten Ziele; Regeln und Ports dürfen anders angeordnet oder aufgeteilt werden. Andere Policies,
-  die den Client auswählen, dürfen kein breiteres Egress erlauben.
-
-
-  Prüfe, dass die PVC-UID von `ledger-shelf-0` `/run/dq/facts/0/original-pvc-uid` entspricht, Client-DNS `shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local.`
-  auflöst und Client-HTTP zu `shelf-0.shelf:8080` `ledger-120` liefert. Die Prüfungen beobachten Identität, Policy-Konfiguration
-  und aktuelle Verbindung, nicht die gesamte Speichergeschichte. Arbeite nur in der Offline-Umgebung.'
-debrief: Persistenz, discovery und Netzwerkzugriff wurden unabhängig voneinander überprüft, bevor der vollständige Pfad durchlaufen
-  wurde.
-stages.0.brief: Ursprüngliche PVC-UID, Headless-Service, begrenzte Egress-Policy, ordinales DNS und Ledger-Antwort entsprechen
-  der Aufgabe.
-stages.0.objectives.0.text: Ursprüngliche PVC-UID, Headless-Service, begrenzte Egress-Policy, ordinales DNS und Ledger-Antwort
-  entsprechen der Aufgabe.
+brief: "Die Shelf-Daten müssen dem Client unter einer begrenzten Netzwerkrichtlinie verfügbar bleiben. Namensauflösung\
+  \ und Verbindung sind noch unvollständig.\n\nArbeiten Sie in `~/quest` auf der Workstation. Eingaben je Phase:\n\
+  - Phase 1: `shelf.yaml`, `service.yaml`, `client.yaml`, `egress.yaml`.\n\n**Anforderungen:**\n\n- Phase 1:\n \
+  \ - Der bestehende Data Claim behält seine Identität und wird nicht neu erstellt.\n  - Der bestehende Datendienst\
+  \ unterstützt stabile Pod-Erkennung.\n  - Ausgehender Zugriff des anfragenden Workloads ist auf DNS und den bestehenden\
+  \ Datendienst über TCP `8080` begrenzt; keine andere Richtlinie erweitert ihn.\n  - Von Deployment `client` wird\
+  \ der stabile DNS-Name des bestehenden Speicher-Pods aufgelöst.\n  - Von Deployment `client` liefert der bestehende\
+  \ Speicher-Pod `ledger-120` auf Port `8080`.\n\nDie Prüfung beobachtet Claim-Identität, Richtlinienkonfiguration\
+  \ und aktuelle Verbindung, nicht die gesamte Speicherhistorie."
+debrief: Persistenz, discovery und Netzwerkzugriff wurden unabhängig voneinander überprüft, bevor der vollständige
+  Pfad durchlaufen wurde.
+stages.0.brief: Bewahren Sie den ursprünglichen Data Claim beim Wiederherstellen des begrenzten Client-Zugriffs.
 hints.0.text: Überprüfen Sie die stabile Lagerung getrennt von discovery und egress.
-hints.1.text: Headless DNS hängt vom passenden bereiten endpoints ab.
-hints.2.text: Reparieren Sie den selector, lassen Sie dann DNS und nur den shelf Pod-Port zu.
+hints.1.text: 'Headless DNS hängt vom passenden bereiten endpoints ab.
+
+
+  Prüfen Sie mitgelieferte Definitionen, Ressourcenbeschreibungen und Ereignisse der jeweiligen Phase.
+
+
+  ```sh
+
+  kubectl get pvc
+
+  kubectl describe deployment client
+
+  kubectl describe service shelf
+
+  kubectl get networkpolicies -o yaml
+
+  ```
+
+
+  Phase 1: Prüfen Sie diese Ressourcendefinitionen für diese Phase.
+
+
+  ```sh
+
+  kubectl get pvc ledger-shelf-0 -o yaml
+
+  kubectl get service shelf -o yaml
+
+  kubectl get networkpolicies -o yaml
+
+  ```'
+hints.2.text: 'Reparieren Sie den selector, lassen Sie dann DNS und nur den shelf Pod-Port zu.
+
+
+  Prüfen Sie die reparierte Phase und vergleichen Sie das beobachtete Ergebnis.
+
+
+  Phase 1: Die aktuelle Claim-UID entspricht der ursprünglich aufgezeichneten UID.
+
+
+  ```sh
+
+  cat original-pvc-uid
+
+  kubectl get pvc ledger-shelf-0 -o jsonpath=''{.metadata.uid}''; printf ''\n''
+
+  ```
+
+
+  Phase 1: Der Client löst den vollständigen DNS-Namen des Shelf-Pods auf.
+
+
+  ```sh
+
+  kubectl exec deployment/client -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."
+
+  ```
+
+
+  Phase 1: Der Client erhält `ledger-120`.
+
+
+  ```sh
+
+  kubectl exec deployment/client -- wget -qO- -T 3 http://shelf-0.shelf:8080
+
+  ```
+
+
+  Erwartete Beobachtungen für die gesamte Phase:
+
+  - Phase 1: Die Claim-UID ist unverändert, Service `shelf` ist headless und die Richtlinien erlauben nur den erforderlichen
+  Egress.'
 phrases.0: Ich habe den stateful claim während der Netzwerkwiederherstellung beibehalten.
 phrases.1: Ich habe ordinal DNS anhand des isolierten client verifiziert.
 phrases.2: Ich habe nur die erforderlichen Abhängigkeitsflüsse wiederhergestellt.
@@ -43,12 +104,19 @@ diagnostics.named: Es muss genau eine NetworkPolicy namens client-egress geben.
 diagnostics.selector: Der podSelector von client-egress muss genau app:client entsprechen.
 diagnostics.types: policyTypes von client-egress darf nur Egress enthalten.
 diagnostics.egress: Peers und Ports von client-egress müssen die in der Aufgabenbeschreibung beschränkte Form verwenden.
-diagnostics.unexpected: client-egress darf keinen unerwarteten Datenfluss enthalten; das Original nennt Ziel, Protokoll und
-  Port.
-diagnostics.other_egress: Eine andere NetworkPolicy, die einen Client auswählt, darf keinen zusätzlichen ausgehenden Verkehr
-  erlauben; ihr Name steht im Original.
-diagnostics.other_invalid: Eine andere NetworkPolicy hat einen ungültigen Selector oder Egress; ihr Name steht im Original.
+diagnostics.unexpected: client-egress darf keinen unerwarteten Datenfluss enthalten; das Original nennt Ziel, Protokoll
+  und Port.
+diagnostics.other_egress: Eine andere NetworkPolicy, die einen Client auswählt, darf keinen zusätzlichen ausgehenden
+  Verkehr erlauben; ihr Name steht im Original.
+diagnostics.other_invalid: Eine andere NetworkPolicy hat einen ungültigen Selector oder Egress; ihr Name steht im
+  Original.
 diagnostics.invalid_input: NetworkPolicies und Client-Pod-Labels müssen im erwarteten Format lesbar sein.
 diagnostics.missing_dns_udp_53: client-egress muss dns UDP 53 erlauben.
 diagnostics.missing_dns_tcp_53: client-egress muss dns TCP 53 erlauben.
 diagnostics.missing_shelf_tcp_8080: client-egress muss shelf TCP 8080 erlauben.
+stages.0.objectives.0.text: Der bestehende Data Claim behält seine Identität und wird nicht neu erstellt.
+stages.0.objectives.1.text: Der bestehende Datendienst unterstützt stabile Pod-Erkennung.
+stages.0.objectives.2.text: Ausgehender Zugriff des anfragenden Workloads ist auf DNS und den bestehenden Datendienst
+  über TCP `8080` begrenzt; keine andere Richtlinie erweitert ihn.
+stages.0.objectives.3.text: Von Deployment `client` wird der stabile DNS-Name des bestehenden Speicher-Pods aufgelöst.
+stages.0.objectives.4.text: Von Deployment `client` liefert der bestehende Speicher-Pod `ledger-120` auf Port `8080`.
