@@ -1,6 +1,12 @@
 set -euo pipefail
 cd ~/quest
 failed=0
+set +e
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
 if ! policies=$(kubectl get networkpolicies -o json 2>/dev/null); then
   printf '%s\n' 'kubectl get networkpolicies: ✗ [DQ:policies]'
   failed=1
@@ -126,14 +132,41 @@ DQ_POLICY
 then
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
 if ! timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- nslookup -type=A "board.$DQ_NAMESPACE.svc.cluster.local." >/dev/null 2>&1; then
   printf '%s\n' 'deployment/client DNS board: ✗ [DQ:dns]'
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
 if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = north-119; then
   printf '%s\n' 'deployment/client → board:8080 = north-119: ✗ [DQ:http]'
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
 closed=$(kubectl get service closed -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
 if ! test -n "$closed" || ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -- wget -qO- -T 3 "http://$closed:8080" 2>/dev/null)" = closed-119; then
   printf '%s\n' 'deployment/board → closed:8080 = closed-119: ✗ [DQ:closed_direct]'
@@ -143,4 +176,8 @@ if test -n "$closed" && timeout 4s kubectl exec --pod-running-timeout=2s deploym
   printf '%s\n' 'deployment/client → closed:8080 fails: ✗ [DQ:closed_denied]'
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
 exit "$failed"

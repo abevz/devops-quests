@@ -1,32 +1,25 @@
 title: Допуск ResourceQuota и LimitRange
-brief: 'Шаблон board намеренно не содержит поля ресурсов: их должны задать значения namespace по умолчанию. LimitRange добавляет
-  request 300m и limit 400m, превышая фиксированный бюджет ResourceQuota. Исправьте только значения CPU по умолчанию на request
-  100m и limit 200m; сохраните значения памяти 16Mi/32Mi, quota и шаблон Deployment без ресурсов. Повторите выкатку и изучите
-  фактически допущенный Pod. Значения по умолчанию действуют при новом допуске и не переписывают существующие Pod. Это допуск
-  API; quota не создаёт ресурсы узла.
-
-
-  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `client.json`, `quota.json`, `defaults.json`, `board.json`,
-  `service.json`.
-
-
-  В песочнице нет интернета и внешнего DNS. Используйте выданные файлы, предварительно загруженные образы и приватные сервисы.
-  Менять можно только эту песочницу.
-
-
-  Прочитайте `quota.json`, `defaults.json`, `board.json`, `service.json` и `client.json`. Hard-спецификация ResourceQuota
-  `station` должна точно содержать requests CPU `200m`, limits CPU `400m`, requests memory `32Mi`, limits memory `64Mi` и
-  pods `2`. Первый элемент LimitRange `defaults` должен иметь CPU default `200m` и defaultRequest `100m`; resources первого
-  контейнера Deployment должны быть пусты, одна реплика готова. Хотя бы один Pod `app=board`, не находящийся в процессе удаления,
-  должен иметь ровно requests CPU `100m`/memory `16Mi`, limits CPU `200m`/memory `32Mi` и готовый контейнер. deployment/client
-  должен получать `north-126` от `board:8080`. Проверка изучает память допущенного Pod, а не текущие значения памяти LimitRange;
-  она не доказывает историю изменений.'
+brief: "Нагрузка board не становится готовой в пределах бюджета admission. Восстановите требуемые допущенные ресурсы\
+  \ без изменения предоставленной квоты.\n\nРаботайте в `~/quest` на рабочей станции. Предоставлены файлы: `client.json`,\
+  \ `quota.json`, `defaults.json`, `board.json`, `service.json`.\n\n**Requirements:**\n\n- ResourceQuota `station`\
+  \ сохраняет предоставленный бюджет: запросы CPU `200m`, лимиты CPU `400m`, запросы памяти `32Mi`, лимиты памяти\
+  \ `64Mi` и `2` Pod.\n- LimitRange `defaults` предоставляет требуемые ресурсы CPU, когда контейнер приложения в\
+  \ шаблоне Deployment `board` не имеет явных ресурсов.\n- Deployment `board` имеет одну готовую реплику и не завершающийся\
+  \ Pod с готовым контейнером, запросом/лимитом CPU `100m`/`200m` и запросом/лимитом памяти `16Mi`/`32Mi` на том\
+  \ же Pod.\n- Из Deployment `client` адрес `http://board:8080` возвращает `north-126`.\n\n**Verify yourself before\
+  \ Check & finish:** Выполните эти команды наблюдения из `~/quest` на рабочей станции.\n\n- Настройки, идентичности\
+  \ и состояние соответствуют требованиям.\n\n  ```sh\n  kubectl get resourcequota station -o yaml\n  kubectl get\
+  \ limitrange defaults -o yaml\n  kubectl get deployment board -o yaml\n  ```\n\n- `kubectl get pods -l app=board\
+  \ -o yaml` — Один не завершающийся Pod имеет одновременно требуемые ресурсы и готовый контейнер.\n\n- `kubectl\
+  \ exec deployment/client -- wget -qO- -T 3 http://board:8080` — Потребитель получает `north-126`.\n\nПроверка\
+  \ исследует память допущенного Pod, а не текущие значения памяти по умолчанию LimitRange или историю правок; квота\
+  \ admission не создаёт ёмкость узла."
 debrief: Политика defaults исправлена в пределах бюджета namespace; ресурсы scheduler остались отдельным ограничением.
-stages.0.brief: Quota, значения CPU, шаблон Deployment, ресурсы допущенного готового Pod и HTTP-ответ соответствуют описанию.
-stages.0.objectives.0.text: Quota, значения CPU, шаблон Deployment, ресурсы допущенного готового Pod и HTTP-ответ соответствуют
-  описанию.
+stages.0.brief: Допущенный Pod board должен быть готов в фиксированном бюджете ресурсов.
 hints.0.text: Читайте события ReplicaSet, чтобы отличить отказ допуска от Pending при scheduling.
-hints.1.text: LimitRange задаёт defaults до проверки потребления ResourceQuota.
+hints.1.text: LimitRange задаёт defaults до проверки потребления ResourceQuota. Предоставленные значения CPU по
+  умолчанию — запрос `300m` и лимит `400m`, превышающие фиксированную квоту. Значения по умолчанию действуют на
+  новые допускаемые Pod, а не существующие.
 hints.2.text: Исправьте defaults, повторите выкатку и смотрите resources Pod, а не только шаблона.
 phrases.0: Я отличил отказ допуска от ошибки scheduling.
 phrases.1: Я проверил ресурсы после применения defaults.
@@ -42,8 +35,18 @@ diagnostics.default: Стандартный лимит CPU LimitRange defaults �
 diagnostics.request: Стандартный запрос CPU LimitRange defaults должен быть 100m.
 diagnostics.ready: У Deployment board должна быть одна готовая реплика.
 diagnostics.template: Шаблон первого контейнера board не должен иметь resources.
-diagnostics.pod_requests: Pod board, не находящийся в процессе удаления, должен иметь точные запросы CPU и памяти из описания.
-diagnostics.pod_limits: Pod board, не находящийся в процессе удаления, должен иметь точные лимиты CPU и памяти из описания.
+diagnostics.pod_requests: Pod board, не находящийся в процессе удаления, должен иметь точные запросы CPU и памяти
+  из описания.
+diagnostics.pod_limits: Pod board, не находящийся в процессе удаления, должен иметь точные лимиты CPU и памяти из
+  описания.
 diagnostics.pod_ready: У Pod board, не находящегося в процессе удаления, должен быть готовый контейнер.
-diagnostics.same_pod: Один Pod board, не находящийся в процессе удаления, должен иметь все нужные ресурсы и готовый контейнер.
+diagnostics.same_pod: Один Pod board, не находящийся в процессе удаления, должен иметь все нужные ресурсы и готовый
+  контейнер.
 diagnostics.http: board:8080 должен вернуть north-126.
+stages.0.objectives.0.text: 'ResourceQuota `station` сохраняет предоставленный бюджет: запросы CPU `200m`, лимиты
+  CPU `400m`, запросы памяти `32Mi`, лимиты памяти `64Mi` и `2` Pod.'
+stages.0.objectives.1.text: LimitRange `defaults` предоставляет требуемые ресурсы CPU, когда контейнер приложения
+  в шаблоне Deployment `board` не имеет явных ресурсов.
+stages.0.objectives.2.text: Deployment `board` имеет одну готовую реплику и не завершающийся Pod с готовым контейнером,
+  запросом/лимитом CPU `100m`/`200m` и запросом/лимитом памяти `16Mi`/`32Mi` на том же Pod.
+stages.0.objectives.3.text: Из Deployment `client` адрес `http://board:8080` возвращает `north-126`.

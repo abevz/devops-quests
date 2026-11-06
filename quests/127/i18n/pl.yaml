@@ -1,30 +1,32 @@
 title: Diagnostyka pobierania metryk Prometheus
-brief: 'Prywatny Prometheus w przypiętej wersji pobiera metryki z board:8080/metrics.txt co dwie sekundy. Pod board udostępnia
-  na porcie 8080 niewielką syntetyczną metrykę gauge głębokości kolejki, ale jego Service przekierowuje ruch na 8099, więc
-  cel jest niedostępny. Przywróć wyłącznie Service targetPort 8080. Z client Pod użyj zapisanego endpointu Prometheus, aby
-  sprawdzić stan celu, up=1, dwie serie north i ich sumę 7. Dostarczone metryki są jawnymi danymi szkoleniowymi; serwer i
-  pobieranie metryk są rzeczywiste. gauge przedstawia bieżącą wartość, więc rate() nie nadaje się do tej głębokości kolejki.
-
-
-  Pliki zadań w `~/quest` (niektóre pojawiają się w późniejszych etapach): `metrics.json`, `board.json`, `service.json`, `client.json`,
-  `prometheus-target.json`.
-
-
-  W zatoce nie ma Internetu ani zewnętrznego DNS. Korzystaj wyłącznie z dostarczonych plików, wstępnie załadowanych obrazów
-  i usług prywatnych. Zmień tylko tę zatokę.
-
-
-  Przeczytaj `metrics.json`, `board.json`, `service.json`, `client.json` i `prometheus-target.json`. Pierwszy port i targetPort
-  Service muszą wynosić 8080, a selektor być dokładnie `app: board`. Z użyciem zapisanego URL Prometheusa zapytanie `up{job="board"}`
-  musi się powieść z jednym wynikiem równym 1; `sum(station_queue_depth{job="board",route="north"})` i `count` tych serii
-  muszą się powieść z jednym wynikiem równym odpowiednio 7 i 2. Co najmniej jeden aktywny target `board` musi być `up` z pustym
-  `lastError`. Kontrole obserwują bieżący Service i wyniki zapytań, nie historię zmian ani to, czy osobiście wykonano zapytania.'
-debrief: Prawdziwe scrape i query okazały się odzyskiem; Sam readiness nie udowodniłby zarejestrowanych parametrów aplikacji.
-stages.0.brief: Service, aktywny target i trzy wyniki zapytań Prometheusa odpowiadają opisowi.
-stages.0.objectives.0.text: Service, aktywny target i trzy wyniki zapytań Prometheusa odpowiadają opisowi.
+brief: "Monitoring nie pokazuje oczekiwanych wyników kolejki board. Przywróć rzeczywiste działanie zbierania i uzgodnione\
+  \ obserwacje gauge.\n\nPracuj w `~/quest` na stacji roboczej. Dostarczone pliki: `metrics.json`, `board.json`,\
+  \ `service.json`, `client.json`, `prometheus-target.json`.\n\n**Requirements:**\n\n- Service `board` wybiera tylko\
+  \ Pody z etykietą `app=board` i łączy deklarowany port HTTP z nasłuchem aplikacji.\n  - Deklarowany port HTTP\
+  \ Service to `8080`; nasłuch eksportera jest określony w `board.json`. Obserwuj prywatny URL Prometheus z `prometheus-target.json`\
+  \ na stacji; cel zbierania to `board:8080/metrics.txt`.\n- Prywatny Prometheus zgłasza jeden wynik `up` o wartości\
+  \ `1` dla zadania `board`, a co najmniej jeden aktywny cel `board` jest `up` bez błędu zbierania.\n- Dla zadania\
+  \ `board` i trasy `north` metryka `station_queue_depth` ma dokładnie `2` serie o sumie `7`; obydwa zapytania agregujące\
+  \ kończą się powodzeniem i dają jeden wynik.\n\n**Verify yourself before Check & finish:** Wykonaj te polecenia\
+  \ obserwacji z `~/quest` na stacji roboczej.\n\n- Service odpowiada deklarowanemu kontraktowi nasłuchu; aktywny\
+  \ cel `board` jest `up` bez błędu zbierania.\n\n  ```sh\n  kubectl get service board -o yaml\n  url=$(jq -r .url\
+  \ prometheus-target.json)\n  kubectl exec deployment/client -- wget -qO- -T 3 \"$url/api/v1/targets?state=active\"\
+  \n  ```\n\n- Zapytanie kończy się powodzeniem z jednym wynikiem o wartości `1`.\n\n  ```sh\n  url=$(jq -r .url\
+  \ prometheus-target.json)\n  kubectl exec deployment/client -- wget -qO- -T 3 \"$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D\"\
+  \n  ```\n\n- Oba zapytania kończą się powodzeniem z jednym wynikiem: suma `7`, liczba `2`.\n\n  ```sh\n  url=$(jq\
+  \ -r .url prometheus-target.json)\n  for aggregate in sum count; do\n    kubectl exec deployment/client -- wget\
+  \ -qO- -T 3 \"$url/api/v1/query?query=$aggregate%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29\"\
+  \n  done\n  ```\n\nGauge to syntetyczne dane szkoleniowe; Prometheus i zbieranie co dwie sekundy są rzeczywiste.\
+  \ Kontrole obserwują bieżące wyniki Service/zapytań, nie historię ani autora zapytań."
+debrief: Prawdziwe scrape i query okazały się odzyskiem; Sam readiness nie udowodniłby zarejestrowanych parametrów
+  aplikacji.
+stages.0.brief: Rzeczywiste zbieranie ma działać poprawnie, a zapytania kolejki pokazywać wymagane wyniki.
 hints.0.text: Oddzielna odpowiedź exporter, przekazywanie Service i kondycja scrape.
-hints.1.text: Wartość up równa zero oznacza, że ​​scrape nie powiodło się, a nie, że kolejka jest pusta.
-hints.2.text: Napraw port zaplecza Service, poczekaj na scrape i zapytaj zarówno count, jak i sum.
+hints.1.text: Wartość up równa zero oznacza, że ​​scrape nie powiodło się, a nie, że kolejka jest pusta. Głębokość
+  kolejki jest gauge bieżącej wartości, więc `rate()` nie jest odpowiednie.
+hints.2.text: Napraw port zaplecza Service, poczekaj na scrape i zapytaj zarówno count, jak i sum. Nasłuch board
+  działa na `8080`, ale dostarczony backend Service to `8099`; przywróć tylko targetPort do `8080` i poczekaj na
+  zebranie.
 phrases.0: Prześledziłem awarię scrape poprzez Service.
 phrases.1: Zweryfikowałem up i zarejestrowaną metrykę labels.
 phrases.2: Zastosowałem agregację odpowiednią dla gauge.
@@ -47,3 +49,9 @@ diagnostics.sum_value: Wartość zapytania sum musi wynosić 7.
 diagnostics.count_status: Zapytanie count musi się powieść.
 diagnostics.count_count: Zapytanie count musi zwrócić dokładnie jeden wynik.
 diagnostics.count_value: Wartość zapytania count musi wynosić 2.
+stages.0.objectives.0.text: Service `board` wybiera tylko Pody z etykietą `app=board` i łączy deklarowany port HTTP
+  z nasłuchem aplikacji.
+stages.0.objectives.1.text: Prywatny Prometheus zgłasza jeden wynik `up` o wartości `1` dla zadania `board`, a co
+  najmniej jeden aktywny cel `board` jest `up` bez błędu zbierania.
+stages.0.objectives.2.text: Dla zadania `board` i trasy `north` metryka `station_queue_depth` ma dokładnie `2` serie
+  o sumie `7`; obydwa zapytania agregujące kończą się powodzeniem i dają jeden wynik.

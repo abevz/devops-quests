@@ -1,31 +1,35 @@
 title: Admisión webhook recuperación
-brief: 'Trabaja en `~/quest`; lee `route.json`, `webhook-repair.json`, `admission-ca.pem`, `admission-target.json`, `board.json`,
-  `service.json` y `client.json`. Un webhook de validación privado tiene una URL antigua, por lo que la admisión fail-closed
-  impide el ConfigMap de ruta. Un webhook es una llamada de API que puede admitir o denegar una solicitud. Su configuración
-  es de solo lectura para el jugador.
-
-
-  Escribe `{"action":"restore-path"}` en `webhook-repair.json` y espera al agente limitado de la bahía; solo puede restaurar
-  la ruta del servidor suministrado. La configuración `dq-webhook-<bay id>` debe contener un webhook llamado `route.training.devops-quests.local`,
-  `failurePolicy: Fail`, `timeoutSeconds: 2` y URL `https://dq-webhook-<bay id>:8443/validate`. Su paquete CA debe coincidir
-  con `admission-ca.pem` y su selector de namespace con las etiquetas de la bahía `devops-quests.installation` y `devops-quests.run`.
-  Estos campos exactos conservan la única llamada limitada original que el agente puede reparar.
-
-
-  Aplica `data.route: north-121`. Comprueba una réplica board lista, HTTP del cliente a `board:8080` con respuesta `north-121`
-  y pruebas dry-run del servidor: la ruta válida debe tener éxito, mientras `closed` debe fallar con `Station route must be
-  north-121`. Las comprobaciones observan la configuración y decisiones actuales; no demuestran toda la historia de recuperación.
-  Trabaja solo en la bahía sin conexión.'
-debrief: La configuración actual del webhook, la ruta, la respuesta y las pruebas dry-run válida e inválida coincidieron con
-  las comprobaciones.
-stages.0.brief: La configuración limitada del webhook, la ruta, board listo, la respuesta del cliente y ambas pruebas dry-run
-  coinciden con el enunciado.
-stages.0.objectives.0.text: La configuración limitada del webhook, la ruta, board listo, la respuesta del cliente y ambas
-  pruebas dry-run coinciden con el enunciado.
-hints.0.text: Fail-closed distingue un webhook inalcanzable de un objeto rechazado.
-hints.1.text: La configuración es de sólo lectura; la solicitud de reparación no puede cambiar el alcance de namespace, CA
-  o el servidor.
-hints.2.text: Solicite restore-path, repare data.route y luego pruebe ambos resultados de admisión.
+brief: "Las actualizaciones de ruta no llegan a la carga. Restaure el contrato privado de admisión y los resultados\
+  \ permitidos y rechazados esperados.\n\nTrabaje en `~/quest` en la estación de trabajo. Archivos suministrados:\
+  \ `route.json`, `webhook-repair.json`, `admission-ca.pem`, `admission-target.json`, `board.json`, `service.json`,\
+  \ `client.json`.\n\n**Requirements:**\n\n- El webhook de validación limitado a la bahía confía en su CA privada\
+  \ y tiene un callback `route.training.devops-quests.local`, política de fallo `Fail` y timeout de `2` segundos.\n\
+  \  - El endpoint del callback coincide con `admission-target.json` y su CA con `admission-ca.pem`, ambos en `~/quest`\
+  \ de la estación. Su ámbito de namespace coincide con las etiquetas actuales `devops-quests.installation` y `devops-quests.run`;\
+  \ la configuración `dq-webhook-${DQ_NAMESPACE#dq-}` es de solo lectura para el jugador.\n- El ConfigMap `route`\
+  \ contiene la ruta `north-121` y su simulación de admisión en el servidor tiene éxito (dry-run).\n- Una simulación\
+  \ en el servidor con ruta `closed` se rechaza con `Station route must be north-121` (dry-run).\n- El Deployment\
+  \ `board` tiene una réplica lista y `http://board:8080` devuelve `north-121` al Deployment `client`.\n\n**Verify\
+  \ yourself before Check & finish:** Ejecute estos comandos de observación desde `~/quest` en la estación de trabajo.\n\
+  \n- La configuración, identidades y estado cumplen los requisitos.\n\n  ```sh\n  name=\"dq-webhook-${DQ_NAMESPACE#dq-}\"\
+  \n  kubectl get validatingwebhookconfiguration \"$name\" -o yaml\n  kubectl get namespace \"$DQ_NAMESPACE\" -o\
+  \ yaml\n  kubectl get deployment board -o yaml\n  cat admission-target.json admission-ca.pem\n  ```\n\n- La ruta\
+  \ actual se admite sin guardar cambios; el consumidor recibe `north-121`.\n\n  ```sh\n  kubectl get configmap\
+  \ route -o json |\n    jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)'\
+  \ |\n    kubectl apply --dry-run=server -f -\n  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080\n\
+  \  ```\n\n- La simulación falla con `Station route must be north-121` y no cambia ningún objeto guardado (dry-run).\n\
+  \n  ```sh\n  kubectl get configmap route -o json |\n    jq '.data.route=\"closed\" | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)'\
+  \ |\n    kubectl apply --dry-run=server -f -\n  ```\n\nLas comprobaciones observan la configuración actual del\
+  \ callback y las decisiones de admisión, no todo el historial de recuperación."
+debrief: La configuración actual del webhook, la ruta, la respuesta y las pruebas dry-run válida e inválida coincidieron
+  con las comprobaciones.
+stages.0.brief: El callback limitado de admisión debe exigir la ruta requerida y permitir que la carga la sirva.
+hints.0.text: Fail-closed distingue un webhook inalcanzable de un objeto rechazado. La URL suministrada del callback
+  apunta a una ruta retirada, por lo que admisión fail-closed bloquea el ConfigMap antes de llegar a la carga.
+hints.1.text: La configuración es de sólo lectura; la solicitud de reparación no puede cambiar el alcance de namespace,
+  CA o el servidor.
+hints.2.text: Solicite restore-path, repare data.route y luego pruebe ambos resultados de admisión. Escriba `{"action":"restore-path"}`
+  en `webhook-repair.json` y espere al agente limitado; solo restaura la ruta del servidor suministrada.
 phrases.0: Distinguí la falla de transporte webhook de la denegación de policy.
 phrases.1: Conservé la validación fail-closed y el alcance namespace.
 phrases.2: Probé solicitudes API admitidas y denegadas.
@@ -40,9 +44,10 @@ diagnostics.name: webhook name debe ser igual a route.training.devops-quests.loc
 diagnostics.failure_policy: webhook failurePolicy debe ser igual a Fail.
 diagnostics.timeout: webhook timeoutSeconds debe ser igual a 2.
 diagnostics.url: webhook clientConfig.url debe ser `https://dq-webhook-<bay>:8443/validate` para esta bahía.
-diagnostics.ca: webhook caBundle debe ser base64 válido y coincidir con admission-ca.pem no vacío tras quitar espacios alrededor.
-diagnostics.namespace: La etiqueta de instalación de la bahía no debe estar vacía y webhook namespaceSelector debe coincidir
-  exactamente con sus etiquetas de instalación y ejecución.
+diagnostics.ca: webhook caBundle debe ser base64 válido y coincidir con admission-ca.pem no vacío tras quitar espacios
+  alrededor.
+diagnostics.namespace: La etiqueta de instalación de la bahía no debe estar vacía y webhook namespaceSelector debe
+  coincidir exactamente con sus etiquetas de instalación y ejecución.
 diagnostics.route: configmap/route data.route debe ser igual a north-121.
 diagnostics.ready: deployment/board readyReplicas debe ser igual a 1.
 diagnostics.http: La petición a board:8080 debe devolver north-121.
@@ -50,3 +55,11 @@ diagnostics.valid: La preparación de route y su dry-run del servidor deben tene
 diagnostics.invalid_input: La preparación de la entrada dry-run para route closed debe tener éxito.
 diagnostics.denial: El dry-run del servidor debe rechazar route closed.
 diagnostics.denial_text: El rechazo debe contener Station route must be north-121.
+stages.0.objectives.0.text: El webhook de validación limitado a la bahía confía en su CA privada y tiene un callback
+  `route.training.devops-quests.local`, política de fallo `Fail` y timeout de `2` segundos.
+stages.0.objectives.1.text: El ConfigMap `route` contiene la ruta `north-121` y su simulación de admisión en el
+  servidor tiene éxito (dry-run).
+stages.0.objectives.2.text: Una simulación en el servidor con ruta `closed` se rechaza con `Station route must be
+  north-121` (dry-run).
+stages.0.objectives.3.text: El Deployment `board` tiene una réplica lista y `http://board:8080` devuelve `north-121`
+  al Deployment `client`.

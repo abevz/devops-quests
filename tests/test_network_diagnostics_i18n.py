@@ -132,9 +132,16 @@ def test_policy_failure_markers_are_translated(catalog, number, case):
             "de",
             "ru",
         }
-    assert (ROOT / f"quests/{number:03}/check-0.sh").read_text() == catalog.quests[
-        number
-    ]["stages"][0]["objectives"][0]["check"]
+    source = (ROOT / f"quests/{number:03}/check-0.sh").read_text()
+    checks = [goal["check"] for goal in catalog.quests[number]["stages"][0]["objectives"]]
+    if len(checks) == 1:
+        assert source == checks[0]
+    else:
+        expected = "set -euo pipefail\ncd ~/quest\nfailed=0\nset +e\n"
+        for check in checks:
+            expected += "(\nset -e\n" + check + "\n)\n[ $? -eq 0 ] || failed=1\n"
+        expected += 'exit "$failed"\n'
+        assert source == expected
 
 
 @pytest.mark.parametrize("number", [119, 120])
