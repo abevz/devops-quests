@@ -52,8 +52,10 @@ def test_005_brief_does_not_disclose_the_permission_answer(language):
 
 @pytest.mark.parametrize("language", ["en", "ru", "de", "es", "pl"])
 def test_006_self_verification_observes_the_result_without_the_state_hint(language):
-    brief = yaml.safe_load((ROOT / f"quests/006/i18n/{language}.yaml").read_text())["brief"]
-    commands = re.findall(r"^- `(.*)` —", brief, re.MULTILINE)
+    values = yaml.safe_load((ROOT / f"quests/006/i18n/{language}.yaml").read_text())
+    brief = values["brief"]
+    assert not re.search(r"^- `.*` —", brief, re.MULTILINE)
+    commands = re.findall(r"^- `(.*)` —", values["hints.2.text"], re.MULTILINE)
     assert len(commands) == 2
     assert not any("state list" in command or "docker ps" in command for command in commands)
     assert any("docker inspect rail-worker" in command for command in commands)
