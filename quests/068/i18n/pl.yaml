@@ -1,34 +1,42 @@
 title: Zdrowie Argo
-brief: 'Prywatny Application może synchronizować, ale zatwierdzony readiness probe celuje w 9090, podczas
-  gdy HTTP nasłuchuje w 8080. Popraw repository/manifests/board.json, zatwierdź i wypchnij do jednorazowej
-  gałęzi Gitea main, a następnie odśwież Argo. Zachowaj historię baseline-commit. Sam Synced jest niewystarczający:
-  zarejestrowany prąd revision musi stać się Healthy i faktycznie służyć north-68. Kontroler aplikacji
-  może krótko zgłosić Progressing w oczekiwaniu na nieprawidłowe wdrożenie.
+brief: |
+  Zarządzane przez Git wydanie `board` nie jest zdrowe dla swoich odbiorców.
 
+  Pracuj na workstation w `~/quest` z plikami `platform.env`, `application.yaml`, `repository/manifests/board.yaml`, `release-commit`.
 
-  Pliki zadań w `~/quest` (niektóre pojawiają się w późniejszych etapach): `platform.env`, `application.json`,
-  `repository/manifests/board.json`, `repository/manifests/service.json`, `baseline-commit`, `release-commit`.
+  **Wymagania:**
+  - Application w przestrzeni nazw zatoki:
+    - Nazwa: `board`.
+    - Repozytorium: `GIT_URL` z `~/quest/platform.env` na workstation.
+    - Gałąź i katalog źródłowy: `main`, `manifests`.
+  - Obserwowany wynik Application:
+    - Status: `Synced`, `Healthy`.
+    - Zsynchronizowana rewizja odpowiada plikowi `~/quest/release-commit` na workstation.
+  - Deployment w przestrzeni nazw zatoki:
+    - Nazwa: `board`.
+    - Rollout zakończony.
+  - HTTP wewnątrz Poda Deployment `board`:
+    - Ścieżka: `http://board:8080`.
+    - Odpowiedź: `north-68`.
+  - Opublikowany wynik Git w `~/quest/repository` na workstation:
+    - `origin/main` odpowiada plikowi `~/quest/release-commit` na workstation i różni się od bazy w `/run/dq/facts/0/baseline-commit` na workstation.
+    - Baza pozostaje przodkiem opublikowanego commita.
+  - Port HTTP gotowości:
+    - Wartość `8080` zarówno w działającym Deployment `board`, jak i w `manifests/board.yaml` w `origin/main` repozytorium `~/quest/repository` na workstation.
 
+  **Sprawdź przed Check & finish:**
+  - `kubectl get application board -o custom-columns=NAME:.metadata.name,PROJECT:.spec.project,REPO:.spec.source.repoURL,PATH:.spec.source.path,BRANCH:.spec.source.targetRevision,NAMESPACE:.spec.destination.namespace,SERVER:.spec.destination.server,SYNC:.status.sync.status,HEALTH:.status.health.status,REVISION:.status.sync.revision; cat release-commit` — Pokazuje dostarczone repozytorium, `main` / `manifests`, `Synced` / `Healthy` i rewizję równą zapisanemu commitowi.
+  - `git -C repository ls-remote origin refs/heads/main; cat release-commit /run/dq/facts/0/baseline-commit; git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/baseline-commit)" origin/main; printf "ancestry status: %s\n" "$?"; git -C repository show origin/main:manifests/board.yaml | python3 -c 'import sys,yaml; print(yaml.safe_load(sys.stdin)["spec"]["template"]["spec"]["containers"][0]["readinessProbe"]["httpGet"]["port"])'` — ID zdalnego commita i wydania są zgodne i różnią się od bazy; ancestry status to `0`; port gotowości w Git to `8080`.
+  - `kubectl rollout status deployment/board --timeout=10s; kubectl get deployment board -o jsonpath='{.spec.template.spec.containers[0].readinessProbe.httpGet.port}{"\n"}'; kubectl exec --pod-running-timeout=5s deployment/board -- wget -qO- -T 3 http://board:8080` — Rollout się kończy, działający port gotowości to `8080`, a HTTP zwraca `north-68`.
 
-  W zatoce nie ma Internetu ani zewnętrznego DNS. Korzystaj wyłącznie z dostarczonych plików, wstępnie
-  załadowanych obrazów i usług prywatnych. Zmień tylko tę zatokę.
-
-
-  Początkowe kryteria sukcesu: poprawiony Git commit jest synchronizowany i Healthy, readiness używa 8080,
-  a prawdziwy endpoint zwraca north-68.
-
-
-  Wiarygodne dowody konfiguracji są przeznaczone tylko do odczytu w ramach `/run/dq/facts/0/`; pasujące
-  pliki w `~/quest` są kopiami roboczymi.'
-debrief: Zamiar Git i stan workload są teraz zgodne; bezpośredni live patch zostałby przywrócony przez
-  self-heal.
-stages.0.brief: 'Kryteria sukcesu: Poprawiony Git commit jest synchronizowany i Healthy, readiness używa
-  8080, a prawdziwy endpoint zwraca north-68.'
-stages.0.objectives.0.text: Poprawiony Git commit jest synchronizowany i Healthy, readiness używa 8080,
-  a prawdziwy endpoint zwraca north-68.
+  Dane setup pod `/run/dq/facts/0/` na workstation są autorytatywne; odpowiadające im pliki w `~/quest` to kopie robocze.
+debrief: Zamiar Git i stan workload są teraz zgodne; bezpośredni live patch zostałby przywrócony przez self-heal.
+stages.0.brief: Opublikowana rewizja Git musi być zdrowa dla swoich odbiorców.
 hints.0.text: Sync porównuje pożądane zasoby; health opisuje ich zaobserwowany stan.
-hints.1.text: Przeczytaj probe w Git i porównaj je z uruchomionym poleceniem.
-hints.2.text: Zatwierdź korektę portu w Git, odśwież i zweryfikuj revision, readiness i HTTP.
+hints.1.text: Zacommitowana sonda gotowości wskazuje 9090, a HTTP nasłuchuje na 8080. Podczas nieudanego rollout
+  application-controller może krótko zgłaszać Progressing.
+hints.2.text: Popraw repository/manifests/board.yaml, wykonaj commit i push do prywatnej gałęzi main, a następnie
+  odśwież Argo. Zachowaj historię baseline-commit.
 phrases.0: Oddzieliłem synchronizację od kondycji aplikacji.
 phrases.1: Naprawiłem źródło commit zamiast walczyć z self-heal.
 phrases.2: Sprawdziłem zaobserwowaną odpowiedź revision i rzeczywistą odpowiedź HTTP.
@@ -40,3 +48,12 @@ questions.1.points.0: Zmień wiarygodne źródło Git.
 questions.1.points.1: Po uzgodnieniu sprawdź nową zaobserwowaną wartość revision.
 questions.1.points.2: Unikaj polegania na przejściowym live patch.
 questions.1.prompt: Na czym polega trwała naprawa, gdy włączona jest funkcja automatycznego self-heal?
+stages.0.objectives.0.text: Application `board` śledzi `main` / `manifests` w prywatnym repozytorium wskazanym przez
+  `platform.env` na workstation (`GIT_URL`).
+stages.0.objectives.1.text: Application `board` zgłasza `Synced` i `Healthy` dla `~/quest/release-commit`.
+stages.0.objectives.2.text: Deployment `board` kończy rollout w przestrzeni nazw zatoki.
+stages.0.objectives.3.text: Wewnątrz Poda Deployment `board` adres `http://board:8080` zwraca `north-68`.
+stages.0.objectives.4.text: Zdalne `origin/main` odpowiada plikowi `release-commit` na workstation i jest nowym
+  potomkiem bazy zapisanej w `/run/dq/facts/0/baseline-commit`.
+stages.0.objectives.5.text: Zarówno działający Deployment `board`, jak i `manifests/board.yaml` w zdalnym Git używają
+  portu HTTP gotowości `8080`.

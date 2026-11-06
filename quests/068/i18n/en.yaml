@@ -1,37 +1,42 @@
 title: Argo health
-brief: 'The private Application can synchronize, but the committed readiness probe
-  targets 9090 while HTTP listens on 8080. Correct repository/manifests/board.json,
-  commit and push to the disposable Gitea main branch, then refresh Argo. Preserve
-  baseline-commit history. Synced alone is insufficient: the recorded current revision
-  must become Healthy and actually serve north-68. The application-controller may
-  briefly report Progressing while the bad rollout waits.
+brief: |
+  The Git-managed `board` release is not healthy for its consumers.
 
+  Work on the workstation in `~/quest` with `platform.env`, `application.yaml`, `repository/manifests/board.yaml`, `release-commit`.
 
-  Quest files in `~/quest` (some appear in later stages): `platform.env`, `application.json`,
-  `repository/manifests/board.json`, `repository/manifests/service.json`, `baseline-commit`,
-  `release-commit`.
+  **Requirements:**
+  - Application in the bay namespace:
+    - Name: `board`.
+    - Repository: `GIT_URL` from workstation `~/quest/platform.env`.
+    - Branch and source directory: `main`, `manifests`.
+  - Observed Application result:
+    - Status: `Synced`, `Healthy`.
+    - The synchronized revision equals workstation `~/quest/release-commit`.
+  - Deployment in the bay namespace:
+    - Name: `board`.
+    - Rollout complete.
+  - HTTP inside a Pod of Deployment `board`:
+    - Path: `http://board:8080`.
+    - Response: `north-68`.
+  - Published Git result in workstation `~/quest/repository`:
+    - `origin/main` equals workstation `~/quest/release-commit` and differs from the baseline in workstation `/run/dq/facts/0/baseline-commit`.
+    - The baseline remains an ancestor of the published commit.
+  - Readiness HTTP port:
+    - Value `8080` in both live Deployment `board` and `manifests/board.yaml` in `origin/main` of workstation `~/quest/repository`.
 
+  **Verify yourself before Check & finish:**
+  - `kubectl get application board -o custom-columns=NAME:.metadata.name,PROJECT:.spec.project,REPO:.spec.source.repoURL,PATH:.spec.source.path,BRANCH:.spec.source.targetRevision,NAMESPACE:.spec.destination.namespace,SERVER:.spec.destination.server,SYNC:.status.sync.status,HEALTH:.status.health.status,REVISION:.status.sync.revision; cat release-commit` — Shows the supplied repository, `main` / `manifests`, `Synced` / `Healthy`, and a revision equal to the recorded commit.
+  - `git -C repository ls-remote origin refs/heads/main; cat release-commit /run/dq/facts/0/baseline-commit; git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/baseline-commit)" origin/main; printf "ancestry status: %s\n" "$?"; git -C repository show origin/main:manifests/board.yaml | python3 -c 'import sys,yaml; print(yaml.safe_load(sys.stdin)["spec"]["template"]["spec"]["containers"][0]["readinessProbe"]["httpGet"]["port"])'` — Remote and release commit IDs agree and differ from the baseline; ancestry status is `0`; the Git readiness port is `8080`.
+  - `kubectl rollout status deployment/board --timeout=10s; kubectl get deployment board -o jsonpath='{.spec.template.spec.containers[0].readinessProbe.httpGet.port}{"\n"}'; kubectl exec --pod-running-timeout=5s deployment/board -- wget -qO- -T 3 http://board:8080` — Rollout completes, the live readiness port is `8080`, and HTTP returns `north-68`.
 
-  The bay has no Internet or external DNS. Use only supplied files, preloaded images
-  and private services. Change only this bay.
-
-
-  Initial success criteria: The corrected Git commit is synchronized and Healthy,
-  readiness uses 8080 and the real endpoint returns north-68.
-
-
-  The authoritative setup evidence is read-only under `/run/dq/facts/0/`; matching
-  files in `~/quest` are working copies.'
-debrief: Git intent and workload health now agree; a direct live patch would have
-  been reverted by self-heal.
-stages.0.brief: 'Success criteria: The corrected Git commit is synchronized and Healthy,
-  readiness uses 8080 and the real endpoint returns north-68.'
-stages.0.objectives.0.text: The corrected Git commit is synchronized and Healthy,
-  readiness uses 8080 and the real endpoint returns north-68.
+  Setup evidence under workstation `/run/dq/facts/0/` is authoritative; matching files in `~/quest` are working copies.
+debrief: Git intent and workload health now agree; a direct live patch would have been reverted by self-heal.
+stages.0.brief: The published Git revision must be healthy for its consumers.
 hints.0.text: Sync compares desired resources; health describes their observed condition.
-hints.1.text: Read the probe in Git and compare it with the running command.
-hints.2.text: Commit the port correction in Git, refresh and verify revision, readiness
-  and HTTP.
+hints.1.text: The committed readiness probe targets 9090 while HTTP listens on 8080. The application-controller
+  may briefly report Progressing during the failed rollout.
+hints.2.text: Correct repository/manifests/board.yaml, commit and push to the private main branch, then refresh
+  Argo. Preserve baseline-commit history.
 phrases.0: I separated synchronization from application health.
 phrases.1: I repaired the source commit instead of fighting self-heal.
 phrases.2: I verified the observed revision and a real HTTP response.
@@ -43,3 +48,12 @@ questions.1.points.0: Change the authoritative Git source.
 questions.1.points.1: Verify the new observed revision after reconciliation.
 questions.1.points.2: Avoid relying on a transient live patch.
 questions.1.prompt: What is the durable repair when automated self-heal is enabled?
+stages.0.objectives.0.text: Application `board` tracks `main` / `manifests` in the private repository identified
+  by workstation `platform.env` (`GIT_URL`).
+stages.0.objectives.1.text: Application `board` reports `Synced` and `Healthy` at `~/quest/release-commit`.
+stages.0.objectives.2.text: Deployment `board` completes its rollout in the bay namespace.
+stages.0.objectives.3.text: Inside a Pod of Deployment `board`, `http://board:8080` returns `north-68`.
+stages.0.objectives.4.text: Remote `origin/main` matches workstation `release-commit` and is a new descendant of
+  the baseline recorded in `/run/dq/facts/0/baseline-commit`.
+stages.0.objectives.5.text: Both live Deployment `board` and remote Git `manifests/board.yaml` use readiness HTTP
+  port `8080`.

@@ -32,7 +32,15 @@ def test_vault_failure_lines_are_localized(tmp_path, catalog, number, stage, exp
         binary.write_text("#!/bin/sh\nexit 1\n")
         binary.chmod(0o755)
     source = (ROOT / f"quests/{number:03}/check-{stage}.sh").read_text()
-    assert source == catalog.quests[number]["stages"][stage]["objectives"][0]["check"]
+    checks = [goal["check"] for goal in catalog.quests[number]["stages"][stage]["objectives"]]
+    if len(checks) == 1:
+        assert source == checks[0]
+    else:
+        expected_script = "set -euo pipefail\ncd ~/quest\nfailed=0\nset +e\n"
+        for check in checks:
+            expected_script += "(\nset -e\n" + check + "\n)\n[ $? -eq 0 ] || failed=1\n"
+        expected_script += 'exit "$failed"\n'
+        assert source == expected_script
     env = {**os.environ, "HOME": str(home), "PATH": f"{binaries}:{os.environ['PATH']}"}
     result = subprocess.run(
         ["bash", "-c", source], text=True, capture_output=True, env=env, timeout=20

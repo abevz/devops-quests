@@ -1,22 +1,33 @@
 title: Vault policy
-brief: 'Work in `~/quest` with `platform.env`, `reader.hcl` and `apply-policy.sh`. The game Vault reader policy points to
-  a retired KV-v2 path. The manager token can update `rail-reader`; the reader token is used for the read and capability checks.
-  Never print tokens or secret responses. The linked Vault guide explains the policy and read API.
+brief: |
+  The supplied Vault identity cannot obtain the required dispatch configuration.
 
+  Work on the workstation in `~/quest` with `platform.env`, `reader.hcl`, `apply-policy.sh`.
 
-  Grant only `read` on `secret/data/dispatch` in `rail-reader`; keep its policy to that path and capability, with no other
-  grants, because testing a few denied paths cannot prove all paths are denied. Equivalent whitespace, comments and a trailing
-  comma are accepted. Apply the policy, then verify the reader retrieves `north-secret` and `sys/capabilities-self` reports
-  `[read]` for `secret/data/dispatch` and `[deny]` for `secret/data/wrong`, `secret/data/other` and `sys/mounts`. The reader
-  also retains Vault''s default self-inspection policy. Work only in the offline bay.'
-debrief: The effective reader permissions were checked through the API, including denied paths, rather than from policy text
-  alone.
-stages.0.brief: The policy text has only the dispatch read grant, the reader value matches, and all four capability results
-  match the brief.
-stages.0.objectives.0.text: The policy text has only the dispatch read grant, the reader value matches, and all four capability
-  results match the brief.
-hints.0.text: KV-v2 API paths include data between the mount and key.
-hints.1.text: Use the manager only to update the reader policy, then test the reader identity.
+  **Requirements:**
+  - Game Vault at `VAULT_ADDR` from workstation `platform.env`:
+    - Policy: `rail-reader`.
+    - `secret/data/dispatch`: `read`.
+    - No other grants in this policy.
+  - Game Vault at `VAULT_ADDR` from workstation `platform.env`:
+    - The supplied `VAULT_READER_TOKEN` identity reads `north-secret` at KV-v2 `secret/data/dispatch`.
+  - Capabilities of the supplied identity:
+    - `secret/data/dispatch`: `read`.
+    - `secret/data/wrong`, `secret/data/other`, `sys/mounts`: `deny`.
+
+  **Verify yourself before Check & finish:**
+  - `source platform.env; curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value=="north-secret"'` — Prints `true` without printing the secret response.
+  - `source platform.env; curl -fsS -X POST -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") -H 'Content-Type: application/json' --data '{"paths":["secret/data/dispatch","secret/data/wrong","secret/data/other","sys/mounts"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '.data // .'` — Dispatch has only `read`; the three other paths have only `deny`.
+
+  A few denied-path probes alone do not prove that every other path is denied.
+debrief: The effective reader permissions were checked through the API, including denied paths, rather than from
+  policy text alone.
+stages.0.brief: The supplied Vault identity must meet the dispatch access contract.
+hints.0.text: |-
+  KV-v2 API paths include data between the mount and key.
+  The rail-reader policy currently points to a retired KV-v2 path.
+hints.1.text: Use the manager only to update rail-reader. The supplied access identity also retains the default
+  Vault policy for self-inspection.
 hints.2.text: A wildcard would pass the positive read but fail the negative permission checks.
 phrases.0: I tested the reader identity rather than relying on manager access.
 phrases.1: I granted read on one KV-v2 data path without a wildcard.
@@ -28,3 +39,8 @@ diagnostics.cap_secret_data_dispatch: capabilities-self for secret/data/dispatch
 diagnostics.cap_secret_data_wrong: capabilities-self for secret/data/wrong must equal [deny].
 diagnostics.cap_secret_data_other: capabilities-self for secret/data/other must equal [deny].
 diagnostics.cap_sys_mounts: capabilities-self for sys/mounts must equal [deny].
+stages.0.objectives.0.text: Vault policy `rail-reader` grants only `read` on `secret/data/dispatch`, with no other
+  grants.
+stages.0.objectives.1.text: The supplied `VAULT_READER_TOKEN` identity reads value `north-secret` from Vault `secret/data/dispatch`.
+stages.0.objectives.2.text: The supplied Vault identity has `read` on `secret/data/dispatch` and `deny` on `secret/data/wrong`,
+  `secret/data/other` and `sys/mounts`.

@@ -1,36 +1,34 @@
 title: Registry retention
-brief: 'The private game registry holds three distinct manifests: rollback, current
-  and obsolete, listed in release-catalog.json. The proposed retention.json incorrectly
-  selects rollback. Correct it to remove only obsolete and execute bash prune.sh.
-  The helper refuses protected digests and verifies TLS using registry-ca.crt. Current
-  and rollback must remain retrievable by digest. This bay has no Kubernetes; deletion
-  is enabled only for this disposable retention registry. Manifest deletion is not
-  a garbage-collection exercise.
+brief: |
+  The registry has a pending retention request; protected releases must remain available.
 
+  Work on the workstation in `~/quest` with `platform.env`, `registry-ca.crt`, `release-catalog.json`, `retention.json`, `prune.sh`.
 
-  Quest files in `~/quest` (some appear in later stages): `platform.env`, `registry-ca.crt`,
-  `variant-context/Dockerfile`, `release-catalog.json`, `retention.json`, `prune.sh`.
+  **Requirements:**
+  - Authoritative catalog on the workstation:
+    - Path: `/run/dq/facts/0/release-catalog.json`.
+  - File on the workstation:
+    - Path: `~/quest/retention.json`.
+    - The `delete` selection contains only the catalog digest `obsolete`.
+  - Registry manifests over verified TLS:
+    - Registry and credentials come from workstation `~/quest/platform.env`; trusted CA is workstation `~/quest/registry-ca.crt`.
+    - `current`, `rollback`: HTTP `200`; `obsolete`: HTTP `404`.
 
+  **Verify yourself before Check & finish:**
+  - `jq -e --slurpfile c /run/dq/facts/0/release-catalog.json '.delete==[$c[0].obsolete]' retention.json` — Prints `true` for the retained deletion request.
+  - `source platform.env; for kind in current rollback obsolete; do digest=$(jq -r --arg kind "$kind" '.[$kind]' /run/dq/facts/0/release-catalog.json); code=$(curl -sS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' -o /dev/null -w '%{http_code}' "https://$REGISTRY/v2/parcel/manifests/$digest"); printf "%s %s\n" "$kind" "$code"; done` — Reports `current 200`, `rollback 200`, `obsolete 404`, with certificate verification enabled.
 
-  The bay has no Internet or external DNS. Use only supplied files, preloaded images
-  and private services. Change only this bay.
-
-
-  Initial success criteria: Only obsolete returns 404 by digest; current and rollback
-  return 200 with verified TLS.
-
-
-  The authoritative setup evidence is read-only under `/run/dq/facts/0/`; matching
-  files in `~/quest` are working copies.'
+  The check observes manifest deletion, not garbage collection; files in `~/quest` are working copies, while `/run/dq/facts/0/` on the workstation is authoritative.
 debrief: Retention removed an obsolete manifest without breaking a real rollback reference.
-stages.0.brief: 'Success criteria: Only obsolete returns 404 by digest; current and
-  rollback return 200 with verified TLS.'
-stages.0.objectives.0.text: Only obsolete returns 404 by digest; current and rollback
-  return 200 with verified TLS.
+stages.0.brief: The retention result must preserve both protected releases.
 hints.0.text: Tags are mutable references; retention safety depends on protected manifests.
-hints.1.text: Inspect all three digest identities before executing deletion.
-hints.2.text: Select obsolete only, run the guarded helper and test protected digests
-  through the registry API.
+hints.1.text: The proposed retention.json selects rollback. Protected digest identities come from the read-only
+  /run/dq/facts/0/release-catalog.json, not the working copy.
+hints.2.text: Select obsolete only and run bash prune.sh; the helper refuses protected digests and verifies TLS
+  using registry-ca.crt.
 phrases.0: I protected rollback digests before deleting obsolete manifests.
 phrases.1: I verified TLS instead of bypassing certificate checks.
 phrases.2: I distinguished manifest removal from storage garbage collection.
+stages.0.objectives.0.text: Workstation `~/quest/retention.json` selects only the obsolete digest from `/run/dq/facts/0/release-catalog.json`.
+stages.0.objectives.1.text: Over verified TLS, registry manifests `current` and `rollback` return HTTP `200`, and
+  `obsolete` returns `404`, using workstation `/run/dq/facts/0/release-catalog.json`.
