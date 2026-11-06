@@ -1,31 +1,54 @@
 title: NetworkPolicy и исходящий DNS
-brief: "Запрашивающая нагрузка не достигает всех нужных назначений. Восстановите узкий исходящий доступ с сохранением\
-  \ изоляции от закрытого сервиса.\n\nРаботайте в `~/quest` на рабочей станции. Предоставлены файлы: `client.yaml`,\
-  \ `board.yaml`, `closed.yaml`, `service.yaml`, `closed-service.yaml`, `egress.yaml`.\n\n**Requirements:**\n\n\
-  - NetworkPolicy `client-egress` выбирает только Pod с меткой `app=client`, действует только для `Egress` и разрешает\
-  \ только DNS UDP/TCP `53` к DNS Pod kube-system и TCP `8080` к Pod с меткой `app=board` в том же пространстве\
-  \ имён; другие выбирающие политики не расширяют этот исходящий доступ.\n  - Назначения DNS — Pod с меткой `k8s-app=kube-dns`\
-  \ в пространстве имён с меткой `kubernetes.io/metadata.name=kube-system`. Допустимы селекторы `In` с одним значением\
-  \ и переставленные или разделённые правила/порты.\n- Из Deployment `client` A-запрос для `board.$DQ_NAMESPACE.svc.cluster.local.`\
-  \ успешен.\n- Из Deployment `client` адрес `http://board:8080` возвращает `north-119`.\n- IP Service `closed`\
-  \ на порту `8080` возвращает `closed-119` в Deployment `board`, а тот же запрос из Deployment `client` не проходит.\n\
-  \n**Verify yourself before Check & finish:** Выполните эти команды наблюдения из `~/quest` на рабочей станции.\n\
-  \n- Настройки, идентичности и состояние соответствуют требованиям.\n\n  ```sh\n  kubectl get networkpolicies -o\
-  \ yaml\n  kubectl get pods -l app=client --show-labels\n  kubectl exec deployment/client -- nslookup -type=A \"\
-  board.$DQ_NAMESPACE.svc.cluster.local.\"\n  ```\n\n- Разрешённые запросы возвращают соответственно `north-119`\
-  \ и `closed-119`.\n\n  ```sh\n  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080\n  closed=$(kubectl\
-  \ get service closed -o jsonpath='{.spec.clusterIP}')\n  kubectl exec deployment/board -- wget -qO- -T 3 \"http://$closed:8080\"\
-  \n  ```\n\n- Запрос изолированного потребителя завершается с ненулевым кодом.\n\n  ```sh\n  closed=$(kubectl get\
-  \ service closed -o jsonpath='{.spec.clusterIP}')\n  kubectl exec deployment/client -- wget -qO- -T 2 \"http://$closed:8080\"\
-  \n  ```\n\nОдин неудачный запрос не доказывает причину; используйте доступное контрольное назначение как свидетельство\
-  \ и меняйте только эту песочницу."
-debrief: Ограниченные политики egress и наблюдаемые DNS, ответы и неудачный запрос client соответствовали проверкам.
-stages.0.brief: Требуемый исходящий доступ должен работать, а закрытое назначение оставаться заблокированным.
-hints.0.text: Выбор Pod egress policy меняет его поведение исходящего трафика по умолчанию. Выбранный Pod становится
-  изолированным для исходящего трафика. Разрешены все сочетания peer/port внутри правила, а отдельные правила складывают
-  разрешения.
-hints.1.text: DNS нужен UDP, иногда TCP; оба selector поместите в один peer.
-hints.2.text: Разрешите только DNS и порт board, затем проверьте запрещённый сервис.
+brief: |-
+  Запрашивающая нагрузка не достигает всех нужных назначений. Восстановите узкий исходящий доступ с сохранением изоляции от закрытого сервиса.
+
+  Работайте на workstation в `~/quest` с предоставленными файлами:
+  - `board.yaml`, `closed.yaml`, `client.yaml`, `service.yaml`, `closed-service.yaml`, `egress.yaml`.
+
+  **Requirements:**
+
+  - Существующая политика применяется только к исходящему трафику, изолирует только предоставленную нагрузку client и разрешает исходящий трафик только к DNS кластера и предоставленному HTTP-сервису board; никакая другая выбирающая политика не расширяет доступ.
+  - Из Deployment `client` A-запрос для `board.$DQ_NAMESPACE.svc.cluster.local.` успешен.
+  - Из Deployment `client` адрес `http://board:8080` возвращает `north-119`.
+  - IP Service `closed` на порту `8080` возвращает `closed-119` в Deployment `board`, а тот же запрос из Deployment `client` не проходит.
+
+  Один неудачный запрос не доказывает причину; используйте доступное контрольное назначение как свидетельство и меняйте только эту песочницу.
+debrief: Ограниченные политики egress и наблюдаемые DNS, ответы и неудачный запрос client соответствовали
+  проверкам.
+stages.0.brief: Сохраните изоляцию от доступного закрытого сервиса.
+hints.0.text: Выбор Pod egress policy меняет его поведение исходящего трафика по умолчанию. Выбранный
+  Pod становится изолированным для исходящего трафика. Разрешены все сочетания peer/port внутри правила,
+  а отдельные правила складывают разрешения.
+hints.1.text: |-
+  DNS нужен UDP, иногда TCP; оба selector поместите в один peer.
+
+  Изучите предоставленные файлы и живые наблюдения:
+
+  ```sh
+  kubectl get networkpolicies -o yaml
+    kubectl get pods -l app=client --show-labels
+  ```
+hints.2.text: |-
+  Разрешите только DNS и порт board, затем проверьте запрещённый сервис.
+
+  Проверьте результат из `~/quest` на workstation:
+
+  - Разрешённые запросы возвращают соответственно `north-119` и `closed-119`.
+
+    ```sh
+    kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+    closed=$(kubectl get service closed -o jsonpath='{.spec.clusterIP}')
+    kubectl exec deployment/board -- wget -qO- -T 3 "http://$closed:8080"
+    ```
+
+  - Запрос изолированного потребителя завершается с ненулевым кодом.
+
+    ```sh
+    closed=$(kubectl get service closed -o jsonpath='{.spec.clusterIP}')
+    kubectl exec deployment/client -- wget -qO- -T 2 "http://$closed:8080"
+    ```
+
+  A-запрос разрешается успешно: `kubectl exec deployment/client -- nslookup -type=A "board.$DQ_NAMESPACE.svc.cluster.local."`.
 phrases.0: Я сохранил DNS как явную egress-зависимость.
 phrases.1: Я объединил selectors namespace и Pod в одном peer.
 phrases.2: Я проверил разрешённый и запрещённый HTTP.
@@ -45,19 +68,21 @@ diagnostics.named: Должна существовать ровно одна Net
 diagnostics.selector: PodSelector client-egress должен точно совпадать с app:client.
 diagnostics.types: policyTypes client-egress должен содержать только Egress.
 diagnostics.egress: Peers и порты client-egress должны использовать ограниченную форму из описания задания.
-diagnostics.unexpected: У client-egress не должно быть лишнего потока; исходная диагностика указывает назначение,
-  протокол и порт.
-diagnostics.other_egress: Другая NetworkPolicy, выбирающая client, не должна разрешать лишний исходящий трафик;
-  её имя указано в исходной диагностике.
-diagnostics.other_invalid: У другой NetworkPolicy неверный selector или egress; её имя указано в исходной диагностике.
+diagnostics.unexpected: У client-egress не должно быть лишнего потока; исходная диагностика указывает
+  назначение, протокол и порт.
+diagnostics.other_egress: Другая NetworkPolicy, выбирающая client, не должна разрешать лишний исходящий
+  трафик; её имя указано в исходной диагностике.
+diagnostics.other_invalid: У другой NetworkPolicy неверный selector или egress; её имя указано в исходной
+  диагностике.
 diagnostics.invalid_input: NetworkPolicy и метки Pod client должны читаться в ожидаемом формате.
 diagnostics.missing_dns_udp_53: client-egress должен разрешать dns UDP 53.
 diagnostics.missing_dns_tcp_53: client-egress должен разрешать dns TCP 53.
 diagnostics.missing_board_tcp_8080: client-egress должен разрешать board TCP 8080.
-stages.0.objectives.0.text: NetworkPolicy `client-egress` выбирает только Pod с меткой `app=client`, действует только
-  для `Egress` и разрешает только DNS UDP/TCP `53` к DNS Pod kube-system и TCP `8080` к Pod с меткой `app=board`
-  в том же пространстве имён; другие выбирающие политики не расширяют этот исходящий доступ.
-stages.0.objectives.1.text: Из Deployment `client` A-запрос для `board.$DQ_NAMESPACE.svc.cluster.local.` успешен.
+stages.0.objectives.0.text: Существующая политика применяется только к исходящему трафику, изолирует только
+  предоставленную нагрузку client и разрешает исходящий трафик только к DNS кластера и предоставленному
+  HTTP-сервису board; никакая другая выбирающая политика не расширяет доступ.
+stages.0.objectives.1.text: Из Deployment `client` A-запрос для `board.$DQ_NAMESPACE.svc.cluster.local.`
+  успешен.
 stages.0.objectives.2.text: Из Deployment `client` адрес `http://board:8080` возвращает `north-119`.
-stages.0.objectives.3.text: IP Service `closed` на порту `8080` возвращает `closed-119` в Deployment `board`, а
-  тот же запрос из Deployment `client` не проходит.
+stages.0.objectives.3.text: IP Service `closed` на порту `8080` возвращает `closed-119` в Deployment `board`,
+  а тот же запрос из Deployment `client` не проходит.

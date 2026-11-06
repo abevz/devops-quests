@@ -1,32 +1,57 @@
 title: Diagnose der Prometheus-Metrikerfassung
-brief: "Das Monitoring zeigt die erwarteten Board-Warteschlangenergebnisse nicht. Stellen Sie echten Scrape-Zustand\
-  \ und die vereinbarten Gauge-Beobachtungen her.\n\nArbeiten Sie in `~/quest` auf der Workstation. Bereitgestellte\
-  \ Dateien: `metrics.yaml`, `board.yaml`, `service.yaml`, `client.yaml`, `prometheus-target.json`.\n\n**Requirements:**\n\
-  \n- Service `board` wählt nur Pods mit Label `app=board` und verbindet seinen deklarierten HTTP-Port mit dem Anwendungslistener.\n\
-  \  - Der deklarierte Service-HTTP-Port ist `8080`; der Exporter-Listener steht in `board.yaml`. Beobachten Sie\
-  \ die private Prometheus-URL aus `prometheus-target.json` auf der Workstation; Scrape-Ziel ist `board:8080/metrics.txt`.\n\
-  - Das private Prometheus meldet ein `up`-Ergebnis mit Wert `1` für Job `board`; mindestens ein aktives `board`-Ziel\
-  \ ist `up` ohne Scrape-Fehler.\n- Für Job `board` und Route `north` hat `station_queue_depth` genau `2` Serien\
-  \ mit Summe `7`; beide Aggregatabfragen sind erfolgreich und liefern ein Ergebnis.\n\n**Verify yourself before\
-  \ Check & finish:** Führen Sie diese Beobachtungsbefehle aus `~/quest` auf der Workstation aus.\n\n- Der Service\
-  \ entspricht seinem deklarierten Listener-Vertrag; ein aktives `board`-Ziel ist `up` ohne Scrape-Fehler.\n\n \
-  \ ```sh\n  kubectl get service board -o yaml\n  url=$(jq -r .url prometheus-target.json)\n  kubectl exec deployment/client\
-  \ -- wget -qO- -T 3 \"$url/api/v1/targets?state=active\"\n  ```\n\n- Die Abfrage ist erfolgreich und liefert ein\
-  \ Ergebnis mit Wert `1`.\n\n  ```sh\n  url=$(jq -r .url prometheus-target.json)\n  kubectl exec deployment/client\
-  \ -- wget -qO- -T 3 \"$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D\"\n  ```\n\n- Beide Abfragen sind erfolgreich\
-  \ mit einem Ergebnis: Summe `7`, Anzahl `2`.\n\n  ```sh\n  url=$(jq -r .url prometheus-target.json)\n  for aggregate\
-  \ in sum count; do\n    kubectl exec deployment/client -- wget -qO- -T 3 \"$url/api/v1/query?query=$aggregate%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29\"\
-  \n  done\n  ```\n\nDie Gauge ist ein synthetischer Trainingsdatensatz; Prometheus und sein Zwei-Sekunden-Scrape\
-  \ sind echt. Die Prüfungen beobachten aktuelle Service-/Abfrageergebnisse, nicht Änderungsverlauf oder Abfrageausführer."
+brief: |-
+  Das Monitoring zeigt die erwarteten Board-Warteschlangenergebnisse nicht. Stellen Sie echten Scrape-Zustand und die vereinbarten Gauge-Beobachtungen her.
+
+  Arbeiten Sie auf der Workstation in `~/quest` mit den bereitgestellten Dateien:
+  - `metrics.yaml`, `board.yaml`, `service.yaml`, `client.yaml`, `prometheus-target.json`.
+
+  **Requirements:**
+
+  - Der vorhandene board-Service erreicht nur den bereitgestellten board-Workload über seine deklarierte HTTP-Schnittstelle und den Anwendungs-Listener.
+  - Das private Prometheus meldet ein `up`-Ergebnis mit Wert `1` für Job `board`; mindestens ein aktives `board`-Ziel ist `up` ohne Scrape-Fehler.
+  - Für Job `board` und Route `north` hat `station_queue_depth` genau `2` Serien mit Summe `7`; beide Aggregatabfragen sind erfolgreich und liefern ein Ergebnis.
+
+  Die Gauge ist ein synthetischer Trainingsdatensatz; Prometheus und sein Zwei-Sekunden-Scrape sind echt. Die Prüfungen beobachten aktuelle Service-/Abfrageergebnisse, nicht Änderungsverlauf oder Abfrageausführer.
 debrief: Eine echte Erholung von scrape und query; readiness allein würde die aufgezeichneten Anwendungsmetriken
   nicht beweisen.
-stages.0.brief: Der echte Scrape muss gesund sein und die Warteschlangenabfragen die geforderten Ergebnisse zeigen.
+stages.0.brief: Belegen Sie tatsächliche Scrape- und Gauge-Beobachtungen statt abgeleiteter Verkehrshistorie.
 hints.0.text: Separate exporter-Antwort, Service-Weiterleitung und scrape-Zustand.
-hints.1.text: Ein up-Wert von Null bedeutet, dass der scrape fehlgeschlagen ist, nicht, dass die Warteschlange leer
-  ist. Warteschlangentiefe ist eine Gauge des aktuellen Werts; `rate()` ist dafür ungeeignet.
-hints.2.text: Reparieren Sie den Port Service backend, warten Sie auf einen scrape und fragen Sie sowohl count als
-  auch sum ab. Der Board-Listener bedient `8080`, das vorgegebene Service-Backend ist `8099`; setzen Sie nur targetPort
-  auf `8080` und warten Sie auf einen Scrape.
+hints.1.text: |-
+  Ein up-Wert von Null bedeutet, dass der scrape fehlgeschlagen ist, nicht, dass die Warteschlange leer ist. Warteschlangentiefe ist eine Gauge des aktuellen Werts; `rate()` ist dafür ungeeignet.
+
+  Prüfen Sie die bereitgestellten Eingaben und laufenden Beobachtungen:
+
+  ```sh
+  kubectl get service board -o yaml
+  cat prometheus-target.json
+  ```
+hints.2.text: |-
+  Reparieren Sie den Port Service backend, warten Sie auf einen scrape und fragen Sie sowohl count als auch sum ab. Der Board-Listener bedient `8080`, das vorgegebene Service-Backend ist `8099`; setzen Sie nur targetPort auf `8080` und warten Sie auf einen Scrape.
+
+  Prüfen Sie das Ergebnis in `~/quest` auf der Workstation:
+
+  - Die Abfrage ist erfolgreich und liefert ein Ergebnis mit Wert `1`.
+
+    ```sh
+    url=$(jq -r .url prometheus-target.json)
+    kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
+    ```
+
+  - Beide Abfragen sind erfolgreich mit einem Ergebnis: Summe `7`, Anzahl `2`.
+
+    ```sh
+    url=$(jq -r .url prometheus-target.json)
+    for aggregate in sum count; do
+      kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=$aggregate%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29"
+    done
+    ```
+
+  Ein aktives board-Ziel ist up ohne Scrape-Fehler:
+
+  ```sh
+  url=$(jq -r .url prometheus-target.json)
+  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/targets?state=active"
+  ```
 phrases.0: Ich habe den Fehler scrape über den Fehler Service verfolgt.
 phrases.1: Ich habe up und die aufgezeichnete Metrik labels überprüft.
 phrases.2: Ich habe die für einen gauge geeignete Aggregation verwendet.
@@ -49,9 +74,9 @@ diagnostics.sum_value: Der Wert der sum-Abfrage muss 7 sein.
 diagnostics.count_status: Die count-Abfrage muss erfolgreich sein.
 diagnostics.count_count: Die count-Abfrage muss genau ein Ergebnis liefern.
 diagnostics.count_value: Der Wert der count-Abfrage muss 2 sein.
-stages.0.objectives.0.text: Service `board` wählt nur Pods mit Label `app=board` und verbindet seinen deklarierten
-  HTTP-Port mit dem Anwendungslistener.
-stages.0.objectives.1.text: Das private Prometheus meldet ein `up`-Ergebnis mit Wert `1` für Job `board`; mindestens
-  ein aktives `board`-Ziel ist `up` ohne Scrape-Fehler.
-stages.0.objectives.2.text: Für Job `board` und Route `north` hat `station_queue_depth` genau `2` Serien mit Summe
-  `7`; beide Aggregatabfragen sind erfolgreich und liefern ein Ergebnis.
+stages.0.objectives.0.text: Der vorhandene board-Service erreicht nur den bereitgestellten board-Workload
+  über seine deklarierte HTTP-Schnittstelle und den Anwendungs-Listener.
+stages.0.objectives.1.text: Das private Prometheus meldet ein `up`-Ergebnis mit Wert `1` für Job `board`;
+  mindestens ein aktives `board`-Ziel ist `up` ohne Scrape-Fehler.
+stages.0.objectives.2.text: Für Job `board` und Route `north` hat `station_queue_depth` genau `2` Serien
+  mit Summe `7`; beide Aggregatabfragen sind erfolgreich und liefern ein Ergebnis.

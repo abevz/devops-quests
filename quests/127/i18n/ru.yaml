@@ -1,29 +1,57 @@
 title: Диагностика scrape Prometheus
-brief: "Мониторинг не показывает ожидаемые результаты очереди board. Восстановите реальный сбор метрик и согласованные\
-  \ наблюдения gauge.\n\nРаботайте в `~/quest` на рабочей станции. Предоставлены файлы: `metrics.yaml`, `board.yaml`,\
-  \ `service.yaml`, `client.yaml`, `prometheus-target.json`.\n\n**Requirements:**\n\n- Service `board` выбирает\
-  \ только Pod с меткой `app=board` и соединяет объявленный HTTP-порт со слушателем приложения.\n  - Объявленный\
-  \ HTTP-порт Service — `8080`; слушатель экспортера задан в `board.yaml`. Наблюдайте частный URL Prometheus из\
-  \ `prometheus-target.json` на рабочей станции; цель сбора — `board:8080/metrics.txt`.\n- Частный Prometheus сообщает\
-  \ один результат `up` со значением `1` для задания `board`, и хотя бы одна активная цель `board` имеет `up` без\
-  \ ошибки сбора.\n- Для задания `board` и маршрута `north` метрика `station_queue_depth` имеет ровно `2` ряда с\
-  \ суммой `7`; оба агрегатных запроса успешны и дают один результат.\n\n**Verify yourself before Check & finish:**\
-  \ Выполните эти команды наблюдения из `~/quest` на рабочей станции.\n\n- Service соответствует объявленному контракту\
-  \ слушателя; активная цель `board` имеет `up` без ошибки сбора.\n\n  ```sh\n  kubectl get service board -o yaml\n\
-  \  url=$(jq -r .url prometheus-target.json)\n  kubectl exec deployment/client -- wget -qO- -T 3 \"$url/api/v1/targets?state=active\"\
-  \n  ```\n\n- Запрос успешен и даёт один результат со значением `1`.\n\n  ```sh\n  url=$(jq -r .url prometheus-target.json)\n\
-  \  kubectl exec deployment/client -- wget -qO- -T 3 \"$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D\"\n  ```\n\
-  \n- Оба запроса успешны и дают один результат: сумма `7`, количество `2`.\n\n  ```sh\n  url=$(jq -r .url prometheus-target.json)\n\
-  \  for aggregate in sum count; do\n    kubectl exec deployment/client -- wget -qO- -T 3 \"$url/api/v1/query?query=$aggregate%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29\"\
-  \n  done\n  ```\n\nGauge — синтетические учебные данные; Prometheus и его сбор раз в две секунды реальны. Проверки\
-  \ наблюдают текущие результаты Service/запросов, а не историю правок или автора запросов."
-debrief: Настоящие scrape и query подтвердили восстановление; одной readiness недостаточно для метрик приложения.
-stages.0.brief: Реальный сбор должен быть исправен, а запросы очереди показывать требуемые результаты.
+brief: |-
+  Мониторинг не показывает ожидаемые результаты очереди board. Восстановите реальный сбор метрик и согласованные наблюдения gauge.
+
+  Работайте на workstation в `~/quest` с предоставленными файлами:
+  - `metrics.yaml`, `board.yaml`, `service.yaml`, `client.yaml`, `prometheus-target.json`.
+
+  **Requirements:**
+
+  - Существующий Service board достигает только предоставленной нагрузки board через объявленный HTTP-интерфейс и listener приложения.
+  - Частный Prometheus сообщает один результат `up` со значением `1` для задания `board`, и хотя бы одна активная цель `board` имеет `up` без ошибки сбора.
+  - Для задания `board` и маршрута `north` метрика `station_queue_depth` имеет ровно `2` ряда с суммой `7`; оба агрегатных запроса успешны и дают один результат.
+
+  Gauge — синтетические учебные данные; Prometheus и его сбор раз в две секунды реальны. Проверки наблюдают текущие результаты Service/запросов, а не историю правок или автора запросов.
+debrief: Настоящие scrape и query подтвердили восстановление; одной readiness недостаточно для метрик
+  приложения.
+stages.0.brief: Подтвердите реальные наблюдения scrape и gauge, а не предполагаемую историю трафика.
 hints.0.text: Разделите ответ exporter, перенаправление Service и здоровье scrape.
-hints.1.text: up равный нулю означает сбой scrape, а не пустую очередь. Глубина очереди — gauge текущего значения,
-  поэтому `rate()` для неё не подходит.
-hints.2.text: Исправьте backend port Service, дождитесь scrape и проверьте count и sum. Слушатель board обслуживает
-  `8080`, а предоставленный backend Service — `8099`; восстановите только targetPort на `8080` и дождитесь сбора.
+hints.1.text: |-
+  up равный нулю означает сбой scrape, а не пустую очередь. Глубина очереди — gauge текущего значения, поэтому `rate()` для неё не подходит.
+
+  Изучите предоставленные файлы и живые наблюдения:
+
+  ```sh
+  kubectl get service board -o yaml
+  cat prometheus-target.json
+  ```
+hints.2.text: |-
+  Исправьте backend port Service, дождитесь scrape и проверьте count и sum. Слушатель board обслуживает `8080`, а предоставленный backend Service — `8099`; восстановите только targetPort на `8080` и дождитесь сбора.
+
+  Проверьте результат из `~/quest` на workstation:
+
+  - Запрос успешен и даёт один результат со значением `1`.
+
+    ```sh
+    url=$(jq -r .url prometheus-target.json)
+    kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
+    ```
+
+  - Оба запроса успешны и дают один результат: сумма `7`, количество `2`.
+
+    ```sh
+    url=$(jq -r .url prometheus-target.json)
+    for aggregate in sum count; do
+      kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=$aggregate%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29"
+    done
+    ```
+
+  Активная цель board имеет статус up без ошибки scrape:
+
+  ```sh
+  url=$(jq -r .url prometheus-target.json)
+  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/targets?state=active"
+  ```
 phrases.0: Я проследил сбой scrape через Service.
 phrases.1: Я проверил up и labels собранных метрик.
 phrases.2: Я применил агрегацию, подходящую gauge.
@@ -46,9 +74,9 @@ diagnostics.sum_value: Значение запроса sum должно быть
 diagnostics.count_status: Запрос count должен завершиться успешно.
 diagnostics.count_count: Запрос count должен вернуть ровно один результат.
 diagnostics.count_value: Значение запроса count должно быть 2.
-stages.0.objectives.0.text: Service `board` выбирает только Pod с меткой `app=board` и соединяет объявленный HTTP-порт
-  со слушателем приложения.
-stages.0.objectives.1.text: Частный Prometheus сообщает один результат `up` со значением `1` для задания `board`,
-  и хотя бы одна активная цель `board` имеет `up` без ошибки сбора.
-stages.0.objectives.2.text: Для задания `board` и маршрута `north` метрика `station_queue_depth` имеет ровно `2`
-  ряда с суммой `7`; оба агрегатных запроса успешны и дают один результат.
+stages.0.objectives.0.text: Существующий Service board достигает только предоставленной нагрузки board
+  через объявленный HTTP-интерфейс и listener приложения.
+stages.0.objectives.1.text: Частный Prometheus сообщает один результат `up` со значением `1` для задания
+  `board`, и хотя бы одна активная цель `board` имеет `up` без ошибки сбора.
+stages.0.objectives.2.text: Для задания `board` и маршрута `north` метрика `station_queue_depth` имеет
+  ровно `2` ряда с суммой `7`; оба агрегатных запроса успешны и дают один результат.

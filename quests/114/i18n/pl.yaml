@@ -1,28 +1,48 @@
 title: Granice tokenów konta Service
-brief: "Reader nie może odczytać wymaganych danych API. Przywróć wąsko ograniczony dostęp bez ujawniania poświadczeń.\n\
-  \nPracuj w `~/quest` na stacji roboczej. Dostarczone pliki: `reader-sa.yaml`, `role.yaml`, `binding.yaml`, `route.yaml`,\
-  \ `reader.yaml`, `api-ca.pem`, `api-endpoint`.\n\n**Requirements:**\n\n- Deployment `reader` wyłącza automatyczne\
-  \ montowanie tokena i projektuje token dla odbiorcy API w `/credential/token` wewnątrz kontenera z żądanym czasem\
-  \ życia `600` sekund.\n  - Plik tokena należy do kontenera reader; jego względna ścieżka projekcji to `token`.\
-  \ Zachowaj poufność poświadczeń.\n- Role `reader` pozwala tylko na `get` ConfigMap `route` z głównego API.\n-\
-  \ Z zamontowanym tokenem reader i weryfikacją CA żądanie GET ConfigMap `route` zwraca HTTP `200` z trasą `north-114`.\n\
-  - Te same dane uwierzytelniające reader otrzymują HTTP `403` przy listowaniu ConfigMap i Secret oraz odczycie\
-  \ ConfigMap `offlimits`.\n\n**Verify yourself before Check & finish:** Wykonaj te polecenia obserwacji z `~/quest`\
-  \ na stacji roboczej.\n\n- Ustawienia, tożsamość i stan odpowiadają wymaganiom.\n\n  ```sh\n  kubectl get deployment\
-  \ reader -o yaml\n  kubectl get role reader -o yaml\n  ```\n\n- Wskazana trasa zwraca `north-114` i HTTP `200`;\
-  \ pozostałe trzy żądania zwracają HTTP `403`. Nie wyświetlaj ani nie zapisuj tokena.\n\n  ```sh\n  api=$(cat api-endpoint)\n\
-  \  token=$(kubectl exec deployment/reader -- cat /credential/token)\n  for path in configmaps/route configmaps\
-  \ secrets configmaps/offlimits; do\n    printf 'header = \"Authorization: Bearer %s\"\\n' \"$token\" |\n     \
-  \ curl --config - --cacert api-ca.pem -sS -w '\\nHTTP %{http_code}\\n' \\\n      \"$api/api/v1/namespaces/$DQ_NAMESPACE/$path\"\
-  \n  done\n  unset token\n  ```\n\nKontrole obejmują te żądania i bieżącą Role, nie wszystkie możliwe uprawnienia\
-  \ ani historię poleceń."
-debrief: Krótkotrwała autoryzacja projected credentials i najniższe uprawnienia rozwiązują różne części dostępu
-  API.
-stages.0.brief: Reader musi odczytywać wskazaną trasę, a szersze żądania mają pozostać zabronione.
+brief: |-
+  Reader nie może odczytać wymaganych danych API. Przywróć wąsko ograniczony dostęp bez ujawniania poświadczeń.
+
+  Pracuj na workstation w `~/quest` z dostarczonymi plikami:
+  - `reader-sa.yaml`, `role.yaml`, `binding.yaml`, `route.yaml`, `reader.yaml`, `api-ca.pem`, `api-endpoint`.
+
+  **Requirements:**
+
+  - W Deployment `reader` zamontowanym poświadczeniem API jest prywatny token projekcyjny w `/credential/token`, ważny dla API i żądany na `600` sekund; automatyczne montowanie pozostaje wyłączone.
+  - Dostarczony Role przyznaje tylko odczyt istniejącej konfiguracji trasy po nazwie.
+  - Używając zamontowanego poświadczenia i weryfikacji CA, reader otrzymuje HTTP `200` i trasę `north-114` z istniejącej konfiguracji.
+  - To samo poświadczenie reader otrzymuje HTTP `403` dla list ConfigMap, list Secret i oddzielnej chronionej konfiguracji.
+
+  Kontrole obejmują te żądania i bieżącą Role, nie wszystkie możliwe uprawnienia ani historię poleceń.
+debrief: Krótkotrwała autoryzacja projected credentials i najniższe uprawnienia rozwiązują różne części
+  dostępu API.
+stages.0.brief: Zachowaj poufność poświadczenia reader i weryfikuj CA API.
 hints.0.text: Uwierzytelnianie sprawdza audience przed autoryzacją RBAC.
-hints.1.text: Projektowany wolumen żąda tokenu dla jednego określonego odbiorcy.
-hints.2.text: Naprawiaj tylko audience, poczekaj na wymianę i użyj dostarczonego CA dla HTTPS. Dostarczony odbiorca
-  wskazuje wycofaną usługę. Odbiorca API to `https://kubernetes.default.svc.cluster.local`.
+hints.1.text: |-
+  Projektowany wolumen żąda tokenu dla jednego określonego odbiorcy.
+
+  Sprawdź dostarczone dane i bieżące obserwacje:
+
+  ```sh
+  kubectl get deployment reader -o yaml
+    kubectl get role reader -o yaml
+  ```
+hints.2.text: |-
+  Naprawiaj tylko audience, poczekaj na wymianę i użyj dostarczonego CA dla HTTPS. Dostarczony odbiorca wskazuje wycofaną usługę. Odbiorca API to `https://kubernetes.default.svc.cluster.local`.
+
+  Sprawdź wynik z `~/quest` na workstation:
+
+  - Wskazana trasa zwraca `north-114` i HTTP `200`; pozostałe trzy żądania zwracają HTTP `403`. Nie wyświetlaj ani nie zapisuj tokena.
+
+    ```sh
+    api=$(cat api-endpoint)
+    token=$(kubectl exec deployment/reader -- cat /credential/token)
+    for path in configmaps/route configmaps secrets configmaps/offlimits; do
+      printf 'header = "Authorization: Bearer %s"\n' "$token" |
+        curl --config - --cacert api-ca.pem -sS -w '\nHTTP %{http_code}\n' \
+        "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
+    done
+    unset token
+    ```
 phrases.0: Sprawdziłem token audience bez ujawniania credentials.
 phrases.1: Użyłem CA zweryfikowanego HTTPS do prawdziwego żądania API.
 phrases.2: Przetestowałem dozwolone i zabronione operacje.
@@ -41,10 +61,12 @@ diagnostics.value: configmaps/route data.route musi być równe north-114.
 diagnostics.denied_configmaps: reader GET configmaps musi zwrócić HTTP 403.
 diagnostics.denied_secrets: reader GET secrets musi zwrócić HTTP 403.
 diagnostics.denied_configmaps_offlimits: reader GET configmaps/offlimits musi zwrócić HTTP 403.
-stages.0.objectives.0.text: Deployment `reader` wyłącza automatyczne montowanie tokena i projektuje token dla odbiorcy
-  API w `/credential/token` wewnątrz kontenera z żądanym czasem życia `600` sekund.
-stages.0.objectives.1.text: Role `reader` pozwala tylko na `get` ConfigMap `route` z głównego API.
-stages.0.objectives.2.text: Z zamontowanym tokenem reader i weryfikacją CA żądanie GET ConfigMap `route` zwraca
-  HTTP `200` z trasą `north-114`.
-stages.0.objectives.3.text: Te same dane uwierzytelniające reader otrzymują HTTP `403` przy listowaniu ConfigMap
-  i Secret oraz odczycie ConfigMap `offlimits`.
+stages.0.objectives.0.text: W Deployment `reader` zamontowanym poświadczeniem API jest prywatny token
+  projekcyjny w `/credential/token`, ważny dla API i żądany na `600` sekund; automatyczne montowanie pozostaje
+  wyłączone.
+stages.0.objectives.1.text: Dostarczony Role przyznaje tylko odczyt istniejącej konfiguracji trasy po
+  nazwie.
+stages.0.objectives.2.text: Używając zamontowanego poświadczenia i weryfikacji CA, reader otrzymuje HTTP
+  `200` i trasę `north-114` z istniejącej konfiguracji.
+stages.0.objectives.3.text: To samo poświadczenie reader otrzymuje HTTP `403` dla list ConfigMap, list
+  Secret i oddzielnej chronionej konfiguracji.

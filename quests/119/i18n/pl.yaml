@@ -1,31 +1,54 @@
 title: Wyjście NetworkPolicy i DNS
-brief: "Obciążenie wysyłające żądania nie osiąga wszystkich wymaganych celów. Przywróć wąsko ograniczony ruch wychodzący,\
-  \ zachowując izolację od zamkniętej usługi.\n\nPracuj w `~/quest` na stacji roboczej. Dostarczone pliki: `client.yaml`,\
-  \ `board.yaml`, `closed.yaml`, `service.yaml`, `closed-service.yaml`, `egress.yaml`.\n\n**Requirements:**\n\n\
-  - NetworkPolicy `client-egress` wybiera tylko Pody z etykietą `app=client`, dotyczy tylko `Egress` i zezwala jedynie\
-  \ na DNS UDP/TCP `53` do Podów DNS kube-system oraz TCP `8080` do Podów z etykietą `app=board` w tym samym namespace;\
-  \ inne wybierające polityki nie rozszerzają tego wyjścia.\n  - Cele DNS to Pody z etykietą `k8s-app=kube-dns`\
-  \ w namespace z etykietą `kubernetes.io/metadata.name=kube-system`. Dozwolone są selektory `In` z jedną wartością\
-  \ oraz zmieniona kolejność lub podział reguł/portów.\n- Z Deployment `client` zapytanie A o `board.$DQ_NAMESPACE.svc.cluster.local.`\
-  \ kończy się powodzeniem.\n- Z Deployment `client` adres `http://board:8080` zwraca `north-119`.\n- IP Service\
-  \ `closed` na porcie `8080` zwraca `closed-119` do Deployment `board`, a takie samo żądanie z Deployment `client`\
-  \ kończy się niepowodzeniem.\n\n**Verify yourself before Check & finish:** Wykonaj te polecenia obserwacji z `~/quest`\
-  \ na stacji roboczej.\n\n- Ustawienia, tożsamości i stan odpowiadają wymaganiom.\n\n  ```sh\n  kubectl get networkpolicies\
-  \ -o yaml\n  kubectl get pods -l app=client --show-labels\n  kubectl exec deployment/client -- nslookup -type=A\
-  \ \"board.$DQ_NAMESPACE.svc.cluster.local.\"\n  ```\n\n- Dozwolone żądania zwracają odpowiednio `north-119` i\
-  \ `closed-119`.\n\n  ```sh\n  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080\n  closed=$(kubectl\
-  \ get service closed -o jsonpath='{.spec.clusterIP}')\n  kubectl exec deployment/board -- wget -qO- -T 3 \"http://$closed:8080\"\
-  \n  ```\n\n- Żądanie izolowanego odbiorcy kończy się niezerowym kodem wyjścia.\n\n  ```sh\n  closed=$(kubectl\
-  \ get service closed -o jsonpath='{.spec.clusterIP}')\n  kubectl exec deployment/client -- wget -qO- -T 2 \"http://$closed:8080\"\
-  \n  ```\n\nSamo nieudane żądanie nie dowodzi przyczyny; użyj dostępnego celu kontrolnego jako dowodu i zmieniaj\
-  \ tylko tę piaskownicę."
-debrief: Ograniczone polityki egress oraz zaobserwowane DNS, odpowiedzi i nieudane żądanie client odpowiadały kontrolom.
-stages.0.brief: Wymagany ruch wychodzący ma działać, a zamknięty cel ma pozostać zablokowany.
-hints.0.text: Wybranie Pod z polityką ruchu wychodzącego zmienia jego domyślne zachowanie podczas ruchu wychodzącego.
-  Wybrany Pod staje się izolowany dla ruchu wychodzącego. Każda kombinacja peer/port w regule jest dozwolona, a
-  osobne reguły sumują uprawnienia.
-hints.1.text: DNS potrzebuje UDP, a czasami TCP; umieść oba selektory w tym samym peer.
-hints.2.text: Zezwól tylko na port DNS i board, a następnie przetestuj także zabronioną usługę.
+brief: |-
+  Obciążenie wysyłające żądania nie osiąga wszystkich wymaganych celów. Przywróć wąsko ograniczony ruch wychodzący, zachowując izolację od zamkniętej usługi.
+
+  Pracuj na workstation w `~/quest` z dostarczonymi plikami:
+  - `board.yaml`, `closed.yaml`, `client.yaml`, `service.yaml`, `closed-service.yaml`, `egress.yaml`.
+
+  **Requirements:**
+
+  - Istniejąca polityka egress dotyczy tylko ruchu wychodzącego, izoluje tylko dostarczone obciążenie client i zezwala na ruch wychodzący tylko do DNS klastra oraz dostarczonej usługi HTTP board; żadna inna wybierająca polityka nie rozszerza dostępu.
+  - Z Deployment `client` zapytanie A o `board.$DQ_NAMESPACE.svc.cluster.local.` kończy się powodzeniem.
+  - Z Deployment `client` adres `http://board:8080` zwraca `north-119`.
+  - IP Service `closed` na porcie `8080` zwraca `closed-119` do Deployment `board`, a takie samo żądanie z Deployment `client` kończy się niepowodzeniem.
+
+  Samo nieudane żądanie nie dowodzi przyczyny; użyj dostępnego celu kontrolnego jako dowodu i zmieniaj tylko tę piaskownicę.
+debrief: Ograniczone polityki egress oraz zaobserwowane DNS, odpowiedzi i nieudane żądanie client odpowiadały
+  kontrolom.
+stages.0.brief: Zachowaj izolację od osiągalnej zamkniętej usługi.
+hints.0.text: Wybranie Pod z polityką ruchu wychodzącego zmienia jego domyślne zachowanie podczas ruchu
+  wychodzącego. Wybrany Pod staje się izolowany dla ruchu wychodzącego. Każda kombinacja peer/port w regule
+  jest dozwolona, a osobne reguły sumują uprawnienia.
+hints.1.text: |-
+  DNS potrzebuje UDP, a czasami TCP; umieść oba selektory w tym samym peer.
+
+  Sprawdź dostarczone dane i bieżące obserwacje:
+
+  ```sh
+  kubectl get networkpolicies -o yaml
+    kubectl get pods -l app=client --show-labels
+  ```
+hints.2.text: |-
+  Zezwól tylko na port DNS i board, a następnie przetestuj także zabronioną usługę.
+
+  Sprawdź wynik z `~/quest` na workstation:
+
+  - Dozwolone żądania zwracają odpowiednio `north-119` i `closed-119`.
+
+    ```sh
+    kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+    closed=$(kubectl get service closed -o jsonpath='{.spec.clusterIP}')
+    kubectl exec deployment/board -- wget -qO- -T 3 "http://$closed:8080"
+    ```
+
+  - Żądanie izolowanego odbiorcy kończy się niezerowym kodem wyjścia.
+
+    ```sh
+    closed=$(kubectl get service closed -o jsonpath='{.spec.clusterIP}')
+    kubectl exec deployment/client -- wget -qO- -T 2 "http://$closed:8080"
+    ```
+
+  Zapytanie A kończy się powodzeniem: `kubectl exec deployment/client -- nslookup -type=A "board.$DQ_NAMESPACE.svc.cluster.local."`.
 phrases.0: Zachowałem DNS jako jawną zależność wyjścia.
 phrases.1: Połączyłem przestrzeń nazw i selektory Pod w jednym peer.
 phrases.2: Przetestowałem zarówno dozwolone, jak i zabronione ścieżki HTTP.
@@ -45,20 +68,21 @@ diagnostics.named: Musi istnieć dokładnie jedna NetworkPolicy o nazwie client-
 diagnostics.selector: PodSelector client-egress musi odpowiadać dokładnie app:client.
 diagnostics.types: policyTypes client-egress musi zawierać tylko Egress.
 diagnostics.egress: Peers i porty client-egress muszą używać ograniczonej formy opisanej w treści.
-diagnostics.unexpected: client-egress nie może mieć nieoczekiwanego ruchu; oryginalny komunikat podaje cel, protokół
-  i port.
-diagnostics.other_egress: Inna NetworkPolicy wybierająca klienta (client) nie może zezwalać na dodatkowy ruch wychodzący;
-  jej nazwę podaje oryginalny komunikat.
-diagnostics.other_invalid: Inna NetworkPolicy ma niepoprawny selector lub egress; jej nazwę podaje oryginalny komunikat.
+diagnostics.unexpected: client-egress nie może mieć nieoczekiwanego ruchu; oryginalny komunikat podaje
+  cel, protokół i port.
+diagnostics.other_egress: Inna NetworkPolicy wybierająca klienta (client) nie może zezwalać na dodatkowy
+  ruch wychodzący; jej nazwę podaje oryginalny komunikat.
+diagnostics.other_invalid: Inna NetworkPolicy ma niepoprawny selector lub egress; jej nazwę podaje oryginalny
+  komunikat.
 diagnostics.invalid_input: NetworkPolicy i etykiety Podów client muszą być czytelne w oczekiwanym formacie.
 diagnostics.missing_dns_udp_53: client-egress musi zezwalać na dns UDP 53.
 diagnostics.missing_dns_tcp_53: client-egress musi zezwalać na dns TCP 53.
 diagnostics.missing_board_tcp_8080: client-egress musi zezwalać na board TCP 8080.
-stages.0.objectives.0.text: NetworkPolicy `client-egress` wybiera tylko Pody z etykietą `app=client`, dotyczy tylko
-  `Egress` i zezwala jedynie na DNS UDP/TCP `53` do Podów DNS kube-system oraz TCP `8080` do Podów z etykietą `app=board`
-  w tym samym namespace; inne wybierające polityki nie rozszerzają tego wyjścia.
-stages.0.objectives.1.text: Z Deployment `client` zapytanie A o `board.$DQ_NAMESPACE.svc.cluster.local.` kończy
-  się powodzeniem.
+stages.0.objectives.0.text: Istniejąca polityka egress dotyczy tylko ruchu wychodzącego, izoluje tylko
+  dostarczone obciążenie client i zezwala na ruch wychodzący tylko do DNS klastra oraz dostarczonej usługi
+  HTTP board; żadna inna wybierająca polityka nie rozszerza dostępu.
+stages.0.objectives.1.text: Z Deployment `client` zapytanie A o `board.$DQ_NAMESPACE.svc.cluster.local.`
+  kończy się powodzeniem.
 stages.0.objectives.2.text: Z Deployment `client` adres `http://board:8080` zwraca `north-119`.
-stages.0.objectives.3.text: IP Service `closed` na porcie `8080` zwraca `closed-119` do Deployment `board`, a takie
-  samo żądanie z Deployment `client` kończy się niepowodzeniem.
+stages.0.objectives.3.text: IP Service `closed` na porcie `8080` zwraca `closed-119` do Deployment `board`,
+  a takie samo żądanie z Deployment `client` kończy się niepowodzeniem.

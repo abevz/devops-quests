@@ -1,28 +1,52 @@
 title: Blue-green и canary по репликам
-brief: "Конечная точка board должна пройти два последовательных состояния релиза. Сначала обслуживайте только green,\
-  \ затем обеспечьте готовый пул blue/green в отношении три к одному.\n\nРаботайте в `~/quest` на рабочей станции.\
-  \ Предоставлены файлы: `blue.yaml`, `green.yaml`, `service.yaml`, `client.yaml`.\n\n**Requirements:**\n\n- Этап\
-  \ 1:\n  - Service `board` выбирает только Pod с меткой `app=green` и возвращает `green-115` в Deployment `client`\
-  \ по `http://board:8080`.\n- Этап 2:\n  - Deployment `blue` и `green` имеют соответственно ровно `3` и `1` реплики,\
-  \ все готовы.\n  - Service `board` выбирает только Pod с меткой `release=board` и имеет `4` различных готовых\
-  \ цели EndpointSlice.\n  - Из Deployment `client` IP каждого синего и зелёного Pod отвечает на порту `8080` соответствующим\
-  \ `blue-115` или `green-115`, а Service `board:8080` возвращает одно из этих значений.\n\n**Verify yourself before\
-  \ Check & finish:** Выполните эти команды наблюдения из `~/quest` на рабочей станции.\n\n- Настройки, идентичность\
-  \ и состояние соответствуют требованиям.\n\n  ```sh\n  kubectl get deployment blue green -o yaml\n  kubectl get\
-  \ service board -o yaml\n  kubectl get endpointslices -l kubernetes.io/service-name=board -o yaml\n  ```\n\n-\
-  \ `kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080` — На первом этапе возвращается `green-115`;\
-  \ на втором — `blue-115` или `green-115`.\n\n- Каждый синий Pod возвращает `blue-115`, каждый зелёный — `green-115`.\n\
-  \n  ```sh\n  for version in blue green; do\n    for ip in $(kubectl get pods -l \"app=$version\" -o jsonpath='{.items[*].status.podIP}');\
-  \ do\n      kubectl exec deployment/client -- wget -qO- -T 3 \"http://$ip:8080\"\n    done\n  done\n  ```\n\n\
-  Отношение реплик `3:1` не гарантирует `25%` трафика в малой выборке или с привязкой сессий; проверки не сопоставляют\
-  \ имена конечных точек с этими Pod, не измеряют распределение и не доказывают историю правок."
-debrief: Обычные Services и Deployments дают простое разделение версий, без весов маршрутизации service mesh и гарантии
-  нулевого простоя.
+brief: |-
+  Конечная точка board должна пройти два последовательных состояния релиза. Сначала обслуживайте только green, затем обеспечьте готовый пул blue/green в отношении три к одному.
+
+  Работайте на workstation в `~/quest` с предоставленными файлами:
+  - `blue.yaml`, `green.yaml`, `service.yaml`, `client.yaml`.
+
+  **Requirements:**
+
+  - Этап 1:
+    - На этапе 1 Service `board` обслуживает только релиз green и возвращает `green-115` в Deployment `client` по `http://board:8080`.
+
+  - Этап 2:
+    - Deployment `blue` и `green` имеют соответственно ровно `3` и `1` реплики, все готовы.
+    - На этапе 2 Service `board` обслуживает только предоставленный пул релизов blue и green и имеет `4` различных готовых цели EndpointSlice.
+    - Из Deployment `client` IP каждого синего и зелёного Pod отвечает на порту `8080` соответствующим `blue-115` или `green-115`, а Service `board:8080` возвращает одно из этих значений.
+
+  Отношение реплик `3:1` не гарантирует `25%` трафика в малой выборке или с привязкой сессий; проверки не сопоставляют имена конечных точек с этими Pod, не измеряют распределение и не доказывают историю правок.
+debrief: Обычные Services и Deployments дают простое разделение версий, без весов маршрутизации service
+  mesh и гарантии нулевого простоя.
 stages.0.brief: Только релиз green должен обслуживать board.
 stages.1.brief: Оба релиза должны оставаться доступными в пуле три к одному.
 hints.0.text: Blue-green меняет выбранную Service полную версию.
-hints.1.text: Расширенному selector нужна общая метка в обоих шаблонах Pod.
-hints.2.text: Масштабируйте stable до трёх, candidate до одной и проверьте готовые endpoints.
+hints.1.text: |-
+  Расширенному selector нужна общая метка в обоих шаблонах Pod.
+
+  Изучите предоставленные файлы и живые наблюдения:
+
+  ```sh
+  kubectl get deployment blue green -o yaml
+    kubectl get service board -o yaml
+    kubectl get endpointslices -l kubernetes.io/service-name=board -o yaml
+  ```
+hints.2.text: |-
+  Масштабируйте stable до трёх, candidate до одной и проверьте готовые endpoints.
+
+  Проверьте результат из `~/quest` на workstation:
+
+  - `kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080` — На первом этапе возвращается `green-115`; на втором — `blue-115` или `green-115`.
+
+  - Каждый синий Pod возвращает `blue-115`, каждый зелёный — `green-115`.
+
+    ```sh
+    for version in blue green; do
+      for ip in $(kubectl get pods -l "app=$version" -o jsonpath='{.items[*].status.podIP}'); do
+        kubectl exec deployment/client -- wget -qO- -T 3 "http://$ip:8080"
+      done
+    done
+    ```
 phrases.0: Я переключил selector Service для blue-green.
 phrases.1: Я проверил endpoints stable и candidate.
 phrases.2: Я не выводил точные веса трафика из малой выборки.
@@ -45,12 +69,13 @@ diagnostics.ips_green: green Pod IP должен присутствовать.
 diagnostics.pod_blue: Каждый полученный IP Pod blue должен вернуть blue-115.
 diagnostics.pod_green: Каждый полученный IP Pod green должен вернуть green-115.
 diagnostics.canary_http: board:8080 должен вернуть blue-115 или green-115.
-stages.0.objectives.0.text: Service `board` выбирает только Pod с меткой `app=green` и возвращает `green-115` в
-  Deployment `client` по `http://board:8080`.
-stages.1.objectives.0.text: Deployment `blue` и `green` имеют соответственно ровно `3` и `1` реплики, все готовы.
-stages.1.objectives.1.text: Service `board` выбирает только Pod с меткой `release=board` и имеет `4` различных готовых
-  цели EndpointSlice.
-stages.1.objectives.2.text: Из Deployment `client` IP каждого синего и зелёного Pod отвечает на порту `8080` соответствующим
-  `blue-115` или `green-115`, а Service `board:8080` возвращает одно из этих значений.
-diagnostics.probe_budget: Бюджет времени проб истёк до проверки всех IP Pod. Непроверенные IP перечислены в диагностическом
-  выводе; их ответы не оценивались.
+stages.0.objectives.0.text: На этапе 1 Service `board` обслуживает только релиз green и возвращает `green-115`
+  в Deployment `client` по `http://board:8080`.
+stages.1.objectives.0.text: Deployment `blue` и `green` имеют соответственно ровно `3` и `1` реплики,
+  все готовы.
+stages.1.objectives.1.text: На этапе 2 Service `board` обслуживает только предоставленный пул релизов
+  blue и green и имеет `4` различных готовых цели EndpointSlice.
+stages.1.objectives.2.text: Из Deployment `client` IP каждого синего и зелёного Pod отвечает на порту
+  `8080` соответствующим `blue-115` или `green-115`, а Service `board:8080` возвращает одно из этих значений.
+diagnostics.probe_budget: Бюджет времени проб истёк до проверки всех IP Pod. Непроверенные IP перечислены
+  в диагностическом выводе; их ответы не оценивались.
