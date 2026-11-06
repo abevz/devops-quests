@@ -2,12 +2,12 @@ set -euo pipefail
 cd ~/quest
 source platform.env
 python3 - <<'PROBE'
-import json
+import yaml
 from pathlib import Path
-p=Path('repository/manifests/board.json');d=json.loads(p.read_text());d['spec']['template']['spec']['containers'][0]['readinessProbe']['httpGet']['port']=8080;p.write_text(json.dumps(d,indent=2))
+p=Path('repository/manifests/board.yaml');d=yaml.safe_load(p.read_text());d['spec']['template']['spec']['containers'][0]['readinessProbe']['httpGet']['port']=8080;p.write_text(yaml.safe_dump(d,sort_keys=False))
 PROBE
 cd repository
-git add manifests/board.json
+git add manifests/board.yaml
 git commit -m 'Correct board readiness port'
 git push origin main
 git rev-parse HEAD > ../release-commit

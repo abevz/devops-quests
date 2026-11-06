@@ -51,10 +51,13 @@ def test_045_objective_names_required_volume_contract(language):
     texts = yaml.safe_load(
         (ROOT / f"quests/045/i18n/{language}.yaml").read_text()
     )
-    # Required result identifiers must stay explicit even if absent from brief.
+    # Presentation v2 (owner decision 2026-11-06, principle 3): a medium quest names the
+    # observable result but not the claim the learner must find while diagnosing.
     objective = texts["stages.0.objectives.1.text"]
-    for identifier in ["reader", "route-data", "data", "/data"]:
+    for identifier in ["reader", "/data"]:
         assert f"`{identifier}`" in objective, (language, identifier)
+    for text in [texts["brief"], *(v for k, v in texts.items() if ".objectives." in k)]:
+        assert "route-data" not in text, (language, "claim name handed over")
 
 
 @pytest.mark.parametrize("language", ["en", "ru", "de", "es", "pl"])

@@ -1,45 +1,56 @@
 title: Vault Erneuerung
-brief: 'Der Workload station reader kann seine Vault-gestützte Konfiguration nicht lesen, da der lokale
-  Vault reader token in station-token einen Kurzschluss aufweist Erster Leasingvertrag 60s (durch seine
-  Rolle auf max. TTL 600s begrenzt). Liefern Sie das Geheimnis an den reader-Workload und hinterlassen
-  Sie einen gültigen renewable reader token in station-token (Modus 0600) mit mehr als 90 Sekunden verbleibender
-  TTL (Ziel a 180s Erneuerungsinkrement). Betten Sie Vault token niemals direkt in das Workload-Manifest
-  ein.
+brief: |
+  Der Workload `reader` kann seine Vault-gestützte Konfiguration nicht abrufen.
 
+  Arbeite auf der Workstation in `~/quest` mit `platform.env`, `station-token`, `issue-token.sh`, `issue-request.json`, `renew-token.sh`, `renew-request.json`, `sync-secret.sh`, `reader.yaml`.
 
-  Questdateien in `~/quest` (einige erscheinen in späteren Stadien): `platform.env`, `station-token`,
-  `reader.hcl`, `issue-token.sh`, `issue-request.json`, `renew-token.sh`, `renew-request.json`, `sync-secret.sh`,
-  `reader.json`.
+  **Anforderungen:**
+  - Datei auf der Workstation:
+    - Pfad: `~/quest/station-token`.
+    - Zugriffsmodus: `0600`.
+  - Token-Lease im Trainings-Vault:
+    - Verbleibende TTL: `>90` s.
+    - Erneuerbar: `true`.
+    - Maximale TTL: `600` s.
+    - Genaue Policies: `default`, `rail-reader`.
+  - Zugriff mit dem Token aus der Workstation-Datei `station-token`:
+    - `secret/data/dispatch`: `read`.
+    - `secret/data/other`, `sys/mounts`: `deny`.
+  - Capabilities des bereitgestellten Token-Ausstellers:
+    - `auth/token/create/rail-station`: `update`.
+    - `auth/token/create/other`, `sys/policies/acl/rail-reader`: `deny`.
+  - Deployment im Bay-Namespace:
+    - Name: `reader`.
+    - Rollout abgeschlossen.
+  - Konfiguration in einem Pod von Deployment `reader`:
+    - `/tmp/route`: `north-secret`.
+    - `ROUTE`, Secret `route-secret`, key `value`.
+    - Der Workload-Manifest enthält nicht den Tokenwert aus der Workstation-Datei `~/quest/station-token`.
 
-
-  Der Schacht verfügt über kein Internet oder externes DNS. Verwenden Sie nur bereitgestellte Dateien,
-  vorinstallierte Bilder und private Dienste. Ändern Sie nur diese Bucht.
-
-
-  Anfängliche Erfolgskriterien: Das begrenzte renewable reader token hat TTL >90s und den Modus 0600;
-  reader verbraucht north-secret aus dem gelieferten Secret. Effektiv bleiben reader und issuer capabilities
-  auf dispatch-Lesevorgänge und die bereitgestellte token-Rolle beschränkt.
-
-
-  Der issuer kann nur die bereitgestellte Rolle reader token erstellen; Die Richtlinie Vault reader kann
-  nicht bearbeitet werden.'
-debrief: Das Ausstellen, Erneuern und Übermitteln von Anmeldeinformationen wurde als separate Aktionen
-  verifiziert, einschließlich eines echten verbleibenden lease.
-stages.0.brief: 'Erfolgskriterien: Das begrenzte renewable reader token hat TTL >90s und den Modus 0600;
-  reader verbraucht north-secret aus seinem gelieferten Secret. Effektiv bleiben reader und issuer capabilities
-  auf dispatch-Lesevorgänge und die bereitgestellte token-Rolle beschränkt.'
-stages.0.objectives.0.text: Der begrenzte renewable reader token hat TTL >90s und den Modus 0600; reader
-  verbraucht north-secret aus dem gelieferten Secret. Effektiv bleiben reader und issuer capabilities
-  auf dispatch-Lesevorgänge und die bereitgestellte token-Rolle beschränkt.
-hints.0.text: Überprüfen Sie den aktuellen token-Status mit lookup-self (ohne token zu drucken). Ein abgelaufener
-  token kann sich nicht selbst erneuern; Geben Sie zuerst ein neues, gebundenes reader token über issue-token.sh
-  aus.
-hints.1.text: Ein neuer Token ist nur 60s gültig. Setzen Sie die Erneuerung increment in renew-request.json
-  auf 180s (innerhalb der Rollenobergrenze 600s) und führen Sie renew-token.sh aus, sodass der verbleibende
-  lease 90s übersteigt.
-hints.2.text: Halten Sie station-token im Modus 0600, führen Sie sync-secret.sh aus, um den Anwendungswert
-  an Kubernetes Secret zu liefern, und stellen Sie die Arbeitslast reader wieder her.
+  **Selbstprüfung vor Check & finish:**
+  - `source platform.env; token=$(cat station-token); ls -l station-token; curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$token") "$VAULT_ADDR/v1/auth/token/lookup-self" | jq '.data | {ttl,renewable,explicit_max_ttl,policies}'` — Modus `-rw-------`, TTL größer als `90`, renewable `true`, maximale TTL `600` und Policies `default`, `rail-reader`.
+  - `source platform.env; token=$(cat station-token); curl -fsS -X POST -H @<(printf 'X-Vault-Token: %s\n' "$token") -H 'Content-Type: application/json' --data '{"paths":["secret/data/dispatch","secret/data/other","sys/mounts"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '.data // .'; curl -fsS -X POST -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN") -H 'Content-Type: application/json' --data '{"paths":["sys/policies/acl/rail-reader","auth/token/create/rail-station","auth/token/create/other"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '.data // .'` — Das Token hat `read` nur für Dispatch; der Aussteller hat `update` für `auth/token/create/rail-station`; die anderen genannten Pfade haben `deny`.
+  - `kubectl rollout status deployment/reader --timeout=10s; kubectl get deployment reader -o json | jq -e --rawfile token station-token 'tostring|contains($token|sub("\n+$";""))|not'; kubectl exec deployment/reader -- sh -c 'test "$(cat /tmp/route)" = north-secret && printf "configuration matches\n"'` — Der Rollout wird abgeschlossen, die Token-Abwesenheitsprüfung gibt `true` aus und der Verbraucher gibt `configuration matches` aus.
+debrief: Das Ausstellen, Erneuern und Übermitteln von Anmeldeinformationen wurde als separate Aktionen verifiziert,
+  einschließlich eines echten verbleibenden lease.
+stages.0.brief: Der Konfigurationsverbraucher muss eine gültige begrenzte Lease und privaten Zugriff haben.
+hints.0.text: Ein abgelaufenes Token kann sich nicht selbst erneuern; stelle zuerst mit issue-token.sh ein neues
+  begrenztes Zugriffstoken aus.
+hints.1.text: Ein neuer Token ist nur 60s gültig. Setzen Sie die Erneuerung increment in renew-request.json auf
+  180s (innerhalb der Rollenobergrenze 600s) und führen Sie renew-token.sh aus, sodass der verbleibende lease 90s
+  übersteigt.
+hints.2.text: Halten Sie station-token im Modus 0600, führen Sie sync-secret.sh aus, um den Anwendungswert an Kubernetes
+  Secret zu liefern, und stellen Sie die Arbeitslast reader wieder her.
 phrases.0: Ich habe die Ausstellung einer Berechtigung von der Erneuerung der verbleibenden lease unterschieden.
 phrases.1: Ich habe den echten TTL innerhalb einer begrenzten Lebensdauer getestet.
-phrases.2: Ich habe den Vault token privat gehalten und nur den Anwendungswert in einem Kubernetes Secret
-  geliefert.
+phrases.2: Ich habe den Vault token privat gehalten und nur den Anwendungswert in einem Kubernetes Secret geliefert.
+stages.0.objectives.0.text: Die Workstation-Datei `~/quest/station-token` hat Modus `0600`.
+stages.0.objectives.1.text: Das Token in der Workstation-Datei `station-token` ist erneuerbar, hat TTL größer als
+  `90` Sekunden, maximale TTL `600` und genau die Policies `default` und `rail-reader`.
+stages.0.objectives.2.text: Das Token in der Workstation-Datei `station-token` hat `read` auf `secret/data/dispatch`
+  und `deny` auf `secret/data/other` und `sys/mounts`.
+stages.0.objectives.3.text: Der bereitgestellte Token-Aussteller hat `update` auf `auth/token/create/rail-station`
+  und `deny` auf `auth/token/create/other` und `sys/policies/acl/rail-reader`.
+stages.0.objectives.4.text: In einem Pod von Deployment `reader` enthält `/tmp/route` den Wert `north-secret`; der
+  Workload-Manifest enthält nicht den Tokenwert aus der Workstation-Datei `~/quest/station-token`.
+stages.0.objectives.5.text: Deployment `reader` schließt seinen Rollout im Bay-Namespace ab.

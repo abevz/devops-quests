@@ -31,11 +31,19 @@ Do not point to an unrelated passage merely to make links distinct.
 
 ## 3. Fade scaffolding by difficulty
 
-Basics name the exact files, identifiers, and verification steps. Intermediate quests
-state the goal and verification while exact names are discoverable in supplied files.
-Boss quests state the incident and how the learner can tell it is fixed. In every
-case, every condition enforced by a check must remain discoverable in the brief or
-in files the brief explicitly points to. Do not make a condition a guessing game.
+Basics name the exact files, identifiers and values of the result. Medium and harder
+quests state the result and its constraints, anchored to what the learner can observe
+(a service response, a file's content, "the existing claim"), but never the names or
+values the learner is expected to discover while diagnosing (which claim to mount, which
+Secret key to reference, which field to fix). Boss quests state the incident and how the
+learner can tell it is fixed. In every case, every condition enforced by a check must remain
+discoverable from the brief, the supplied files or the bay itself (`kubectl get`, events,
+logs, a plan). Do not make a condition a guessing game.
+
+- **Good (045, medium):** "The data comes from the existing claim that already holds it,
+  mounted read-only at `/data`"; `kubectl get pvc` shows which claim that is.
+- **Bad (045):** the brief or an objective names `route-data` or gives the volume object —
+  that is the diagnosis handed over.
 
 - **Good:** In Basics quest 003, name `modules/notice`, `station`, `message`, and
   the expected state address. In a hypothetical intermediate or Boss version, let
@@ -43,19 +51,20 @@ in files the brief explicitly points to. Do not make a condition a guessing game
 - **Bad:** For 003, require `module.notice.local_file.notice` without naming it in
   the brief or any file the brief points to, regardless of difficulty.
 
-## 4. Verify yourself before Check & finish
+## 4. Verify yourself through the hint ladder
 
-Every quest needs a “Verify yourself before Check & finish” section with 2–3 commands
-or command groups that show what the check tests, including expected results. Group
-related observations when necessary; cover all checked conditions without adding
-hidden prerequisites. Match the amount of detail to the difficulty rule above.
+The brief has no self-verification block: Live objectives and Check & finish already give
+free, live feedback on every checked condition. Self-verification is taught through the
+hint ladder (principle 1): diagnostic commands ("where to look") go to hint 2, verification
+commands with their expected result go to hint 3. Both are paid hints, so nothing that
+points at the fault is handed over for free.
 
-- **Good:** For 003, inspect `tofu state list` for
-  `module.notice.local_file.notice`; use `cat north.txt` and `tofu output -raw message`
-  to see `north-ready`; then run `tofu plan -input=false -detailed-exitcode -no-color`
-  and expect exit code 0. These are three groups covering the four checked conditions.
-- **Bad:** Say “verify the module works” without commands, expected results, or a
-  way to see the no-change plan.
+- **Good (045):** hint 2 compares `kubectl describe pod -l app=reader` events and
+  `kubectl get pvc` with the volumes in `reader.yaml`; hint 3 confirms with
+  `kubectl rollout status deployment/reader`, `cat /data/route.txt` and a failing
+  `touch /data/x` on the read-only mount.
+- **Bad:** A brief section that runs `kubectl get deployment reader -o json` "to see the
+  required volume contract" — it points at the broken field before the learner starts.
 
 ## 5. A failed check teaches
 
@@ -96,8 +105,9 @@ outbound telemetry. Do not claim metrics exist until their collection is impleme
 This is the agreed format for every quest brief and objective. It applies at all
 difficulty levels until measurements (principle 7) justify fading detail (principle 3).
 `tests/test_quest_presentation.py` enforces the mechanical rules; the rest is review.
-Reference quests: 011 (where artifacts live), 014 (evidence the learner must find),
-059 (technique kept out of the brief), 005 (property instead of a single value).
+Reference quests: 045 (the full v2 format: result by level, no Verify block, hints 2/3),
+011 (where artifacts live), 014 (evidence the learner must find), 059 (technique kept out
+of the brief), 005 (property instead of a single value).
 
 **The rule:** the brief states exactly *what* the result must be, never *how* to reach it
 or *what is broken*.
@@ -118,11 +128,14 @@ or *what is broken*.
    - Never state what the learner must discover (a log line, a diagnostic value) or the
      technique (`moved`, `import`, `rollout restart`, a Helm key to change, a trap's
      workaround). Those belong in hints.
-4. `**Verify yourself before Check & finish:**` — two or three read-only commands with the
-   expected result, showing the outcome as its consumer sees it. They never change state and
-   never repeat a hint (principle 4).
-5. One line under that block for check boundaries ("the check observes current state; it
-   does not prove history"). Do not delete such caveats; move them here.
+   - Medium and harder quests follow principle 3: no names or values that diagnosis should
+     reveal; anchor the result to what the learner can observe.
+   - Do not list check-only files (records such as `original-pvc-uid`) as working files;
+     state the constraint in words ("the existing claim is kept: not deleted or recreated").
+4. No "Verify yourself" block (principle 4): diagnostic commands go to hint 2, verification
+   commands with expected results to hint 3.
+5. One line at the end for check boundaries ("the check observes current state; it does not
+   prove history"). Do not delete such caveats; move them here.
 
 Do not repeat the Bay facts paragraph ("no Internet or external DNS") or keep
 "Initial success criteria" / "Success criteria" lines: requirements and objectives replace
@@ -142,7 +155,8 @@ host or path. An objective or requirement never states the structure of the solu
 separates delivery and inspection tags"); state the observable result instead ("running the
 inspection selection changes nothing on any host").
 Write them for a person: no jsonpath, JSON, array positions, ready YAML/HCL or commands. Name
-the exact names and values of the result; never the solution or the diagnosis (082: "The fix
+the exact names and values of the result at Basics level (medium and harder: principle 3);
+never the solution or the diagnosis (082: "The fix
 is applied through Helm release `board` values, not by editing the Deployment", not "uses
 `port` value `8080`"). Split objectives only in the same change that migrates the brief, or
 the brief loses its goal. Multi-objective `check-N.sh` scripts follow the aggregate template

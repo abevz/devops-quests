@@ -1,5 +1,9 @@
 set -euo pipefail
 cd ~/quest
+failed=0
+set +e
+(
+set -e
 source platform.env
 umask 077
 headers=$(mktemp -d)
@@ -11,6 +15,7 @@ if ! curl -fsS -H @"$headers/manager" "$VAULT_ADDR/v1/sys/policies/acl/rail-read
   printf '%s\n' 'rail-reader policy read: ✗ [DQ:policy_read]'
   failed=1
 fi
+
 if ! python3 - <<'ACL_SCOPE'
 import re
 from pathlib import Path
@@ -25,10 +30,34 @@ then
   printf '%s\n' 'rail-reader policy: secret/data/dispatch [read] only: ✗ [DQ:policy_scope]'
   failed=1
 fi
+exit "$failed"
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+source platform.env
+umask 077
+headers=$(mktemp -d)
+trap 'rm -f "$headers/reader" "$headers/manager"; rmdir "$headers"' EXIT
+printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN" > "$headers/manager"
+printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN" > "$headers/reader"
+failed=0
 if ! test "$(curl -fsS -H @"$headers/reader" "$VAULT_ADDR/v1/secret/data/dispatch" 2>/dev/null | jq -er .data.data.value 2>/dev/null)" = north-secret; then
   printf '%s\n' 'VAULT_READER_TOKEN secret/data/dispatch value = north-secret: ✗ [DQ:reader]'
   failed=1
 fi
+exit "$failed"
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+source platform.env
+umask 077
+headers=$(mktemp -d)
+trap 'rm -f "$headers/reader" "$headers/manager"; rmdir "$headers"' EXIT
+printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN" > "$headers/manager"
+printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN" > "$headers/reader"
+failed=0
 cat > capability-paths.json <<'DQ_ASSET'
 {"paths": ["secret/data/dispatch", "secret/data/wrong", "secret/data/other", "sys/mounts"]}
 DQ_ASSET
@@ -41,4 +70,7 @@ for path in secret/data/dispatch secret/data/wrong secret/data/other sys/mounts;
     failed=1
   fi
 done
+exit "$failed"
+)
+[ $? -eq 0 ] || failed=1
 exit "$failed"

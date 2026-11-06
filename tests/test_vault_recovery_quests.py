@@ -56,17 +56,24 @@ def test_065_reports_failed_conditions_without_disclosing_fixture_secrets(tmp_pa
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ["PATH"])
     catalog = Catalog()
-    checks = (
-        catalog.script(65, 0, "check"),
-        catalog.quests[65]["stages"][0]["objectives"][0]["check"],
-    )
-    for check in checks:
-        result = subprocess.run(["bash", "-c", check], capture_output=True, text=True)
-        assert result.returncode != 0
-        assert len(result.stdout.splitlines()) == 8
-        assert not result.stderr
+    standalone = catalog.script(65, 0, "check")
+    individual = [
+        "set -euo pipefail\ncd ~/quest\n" + goal["check"]
+        for goal in catalog.quests[65]["stages"][0]["objectives"]
+    ]
+    for checks in ([standalone], individual):
+        results = [
+            subprocess.run(["bash", "-c", check], capture_output=True, text=True)
+            for check in checks
+        ]
+        assert all(result.returncode != 0 for result in results)
+        stdout = "".join(result.stdout for result in results)
+        stderr = "".join(result.stderr for result in results)
+        assert len(stdout.splitlines()) == 8
+        assert not stderr
         for secret in ("fixture-token-private", "fixture-share-private", "fixture-value-private"):
-            assert secret not in result.stdout
+            assert secret not in stdout + stderr
+
 
 
 @pytest.mark.skipif(
@@ -152,12 +159,21 @@ def test_065_rejects_duplicate_shares_and_keeps_token_out_of_curl_arguments(tmp_
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ["PATH"])
     catalog = Catalog()
-    for check in (
-        catalog.script(65, 0, "check"),
-        catalog.quests[65]["stages"][0]["objectives"][0]["check"],
-    ):
-        result = subprocess.run(["bash", "-c", check], capture_output=True, text=True)
-        assert result.returncode != 0
-        assert len(result.stdout.splitlines()) == 1
-        assert "[0] ≠ [1]" in result.stdout
-        assert "fixture-share-private" not in result.stdout + result.stderr
+    standalone = catalog.script(65, 0, "check")
+    individual = [
+        "set -euo pipefail\ncd ~/quest\n" + goal["check"]
+        for goal in catalog.quests[65]["stages"][0]["objectives"]
+    ]
+    for checks in ([standalone], individual):
+        results = [
+            subprocess.run(["bash", "-c", check], capture_output=True, text=True)
+            for check in checks
+        ]
+        assert sum(result.returncode != 0 for result in results) == 1
+        if len(results) > 1:
+            assert [result.returncode for result in results] == [0, 1, 0]
+        stdout = "".join(result.stdout for result in results)
+        stderr = "".join(result.stderr for result in results)
+        assert len(stdout.splitlines()) == 1
+        assert "[0] ≠ [1]" in stdout
+        assert "fixture-share-private" not in stdout + stderr

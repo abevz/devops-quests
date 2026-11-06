@@ -1,36 +1,35 @@
 title: Retención de registro
-brief: 'El juego privado registry tiene tres manifests distintos: rollback, actual y obsolete, que figuran
-  en release-catalog.json. El retention.json propuesto selecciona incorrectamente rollback. Corríjalo
-  para eliminar solo obsolete y ejecute bash prune.sh. El asistente rechaza resúmenes protegidos y verifica
-  TLS usando registry-ca.crt. Actual y rollback deben seguir siendo recuperables por digest. Esta bahía
-  no tiene Kubernetes; la eliminación está habilitada solo para esta retención desechable registry. La
-  eliminación de manifiestos no es un ejercicio de recolección de basura.
+brief: |
+  El registro tiene una solicitud de retención pendiente; las versiones protegidas deben seguir disponibles.
 
+  Trabaja en la workstation en `~/quest` con `platform.env`, `registry-ca.crt`, `release-catalog.json`, `retention.json`, `prune.sh`.
 
-  Archivos de búsqueda en `~/quest` (algunos aparecen en etapas posteriores): `platform.env`, `registry-ca.crt`,
-  `variant-context/Dockerfile`, `release-catalog.json`, `retention.json`, `prune.sh`.
+  **Requisitos:**
+  - Catálogo autoritativo en la workstation:
+    - Ruta: `/run/dq/facts/0/release-catalog.json`.
+  - Archivo en la workstation:
+    - Ruta: `~/quest/retention.json`.
+    - La selección `delete` contiene solo el digest `obsolete` del catálogo.
+  - Manifiestos del registro mediante TLS verificado:
+    - El registro y las credenciales proceden de `~/quest/platform.env` en la workstation; la CA confiable es `~/quest/registry-ca.crt` en la workstation.
+    - `current`, `rollback`: HTTP `200`; `obsolete`: HTTP `404`.
 
+  **Verifica antes de Check & finish:**
+  - `jq -e --slurpfile c /run/dq/facts/0/release-catalog.json '.delete==[$c[0].obsolete]' retention.json` — Imprime `true` para la solicitud de eliminación guardada.
+  - `source platform.env; for kind in current rollback obsolete; do digest=$(jq -r --arg kind "$kind" '.[$kind]' /run/dq/facts/0/release-catalog.json); code=$(curl -sS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' -o /dev/null -w '%{http_code}' "https://$REGISTRY/v2/parcel/manifests/$digest"); printf "%s %s\n" "$kind" "$code"; done` — Informa `current 200`, `rollback 200`, `obsolete 404`, con verificación del certificado activada.
 
-  La bahía no tiene Internet ni DNS externo. Utilice únicamente archivos proporcionados, imágenes precargadas
-  y servicios privados. Cambie sólo esta bahía.
-
-
-  Criterios de éxito iniciales: solo obsolete devuelve 404 por digest; actual y rollback devuelve 200
-  con TLS verificado.
-
-
-  La evidencia de configuración autorizada es de solo lectura en `/run/dq/facts/0/`; Los archivos coincidentes
-  en `~/quest` son copias de trabajo.'
+  La comprobación observa la eliminación de manifiestos, no garbage collection; los archivos de `~/quest` son copias de trabajo, mientras `/run/dq/facts/0/` en la workstation es autoritativo.
 debrief: Retention eliminó un manifest obsoleto sin romper una referencia de reversión real.
-stages.0.brief: 'Criterios de éxito: solo obsolete devuelve 404 por digest; actual y rollback devuelve
-  200 con TLS verificado.'
-stages.0.objectives.0.text: Sólo obsolete devuelve 404 por digest; actual y rollback retorno 200 con TLS
-  verificado.
-hints.0.text: Las etiquetas son referencias mutables; La seguridad de retention depende del manifests
-  protegido.
-hints.1.text: Inspeccione las tres identidades digest antes de ejecutar la eliminación.
-hints.2.text: Seleccione obsolete únicamente, ejecute el helper protegido y pruebe los resúmenes protegidos
-  a través del registry API.
+stages.0.brief: El resultado de retención debe conservar ambas versiones protegidas.
+hints.0.text: Las etiquetas son referencias mutables; La seguridad de retention depende del manifests protegido.
+hints.1.text: El retention.json propuesto selecciona rollback. Las identidades de los digest protegidos proceden
+  de /run/dq/facts/0/release-catalog.json de solo lectura, no de la copia de trabajo.
+hints.2.text: Selecciona solo obsolete y ejecuta bash prune.sh; el helper rechaza digest protegidos y verifica TLS
+  mediante registry-ca.crt.
 phrases.0: Protegí los resúmenes de reversión antes de eliminar el obsoleto manifests.
 phrases.1: Verifiqué TLS en lugar de omitir las verificaciones de certificados.
 phrases.2: Distinguí la eliminación de manifest del almacenamiento garbage collection.
+stages.0.objectives.0.text: El archivo `~/quest/retention.json` en la workstation selecciona solo el digest obsolete
+  de `/run/dq/facts/0/release-catalog.json`.
+stages.0.objectives.1.text: Mediante TLS verificado, los manifiestos del registro `current` y `rollback` devuelven
+  HTTP `200` y `obsolete` devuelve `404`, según `/run/dq/facts/0/release-catalog.json` en la workstation.

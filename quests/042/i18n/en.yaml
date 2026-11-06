@@ -1,25 +1,39 @@
 title: Registry credentials
-brief: 'Work in `~/quest` with `platform.env` and `board.json`. The private registry has a new game-only credential, but the
-  board Secret is stale. A same-namespace image pull Secret gives the kubelet registry credentials; avoid printing them or
-  saving them in shell history. Rotate `registry-pull` using the registry address, user and password in `platform.env`. The
-  `.dockerconfigjson` auth entry for `REGISTRY` must decode to the supplied user and password. Keep one `board` replica, the
-  first container image equal to `PRIVATE_IMAGE`, pull policy `Always`, and exactly one pull Secret `registry-pull`. Wait
-  for the rollout, then check the board Pod''s `127.0.0.1:8080` returns `north-42`. Current Secret, rollout and response checks
-  do not prove every future pull. Work only in the offline bay.
+brief: |
+  The private `board` consumer is unavailable.
 
+  Work on the workstation in `~/quest` with `platform.env`, `board.yaml`.
 
-  The API Secret data and nested auth must use valid canonical base64. Base64 is an encoding, not encryption; keep the values
-  private.
+  **Requirements:**
+  - Deployment in the bay namespace:
+    - Name: `board`.
+    - Image: `PRIVATE_IMAGE` from workstation `~/quest/platform.env`.
+    - Pull policy: `Always`.
+    - Image-pull Secret: `registry-pull`.
+    - No other image-pull Secrets.
+    - Desired replicas: `1`.
+    - Rollout complete.
+  - Secret in the bay namespace:
+    - Name: `registry-pull`.
+    - Type: `kubernetes.io/dockerconfigjson`.
+    - Credentials for `REGISTRY`: `REGISTRY_USER` and `REGISTRY_PASSWORD` from workstation `~/quest/platform.env`.
+  - HTTP inside a Pod of Deployment `board`:
+    - Path: `http://127.0.0.1:8080`.
+    - Response: `north-42`.
 
+  **Verify yourself before Check & finish:**
+  - `source platform.env; kubectl get secret registry-pull -o json | jq -e 'env as $e | .type=="kubernetes.io/dockerconfigjson" and ((.data[".dockerconfigjson"]|@base64d|fromjson|.auths[$e.REGISTRY].auth|@base64d)==($e.REGISTRY_USER+":"+$e.REGISTRY_PASSWORD))'` — Prints `true` without exposing credentials.
+  - `source platform.env; kubectl get deployment board -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas,IMAGE:.spec.template.spec.containers[0].image,PULL:.spec.template.spec.containers[0].imagePullPolicy,SECRETS:.spec.template.spec.imagePullSecrets[*].name` — Shows `board`, replicas `1`, the supplied `PRIVATE_IMAGE`, `Always` and only `registry-pull`.
+  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -- wget -qO- -T 3 http://127.0.0.1:8080` — Rollout completes; HTTP returns `north-42`.
 
-  The Secret must have type `kubernetes.io/dockerconfigjson`.'
+  Base64 is encoding, not encryption; current credential, rollout and response checks do not prove every future pull.
 debrief: Registry authentication and Kubernetes consumer configuration were separate parts of the rotation.
-stages.0.brief: The registry credential, board image and pull settings, rollout and local HTTP response match the brief.
-stages.0.objectives.0.text: The registry credential, board image and pull settings, rollout and local HTTP response match
-  the brief.
+stages.0.brief: The private release must meet its credential and consumer contract.
 hints.0.text: A successful push from the workstation does not authenticate the kubelet.
 hints.1.text: Inspect imagePullSecrets and the Pod pull failure without printing credentials.
-hints.2.text: Replace the Docker auth Secret and restart the failed consumer.
+hints.2.text: |-
+  Replace the stale Docker auth Secret and restart the failed consumer. Both API Secret data and nested auth must use valid canonical base64.
+  Do not print credential values or save them in shell history.
 phrases.0: I separated registry authentication from the kubelet pull credential.
 phrases.1: I rotated the consumer Secret while retaining the immutable image reference.
 phrases.2: I verified a fresh private pull and the recovered application response.
@@ -41,3 +55,10 @@ diagnostics.auth: The registry-pull auth must use canonical base64.
 diagnostics.credentials: Decoded registry-pull auth must match the user and password in platform.env.
 diagnostics.rollout: The deployment/board rollout must complete.
 diagnostics.http: The request to board Pod localhost:8080 must return north-42.
+stages.0.objectives.0.text: Deployment `board` uses `PRIVATE_IMAGE` from workstation `platform.env`, pull policy
+  `Always`, and only pull Secret `registry-pull`.
+stages.0.objectives.1.text: Deployment `board` has desired replica count `1`.
+stages.0.objectives.2.text: Secret `registry-pull` has type `kubernetes.io/dockerconfigjson` and valid Docker credentials
+  for `REGISTRY` matching workstation `platform.env`.
+stages.0.objectives.3.text: Deployment `board` completes its rollout in the bay namespace.
+stages.0.objectives.4.text: Inside a Pod of Deployment `board`, `http://127.0.0.1:8080` returns `north-42`.
