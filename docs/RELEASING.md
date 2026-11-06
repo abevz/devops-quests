@@ -126,7 +126,7 @@ the web process: release, deployment and rollback remain operator actions.
 ## Offline dependencies (Linux amd64 / CPython 3.13)
 
 The tag workflow restores `ci-dependencies.lock.json` package caches from the
-`deps-1` GitHub prerelease. Their SHA-256 values bind the Python wheels and npm
+`deps-1` (npm cache) and `deps-2` (Python wheelhouse, adds pytest-xdist) GitHub prereleases. Their SHA-256 values bind the Python wheels and npm
 cache; npm additionally checks `package-lock.json` integrity. CI uses pip
 `--no-index`, npm `--offline`, and builds Python packages without build isolation.
 No sandbox is started in CI.
