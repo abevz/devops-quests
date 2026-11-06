@@ -1,35 +1,114 @@
 title: Private Git-Lieferung
-brief: 'Ein zweistufiger Vorfall mit privater Zustellung. Stellen Sie zunächst das release-candidate ConfigMap-Commit
-  auf main wieder her und veröffentlichen Sie es, ohne den ursprünglichen Verlauf neu zu schreiben. Reparieren
-  Sie anschließend einen Argo-Quellpfadvorfall und übermitteln Sie dieselbe Remote-Revision an einen fehlerfreien
-  board. Arbeiten Sie durch Git und Argo; Eine manuell bearbeitete Live-Antwort reicht nicht aus.
-
-
-  Questdateien in `~/quest` (einige erscheinen in späteren Phasen): `platform.env`, `repository/manifests/board.json`,
-  `repository/manifests/route.json`, `baseline-commit`, `application.json`, `sync.json`.
-
-
-  Der Schacht verfügt über kein Internet oder externes DNS. Verwenden Sie nur bereitgestellte Dateien,
-  vorinstallierte Bilder und private Dienste. Ändern Sie nur diese Bucht.
-
-
-  Anfängliche Erfolgskriterien: Bereinigen von local/remote main enthält das north-50 ConfigMap-Commit
-  und behält den Basislinienvorfahren bei.'
-debrief: Die Version wurde in Git wiederhergestellt und dann von einem echten Controller mit unabhängigen
-  Prüfungen auf Revision und Anwendungsverhalten abgeglichen.
-stages.0.brief: 'Erfolgskriterien: Bereinigen von local/remote main enthält den north-50 ConfigMap-Commit
-  und behält den Baseline-Vorfahren bei.'
-stages.0.objectives.0.text: Clean local/remote main enthält den north-50 ConfigMap-Commit und behält den
-  Baseline-Vorfahren bei.
-stages.1.brief: 'Erfolgskriterien: Argo meldet die beabsichtigte Remote-Revision Synced/Healthy; Sein
-  verfolgter board bedient north-50.'
-stages.1.objectives.0.text: Argo meldet die beabsichtigte Remote-Revision Synced/Healthy; sein verfolgtes
-  board bedient north-50.
+brief: "Das entfernte Release und die ausgelieferte Anwendung stimmen noch nicht überein.\n\nArbeiten Sie in `~/quest`\
+  \ auf der Workstation. Eingaben je Phase:\n- Phase 1: `platform.env`, `repository/manifests/board.yaml`, `repository/manifests/route.yaml`.\n\
+  - Phase 2: `application.yaml`, `sync.json`.\n\n**Anforderungen:**\n\n- Phase 1:\n  - Das Workstation-Repository\
+  \ `repository` ist auf Branch `main` sauber und sein HEAD entspricht dem entfernten `main`.\n  - Das veröffentlichte\
+  \ Release beschreibt den Anwendungsantwortinhalt `north-50`.\n  - Der ursprüngliche Commit bleibt ein Vorgänger\
+  \ des veröffentlichten Release.\n- Phase 2:\n  - Application `station` meldet `Synced` und `Healthy` bei der veröffentlichten\
+  \ Revision.\n  - Der ursprüngliche Commit bleibt ein Vorgänger des veröffentlichten Release.\n  - Deployment `board`\
+  \ schließt seinen Rollout ab und trägt Controller-Tracking-Metadaten.\n  - Von Deployment `board` liefert `http://127.0.0.1:8080`\
+  \ den Wert `north-50`.\n\nGit-Abstammung, aktuelle Argo-Felder, Tracking-Metadaten und HTTP werden geprüft; sie\
+  \ belegen nicht, welcher Bediener die jeweilige Änderung vorgenommen hat."
+debrief: Die Version wurde in Git wiederhergestellt und dann von einem echten Controller mit unabhängigen Prüfungen
+  auf Revision und Anwendungsverhalten abgeglichen.
+stages.0.brief: Das veröffentlichte Release muss die gespeicherte Abstammung bewahren.
+stages.1.brief: Die veröffentlichte Revision muss im gesunden abgeglichenen Ergebnis sichtbar sein.
 hints.0.text: Trennen Sie die Wiederherstellung der Git-Version von der Bereitstellung.
-hints.1.text: Validieren Sie die Fernbedienung main ref, bevor Sie den Controller auffordern, sync zu
-  verwenden.
-hints.2.text: Reparieren Sie den Quellpfad und korrelieren Sie die Argo-Revision, die verfolgte Arbeitslast
-  und das HTTP-Ergebnis.
+hints.1.text: 'Prüfen Sie die Referenz main im entfernten Repository, bevor Sie den Controller synchronisieren lassen.
+
+
+  Prüfen Sie Repository-Historie und Details des Controller-Abgleichs.
+
+
+  ```sh
+
+  git -C repository log --all --oneline
+
+  kubectl describe application station
+
+  ```
+
+
+  Phase 1/2: Prüfen Sie diese Ressourcendefinitionen für diese Phase.
+
+
+  ```sh
+
+  git -C repository show HEAD:manifests/route.yaml
+
+  ```
+
+
+  Phase 2: Prüfen Sie diese Ressourcendefinitionen für diese Phase.
+
+
+  ```sh
+
+  kubectl get application station -o yaml
+
+  kubectl get deployment board -o yaml
+
+  ```'
+hints.2.text: 'Der gewünschte ConfigMap-Commit liegt auf `release-candidate`; übernehmen Sie ihn nach `main` und
+  bewahren Sie die bestehende Abstammung.
+
+
+  Reparieren Sie den Quellpfad und korrelieren Sie die Argo-Revision, die verfolgte Arbeitslast und das HTTP-Ergebnis.
+
+
+  Prüfen Sie die jeweilige Phase nach der Reparatur.
+
+
+  Phase 1/2: Der veröffentlichte Hash entspricht dem aufgezeichneten Release; die Abstammungsprüfung endet, sofern
+  vorhanden, mit Code `0`.
+
+
+  ```sh
+
+  source platform.env
+
+  git -C repository status --short --branch
+
+  git -C repository rev-parse HEAD
+
+  git -C repository ls-remote origin refs/heads/main
+
+  git -C repository merge-base --is-ancestor "$(cat baseline-commit)" HEAD
+
+  ```
+
+
+  Phase 2: Der Controller meldet `Synced` bei der erwarteten Revision; in der letzten Phase meldet er auch `Healthy`
+  und der Workload ist bereit.
+
+
+  ```sh
+
+  kubectl get application station -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
+  printf ''\n''
+
+  kubectl rollout status deployment/board --timeout=3s
+
+  ```
+
+
+  Phase 2: Der Verbraucher erhält `north-50`.
+
+
+  ```sh
+
+  kubectl exec deployment/board -- wget -qO- http://127.0.0.1:8080
+
+  ```
+
+
+  Erwartete Beobachtungen für die gesamte Phase:
+
+  - Phase 1/2: Die Arbeitskopie ist auf `main` sauber; lokaler HEAD und entferntes `main` haben denselben Hash;
+  das Manifest `route` enthält `index.html: north-50`; der Abstammungstest endet mit Code `0`.
+
+  - Phase 2: Quelle, Ziel, Revision und Status `Synced` und `Healthy` der Application erfüllen die Anforderungen;
+  das Deployment hat seine Tracking-ID und einen abgeschlossenen Rollout.'
 phrases.0: Ich habe die gewünschte Konfiguration im privaten Git-Bereitstellungszweig wiederhergestellt.
 phrases.1: Ich habe den Remote-Commit mit der Argo-Revision korreliert und den Workload-Zustand verfolgt.
 phrases.2: Ich habe das gelieferte Verhalten überprüft, anstatt eine manuelle Live-Reparatur durchzuführen.
@@ -41,3 +120,11 @@ questions.1.points.0: Der gewünschte Zustand kann den Fehler noch enthalten.
 questions.1.points.1: Eine zukünftige Abstimmung kann die manuelle Änderung rückgängig machen.
 questions.1.points.2: Notieren Sie die Reparatur in der Quelle und überprüfen Sie den Abgleich.
 questions.1.prompt: Warum ist das Bearbeiten einer Live-Workload eine schwache dauerhafte GitOps-Wiederherstellung?
+stages.0.objectives.0.text: Das Workstation-Repository `repository` ist auf Branch `main` sauber und sein HEAD entspricht
+  dem entfernten `main`.
+stages.0.objectives.1.text: Das veröffentlichte Release beschreibt den Anwendungsantwortinhalt `north-50`.
+stages.0.objectives.2.text: Der ursprüngliche Commit bleibt ein Vorgänger des veröffentlichten Release.
+stages.1.objectives.0.text: Application `station` meldet `Synced` und `Healthy` bei der veröffentlichten Revision.
+stages.1.objectives.1.text: Der ursprüngliche Commit bleibt ein Vorgänger des veröffentlichten Release.
+stages.1.objectives.2.text: Deployment `board` schließt seinen Rollout ab und trägt Controller-Tracking-Metadaten.
+stages.1.objectives.3.text: Von Deployment `board` liefert `http://127.0.0.1:8080` den Wert `north-50`.

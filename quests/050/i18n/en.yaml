@@ -1,45 +1,129 @@
 title: Private Git delivery
-brief: 'A two-stage private delivery incident. First recover the release-candidate
-  ConfigMap commit onto main and publish it without rewriting the initial history.
-  After that, repair an Argo source-path incident and deliver the same remote revision
-  to a healthy board. Work through Git and Argo; a manually edited live response is
-  insufficient.
-
-
-  Quest files in `~/quest` (some appear in later stages): `platform.env`, `repository/manifests/board.json`,
-  `repository/manifests/route.json`, `baseline-commit`, `application.json`, `sync.json`.
-
-
-  The bay has no Internet or external DNS. Use only supplied files, preloaded images
-  and private services. Change only this bay.
-
-
-  Initial success criteria: Clean local/remote main contains the north-50 ConfigMap
-  commit and retains the baseline ancestor.'
-debrief: The release was recovered in Git and then reconciled by a real controller,
-  with independent checks for revision and application behavior.
-stages.0.brief: 'Success criteria: Clean local/remote main contains the north-50 ConfigMap
-  commit and retains the baseline ancestor.'
-stages.0.objectives.0.text: Clean local/remote main contains the north-50 ConfigMap
-  commit and retains the baseline ancestor.
-stages.1.brief: 'Success criteria: Argo reports the intended remote revision Synced/Healthy;
-  its tracked board serves north-50.'
-stages.1.objectives.0.text: Argo reports the intended remote revision Synced/Healthy;
-  its tracked board serves north-50.
+brief: "The remote release and the deployed application do not yet agree.\n\nWork in `~/quest` on the workstation.\
+  \ Inputs by stage:\n- Stage 1: `platform.env`, `repository/manifests/board.yaml`, `repository/manifests/route.yaml`.\n\
+  - Stage 2: `application.yaml`, `sync.json`.\n\n**Requirements:**\n\n- Stage 1:\n  - The workstation `repository`\
+  \ is clean on branch `main`, with its HEAD equal to remote `main`.\n  - The published release describes application\
+  \ response content `north-50`.\n  - The original commit remains an ancestor of the published release.\n- Stage\
+  \ 2:\n  - Application `station` reports `Synced` and `Healthy` at the published revision.\n  - The original commit\
+  \ remains an ancestor of the published release.\n  - Deployment `board` completes its rollout and carries controller\
+  \ tracking metadata.\n  - From Deployment `board`, `http://127.0.0.1:8080` returns `north-50`.\n\nGit ancestry\
+  \ and current Argo fields, tracking metadata and HTTP are checked; they do not prove which operator performed\
+  \ each change."
+debrief: The release was recovered in Git and then reconciled by a real controller, with independent checks for
+  revision and application behavior.
+stages.0.brief: The published release must preserve the recorded ancestry.
+stages.1.brief: The published revision must be visible in healthy reconciled output.
 hints.0.text: Separate recovering the Git release from delivering it.
-hints.1.text: Validate the remote main ref before asking the controller to sync.
-hints.2.text: Repair the source path and correlate Argo revision, tracked workload
-  and HTTP result.
+hints.1.text: 'Validate the remote main ref before asking the controller to sync.
+
+
+  Inspect repository history and controller reconciliation details.
+
+
+  ```sh
+
+  git -C repository log --all --oneline
+
+  kubectl describe application station
+
+  ```
+
+
+  Stage 1/2: Inspect these resource definitions for this stage.
+
+
+  ```sh
+
+  git -C repository show HEAD:manifests/route.yaml
+
+  ```
+
+
+  Stage 2: Inspect these resource definitions for this stage.
+
+
+  ```sh
+
+  kubectl get application station -o yaml
+
+  kubectl get deployment board -o yaml
+
+  ```'
+hints.2.text: 'The desired ConfigMap commit is on `release-candidate`; replay it onto `main` while retaining the
+  existing ancestry.
+
+
+  Repair the source path and correlate Argo revision, tracked workload and HTTP result.
+
+
+  Verify the relevant stage after repairing it.
+
+
+  Stage 1/2: The published hash matches the recorded release; the ancestry check, when present, exits `0`.
+
+
+  ```sh
+
+  source platform.env
+
+  git -C repository status --short --branch
+
+  git -C repository rev-parse HEAD
+
+  git -C repository ls-remote origin refs/heads/main
+
+  git -C repository merge-base --is-ancestor "$(cat baseline-commit)" HEAD
+
+  ```
+
+
+  Stage 2: The controller reports `Synced` at the expected revision; in the final stage it also reports `Healthy`
+  and the workload is ready.
+
+
+  ```sh
+
+  kubectl get application station -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
+  printf ''\n''
+
+  kubectl rollout status deployment/board --timeout=3s
+
+  ```
+
+
+  Stage 2: The consumer receives `north-50`.
+
+
+  ```sh
+
+  kubectl exec deployment/board -- wget -qO- http://127.0.0.1:8080
+
+  ```
+
+
+  Expected observations for the complete stage:
+
+  - Stage 1/2: The checkout is clean on `main`; local HEAD and remote `main` hashes agree; the `route` manifest
+  contains `index.html: north-50`; the ancestry command exits `0`.
+
+  - Stage 2: The Application source, target, revision, `Synced` and `Healthy` status match Requirements, and the
+  Deployment has its tracking ID and completed rollout.'
 phrases.0: I recovered the desired configuration in the private Git deployment branch.
-phrases.1: I correlated the remote commit with Argo revision and tracked workload
-  health.
+phrases.1: I correlated the remote commit with Argo revision and tracked workload health.
 phrases.2: I verified the delivered behavior instead of leaving a manual live repair.
 questions.0.points.0: The expected remote commit contains the reviewed manifest.
 questions.0.points.1: The controller reports that revision and healthy tracked resources.
 questions.0.points.2: An application-level request confirms the intended behavior.
-questions.0.prompt: What evidence proves that the intended Git change reached the
-  application?
+questions.0.prompt: What evidence proves that the intended Git change reached the application?
 questions.1.points.0: Desired state may still contain the fault.
 questions.1.points.1: Future reconciliation can undo the manual change.
 questions.1.points.2: Record the repair in the source and verify reconciliation.
 questions.1.prompt: Why is editing a live workload a weak permanent GitOps recovery?
+stages.0.objectives.0.text: The workstation `repository` is clean on branch `main`, with its HEAD equal to remote
+  `main`.
+stages.0.objectives.1.text: The published release describes application response content `north-50`.
+stages.0.objectives.2.text: The original commit remains an ancestor of the published release.
+stages.1.objectives.0.text: Application `station` reports `Synced` and `Healthy` at the published revision.
+stages.1.objectives.1.text: The original commit remains an ancestor of the published release.
+stages.1.objectives.2.text: Deployment `board` completes its rollout and carries controller tracking metadata.
+stages.1.objectives.3.text: From Deployment `board`, `http://127.0.0.1:8080` returns `north-50`.

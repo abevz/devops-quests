@@ -7,35 +7,51 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: 'ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" ''set -eu; test "$(cat /srv/site/maintenance.txt)"
-      = north-40''
-
-      ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" ''set -eu; test "$(cat /srv/site/maintenance.txt)"
-      = north-40''
-
-      ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" ''set -eu; test "$(cat /srv/site/maintenance.txt)"
-      = north-40''
-
-      python3 - <<''DQ_SERIAL''
+    check: 'python3 - <<''DQ_SERIAL''
 
       import yaml
 
       plays=yaml.safe_load(open(''rollout.yml''))
 
-      assert plays and all(p.get(''serial'')==1 for p in plays), ''Keep serial: 1 for every maintenance
-      play''
+      assert plays and all(p.get(''serial'')==1 for p in plays), ''Keep serial: 1 for every maintenance play''
 
       DQ_SERIAL'
+  - text: stages.0.objectives.1.text
+    check: 'set -euo pipefail
+
+      cd ~/quest
+
+      failed=0
+
+      if ! ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" ''set -eu; test "$(cat /srv/site/maintenance.txt)"
+      = north-40''; then printf ''%s\n'' ''app1 /srv/site/maintenance.txt = north-40: ✗ [DQ:maintenance_1]'' >&2;
+      failed=1; fi
+
+      if ! ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" ''set -eu; test "$(cat /srv/site/maintenance.txt)"
+      = north-40''; then printf ''%s\n'' ''app2 /srv/site/maintenance.txt = north-40: ✗ [DQ:maintenance_2]'' >&2;
+      failed=1; fi
+
+      if ! ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" ''set -eu; test "$(cat /srv/site/maintenance.txt)"
+      = north-40''; then printf ''%s\n'' ''app3 /srv/site/maintenance.txt = north-40: ✗ [DQ:maintenance_3]'' >&2;
+      failed=1; fi
+
+      exit "$failed"
+
+      '
 - brief: stages.1.brief
   objectives:
   - text: stages.1.objectives.0.text
-    check: "kubectl rollout status deployment/board --timeout=3s\nkubectl get deployment board -o json\
-      \ | jq -e '.spec.replicas==2 and .spec.strategy.rollingUpdate.maxUnavailable==0 and .spec.strategy.rollingUpdate.maxSurge==1\
-      \ and .status.availableReplicas==2' >/dev/null\nfor pod in $(kubectl get pods -l app=board -o json\
-      \ | jq -r '.items[]|select(.metadata.deletionTimestamp==null and .status.phase==\"Running\")|.metadata.name'\
-      \ ); do\n test \"$(kubectl exec \"$pod\" -- wget -qO- http://board:8080)\" = north-40\ndone\nkubectl\
-      \ get service board -o json | jq -e '.spec.selector=={\"app\":\"board\"} and .spec.ports[0].port==8080\
-      \ and .spec.ports[0].targetPort==8080' >/dev/null"
+    check: 'kubectl rollout status deployment/board --timeout=3s
+
+      kubectl get deployment board -o json | jq -e ''.spec.replicas==2 and .spec.strategy.rollingUpdate.maxUnavailable==0
+      and .spec.strategy.rollingUpdate.maxSurge==1 and .status.availableReplicas==2'' >/dev/null'
+  - text: stages.1.objectives.1.text
+    check: kubectl get service board -o json | jq -e '.spec.selector=={"app":"board"} and .spec.ports[0].port==8080
+      and .spec.ports[0].targetPort==8080' >/dev/null
+  - text: stages.1.objectives.2.text
+    check: "for pod in $(kubectl get pods -l app=board -o json | jq -r '.items[]|select(.metadata.deletionTimestamp==null\
+      \ and .status.phase==\"Running\")|.metadata.name' ); do\n test \"$(kubectl exec \"$pod\" -- wget -qO- http://board:8080)\"\
+      \ = north-40\ndone"
 hints:
 - text: hints.0.text
   guide: ansible-11
@@ -69,8 +85,8 @@ facts:
   - inventory.ini
   - ansible.cfg
   - rollout.yml
-  - board.json
-  - service.json
+  - board.yaml
+  - service.yaml
   services: []
 book:
   chapter: 3
