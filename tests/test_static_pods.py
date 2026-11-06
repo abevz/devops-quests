@@ -130,7 +130,7 @@ def static_request(tmp_path):
     import subprocess
     import sys
 
-    from devops_quests.static_pods import _STATIC_CONTROL_READER
+    from devops_quests.sandbox_evidence import bounded_yaml_reader
 
     home = tmp_path / "home"
     quest = home / "quest"
@@ -139,7 +139,7 @@ def static_request(tmp_path):
 
     def read():
         return subprocess.run(
-            [sys.executable, "-c", _STATIC_CONTROL_READER, target.name],
+            [sys.executable, "-c", bounded_yaml_reader(), target.name],
             env={**os.environ, "HOME": str(home)},
             capture_output=True,
             text=True,

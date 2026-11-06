@@ -1,32 +1,47 @@
 title: Restauración del registro
-brief: 'El proceso privado registry y TLS están en buen estado, pero se eliminó la versión manifest. En
-  esta bahía permanece un archivo Docker recovery-image.tar. Verifíquelo con el SHA-256 congelado, cárguelo
-  en el Docker daemon privado y presione parcel:1 nuevamente al mismo registry. Recupera los originales
-  exactos manifest digest y config blob; un nuevo tag que apunta a diferentes bytes no es recuperación.
-  El CA congelado sigue teniendo autoridad. Este ejercicio restaura el contenido de la imagen, no el host
-  registry ni el almacenamiento arbitrario.
+brief: |-
+  Los consumidores llegan al registro privado, pero no pueden obtener la imagen de la versión. Recupera su contenido original desde el archivo suministrado.
 
+  Trabaja en la workstation en `~/quest` con `platform.env`, `recovery-image.tar`, `release-image`, `registry-ca.crt`.
 
-  Archivos de búsqueda en `~/quest` (algunos aparecen en etapas posteriores): `platform.env`, `recovery-image.tar`,
-  `archive.sha256`, `release-image`, `registry-ca.crt`.
+  **Requirements:**
 
+  - El archivo `~/quest/recovery-image.tar` en la workstation conserva su suma de comprobación suministrada.
+  - El registro privado suministrado sirve la versión original con la etiqueta registrada en el archivo de recuperación y con su digest inmutable; el blob de configuración está disponible mediante TLS verificado.
 
-  La bahía no tiene Internet ni DNS externo. Utilice únicamente archivos proporcionados, imágenes precargadas
-  y servicios privados. Cambie sólo esta bahía.
-
-
-  Criterios de éxito iniciales: el archivo verificado se conserva y parcel:1 vuelve a resolverse en el
-  immutable manifest original con su config disponible sobre el TLS verificado.'
+  Este ejercicio recupera el contenido de la imagen, no el host del registro ni almacenamiento arbitrario.
 debrief: La versión inmutable se recuperó del contenido de la imagen retenida y se verificó a través del
   registry API.
-stages.0.brief: 'Criterios de éxito: el archivo verificado se conserva y parcel:1 vuelve a resolverse
-  en el immutable manifest original con su config disponible sobre el TLS verificado.'
-stages.0.objectives.0.text: El archivo verificado se conserva y parcel:1 vuelve a resolverse en el immutable
-  manifest original con su config disponible sobre el TLS verificado.
+stages.0.brief: Conserva sin cambios el archivo de recuperación suministrado.
 hints.0.text: La disponibilidad del proceso no implica disponibilidad del contenido de la imagen.
-hints.1.text: Utilice el digest congelado y archive el checksum como comprobaciones independientes.
-hints.2.text: Cargue el archivo aprobado, envíe la referencia original y verifique los bytes manifest
-  reales.
+hints.1.text: |-
+  Inspecciona la referencia de imagen suministrada y el inventario del Docker daemon privado.
+
+  ```bash
+  cat release-image
+  docker image ls
+  ```
+hints.2.text: |-
+  Cargue el archivo aprobado, envíe la referencia original y verifique los bytes manifest reales. Utilice el digest congelado y archive el checksum como comprobaciones independientes.
+
+  Verifica desde `~/quest` en la workstation:
+
+  - `sha256sum recovery-image.tar`
+  - `cat /run/dq/facts/0/archive.sha256`
+
+  Los valores SHA-256 coinciden.
+
+  - `source platform.env`
+  - `curl -fsS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' -I "https://$REGISTRY/v2/parcel/manifests/1"`
+  - `config=$(curl -fsS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' "https://$REGISTRY/v2/parcel/manifests/1" | jq -r .config.digest)`
+  - `curl -fsS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") -I "https://$REGISTRY/v2/parcel/blobs/$config"`
+
+  HTTP `200`; `Docker-Content-Digest` coincide con el digest de `release-image`. El blob de configuración también devuelve HTTP `200`.
 phrases.0: Separé la disponibilidad del servicio de la pérdida de artifact.
 phrases.1: Recuperé la versión inmutable original de un archivo verificado.
 phrases.2: Verifiqué manifest y config a través de TLS autenticado.
+stages.0.objectives.0.text: El archivo `~/quest/recovery-image.tar` en la workstation conserva su suma
+  de comprobación suministrada.
+stages.0.objectives.1.text: El registro privado suministrado sirve la versión original con la etiqueta
+  registrada en el archivo de recuperación y con su digest inmutable; el blob de configuración está disponible
+  mediante TLS verificado.

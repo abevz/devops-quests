@@ -1,20 +1,44 @@
 title: Секрет из Vault в pod
-brief: 'Работайте в `~/quest` с `platform.env`, `reader.hcl`, `sync-secret.sh` и `deployment.json`. Одноразовый игровой Vault
-  уже инициализирован и распечатан. Его политика `rail-reader` указывает неверный путь KV-v2. Токен manager может изменить
-  политику; токен reader должен иметь право читать `secret/data/dispatch`. Не выводите токены или ответы с секретами. Руководство
-  Vault объясняет пути политик и безопасное чтение KV-v2.
+brief: |-
+  Relay не получает значение из Vault. Восстановите ожидаемое значение по всей цепочке доставки.
 
+  Работайте на workstation в `~/quest` с файлами `platform.env`, `reader.hcl`, `sync-secret.sh`, `deployment.yaml`.
 
-  Исправьте `rail-reader`, запустите выданный скрипт `sync-secret.sh` по запросу и дождитесь развёртывания `deployment/relay`.
-  Проверьте, что reader получает `north-secret` в `.data.data.value`, Kubernetes Secret `route-secret` содержит ключ `value`,
-  декодируемый в `north-secret`, а процесс `relay` имеет `ROUTE_SECRET=north-secret`. Развёртывание должно завершиться успешно.
-  Проверка наблюдает результаты, но не доказывает, какие изменения политики или действия синхронизации их вызвали. Работайте
-  только в офлайн-песочнице.'
-stages.0.brief: Значение reader, ключ Secret, окружение relay и развёртывание соответствуют заданию.
-stages.0.objectives.0.text: Значение reader, ключ Secret, окружение relay и развёртывание соответствуют заданию.
-hints.0.text: Проверьте HTTP-статус Vault, не выводя токены.
-hints.1.text: Для чтения KV-v2 нужен путь политики secret/data/dispatch.
-hints.2.text: Исправьте rail-reader токеном manager, запустите sync-secret.sh и проверьте Secret и окружение пода.
+  Если не указано иное, ресурсы Kubernetes находятся в namespace песочницы (`DQ_NAMESPACE`); пути в `~/quest` — на workstation.
+
+  **Requirements:**
+
+  - Предоставленная идентичность Vault, доставленная конфигурация Kubernetes и работающий процесс `relay` предоставляют значение dispatch `north-secret`.
+  - Deployment `relay` завершает rollout в namespace песочницы.
+
+  Проверка наблюдает эти результаты, но не доказывает, какие изменения политики или шаги синхронизации к ним привели.
+stages.0.brief: Все наблюдения доставки должны согласовываться с одним значением.
+hints.0.text: Авторизация, доставленная конфигурация и работающий процесс — отдельные звенья цепочки доставки.
+hints.1.text: |-
+  Проследите предоставленный помощник синхронизации и ссылки на конфигурацию нагрузки.
+
+  ```bash
+  cat sync-secret.sh
+  kubectl describe deployment relay
+  ```
+hints.2.text: |-
+  Исправьте rail-reader токеном manager, запустите sync-secret.sh и проверьте Secret и окружение пода. Для чтения KV-v2 нужен путь политики secret/data/dispatch.
+
+  Проверьте из `~/quest` на workstation:
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+
+  Код `0`; учётные данные и секретные значения не выводятся.
+
+  - `kubectl get secret route-secret -o json | jq -e '.data.value | @base64d == "north-secret"' >/dev/null`
+
+  Код `0`; учётные данные и секретные значения не выводятся.
+
+  - `kubectl exec deployment/relay -- sh -c 'test "$ROUTE_SECRET" = north-secret'`
+  - `kubectl rollout status deployment/relay --timeout=3s`
+
+  Код `0`; учётные данные и секретные значения не выводятся. Rollout завершён.
 debrief: Значение reader, ключ Secret, окружение relay и развёртывание соответствовали проверкам.
 phrases.0: Я проверил фактическое состояние до изменения.
 phrases.1: Я нашёл причину и менял по одному параметру.
@@ -25,3 +49,6 @@ diagnostics.reader: Токен читателя должен прочитать 
 diagnostics.secret: Декодированное значение route-secret должно быть north-secret.
 diagnostics.env: ROUTE_SECRET контейнера relay должен быть north-secret.
 diagnostics.rollout: Выкатка Deployment relay должна завершиться.
+stages.0.objectives.0.text: Предоставленная идентичность Vault, доставленная конфигурация Kubernetes и
+  работающий процесс `relay` предоставляют значение dispatch `north-secret`.
+stages.0.objectives.1.text: Deployment `relay` завершает rollout в namespace песочницы.

@@ -1,40 +1,55 @@
 title: Webhook del repositorio
-brief: 'Se está esperando una versión privada de Git porque su repository webhook usa un retired URL.
-  El sondeo periódico Argo Git está deshabilitado en esta bahía; La sincronización inicial funcionó, luego
-  Gitea impulsó una confirmación board más nueva. Repare el push hook existente usando webhook.env y el
-  objetivo congelado en /run/dq/facts/0/webhook-target.json. Gitea envía su formato firmado compatible
-  con Gogs porque la versión fijada de Argo admite ese analizador. La prueba Gitea hook endpoint proporciona
-  la ruta de reenvío normal. Restaure la configuración hook almacenada y entregue un main event firmado;
-  un manual Argo refresh por sí solo es insuficiente. El receiver es un NodePort privado en el kind bridge
-  de propiedad, sin VM ni publicación de puerto de host.
+brief: |-
+  Una versión publicada de board no llega a sus consumidores. Restablece la entrega mediante el receptor de eventos existente del repositorio.
 
+  Trabaja en la workstation en `~/quest` con `platform.env`, `webhook.env`, `hook-id`, `hook-repair.json`, `release-commit`, `application.yaml`, `repository/`.
 
-  Archivos de búsqueda en `~/quest` (algunos aparecen en etapas posteriores): `platform.env`, `webhook.env`,
-  `webhook-target.json`, `hook-id`, `hook-create.json`, `hook-repair.json`, `initial-commit`, `release-commit`,
-  `application.json`, `repository/manifests/board.json`, `repository/manifests/service.json`.
+  Salvo indicación contraria, los recursos Kubernetes están en el namespace de la bahía (`DQ_NAMESPACE`); las rutas bajo `~/quest` están en la workstation.
 
+  **Requirements:**
 
-  La bahía no tiene Internet ni DNS externo. Utilice únicamente archivos proporcionados, imágenes precargadas
-  y servicios privados. Cambie sólo esta bahía.
+  - El hook push existente del repositorio está activo para `main` y apunta al receptor privado de eventos previsto.
+  - El `origin/main` publicado coincide con `~/quest/release-commit` en la workstation y es un nuevo descendiente del historial existente del repositorio.
+  - La Application `board` conserva la fuente Git privada suministrada, la rama de la versión y el directorio existente de la carga.
+  - La Application `board` informa `Synced` y `Healthy` en el commit de `~/quest/release-commit` en la workstation.
+  - El Deployment `board` completa su rollout en el namespace de la bahía.
+  - Dentro de un Pod del Deployment `board`, `http://board:8080` devuelve `north-75`.
+  - El receptor privado ha aceptado un evento `main` autenticado del repositorio suministrado.
 
-
-  Criterios de éxito iniciales: el push hook original firmado apunta a su receiver URL congelado, y el
-  nuevo main revision se convierte en Synced/Healthy con HTTP north-75.
-
-
-  Una observación backend bajo `/run/dq/observations/webhook.json` debe confirmar un main event autenticado
-  aceptado; un manual Argo refresh no lo crea.'
+  El evento aceptado y la versión actual no demuestran que todas las entregas futuras del webhook vayan a funcionar.
 debrief: El hook configurado y un main event firmado aceptado se verificaron mientras el sondeo periódico
   Git estaba deshabilitado.
-stages.0.brief: 'Criterios de éxito: el push hook original firmado apunta a su receiver URL congelado,
-  y el main revision más nuevo se convierte en Synced/Healthy con HTTP north-75.'
-stages.0.objectives.0.text: El push hook original firmado apunta a su receiver URL congelado, y el nuevo
-  main revision se convierte en Synced/Healthy con HTTP north-75.
+stages.0.brief: Conserva el hook original del repositorio y el historial Git existente.
 hints.0.text: Un refresh activado por webhook y una encuesta periódica automática son mecanismos diferentes.
-hints.1.text: Utilice el tipo de contenido Gogs hook, JSON existente y el juego compartido secret; inspect
-  es URL sin imprimir el secret.
-hints.2.text: PATCH el hook ID congelado al receiver suministrado, luego POST su punto final /tests y
-  observe el nuevo revision.
+hints.1.text: |-
+  Inspecciona la configuración del hook existente y la referencia del receptor; omite el secreto compartido de la salida.
+
+  ```bash
+  source platform.env
+  source webhook.env
+  api="${GIT_URL%/rail/station.git}/api/v1/repos/rail/station"
+  curl -fsS --config <(printf 'user = "%s:%s"\n' "$GIT_USER" "$GIT_PASSWORD") "$api/hooks/$(cat hook-id)" | jq '{active,branch_filter,url:.config.url}'
+  ```
+hints.2.text: |-
+  PATCH el hook ID congelado al receiver suministrado, luego POST su punto final /tests y observe el nuevo revision. Utilice el tipo de contenido Gogs hook, JSON existente y el juego compartido secret; inspect es URL sin imprimir el secret.
+
+  Verifica desde `~/quest` en la workstation:
+
+  - `source platform.env`
+  - `git -C repository ls-remote origin refs/heads/main`
+  - `cat release-commit`
+
+  El hash de `main` remoto coincide con `release-commit`.
+
+  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
+  - `jq '{repo,branch,authenticated}' /run/dq/observations/webhook.json`
+
+  `Synced`, `Healthy` y la revisión de `release-commit`. La observación indica el repositorio suministrado, `branch: "main"` y `authenticated: true`. La fuente es el repositorio privado suministrado, `manifests`, `main`.
+
+  - `kubectl rollout status deployment/board --timeout=3s`
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080`
+
+  El rollout termina; `north-75`.
 phrases.0: Separé la entrega de webhook de la conciliación periódica.
 phrases.1: Verifiqué el receiver URL y la compatibilidad del protocolo de secreto compartido.
 phrases.2: Observé la nueva confirmación y el comportamiento real de HTTP después de la nueva entrega.
@@ -47,3 +62,15 @@ questions.1.points.0: Demuestra posesión del secreto compartido y detecta modif
 questions.1.points.1: Ambas partes necesitan el mismo secret y el mismo formato compatible.
 questions.1.points.2: No otorga a la aplicación una autoridad de clúster más amplia.
 questions.1.prompt: ¿Qué protege la firma de un webhook?
+stages.0.objectives.0.text: El hook push existente del repositorio está activo para `main` y apunta al
+  receptor privado de eventos previsto.
+stages.0.objectives.1.text: El `origin/main` publicado coincide con `~/quest/release-commit` en la workstation
+  y es un nuevo descendiente del historial existente del repositorio.
+stages.0.objectives.2.text: La Application `board` conserva la fuente Git privada suministrada, la rama
+  de la versión y el directorio existente de la carga.
+stages.0.objectives.3.text: La Application `board` informa `Synced` y `Healthy` en el commit de `~/quest/release-commit`
+  en la workstation.
+stages.0.objectives.4.text: El Deployment `board` completa su rollout en el namespace de la bahía.
+stages.0.objectives.5.text: Dentro de un Pod del Deployment `board`, `http://board:8080` devuelve `north-75`.
+stages.0.objectives.6.text: El receptor privado ha aceptado un evento `main` autenticado del repositorio
+  suministrado.

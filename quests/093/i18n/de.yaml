@@ -1,28 +1,56 @@
 title: Vault-Wiederherstellung
-brief: 'Arbeite in `~/quest` mit `platform.env`, `vault-agent-status.json`, `unseal-shares.json` und `original-cluster-id`.
-  Der private Spiel-Vault-Prozess ist gestoppt, aber initialisierter Speicher ist vorhanden. Schreibe genau `{"action":"start"}`
-  nach `vault-repair.json`; der begrenzte Agent der Umgebung startet ihren vorhandenen Vault. Warte, bis der Initialisierungsendpunkt
-  erreichbar ist. Gib niemals Anteile oder Tokens aus, rufe sys/init nicht zur erneuten Initialisierung auf und ersetze den
-  Speicher nicht. Die verlinkte Vault-Anleitung erklärt Agent, Unseal-Anfragen und KV-v2-Lesezugriffe.
+brief: |-
+  Der vorhandene private Vault ist nicht erreichbar. Stellen Sie seine ursprüngliche Identität und den Zugriff auf gespeicherte Daten wieder her.
 
+  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `vault-repair.json`, `vault-agent-status.json`, `unseal-shares.json`.
 
-  Sende nach dem Start die zwei verschiedenen bereitgestellten Anteile an `/v1/sys/unseal` und halte `unseal-shares.json`
-  auf Modus `0600`. Prüfe, dass `/v1/sys/seal-status` `initialized=true`, `sealed=false`, `t=2` und `n=3` meldet und seine
-  Cluster-ID `/run/dq/facts/0/original-cluster-id` entspricht. Das reader-Token muss `north-secret` als `.data.data.value`
-  aus `secret/data/dispatch` lesen; das manager-Token muss für denselben Pfad HTTP 403 erhalten. Die Prüfungen beobachten
-  aktuellen Status, Identität und Zugriff; sie beweisen weder die genaue Startanfrage noch die gesamte Speichergeschichte.
-  Nutze nur diese Offline-Spielumgebung.'
-debrief: Initialisierung, Siegelstatus, gespeicherte Cluster-ID, Zugriffsergebnisse und Modus der Anteildatei entsprachen
-  den Prüfungen.
-stages.0.brief: Der Initialisierungsendpunkt ist erreichbar und meldet initialized=true.
-stages.0.objectives.0.text: Der Initialisierungsendpunkt ist erreichbar und meldet initialized=true.
-stages.1.brief: Siegelstatus und Cluster-ID, reader-Wert, manager-Ablehnung und Modus der Anteildatei stimmen mit der Aufgabe
-  überein.
-stages.1.objectives.0.text: Siegelstatus und Cluster-ID, reader-Wert, manager-Ablehnung und Modus der Anteildatei stimmen
-  mit der Aufgabe überein.
+  **Requirements:**
+
+  - Stufe 1:
+    - Der Initialisierungsendpunkt des Trainings-Vault ist erreichbar und meldet initialized `true`.
+
+  - Stufe 2:
+    - Der vorhandene Vault ist initialisiert und entsiegelt und behält seine ursprüngliche Cluster-Identität und Entsiegelungskonfiguration.
+    - Die bereitgestellte Reader-Identität ruft den vorhandenen Dispatch-Wert `north-secret` aus Vault ab.
+    - Die bereitgestellte Manager-Identität erhält HTTP `403` beim Abruf der vorhandenen Dispatch-Daten.
+    - Die Workstation-Datei `~/quest/unseal-shares.json` hat Modus `0600`.
+
+  Die Prüfungen beobachten aktuellen Status, Identität und Zugriff; sie beweisen weder die genaue Startanfrage noch die vollständige Speicherhistorie.
+debrief: Initialisierung, Siegelstatus, gespeicherte Cluster-ID, Zugriffsergebnisse und Modus der Anteildatei
+  entsprachen den Prüfungen.
+stages.0.brief: Stellen Sie den Initialisierungsendpunkt des vorhandenen Vault wieder her.
+stages.1.brief: Stellen Sie den ursprünglichen entsiegelten Vault mit der geforderten Zugriffsgrenze wieder
+  her.
 hints.0.text: Gestoppt, versiegelt und nicht initialisiert sind unterschiedliche Zustände.
-hints.1.text: Starte den vorhandenen Prozess, bevor du die beiden Anteile verwendest.
-hints.2.text: Prüfe nach dem Entsiegeln die ursprüngliche Cluster-ID und die vorhandenen Daten für reader.
+hints.1.text: |-
+  Prüfen Sie Prozessstatus und Versiegelungszustand ohne Ausgabe von Anteilen oder Tokens.
+
+  ```bash
+  cat vault-agent-status.json
+  source platform.env
+  curl -fsS "$VAULT_ADDR/v1/sys/seal-status"
+  ```
+hints.2.text: |-
+  Prüfe nach dem Entsiegeln die ursprüngliche Cluster-ID und die vorhandenen Daten für reader. Schreiben Sie genau `{"action":"start"}` in `vault-repair.json`; der begrenzte Agent startet den vorhandenen Vault bei der nächsten Abfrage. Senden Sie die zwei unterschiedlichen bereitgestellten Anteile an `/v1/sys/unseal`; initialisieren Sie nicht erneut und ersetzen Sie den Speicher nicht. Starte den vorhandenen Prozess, bevor du die beiden Anteile verwendest.
+
+  Prüfen Sie in `~/quest` auf der Workstation:
+
+  - `source platform.env`
+  - `curl -fsS "$VAULT_ADDR/v1/sys/init" | jq -e '.initialized == true'`
+
+  Stufe 1: `true`.
+
+  - `source platform.env`
+  - `curl -fsS "$VAULT_ADDR/v1/sys/seal-status" | jq '{initialized,sealed,t,n,cluster_id}'`
+
+  Stufe 2: `initialized: true`, `sealed: false`, `t: 2`, `n: 3`; `cluster_id` entspricht dem eingefrorenen Original.
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+  - `curl -sS -o /dev/null -w '%{http_code}\n' -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"`
+  - `stat -c %a unseal-shares.json`
+
+  Stufe 2: Exit `0`; keine Zugangsdaten oder geheimen Werte werden ausgegeben. Manager meldet `403`; die Anteilsdatei meldet `600`.
 phrases.0: Ich habe die Prozessverfügbarkeit vom Siegelstatus unterschieden.
 phrases.1: Ich habe den initialisierten und entsiegelten Status geprüft, ohne Anteile auszugeben.
 phrases.2: Ich habe die Cluster-ID verglichen und den Zugriff von reader und manager geprüft.
@@ -35,3 +63,12 @@ diagnostics.shares: Vault sys/seal-status n muss 3 sein.
 diagnostics.reader: Das Reader-Token muss north-secret aus secret/data/dispatch lesen.
 diagnostics.manager: Die Anfrage mit dem Manager-Token an secret/data/dispatch muss HTTP 403 liefern.
 diagnostics.mode: Der Modus von unseal-shares.json muss 0600 sein.
+stages.0.objectives.0.text: Der Initialisierungsendpunkt des Trainings-Vault ist erreichbar und meldet
+  initialized `true`.
+stages.1.objectives.0.text: Der vorhandene Vault ist initialisiert und entsiegelt und behält seine ursprüngliche
+  Cluster-Identität und Entsiegelungskonfiguration.
+stages.1.objectives.1.text: Die bereitgestellte Reader-Identität ruft den vorhandenen Dispatch-Wert `north-secret`
+  aus Vault ab.
+stages.1.objectives.2.text: Die bereitgestellte Manager-Identität erhält HTTP `403` beim Abruf der vorhandenen
+  Dispatch-Daten.
+stages.1.objectives.3.text: Die Workstation-Datei `~/quest/unseal-shares.json` hat Modus `0600`.

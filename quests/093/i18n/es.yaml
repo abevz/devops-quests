@@ -1,28 +1,55 @@
 title: Recuperación de Vault
-brief: 'Trabaja en `~/quest` con `platform.env`, `vault-agent-status.json`, `unseal-shares.json` y `original-cluster-id`.
-  El proceso privado de Vault del juego está detenido, pero se proporciona almacenamiento inicializado. Escribe exactamente
-  `{"action":"start"}` en `vault-repair.json`; el agente limitado de la bahía inicia su Vault existente. Espera a que el endpoint
-  de inicialización sea accesible. Nunca imprimas fragmentos o tokens, llames a sys/init para reinicializar ni reemplaces
-  el almacenamiento. La guía enlazada de Vault explica el agente, las peticiones unseal y las lecturas KV-v2.
+brief: |-
+  El Vault privado existente no está disponible. Recupera su identidad original y el acceso a los datos almacenados.
 
+  Trabaja en la workstation en `~/quest` con `platform.env`, `vault-repair.json`, `vault-agent-status.json`, `unseal-shares.json`.
 
-  Tras el inicio, envía los dos fragmentos distintos suministrados a `/v1/sys/unseal` y mantén `unseal-shares.json` con modo
-  `0600`. Comprueba que `/v1/sys/seal-status` informa `initialized=true`, `sealed=false`, `t=2` y `n=3`, y que su ID de clúster
-  coincide con `/run/dq/facts/0/original-cluster-id`. El token reader debe obtener `north-secret` como `.data.data.value`
-  de `secret/data/dispatch`; el token manager debe recibir HTTP 403 en la misma ruta. Las comprobaciones observan el estado,
-  la identidad y el acceso actuales; no demuestran la petición de inicio exacta ni toda la historia del almacenamiento. Usa
-  solo esta bahía del juego sin conexión.'
-debrief: La inicialización, el estado del sello, el ID de clúster registrado, los resultados de acceso y el modo del archivo
-  coincidieron con las comprobaciones.
-stages.0.brief: El endpoint de inicialización es accesible e informa initialized=true.
-stages.0.objectives.0.text: El endpoint de inicialización es accesible e informa initialized=true.
-stages.1.brief: El estado del sello y el ID de clúster, el valor de reader, la denegación de manager y el modo del archivo
-  de fragmentos coinciden con el enunciado.
-stages.1.objectives.0.text: El estado del sello y el ID de clúster, el valor de reader, la denegación de manager y el modo
-  del archivo de fragmentos coinciden con el enunciado.
+  **Requirements:**
+
+  - Etapa 1:
+    - El endpoint de inicialización del Vault de práctica está disponible e informa initialized `true`.
+
+  - Etapa 2:
+    - El Vault existente está inicializado y unsealed, conservando la identidad original del clúster y su configuración unseal.
+    - La identidad reader suministrada obtiene de Vault el valor dispatch existente `north-secret`.
+    - La identidad manager suministrada recibe HTTP `403` al solicitar los datos dispatch existentes.
+    - El archivo `~/quest/unseal-shares.json` en la workstation tiene modo `0600`.
+
+  Las comprobaciones observan estado, identidad y acceso actuales; no demuestran la solicitud exacta de inicio ni el historial completo del almacenamiento.
+debrief: La inicialización, el estado del sello, el ID de clúster registrado, los resultados de acceso
+  y el modo del archivo coincidieron con las comprobaciones.
+stages.0.brief: Recupera el endpoint de inicialización del Vault existente.
+stages.1.brief: Recupera el Vault original unsealed con el límite de acceso requerido.
 hints.0.text: Detenido, sellado y no inicializado son estados diferentes.
-hints.1.text: Inicia el proceso existente antes de utilizar los dos fragmentos.
-hints.2.text: Tras desellar, comprueba el ID original del clúster y los datos existentes accesibles para reader.
+hints.1.text: |-
+  Inspecciona el estado del proceso existente y del sellado sin mostrar partes ni tokens.
+
+  ```bash
+  cat vault-agent-status.json
+  source platform.env
+  curl -fsS "$VAULT_ADDR/v1/sys/seal-status"
+  ```
+hints.2.text: |-
+  Tras desellar, comprueba el ID original del clúster y los datos existentes accesibles para reader. Escribe exactamente `{"action":"start"}` en `vault-repair.json`; el agente limitado inicia el Vault existente en la siguiente consulta. Envía las dos partes distintas suministradas a `/v1/sys/unseal`; no inicialices de nuevo ni sustituyas el almacenamiento. Inicia el proceso existente antes de utilizar los dos fragmentos.
+
+  Verifica desde `~/quest` en la workstation:
+
+  - `source platform.env`
+  - `curl -fsS "$VAULT_ADDR/v1/sys/init" | jq -e '.initialized == true'`
+
+  Etapa 1: `true`.
+
+  - `source platform.env`
+  - `curl -fsS "$VAULT_ADDR/v1/sys/seal-status" | jq '{initialized,sealed,t,n,cluster_id}'`
+
+  Etapa 2: `initialized: true`, `sealed: false`, `t: 2`, `n: 3`; `cluster_id` coincide con el original congelado.
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+  - `curl -sS -o /dev/null -w '%{http_code}\n' -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"`
+  - `stat -c %a unseal-shares.json`
+
+  Etapa 2: Código `0`; no se muestran credenciales ni valores secretos. Manager informa `403`; el archivo de partes informa `600`.
 phrases.0: Distinguí la disponibilidad del proceso del estado del sello.
 phrases.1: Comprobé el estado inicializado y desellado sin imprimir fragmentos.
 phrases.2: Comparé el ID de clúster y comprobé el acceso de reader y manager.
@@ -35,3 +62,12 @@ diagnostics.shares: Vault sys/seal-status n debe ser 3.
 diagnostics.reader: El token lector (reader) debe leer north-secret de secret/data/dispatch.
 diagnostics.manager: La petición con el token manager a secret/data/dispatch debe devolver HTTP 403.
 diagnostics.mode: El modo de unseal-shares.json debe ser 0600.
+stages.0.objectives.0.text: El endpoint de inicialización del Vault de práctica está disponible e informa
+  initialized `true`.
+stages.1.objectives.0.text: El Vault existente está inicializado y unsealed, conservando la identidad
+  original del clúster y su configuración unseal.
+stages.1.objectives.1.text: La identidad reader suministrada obtiene de Vault el valor dispatch existente
+  `north-secret`.
+stages.1.objectives.2.text: La identidad manager suministrada recibe HTTP `403` al solicitar los datos
+  dispatch existentes.
+stages.1.objectives.3.text: El archivo `~/quest/unseal-shares.json` en la workstation tiene modo `0600`.

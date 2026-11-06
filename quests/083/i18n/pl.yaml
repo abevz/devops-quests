@@ -1,19 +1,44 @@
 title: Sekret Vault do pod
-brief: 'Pracuj w `~/quest` z `platform.env`, `reader.hcl`, `sync-secret.sh` i `deployment.json`. Jednorazowy Vault gry jest
-  już zainicjowany i odpieczętowany. Jego polityka `rail-reader` wskazuje błędną ścieżkę KV-v2. Token manager może ją zmienić;
-  token reader musi mieć prawo odczytu `secret/data/dispatch`. Nigdy nie wypisuj tokenów ani odpowiedzi zawierających sekrety.
-  Połączony przewodnik Vault wyjaśnia ścieżki polityk i bezpieczny odczyt KV-v2.
+brief: |-
+  Relay nie może korzystać z wartości z Vault. Przywróć oczekiwaną wartość w całym łańcuchu dostarczania.
 
+  Pracuj na workstation w `~/quest` z plikami `platform.env`, `reader.hcl`, `sync-secret.sh`, `deployment.yaml`.
 
-  Napraw `rail-reader`, uruchom dostarczony na żądanie `sync-secret.sh` i poczekaj na wdrożenie `deployment/relay`. Sprawdź,
-  czy reader otrzymuje `north-secret` jako `.data.data.value`, Kubernetes Secret `route-secret` ma klucz `value` dekodowany
-  do `north-secret`, a proces `relay` ma `ROUTE_SECRET=north-secret`. Wdrożenie musi się powieść. Kontrola obserwuje wyniki,
-  ale nie dowodzi, jakie zmiany polityki lub kroki synchronizacji je spowodowały. Pracuj tylko w zatoce offline.'
-stages.0.brief: Wartość reader, klucz Secret, środowisko relay i wdrożenie odpowiadają opisowi.
-stages.0.objectives.0.text: Wartość reader, klucz Secret, środowisko relay i wdrożenie odpowiadają opisowi.
-hints.0.text: Sprawdź status HTTP Vault, nie wypisując tokenów.
-hints.1.text: Odczyt KV-v2 wymaga ścieżki polityki secret/data/dispatch.
-hints.2.text: Napraw rail-reader tokenem manager, uruchom sync-secret.sh, a następnie sprawdź Secret i środowisko poda.
+  O ile nie wskazano inaczej, zasoby Kubernetes znajdują się w przestrzeni nazw zatoki (`DQ_NAMESPACE`); ścieżki w `~/quest` są na workstation.
+
+  **Requirements:**
+
+  - Dostarczona tożsamość Vault, dostarczona konfiguracja Kubernetes i działający proces `relay` udostępniają wartość dispatch `north-secret`.
+  - Deployment `relay` kończy rollout w przestrzeni nazw zatoki.
+
+  Sprawdzenie obserwuje te wyniki; nie dowodzi, jakie zmiany polityki lub kroki synchronizacji do nich doprowadziły.
+stages.0.brief: Wszystkie obserwacje dostarczania muszą potwierdzać tę samą wartość.
+hints.0.text: Autoryzacja, dostarczona konfiguracja i działający proces to oddzielne ogniwa łańcucha dostarczania.
+hints.1.text: |-
+  Prześledź dostarczony skrypt synchronizacji i odwołania do konfiguracji obciążenia.
+
+  ```bash
+  cat sync-secret.sh
+  kubectl describe deployment relay
+  ```
+hints.2.text: |-
+  Napraw rail-reader tokenem manager, uruchom sync-secret.sh, a następnie sprawdź Secret i środowisko poda. Odczyt KV-v2 wymaga ścieżki polityki secret/data/dispatch.
+
+  Sprawdź z `~/quest` na workstation:
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+
+  Kod `0`; dane uwierzytelniające i tajne wartości nie są wyświetlane.
+
+  - `kubectl get secret route-secret -o json | jq -e '.data.value | @base64d == "north-secret"' >/dev/null`
+
+  Kod `0`; dane uwierzytelniające i tajne wartości nie są wyświetlane.
+
+  - `kubectl exec deployment/relay -- sh -c 'test "$ROUTE_SECRET" = north-secret'`
+  - `kubectl rollout status deployment/relay --timeout=3s`
+
+  Kod `0`; dane uwierzytelniające i tajne wartości nie są wyświetlane. Rollout kończy się.
 debrief: Wartość reader, klucz Secret, środowisko relay i wdrożenie odpowiadały kontrolom.
 phrases.0: Przed dokonaniem zmiany sprawdziłem stan działania.
 phrases.1: Znalazłem przyczynę i zmieniałem jedną rzecz na raz.
@@ -24,3 +49,6 @@ diagnostics.reader: Token czytelnika (reader) musi odczytać north-secret z secr
 diagnostics.secret: Odkodowana wartość route-secret musi wynosić north-secret.
 diagnostics.env: ROUTE_SECRET kontenera relay musi wynosić north-secret.
 diagnostics.rollout: Wdrożenie Deployment relay musi się zakończyć.
+stages.0.objectives.0.text: Dostarczona tożsamość Vault, dostarczona konfiguracja Kubernetes i działający
+  proces `relay` udostępniają wartość dispatch `north-secret`.
+stages.0.objectives.1.text: Deployment `relay` kończy rollout w przestrzeni nazw zatoki.

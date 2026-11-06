@@ -1,25 +1,55 @@
 title: Odzyskiwanie Vault
-brief: 'Pracuj w `~/quest` z `platform.env`, `vault-agent-status.json`, `unseal-shares.json` i `original-cluster-id`. Prywatny
-  proces Vault gry jest zatrzymany, ale dostarczono zainicjowany magazyn. Zapisz dokładnie `{"action":"start"}` do `vault-repair.json`;
-  ograniczony agent zatoki uruchamia jej istniejący Vault. Poczekaj, aż punkt inicjalizacji będzie dostępny. Nigdy nie wypisuj
-  udziałów ani tokenów, nie wywołuj sys/init w celu ponownej inicjalizacji i nie zastępuj magazynu. Połączony przewodnik Vault
-  wyjaśnia agenta, żądania unseal i odczyty KV-v2.
+brief: |-
+  Istniejący prywatny Vault jest niedostępny. Przywróć jego pierwotną tożsamość i dostęp do zapisanych danych.
 
+  Pracuj na workstation w `~/quest` z plikami `platform.env`, `vault-repair.json`, `vault-agent-status.json`, `unseal-shares.json`.
 
-  Po uruchomieniu prześlij dwa różne dostarczone udziały do `/v1/sys/unseal` i zachowaj tryb `0600` pliku `unseal-shares.json`.
-  Sprawdź, czy `/v1/sys/seal-status` podaje `initialized=true`, `sealed=false`, `t=2` i `n=3`, a ID klastra odpowiada `/run/dq/facts/0/original-cluster-id`.
-  Token reader musi odczytać `north-secret` jako `.data.data.value` z `secret/data/dispatch`; token manager musi otrzymać
-  HTTP 403 dla tej samej ścieżki. Kontrole obserwują bieżący stan, tożsamość i dostęp; nie dowodzą dokładnego żądania startu
-  ani całej historii magazynu. Korzystaj tylko z tej zatoki gry offline.'
-debrief: Inicjalizacja, stan pieczęci, zapisany ID klastra, wyniki dostępu i tryb pliku udziałów odpowiadały kontrolom.
-stages.0.brief: Punkt inicjalizacji jest dostępny i podaje initialized=true.
-stages.0.objectives.0.text: Punkt inicjalizacji jest dostępny i podaje initialized=true.
-stages.1.brief: Stan pieczęci i ID klastra, wartość reader, odmowa manager oraz tryb pliku udziałów odpowiadają opisowi.
-stages.1.objectives.0.text: Stan pieczęci i ID klastra, wartość reader, odmowa manager oraz tryb pliku udziałów odpowiadają
-  opisowi.
+  **Requirements:**
+
+  - Etap 1:
+    - Endpoint inicjalizacji ćwiczebnego Vault jest osiągalny i zgłasza initialized `true`.
+
+  - Etap 2:
+    - Istniejący Vault jest zainicjalizowany i unsealed, zachowując pierwotną tożsamość klastra i konfigurację unseal.
+    - Dostarczona tożsamość reader pobiera z Vault istniejącą wartość dispatch `north-secret`.
+    - Dostarczona tożsamość manager otrzymuje HTTP `403`, żądając istniejących danych dispatch.
+    - Plik `~/quest/unseal-shares.json` na workstation ma tryb `0600`.
+
+  Sprawdzenia obserwują bieżący stan, tożsamość i dostęp; nie dowodzą dokładnego żądania uruchomienia ani pełnej historii magazynu.
+debrief: Inicjalizacja, stan pieczęci, zapisany ID klastra, wyniki dostępu i tryb pliku udziałów odpowiadały
+  kontrolom.
+stages.0.brief: Przywróć endpoint inicjalizacji istniejącego Vault.
+stages.1.brief: Przywróć pierwotny unsealed Vault z wymaganą granicą dostępu.
 hints.0.text: Zatrzymany, zapieczętowany i niezainicjowany to różne stany.
-hints.1.text: Uruchom istniejący proces przed użyciem dwóch udziałów.
-hints.2.text: Po odpieczętowaniu sprawdź pierwotny ID klastra i istniejące dane dostępne dla reader.
+hints.1.text: |-
+  Sprawdź stan istniejącego procesu i zapieczętowania bez wyświetlania udziałów ani tokenów.
+
+  ```bash
+  cat vault-agent-status.json
+  source platform.env
+  curl -fsS "$VAULT_ADDR/v1/sys/seal-status"
+  ```
+hints.2.text: |-
+  Po odpieczętowaniu sprawdź pierwotny ID klastra i istniejące dane dostępne dla reader. Zapisz dokładnie `{"action":"start"}` w `vault-repair.json`; ograniczony agent uruchamia istniejący Vault przy następnym sprawdzeniu. Prześlij dwa różne dostarczone udziały do `/v1/sys/unseal`; nie inicjalizuj ponownie ani nie zastępuj magazynu. Uruchom istniejący proces przed użyciem dwóch udziałów.
+
+  Sprawdź z `~/quest` na workstation:
+
+  - `source platform.env`
+  - `curl -fsS "$VAULT_ADDR/v1/sys/init" | jq -e '.initialized == true'`
+
+  Etap 1: `true`.
+
+  - `source platform.env`
+  - `curl -fsS "$VAULT_ADDR/v1/sys/seal-status" | jq '{initialized,sealed,t,n,cluster_id}'`
+
+  Etap 2: `initialized: true`, `sealed: false`, `t: 2`, `n: 3`; `cluster_id` odpowiada zamrożonemu oryginałowi.
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+  - `curl -sS -o /dev/null -w '%{http_code}\n' -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"`
+  - `stat -c %a unseal-shares.json`
+
+  Etap 2: Kod `0`; dane uwierzytelniające i tajne wartości nie są wyświetlane. Manager zgłasza `403`; plik udziałów zgłasza `600`.
 phrases.0: Rozróżniłem dostępność procesu od stanu pieczęci.
 phrases.1: Sprawdziłem stan inicjalizacji i odpieczętowania bez wypisywania udziałów.
 phrases.2: Porównałem ID klastra i sprawdziłem dostęp reader oraz manager.
@@ -32,3 +62,11 @@ diagnostics.shares: Vault sys/seal-status n musi wynosić 3.
 diagnostics.reader: Token czytelnika (reader) musi odczytać north-secret z secret/data/dispatch.
 diagnostics.manager: Żądanie tokenu manager do secret/data/dispatch musi zwrócić HTTP 403.
 diagnostics.mode: Uprawnienia unseal-shares.json muszą wynosić 0600.
+stages.0.objectives.0.text: Endpoint inicjalizacji ćwiczebnego Vault jest osiągalny i zgłasza initialized
+  `true`.
+stages.1.objectives.0.text: Istniejący Vault jest zainicjalizowany i unsealed, zachowując pierwotną tożsamość
+  klastra i konfigurację unseal.
+stages.1.objectives.1.text: Dostarczona tożsamość reader pobiera z Vault istniejącą wartość dispatch `north-secret`.
+stages.1.objectives.2.text: Dostarczona tożsamość manager otrzymuje HTTP `403`, żądając istniejących danych
+  dispatch.
+stages.1.objectives.3.text: Plik `~/quest/unseal-shares.json` na workstation ma tryb `0600`.

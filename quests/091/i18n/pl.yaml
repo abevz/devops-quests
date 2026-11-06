@@ -1,33 +1,55 @@
 title: Pochodzenie Gita
-brief: 'board jest w dobrym stanie, ale raport dotyczący incydentów myli źródło image commit z późniejszym
-  wdrożeniem - manifest commit. Śledzenie działającego, niezmiennego image poprzez prywatne registry manifest
-  i config label org.opencontainers.image.revision do prywatnego źródła Git. Wpisz provenance.json dokładnie
-  image, commit i repo. Potwierdzenie zwolnienia zamrożonego identyfikuje oczekiwany artifact; sprawdź
-  jego rzeczywiste bajty registry i źródło ancestry. Są to metadane umożliwiające śledzenie, a nie podpis
-  lub dowód zaufanej kompilacji.
+brief: |-
+  Board obsługuje ruch, ale wydanie wymaga weryfikowalnego zapisu pochodzenia. Ustal źródło działającego niezmiennego obrazu, odróżniając je od rewizji wdrożenia.
 
+  Pracuj na workstation w `~/quest` z plikami `platform.env`, `release-evidence.json`, `provenance.json`, `release-commit`, `repository/`.
 
-  Pliki zadań w `~/quest` (niektóre pojawiają się w późniejszych etapach): `platform.env`, `release-evidence.json`,
-  `provenance.json`, `source-commit`, `release-commit`, `repository/site/index.html`.
+  O ile nie wskazano inaczej, zasoby Kubernetes znajdują się w przestrzeni nazw zatoki (`DQ_NAMESPACE`); ścieżki w `~/quest` są na workstation.
 
+  **Requirements:**
 
-  W zatoce nie ma Internetu ani zewnętrznego DNS. Korzystaj wyłącznie z dostarczonych plików, wstępnie
-  załadowanych obrazów i usług prywatnych. Zmień tylko tę zatokę.
+  - Opublikowane `origin/main` odpowiada plikowi `~/quest/release-commit` na workstation.
+  - Application `board` zachowuje dostarczone prywatne źródło Git, gałąź wydania i istniejący katalog obciążenia.
+  - Application `board` zgłasza `Synced` i `Healthy` dla commita w `~/quest/release-commit` na workstation.
+  - Deployment `board` kończy rollout w przestrzeni nazw zatoki.
+  - Wewnątrz Poda Deployment `board` adres `http://board:8080` zwraca `north-91`.
+  - Plik `~/quest/provenance.json` na workstation poprawnie łączy działający obraz, jego rzeczywiste bajty w rejestrze i commit źródłowy z historią prywatnego Git.
 
+    - Plik `provenance.json` na workstation zawiera dokładnie `image`, `commit` i `repo`. Źródło obrazu różni się od `release-commit`, poprzedza opublikowane wydanie w historii Git i zawiera w repozytorium `site/index.html` z `north-91`. Raport, działający digest, rzeczywiste bajty rejestru, metadane źródła rejestru i dostarczony dowód wydania są zgodne.
 
-  Początkowe kryteria sukcesu: raport pasuje do rzeczywistego działającego źródła digest, registry config
-  source revision i prywatnego źródła Git; board pozostaje zdrowa.'
+  To metadane identyfikowalności, a nie podpis ani dowód zaufanej kompilacji.
 debrief: Incydent łączy teraz uruchomione bajty z wersją źródłową, pozostawiając zaufanie do kompilacji
   odrębną kwestią.
-stages.0.brief: 'Kryteria sukcesu: raport odpowiada rzeczywistemu działającemu digest, konfiguracji rejestru
-  source revision i prywatnemu źródłu Git; board pozostaje zdrowa.'
-stages.0.objectives.0.text: Raport pasuje do rzeczywistego działającego digest, konfiguracji rejestru
-  source revision i prywatnego źródła Git; board pozostaje zdrowa.
+stages.0.brief: Odróżnij pochodzenie źródła obrazu od historii wdrożenia.
 hints.0.text: Zatwierdzenie manifestu może odwoływać się do obrazu utworzonego na podstawie wcześniejszego
   zatwierdzenia.
-hints.1.text: Rozwiąż manifest → config blob → OCI revision label; porównaj pochodzenie Gita.
-hints.2.text: Zapisz obraz digest, zatwierdzenie źródła i prywatne repozytorium URL, nie traktując label
-  jako podpisu.
+hints.1.text: |-
+  Sprawdź historię źródła i raport; prześledź niezmienny obraz przez metadane rejestru.
+
+  ```bash
+  git -C repository log --oneline -5
+  cat provenance.json
+  ```
+hints.2.text: |-
+  Zapisz obraz digest, zatwierdzenie źródła i prywatne repozytorium URL, nie traktując label jako podpisu. Dokładna etykieta OCI to `org.opencontainers.image.revision`; znajdź ją przez manifest i konfigurację działającego niezmiennego obrazu. Rozwiąż manifest → config blob → OCI revision label; porównaj pochodzenie Gita.
+
+  Sprawdź z `~/quest` na workstation:
+
+  - `source platform.env`
+  - `git -C repository ls-remote origin refs/heads/main`
+  - `cat release-commit`
+  - `cat provenance.json`
+
+  Hash zdalnego `main` odpowiada `release-commit`. Raport zawiera dokładnie `image`, `commit` i `repo`; `commit` wskazuje źródło obrazu i różni się od `release-commit`.
+
+  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
+
+  `Synced`, `Healthy` i rewizja z `release-commit`. Źródłem jest dostarczone prywatne repozytorium, `manifests`, `main`.
+
+  - `kubectl rollout status deployment/board --timeout=3s`
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080`
+
+  Rollout kończy się; `north-91`.
 phrases.0: Rozróżniłem wersję źródłową od wersji wdrożeniowej.
 phrases.1: Sprawdziłem skrót manifestu i obraz config w registry.
 phrases.2: Niepodpisane pochodzenie traktowałem jako możliwość śledzenia, a nie poświadczenie.
@@ -38,3 +60,12 @@ questions.1.points.0: Jedno zatwierdzenie buduje artifact; późniejsze zatwierd
   wdrożenia.
 questions.1.points.1: Śledź obie wersje i zachowaj ich powiązania.
 questions.1.prompt: Dlaczego GitOps revision może różnić się od wersji obrazowej?
+stages.0.objectives.0.text: Opublikowane `origin/main` odpowiada plikowi `~/quest/release-commit` na workstation.
+stages.0.objectives.1.text: Application `board` zachowuje dostarczone prywatne źródło Git, gałąź wydania
+  i istniejący katalog obciążenia.
+stages.0.objectives.2.text: Application `board` zgłasza `Synced` i `Healthy` dla commita w `~/quest/release-commit`
+  na workstation.
+stages.0.objectives.3.text: Deployment `board` kończy rollout w przestrzeni nazw zatoki.
+stages.0.objectives.4.text: Wewnątrz Poda Deployment `board` adres `http://board:8080` zwraca `north-91`.
+stages.0.objectives.5.text: Plik `~/quest/provenance.json` na workstation poprawnie łączy działający obraz,
+  jego rzeczywiste bajty w rejestrze i commit źródłowy z historią prywatnego Git.

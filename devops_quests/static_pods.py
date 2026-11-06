@@ -3,41 +3,8 @@
 import json
 import re
 
-from .sandbox_evidence import record
+from .sandbox_evidence import bounded_yaml_reader, record
 
-# Only quest 117 accepts YAML; other bounded control inputs remain JSON.
-_STATIC_CONTROL_READER = """import json, os, stat, sys, yaml
-from pathlib import Path
-try:
-    fd=os.open(Path.home()/'quest'/sys.argv[1], os.O_RDONLY|os.O_NONBLOCK|os.O_NOFOLLOW)
-except FileNotFoundError:
-    sys.exit(1)
-except OSError:
-    print('null');sys.exit(0)
-try:
-    info=os.fstat(fd)
-    if not stat.S_ISREG(info.st_mode) or info.st_size>4096:
-        print('null');sys.exit(0)
-    raw=os.read(fd,4097)
-    if len(raw)>4096:
-        print('null');sys.exit(0)
-    try:
-        depth=0
-        for event in yaml.parse(raw):
-            if isinstance(event, yaml.events.AliasEvent):
-                raise yaml.YAMLError('Control input must not contain aliases')
-            if isinstance(event, (yaml.events.MappingStartEvent, yaml.events.SequenceStartEvent)):
-                depth+=1
-                if depth>64:
-                    raise yaml.YAMLError('Control input is too deeply nested')
-            elif isinstance(event, (yaml.events.MappingEndEvent, yaml.events.SequenceEndEvent)):
-                depth-=1
-        print(json.dumps(yaml.safe_load(raw),ensure_ascii=True))
-    except (ValueError,UnicodeError,TypeError,RecursionError,yaml.YAMLError):
-        print('null')
-finally:
-    os.close(fd)
-"""
 
 
 def manifest(runtime, run, port):
@@ -103,7 +70,7 @@ def control(runtime, run):
     result = runtime.exec(
         run,
         "python3 - static-pod.yaml <<'STATIC_REQUEST'\n"
-        + _STATIC_CONTROL_READER
+        + bounded_yaml_reader()
         + "\nSTATIC_REQUEST\n",
         check=False,
         timeout=3,

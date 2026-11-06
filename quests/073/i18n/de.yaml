@@ -1,33 +1,51 @@
 title: Vault-Prüfung
-brief: 'Das Spiel reader erhielt eine echte Vault-Berechtigungsverweigerung. Die Dateiüberwachung ist
-  mit log_raw=false aktiviert. Der backend exportiert nur zugelassene Ablehnungsmetadaten in audit-events.json
-  und friert sie unter /run/dq/facts/0/. Raw audit records ein. Authentifizierungsfelder und geheime Werte
-  bleiben außerhalb des workstation. Identifizieren Sie die abgelehnte Anfrage in incident.json mit genau
-  request_id, Pfad, operation und reason. Dann reparieren Sie reader.hcl für dispatch schreibgeschützt
-  und aktualisieren Sie das Spiel policy. Kopieren Sie weder tokens noch geheime Werte in Ihren Vorfalldatensatz.
+brief: |-
+  Ein Vault-Verbraucher erhält eine Zugriffsverweigerung. Stellen Sie den vorgesehenen Zugriff wieder her und dokumentieren Sie die abgelehnte Anfrage.
 
+  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `audit-events.json`, `incident.json`, `reader.hcl`.
 
-  Questdateien in `~/quest` (einige erscheinen in späteren Stadien): `platform.env`, `audit-events.json`,
-  `incident.json`, `reader.hcl`, `reader-policy.json`.
+  **Requirements:**
 
+  - Die Workstation-Datei `~/quest/incident.json` identifiziert die abgelehnte Anfrage aus den bereitgestellten Audit-Metadaten mit genau `request_id`, `path`, `operation` und `reason`.
+  - Die bereitgestellte Reader-Identität liest die vorhandenen Dispatch-Daten und meldet `deny` für Prüfungen von `secret/data/other` und `sys/audit`.
+  - Die bereitgestellte Reader-Identität ruft den vorhandenen Dispatch-Wert `north-secret` aus Vault ab.
 
-  Der Schacht verfügt über kein Internet oder externes DNS. Verwenden Sie nur bereitgestellte Dateien,
-  vorinstallierte Bilder und private Dienste. Ändern Sie nur diese Bucht.
-
-
-  Erste Erfolgskriterien: Der Vorfall stimmt genau mit den eingefrorenen Metadaten der tatsächlichen Ablehnung
-  überein; Der reader kann dispatch lesen und erhält keine unabhängige Verwaltung von secrets und audit.'
+  Die negativen Prüfungen decken die zwei genannten Pfade ab; sie belegen keine Ablehnung für jeden Vault-Pfad.
 debrief: Eine abgelehnte Anfrage wurde anhand echter audit-Metadaten diagnostiziert, während Geheimnisse
   außerhalb des Vorfallsartefakts blieben.
-stages.0.brief: 'Erfolgskriterien: Der Vorfall stimmt genau mit den eingefrorenen Metadaten der tatsächlichen
-  Ablehnung überein; Der reader kann dispatch lesen und erhält keine unabhängige Verwaltung von secrets
-  und audit.'
-stages.0.objectives.0.text: Der Vorfall stimmt genau mit den eingefrorenen Metadaten der echten Ablehnung
-  überein; Der reader kann dispatch lesen und erhält keine unabhängige Verwaltung von secrets und audit.
+stages.0.brief: Der Vorfallnachweis enthält keine Authentifizierungsdaten oder geheimen Werte.
 hints.0.text: Operational logs und Anfrage audit records beantworten verschiedene Fragen.
-hints.1.text: Korrelieren Sie request_id, Pfad und operation, ohne Authentifizierungsdaten zu kopieren.
-hints.2.text: Zeichnen Sie nur die vier exportierten Felder auf und reparieren Sie den Lesepfad KV v2,
-  ohne den Zugriff zu erweitern.
+hints.1.text: |-
+  Prüfen Sie die exportierten Audit-Metadaten und die bereitgestellte Richtlinie ohne Ausgabe von Zugangsdaten.
+
+  ```bash
+  jq 'map({request_id,path,operation,reason})' audit-events.json
+  cat reader.hcl
+  ```
+hints.2.text: |-
+  Zeichnen Sie nur die vier exportierten Felder auf und reparieren Sie den Lesepfad KV v2, ohne den Zugriff zu erweitern. Aktualisieren Sie nach der Bearbeitung von `reader.hcl` die laufende Trainingsrichtlinie mit der Manager-Identität. Das Datei-Audit nutzt `log_raw=false`; nur freigegebene Ablehnungsmetadaten werden nach `audit-events.json` und in eingefrorene Fakten exportiert. Rohe Audit-Einträge, Authentifizierungsfelder und geheime Werte bleiben außerhalb der Workstation. Korrelieren Sie request_id, Pfad und operation, ohne Authentifizierungsdaten zu kopieren.
+
+  Prüfen Sie in `~/quest` auf der Workstation:
+
+  - `jq -e 'keys == ["operation","path","reason","request_id"]' incident.json >/dev/null`
+
+  Exit `0`; der Vorfall enthält genau die vier geforderten Felder.
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+
+  Exit `0`; keine Zugangsdaten oder geheimen Werte werden ausgegeben.
+
+  - `source platform.env`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") -H 'Content-Type: application/json' --request POST --data '{"paths":["secret/data/dispatch","secret/data/other","sys/audit"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '{dispatch:."secret/data/dispatch",other:."secret/data/other",audit:."sys/audit"}'`
+
+  `dispatch: ["read"]`; `other` und `audit`: `["deny"]`.
 phrases.0: Ich habe eine abgelehnte Anfrage mit ihrer Prüfanforderung ID korreliert.
 phrases.1: Ich habe Authentifizierungsdaten und geheime Werte aus dem Vorfallbericht herausgehalten.
 phrases.2: Ich habe die korrigierten Lese- und negativen Autorisierungsprüfungen überprüft.
+stages.0.objectives.0.text: Die Workstation-Datei `~/quest/incident.json` identifiziert die abgelehnte
+  Anfrage aus den bereitgestellten Audit-Metadaten mit genau `request_id`, `path`, `operation` und `reason`.
+stages.0.objectives.1.text: Die bereitgestellte Reader-Identität liest die vorhandenen Dispatch-Daten
+  und meldet `deny` für Prüfungen von `secret/data/other` und `sys/audit`.
+stages.0.objectives.2.text: Die bereitgestellte Reader-Identität ruft den vorhandenen Dispatch-Wert `north-secret`
+  aus Vault ab.

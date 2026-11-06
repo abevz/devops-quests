@@ -1,26 +1,59 @@
 title: Argo CD ApplicationSet
-brief: 'Work in `~/quest` with `platform.env`, `appset-target.json`, `applicationset.json`, `repository/stations/north/board.json`,
-  `repository/stations/south/board.json`, `release-commit` and `wait-apps.sh`. An ApplicationSet list generator supplies values
-  to a Go template. Set the template path to exactly `stations/{{.station}}`, keep `goTemplate: true` and the ordered stations
-  `[north, south]`. The ordinary game poll submits one of two bounded manifests to the private controller namespace from `appset-target.json`;
-  wait for it and for reconciliation. This adapter accepts only those bounded changes, not arbitrary API edits.
+brief: |-
+  The station fleet is not delivering both expected services. Restore the generated applications and their observable release results.
 
+  Work on the workstation in `~/quest` with `platform.env`, `appset-target.json`, `applicationset.yaml`, `repository/`, `release-commit`, `wait-apps.sh`.
 
-  The generated north and south Applications must be owned by this ApplicationSet, `Synced` and `Healthy` at `release-commit`,
-  and retain the project, repository, per-entry path and bay namespace shown in `wait-apps.sh` and `appset-target.json`. Each
-  Deployment must have one ready replica; `north:8080` and `south:8080` must return `north-123` and `south-123`. Current generated
-  state does not prove only the template path was edited. Use only the offline bay.'
-debrief: ApplicationSet generates Application specifications; each Application still reconciles its workload. The bounded
-  submission adapter preserves the private project, repository and destination, while a real namespace-scoped controller performs
-  generation.
-stages.0.brief: The ApplicationSet template, generated Application ownership and status, and both Deployment responses match
-  the brief.
-stages.0.objectives.0.text: The ApplicationSet template, generated Application ownership and status, and both Deployment responses
-  match the brief.
-hints.0.text: The list generator supplies station; the template expands it into each Application source path.
-hints.1.text: Inspect applicationset.json and the read-only generated Applications in the namespace from appset-target.json.
-hints.2.text: Use stations/{{.station}}, keep all scope fields unchanged, then compare owner UID, revisions and both HTTP
-  responses.
+  Unless stated otherwise, Kubernetes resources live in the bay namespace (`DQ_NAMESPACE`); `~/quest` paths are on the workstation.
+
+  **Requirements:**
+
+  - The existing ApplicationSet generates exactly Applications `north` and `south`, each using its corresponding fleet content from the supplied repository, with the intended project and bay destination retained.
+  - Both generated Applications remain owned by the existing ApplicationSet.
+  - Both generated Applications are `Synced` and `Healthy` at the supplied release revision.
+  - Deployments `north` and `south` each have exactly `1` ready replica.
+  - Inside their Pods, `http://north:8080` and `http://south:8080` return `north-123` and `south-123`, respectively.
+
+    - The generated Applications and their ApplicationSet stay in the supplied controller namespace; the Deployments and Services stay in the bay namespace.
+
+  Current generated state does not prove only the template path was edited.
+debrief: ApplicationSet generates Application specifications; each Application still reconciles its workload.
+  The bounded submission adapter preserves the private project, repository and destination, while a real
+  namespace-scoped controller performs generation.
+stages.0.brief: Keep the supplied controller scope and generated ownership.
+hints.0.text: The list generator supplies station; the template expands it into each Application source
+  path.
+hints.1.text: |-
+  Inspect the supplied ApplicationSet and the generated Applications in their controller namespace.
+
+  ```bash
+  cat applicationset.yaml
+  ns=$(jq -r .namespace appset-target.json)
+  kubectl -n "$ns" get applications north south -o yaml
+  ```
+hints.2.text: |-
+  Use stations/{{.station}}, keep all scope fields unchanged, then compare owner UID, revisions and both HTTP responses. The ordinary objective poll submits `applicationset.yaml` through the bounded adapter. Keep `goTemplate: true` and the ordered stations `[north, south]`; it accepts only the original manifest or its template-path repair. Inspect applicationset.yaml and the read-only generated Applications in the namespace from appset-target.json.
+
+  Verify from `~/quest` on the workstation:
+
+  - `ns=$(jq -r .namespace appset-target.json)`
+  - `kubectl -n "$ns" get applications north south -o json | jq '.items[] | {name:.metadata.name,sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision,project:.spec.project,repo:.spec.source.repoURL,path:.spec.source.path,destination:.spec.destination.namespace,owners:.metadata.ownerReferences}'`
+
+  Both are `Synced` and `Healthy` at `release-commit`. Both use project `station`, the recorded repository, their respective `stations/north` / `stations/south` paths, destination `DQ_NAMESPACE`, and an `ApplicationSet` owner.
+
+  - `kubectl get deployments north south -o json | jq '.items[] | {name:.metadata.name,ready:.status.readyReplicas}'`
+
+  Each reports `ready: 1`.
+
+  ```bash
+  for station in north south; do
+    kubectl exec deployment/"$station" -- wget -qO- -T 3 "http://$station:8080"
+  done
+  ```
+
+  `north-123`, `south-123`.
+
+  - `bash wait-apps.sh` — exit `0`; the supplied release checks pass.
 phrases.0: I separated Application generation from workload reconciliation.
 phrases.1: I checked the generator values and template expansion.
 phrases.2: I kept controller permissions and destinations scoped.
@@ -52,9 +85,20 @@ diagnostics.source_north: application/north source.path must equal stations/nort
 diagnostics.source_south: application/south source.path must equal stations/south.
 diagnostics.destination_north: application/north destination.namespace must equal DQ_NAMESPACE.
 diagnostics.destination_south: application/south destination.namespace must equal DQ_NAMESPACE.
-diagnostics.owner_north: application/north must have an ApplicationSet owner reference with the station ApplicationSet UID.
-diagnostics.owner_south: application/south must have an ApplicationSet owner reference with the station ApplicationSet UID.
+diagnostics.owner_north: application/north must have an ApplicationSet owner reference with the station
+  ApplicationSet UID.
+diagnostics.owner_south: application/south must have an ApplicationSet owner reference with the station
+  ApplicationSet UID.
 diagnostics.ready_north: deployment/north readyReplicas must equal 1.
 diagnostics.ready_south: deployment/south readyReplicas must equal 1.
 diagnostics.http_north: The request to north:8080 must return north-123.
 diagnostics.http_south: The request to south:8080 must return south-123.
+stages.0.objectives.0.text: The existing ApplicationSet generates exactly Applications `north` and `south`,
+  each using its corresponding fleet content from the supplied repository, with the intended project and
+  bay destination retained.
+stages.0.objectives.1.text: Both generated Applications remain owned by the existing ApplicationSet.
+stages.0.objectives.2.text: Both generated Applications are `Synced` and `Healthy` at the supplied release
+  revision.
+stages.0.objectives.3.text: Deployments `north` and `south` each have exactly `1` ready replica.
+stages.0.objectives.4.text: Inside their Pods, `http://north:8080` and `http://south:8080` return `north-123`
+  and `south-123`, respectively.

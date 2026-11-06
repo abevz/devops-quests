@@ -1,46 +1,78 @@
 title: Инцидент credential
-brief: 'Приватное табло зависит от игрового reader token Vault, который считается
-  скомпрометированным. Замените только этот reader: через ограниченный issuer rail-rotation
-  создайте non-renewable token rail-reader на 300s с explicit_max_ttl 600s, сохраните
-  в station-token с правами 0600 и отзовите compromised accessor из сохранённой квитанции.
-  Manager выдаёт только эту роль и отзывает только этот accessor; он не читает KV
-  и не меняет policies. sync-secret.sh читает station-token. Восстановите существующую
-  цепочку Git → private image → Argo с новым credential и докажите HTTP 403 для старого
-  token. Не помещайте tokens в Git.
+brief: |-
+  Учётные данные Vault для board считаются скомпрометированными. Восстановите приватную доставку с ограниченной заменой, лишив прежние данные доступа.
 
+  Работайте на workstation в `~/quest` с файлами `platform.env`, `compromised-accessor`, `station-token`, `sync-secret.sh`, `private-release.json`, `release-commit`, `repository/`.
 
-  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `platform.env`,
-  `compromised-accessor`, `station-token`, `sync-secret.sh`, `private-release.json`,
-  `repository/manifests/board.json`.
+  Если не указано иное, ресурсы Kubernetes находятся в namespace песочницы (`DQ_NAMESPACE`); пути в `~/quest` — на workstation.
 
+  **Requirements:**
 
-  В песочнице нет интернета и внешнего DNS. Используйте выданные файлы, предварительно
-  загруженные образы и приватные сервисы. Менять можно только эту песочницу.
+  - Опубликованная `origin/main` совпадает с `~/quest/release-commit` на workstation.
+  - Application `board` сохраняет предоставленный приватный источник Git, ветку релиза и существующий каталог нагрузки.
+  - Application `board` сообщает `Synced` и `Healthy` для коммита из `~/quest/release-commit` на workstation.
+  - Внутри Pod Deployment `board` адрес `http://board:8080` возвращает `north-99`.
+  - Deployment `board` и готовый контейнер используют существующий неизменяемый приватный образ релиза с политикой загрузки `Always`; rollout завершается.
+  - Существующая конфигурация Kubernetes для `board` содержит значение dispatch `north-secret` и передаётся нагрузке.
+  - Замена учётных данных в `~/quest/station-token` на workstation приватна (`0600`), отличается от прежних данных, читает существующее значение dispatch `north-secret`, сохраняет предоставленный набор политик reader и имеет TTL больше `0` и не больше `600` секунд.
+  - Прежние предоставленные учётные данные получают HTTP `403` при запросе существующих данных dispatch.
 
-
-  Цели первого этапа: Старый reader отозван, новый ограничен и сохранён приватно;
-  существующее GitOps-табло отдаёт north-99 из закреплённого приватного образа с Secret
-  из Vault.'
-debrief: Скомпрометированный credential отозван, приватная доставка восстановлена
-  ограниченной заменой с минимальными правами.
-stages.0.brief: 'Результат проверки: Старый reader отозван, новый ограничен и сохранён
-  приватно; существующее GitOps-табло отдаёт north-99 из закреплённого приватного
-  образа с Secret из Vault.'
-stages.0.objectives.0.text: Старый reader отозван, новый ограничен и сохранён приватно;
-  существующее GitOps-табло отдаёт north-99 из закреплённого приватного образа с Secret
-  из Vault.
+  Текущий отказ не доказывает, как и когда прежние учётные данные потеряли доступ.
+debrief: Скомпрометированный credential отозван, приватная доставка восстановлена ограниченной заменой
+  с минимальными правами.
+stages.0.brief: Замена остаётся приватной и ограниченной; прежние учётные данные теряют доступ.
 hints.0.text: Создание замены не делает скомпрометированный token недействительным.
-hints.1.text: Выдайте ограниченный reader, доставьте приватно и отзовите сохранённый
-  accessor.
-hints.2.text: Проверьте 403 для старого token и работающую доставку с новым, не расширяя
-  policy.
+hints.1.text: |-
+  Изучите помощник синхронизации и текущие ссылки на конфигурацию нагрузки, не выводя учётные данные.
+
+  ```bash
+  cat sync-secret.sh
+  kubectl describe deployment board
+  ```
+hints.2.text: |-
+  Проверьте 403 для старого token и работающую доставку с новым, не расширяя policy. Ограниченный издатель — `rail-rotation`: выпустите непродлеваемый токен `rail-reader` на `300s` с `explicit_max_ttl` `600s`, сохраните его приватно в `station-token` и отзовите accessor из замороженной квитанции. `sync-secret.sh` читает `station-token`. Не помещайте токены в Git. Выдайте ограниченный reader, доставьте приватно и отзовите сохранённый accessor.
+
+  Проверьте из `~/quest` на workstation:
+
+  - `source platform.env`
+  - `git -C repository ls-remote origin refs/heads/main`
+  - `cat release-commit`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$(cat station-token)") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+  - `curl -sS -o /dev/null -w '%{http_code}\n' -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"`
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$(cat station-token)") "$VAULT_ADDR/v1/auth/token/lookup-self" | jq '{policies:.data.policies,ttl:.data.ttl}'`
+  - `stat -c %a station-token`
+
+  Хеш удалённой `main` совпадает с `release-commit`. Замена успешно читает без вывода значения; старый токен сообщает `403`. Политики — ровно `default` / `rail-reader`, `0 < ttl <= 600`; режим файла — `600`.
+
+  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
+
+  `Synced`, `Healthy` и ревизия из `release-commit`. Источник — предоставленный приватный репозиторий, `manifests`, `main`.
+
+  - `kubectl rollout status deployment/board --timeout=3s`
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080`
+
+  Rollout завершён; `north-99`.
 phrases.0: Я заменил credential и явно отозвал скомпрометированный.
 phrases.1: Я сохранил секреты вне Git и журналов.
 phrases.2: Я проверил запрет старого доступа и всю цепочку доставки.
 questions.0.points.0: 'Нет: нужен явный отзыв или истечение срока.'
 questions.0.points.1: После замены проверьте отказ старого credential.
 questions.0.prompt: Отзывает ли выдача нового token старый?
-questions.1.points.0: Восстановление не должно создавать неограниченного администратора
-  секретов.
+questions.1.points.0: Восстановление не должно создавать неограниченного администратора секретов.
 questions.1.points.1: Ограничьте policy, срок жизни и цель отзыва.
 questions.1.prompt: Зачем ограничивать issuer восстановления?
+stages.0.objectives.0.text: Опубликованная `origin/main` совпадает с `~/quest/release-commit` на workstation.
+stages.0.objectives.1.text: Application `board` сохраняет предоставленный приватный источник Git, ветку
+  релиза и существующий каталог нагрузки.
+stages.0.objectives.2.text: Application `board` сообщает `Synced` и `Healthy` для коммита из `~/quest/release-commit`
+  на workstation.
+stages.0.objectives.3.text: Внутри Pod Deployment `board` адрес `http://board:8080` возвращает `north-99`.
+stages.0.objectives.4.text: Deployment `board` и готовый контейнер используют существующий неизменяемый
+  приватный образ релиза с политикой загрузки `Always`; rollout завершается.
+stages.0.objectives.5.text: Существующая конфигурация Kubernetes для `board` содержит значение dispatch
+  `north-secret` и передаётся нагрузке.
+stages.0.objectives.6.text: Замена учётных данных в `~/quest/station-token` на workstation приватна (`0600`),
+  отличается от прежних данных, читает существующее значение dispatch `north-secret`, сохраняет предоставленный
+  набор политик reader и имеет TTL больше `0` и не больше `600` секунд.
+stages.0.objectives.7.text: Прежние предоставленные учётные данные получают HTTP `403` при запросе существующих
+  данных dispatch.

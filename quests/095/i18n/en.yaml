@@ -1,32 +1,53 @@
 title: Argo rollback
-brief: 'A private Git release introduced a bad readiness probe. Argo CD keeps reconciling
-  it, so an isolated live rollback would be overwritten. Inspect healthy-commit and
-  faulty-commit, then create and push a new Git revert on main. Keep the faulty commit
-  in history, preserve automatic self-heal/prune, and record the new HEAD in release-commit.
-  Restore the original healthy manifest and HTTP result. Do not reset or force-push
-  history, disable GitOps or roll back only the Deployment.
+brief: |-
+  The latest private Git release is not healthy. Restore the known healthy release content while retaining the incident history.
 
+  Work on the workstation in `~/quest` with `platform.env`, `application.yaml`, `healthy-commit`, `faulty-commit`, `release-commit`, `repository/`.
 
-  Quest files in `~/quest` (some appear in later stages): `application.json`, `healthy-commit`,
-  `faulty-commit`, `release-commit`, `repository/manifests/board.json`.
+  Unless stated otherwise, Kubernetes resources live in the bay namespace (`DQ_NAMESPACE`); `~/quest` paths are on the workstation.
 
+  **Requirements:**
 
-  The bay has no Internet or external DNS. Use only supplied files, preloaded images
-  and private services. Change only this bay.
+  - Published `origin/main` equals workstation `release-commit`, differs from the frozen faulty commit, and retains that commit as an ancestor.
+  - Application `board` retains the supplied private Git source, release branch and existing workload directory.
+  - Application `board` reports `Synced` and `Healthy` at the commit in workstation `~/quest/release-commit`.
+  - Deployment `board` completes its rollout in the bay namespace.
+  - Inside a Pod of Deployment `board`, `http://board:8080` returns `north-95`.
+  - Published Git `manifests/board.yaml` restores the known healthy workload configuration.
 
-
-  Initial success criteria: A new descendant commit restores the healthy manifest;
-  Argo remains automated, Synced and Healthy, with north-95 over HTTP.'
-debrief: Rollback was expressed as a forward change to desired state, retaining the
-  faulty revision for investigation.
-stages.0.brief: 'Success criteria: A new descendant commit restores the healthy manifest;
-  Argo remains automated, Synced and Healthy, with north-95 over HTTP.'
-stages.0.objectives.0.text: A new descendant commit restores the healthy manifest;
-  Argo remains automated, Synced and Healthy, with north-95 over HTTP.
+  Current Git content and ancestry do not prove which recovery command was used.
+debrief: Rollback was expressed as a forward change to desired state, retaining the faulty revision for
+  investigation.
+stages.0.brief: Retain the faulty commit in published history.
 hints.0.text: Self-heal reconciles Git desired state, including mistakes.
-hints.1.text: A revert records a new corrective commit and keeps incident history.
-hints.2.text: Revert the frozen faulty commit, push main and verify the observed revision
-  and health.
+hints.1.text: |-
+  Inspect the release history and the workload’s current failure symptoms.
+
+  ```bash
+  git -C repository log --oneline -5
+  kubectl describe deployment board
+  ```
+hints.2.text: |-
+  Revert the frozen faulty commit, push main and verify the observed revision and health. A revert records a new corrective commit and keeps incident history.
+
+  Verify from `~/quest` on the workstation:
+
+  - `source platform.env`
+  - `git -C repository ls-remote origin refs/heads/main`
+  - `cat release-commit`
+  - `git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/faulty-commit)" "$(cat release-commit)"`
+  - `git -C repository show --stat --oneline "$(cat release-commit)"`
+
+  The remote `main` hash equals `release-commit`. The ancestry read exits `0`; the new commit retains incident history.
+
+  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
+
+  `Synced`, `Healthy`, and the revision from `release-commit`. The source is the supplied private repository, `manifests`, `main`.
+
+  - `kubectl rollout status deployment/board --timeout=3s`
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080`
+
+  The rollout completes; `north-95`.
 phrases.0: I restored desired state with a Git revert.
 phrases.1: I kept reconciliation enabled during recovery.
 phrases.2: I verified the observed revision and application health.
@@ -36,3 +57,12 @@ questions.0.prompt: Why can a live rollout undo be temporary under GitOps?
 questions.1.points.0: The faulty commit remains reachable in the main history.
 questions.1.points.1: The recovery is a reviewable new change.
 questions.1.prompt: What does revert preserve that reset loses?
+stages.0.objectives.0.text: Published `origin/main` equals workstation `release-commit`, differs from
+  the frozen faulty commit, and retains that commit as an ancestor.
+stages.0.objectives.1.text: Application `board` retains the supplied private Git source, release branch
+  and existing workload directory.
+stages.0.objectives.2.text: Application `board` reports `Synced` and `Healthy` at the commit in workstation
+  `~/quest/release-commit`.
+stages.0.objectives.3.text: Deployment `board` completes its rollout in the bay namespace.
+stages.0.objectives.4.text: Inside a Pod of Deployment `board`, `http://board:8080` returns `north-95`.
+stages.0.objectives.5.text: Published Git `manifests/board.yaml` restores the known healthy workload configuration.

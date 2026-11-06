@@ -1,41 +1,69 @@
 title: Происхождение Git-релиза
-brief: 'Табло исправно, но в отчёте перепутаны коммит исходников образа и более поздний
-  коммит манифеста выкатки. Проследите работающий immutable-образ через manifest приватного
-  registry и label org.opencontainers.image.revision в config к исходникам в приватном
-  Git. Запишите в provenance.json ровно image, commit и repo. Сохранённая квитанция
-  указывает ожидаемый artifact; проверьте реальные байты registry и ancestry исходников.
-  Это метаданные трассировки, а не подпись или доказательство доверенной сборки.
+brief: |-
+  Board обслуживает запросы, но релизу нужна проверяемая запись об исходном коде. Определите источник работающего неизменяемого образа, не смешивая его с ревизией развёртывания.
 
+  Работайте на workstation в `~/quest` с файлами `platform.env`, `release-evidence.json`, `provenance.json`, `release-commit`, `repository/`.
 
-  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `platform.env`,
-  `release-evidence.json`, `provenance.json`, `source-commit`, `release-commit`, `repository/site/index.html`.
+  Если не указано иное, ресурсы Kubernetes находятся в namespace песочницы (`DQ_NAMESPACE`); пути в `~/quest` — на workstation.
 
+  **Requirements:**
 
-  В песочнице нет интернета и внешнего DNS. Используйте выданные файлы, предварительно
-  загруженные образы и приватные сервисы. Менять можно только эту песочницу.
+  - Опубликованная `origin/main` совпадает с `~/quest/release-commit` на workstation.
+  - Application `board` сохраняет предоставленный приватный источник Git, ветку релиза и существующий каталог нагрузки.
+  - Application `board` сообщает `Synced` и `Healthy` для коммита из `~/quest/release-commit` на workstation.
+  - Deployment `board` завершает rollout в namespace песочницы.
+  - Внутри Pod Deployment `board` адрес `http://board:8080` возвращает `north-91`.
+  - Файл `~/quest/provenance.json` на workstation верно связывает работающий образ, его реальные байты в реестре и исходный коммит с историей приватного Git.
 
+    - Файл `provenance.json` на workstation содержит ровно `image`, `commit` и `repo`. Исходный коммит образа отличается от `release-commit`, предшествует опубликованному релизу в истории Git и содержит в репозитории `site/index.html` со значением `north-91`. Отчёт, работающий digest, реальные байты реестра, метаданные источника реестра и предоставленное подтверждение релиза согласованы.
 
-  Цели первого этапа: Отчёт соответствует реальному digest, source revision из config
-  registry и исходникам приватного Git; табло исправно.'
-debrief: Инцидент связывает работающие байты с ревизией исходников, отделяя вопрос
-  доверия сборке.
-stages.0.brief: 'Результат проверки: Отчёт соответствует реальному digest, source
-  revision из config registry и исходникам приватного Git; табло исправно.'
-stages.0.objectives.0.text: Отчёт соответствует реальному digest, source revision
-  из config registry и исходникам приватного Git; табло исправно.
+  Это метаданные прослеживаемости, а не подпись или доказательство доверенной сборки.
+debrief: Инцидент связывает работающие байты с ревизией исходников, отделяя вопрос доверия сборке.
+stages.0.brief: Различайте происхождение исходного кода образа и историю развёртывания.
 hints.0.text: Коммит манифеста может ссылаться на образ из более раннего коммита.
-hints.1.text: Пройдите manifest → config blob → OCI revision label; проверьте ancestry
-  Git.
-hints.2.text: Запишите digest, коммит исходников и URL приватного репозитория; label
-  не заменяет подпись.
+hints.1.text: |-
+  Изучите историю исходного кода и отчёт; проследите неизменяемый образ по метаданным реестра.
+
+  ```bash
+  git -C repository log --oneline -5
+  cat provenance.json
+  ```
+hints.2.text: |-
+  Запишите digest, коммит исходников и URL приватного репозитория; label не заменяет подпись. Точная OCI-метка — `org.opencontainers.image.revision`; найдите её через манифест и конфигурацию работающего неизменяемого образа. Пройдите manifest → config blob → OCI revision label; проверьте ancestry Git.
+
+  Проверьте из `~/quest` на workstation:
+
+  - `source platform.env`
+  - `git -C repository ls-remote origin refs/heads/main`
+  - `cat release-commit`
+  - `cat provenance.json`
+
+  Хеш удалённой `main` совпадает с `release-commit`. Отчёт содержит ровно `image`, `commit` и `repo`; `commit` определяет исходный код образа и отличается от `release-commit`.
+
+  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
+
+  `Synced`, `Healthy` и ревизия из `release-commit`. Источник — предоставленный приватный репозиторий, `manifests`, `main`.
+
+  - `kubectl rollout status deployment/board --timeout=3s`
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080`
+
+  Rollout завершён; `north-91`.
 phrases.0: Я различил ревизию исходников и ревизию выкатки.
 phrases.1: Я проверил digest manifest и config образа в registry.
 phrases.2: Я использовал неподписанные метаданные для трассировки, а не аттестации.
 questions.0.points.0: 'Нет: labels задаёт сборщик.'
-questions.0.points.1: Digest определяет байты; подписи и attestations добавляют отдельные
-  свидетельства доверия.
+questions.0.points.1: Digest определяет байты; подписи и attestations добавляют отдельные свидетельства
+  доверия.
 questions.0.prompt: Доказывает ли совпадающий OCI label доверенность сборки?
-questions.1.points.0: Один коммит создаёт artifact; следующий выбирает его в конфигурации
-  выкатки.
+questions.1.points.0: Один коммит создаёт artifact; следующий выбирает его в конфигурации выкатки.
 questions.1.points.1: Прослеживайте обе ревизии и их связь.
 questions.1.prompt: Почему GitOps revision может отличаться от ревизии образа?
+stages.0.objectives.0.text: Опубликованная `origin/main` совпадает с `~/quest/release-commit` на workstation.
+stages.0.objectives.1.text: Application `board` сохраняет предоставленный приватный источник Git, ветку
+  релиза и существующий каталог нагрузки.
+stages.0.objectives.2.text: Application `board` сообщает `Synced` и `Healthy` для коммита из `~/quest/release-commit`
+  на workstation.
+stages.0.objectives.3.text: Deployment `board` завершает rollout в namespace песочницы.
+stages.0.objectives.4.text: Внутри Pod Deployment `board` адрес `http://board:8080` возвращает `north-91`.
+stages.0.objectives.5.text: Файл `~/quest/provenance.json` на workstation верно связывает работающий образ,
+  его реальные байты в реестре и исходный коммит с историей приватного Git.

@@ -1,53 +1,75 @@
 title: Repository webhook
-brief: 'A private Git release is waiting because its repository webhook uses a retired
-  URL. Periodic Argo Git polling is disabled in this bay; initial synchronization
-  worked, then Gitea pushed a newer board commit. Repair the existing push hook using
-  webhook.env and the frozen target in /run/dq/facts/0/webhook-target.json. Gitea
-  sends its Gogs-compatible signed format because the pinned Argo version supports
-  that parser. The Gitea hook test endpoint provides the normal redelivery path. Restore
-  the stored hook configuration and deliver a signed main event; a manual Argo refresh
-  alone is insufficient. The receiver is a private NodePort on the owned kind bridge,
-  with no VM or host port publication.
+brief: |-
+  A published board release has not reached its consumers. Restore delivery through the repository’s existing event receiver.
 
+  Work on the workstation in `~/quest` with `platform.env`, `webhook.env`, `hook-id`, `hook-repair.json`, `release-commit`, `application.yaml`, `repository/`.
 
-  Quest files in `~/quest` (some appear in later stages): `platform.env`, `webhook.env`,
-  `webhook-target.json`, `hook-id`, `hook-create.json`, `hook-repair.json`, `initial-commit`,
-  `release-commit`, `application.json`, `repository/manifests/board.json`, `repository/manifests/service.json`.
+  Unless stated otherwise, Kubernetes resources live in the bay namespace (`DQ_NAMESPACE`); `~/quest` paths are on the workstation.
 
+  **Requirements:**
 
-  The bay has no Internet or external DNS. Use only supplied files, preloaded images
-  and private services. Change only this bay.
+  - The repository’s existing push hook is active for `main` and targets the intended private event receiver.
+  - Published `origin/main` matches workstation `~/quest/release-commit` and is a new descendant of the existing repository history.
+  - Application `board` retains the supplied private Git source, release branch and existing workload directory.
+  - Application `board` reports `Synced` and `Healthy` at the commit in workstation `~/quest/release-commit`.
+  - Deployment `board` completes its rollout in the bay namespace.
+  - Inside a Pod of Deployment `board`, `http://board:8080` returns `north-75`.
+  - The private receiver has accepted an authenticated `main` event from the supplied repository.
 
+  The accepted event and current release do not prove that every future webhook delivery will succeed.
+debrief: The configured hook and an accepted signed main event were verified while periodic Git polling
+  was disabled.
+stages.0.brief: Keep the original repository hook and existing Git history.
+hints.0.text: A webhook-triggered refresh and an automatic periodic poll are different mechanisms.
+hints.1.text: |-
+  Inspect the existing hook configuration and the receiver reference; omit the shared secret from output.
 
-  Initial success criteria: The original signed push hook points to its frozen receiver
-  URL, and the newer main revision becomes Synced/Healthy with HTTP north-75.
+  ```bash
+  source platform.env
+  source webhook.env
+  api="${GIT_URL%/rail/station.git}/api/v1/repos/rail/station"
+  curl -fsS --config <(printf 'user = "%s:%s"\n' "$GIT_USER" "$GIT_PASSWORD") "$api/hooks/$(cat hook-id)" | jq '{active,branch_filter,url:.config.url}'
+  ```
+hints.2.text: |-
+  PATCH the frozen hook ID to the supplied receiver, then POST its /tests endpoint and observe the new revision. Use the existing Gogs hook, JSON content type and shared game secret; inspect its URL without printing the secret.
 
+  Verify from `~/quest` on the workstation:
 
-  A backend observation under `/run/dq/observations/webhook.json` must confirm an
-  accepted authenticated main event; a manual Argo refresh does not create it.'
-debrief: The configured hook and an accepted signed main event were verified while
-  periodic Git polling was disabled.
-stages.0.brief: 'Success criteria: The original signed push hook points to its frozen
-  receiver URL, and the newer main revision becomes Synced/Healthy with HTTP north-75.'
-stages.0.objectives.0.text: The original signed push hook points to its frozen receiver
-  URL, and the newer main revision becomes Synced/Healthy with HTTP north-75.
-hints.0.text: A webhook-triggered refresh and an automatic periodic poll are different
-  mechanisms.
-hints.1.text: Use the existing Gogs hook, JSON content type and shared game secret;
-  inspect its URL without printing the secret.
-hints.2.text: PATCH the frozen hook ID to the supplied receiver, then POST its /tests
-  endpoint and observe the new revision.
+  - `source platform.env`
+  - `git -C repository ls-remote origin refs/heads/main`
+  - `cat release-commit`
+
+  The remote `main` hash equals `release-commit`.
+
+  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
+  - `jq '{repo,branch,authenticated}' /run/dq/observations/webhook.json`
+
+  `Synced`, `Healthy`, and the revision from `release-commit`. The observation names the supplied repository, `branch: "main"` and `authenticated: true`. The source is the supplied private repository, `manifests`, `main`.
+
+  - `kubectl rollout status deployment/board --timeout=3s`
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080`
+
+  The rollout completes; `north-75`.
 phrases.0: I separated webhook delivery from periodic reconciliation.
 phrases.1: I verified the receiver URL and shared-secret protocol compatibility.
 phrases.2: I observed the new commit and real HTTP behavior after redelivery.
 questions.0.points.0: A source change still needs a refresh trigger.
 questions.0.points.1: Check event delivery, receiver path and signature compatibility.
-questions.0.points.2: Observe the commit actually reconciled, not only the sender
-  request.
-questions.0.prompt: Why can a correct Git commit remain unapplied when polling is
-  disabled?
-questions.1.points.0: It proves possession of the shared secret and detects payload
-  modification.
+questions.0.points.2: Observe the commit actually reconciled, not only the sender request.
+questions.0.prompt: Why can a correct Git commit remain unapplied when polling is disabled?
+questions.1.points.0: It proves possession of the shared secret and detects payload modification.
 questions.1.points.1: Both sides need the same secret and supported format.
 questions.1.points.2: It does not grant the application broader cluster authority.
 questions.1.prompt: What does signing a webhook protect?
+stages.0.objectives.0.text: The repository’s existing push hook is active for `main` and targets the intended
+  private event receiver.
+stages.0.objectives.1.text: Published `origin/main` matches workstation `~/quest/release-commit` and is
+  a new descendant of the existing repository history.
+stages.0.objectives.2.text: Application `board` retains the supplied private Git source, release branch
+  and existing workload directory.
+stages.0.objectives.3.text: Application `board` reports `Synced` and `Healthy` at the commit in workstation
+  `~/quest/release-commit`.
+stages.0.objectives.4.text: Deployment `board` completes its rollout in the bay namespace.
+stages.0.objectives.5.text: Inside a Pod of Deployment `board`, `http://board:8080` returns `north-75`.
+stages.0.objectives.6.text: The private receiver has accepted an authenticated `main` event from the supplied
+  repository.

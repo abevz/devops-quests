@@ -4,7 +4,7 @@ import json
 
 from .components import Components
 from .platform import Platform
-from .sandbox_evidence import CONTROL_READER
+from .sandbox_evidence import bounded_yaml_reader
 
 
 class ApplicationSets(Components):
@@ -107,8 +107,8 @@ class ApplicationSets(Components):
         ns = Platform(r).namespace(run)
         result = r.exec(
             run,
-            "/usr/bin/python3 - applicationset.json <<'APPSET_CONTROL'\n"
-            + CONTROL_READER
+            "/usr/bin/python3 - applicationset.yaml <<'APPSET_CONTROL'\n"
+            + bounded_yaml_reader()
             + "\nAPPSET_CONTROL\n",
             check=False,
             timeout=3,

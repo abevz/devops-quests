@@ -1,32 +1,52 @@
 title: Откат Argo CD
-brief: 'Релиз в приватном Git добавил ошибочный readiness probe. Argo CD продолжает
-  его применять, поэтому отдельный live rollback будет перезаписан. Изучите healthy-commit
-  и faulty-commit, создайте и отправьте новый Git revert в main. Сохраните ошибочный
-  коммит в истории и автоматические self-heal/prune, запишите новый HEAD в release-commit.
-  Восстановите исходный исправный манифест и HTTP. Не делайте reset/force-push истории,
-  не отключайте GitOps и не ограничивайтесь rollback Deployment.
+brief: |-
+  Последний релиз из приватного Git неработоспособен. Восстановите известное исправное содержимое, сохранив историю инцидента.
 
+  Работайте на workstation в `~/quest` с файлами `platform.env`, `application.yaml`, `healthy-commit`, `faulty-commit`, `release-commit`, `repository/`.
 
-  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `application.json`,
-  `healthy-commit`, `faulty-commit`, `release-commit`, `repository/manifests/board.json`.
+  Если не указано иное, ресурсы Kubernetes находятся в namespace песочницы (`DQ_NAMESPACE`); пути в `~/quest` — на workstation.
 
+  **Requirements:**
 
-  В песочнице нет интернета и внешнего DNS. Используйте выданные файлы, предварительно
-  загруженные образы и приватные сервисы. Менять можно только эту песочницу.
+  - Опубликованная `origin/main` совпадает с `release-commit` на workstation, отличается от замороженного faulty-коммита и сохраняет его как предка.
+  - Application `board` сохраняет предоставленный приватный источник Git, ветку релиза и существующий каталог нагрузки.
+  - Application `board` сообщает `Synced` и `Healthy` для коммита из `~/quest/release-commit` на workstation.
+  - Deployment `board` завершает rollout в namespace песочницы.
+  - Внутри Pod Deployment `board` адрес `http://board:8080` возвращает `north-95`.
+  - Опубликованный файл Git `manifests/board.yaml` восстанавливает известную исправную конфигурацию нагрузки.
 
-
-  Цели первого этапа: Новый коммит-потомок восстановил исправный манифест; автоматический
-  Argo имеет Synced/Healthy, HTTP отдаёт north-95.'
-debrief: Откат выражен новым изменением desired state, ошибочная ревизия сохранена
-  для расследования.
-stages.0.brief: 'Результат проверки: Новый коммит-потомок восстановил исправный манифест;
-  автоматический Argo имеет Synced/Healthy, HTTP отдаёт north-95.'
-stages.0.objectives.0.text: Новый коммит-потомок восстановил исправный манифест; автоматический
-  Argo имеет Synced/Healthy, HTTP отдаёт north-95.
+  Текущее содержимое Git и происхождение коммитов не доказывают, какая команда восстановления применялась.
+debrief: Откат выражен новым изменением desired state, ошибочная ревизия сохранена для расследования.
+stages.0.brief: Сохраните faulty-коммит в опубликованной истории.
 hints.0.text: Self-heal приводит к desired state из Git, включая ошибки.
-hints.1.text: Revert создаёт исправляющий коммит и сохраняет историю инцидента.
-hints.2.text: Отмените сохранённый ошибочный коммит, отправьте main и проверьте наблюдаемую
-  revision и health.
+hints.1.text: |-
+  Изучите историю релиза и текущие симптомы сбоя нагрузки.
+
+  ```bash
+  git -C repository log --oneline -5
+  kubectl describe deployment board
+  ```
+hints.2.text: |-
+  Отмените сохранённый ошибочный коммит, отправьте main и проверьте наблюдаемую revision и health. Revert создаёт исправляющий коммит и сохраняет историю инцидента.
+
+  Проверьте из `~/quest` на workstation:
+
+  - `source platform.env`
+  - `git -C repository ls-remote origin refs/heads/main`
+  - `cat release-commit`
+  - `git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/faulty-commit)" "$(cat release-commit)"`
+  - `git -C repository show --stat --oneline "$(cat release-commit)"`
+
+  Хеш удалённой `main` совпадает с `release-commit`. Проверка предка завершается с кодом `0`; новый коммит сохраняет историю инцидента.
+
+  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
+
+  `Synced`, `Healthy` и ревизия из `release-commit`. Источник — предоставленный приватный репозиторий, `manifests`, `main`.
+
+  - `kubectl rollout status deployment/board --timeout=3s`
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080`
+
+  Rollout завершён; `north-95`.
 phrases.0: Я восстановил desired state через Git revert.
 phrases.1: Я сохранил reconciliation при восстановлении.
 phrases.2: Я проверил наблюдаемую ревизию и здоровье приложения.
@@ -36,3 +56,13 @@ questions.0.prompt: Почему live rollout undo может быть врем�
 questions.1.points.0: Ошибочный коммит остаётся в истории main.
 questions.1.points.1: Восстановление становится отдельным проверяемым изменением.
 questions.1.prompt: Что сохраняет revert в отличие от reset?
+stages.0.objectives.0.text: Опубликованная `origin/main` совпадает с `release-commit` на workstation,
+  отличается от замороженного faulty-коммита и сохраняет его как предка.
+stages.0.objectives.1.text: Application `board` сохраняет предоставленный приватный источник Git, ветку
+  релиза и существующий каталог нагрузки.
+stages.0.objectives.2.text: Application `board` сообщает `Synced` и `Healthy` для коммита из `~/quest/release-commit`
+  на workstation.
+stages.0.objectives.3.text: Deployment `board` завершает rollout в namespace песочницы.
+stages.0.objectives.4.text: Внутри Pod Deployment `board` адрес `http://board:8080` возвращает `north-95`.
+stages.0.objectives.5.text: Опубликованный файл Git `manifests/board.yaml` восстанавливает известную исправную
+  конфигурацию нагрузки.
