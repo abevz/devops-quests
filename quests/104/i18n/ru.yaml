@@ -1,22 +1,18 @@
 title: Планирование CronJob
 brief: "Плановый аудит не выдаёт требуемый результат. Восстановите реальное выполнение по расписанию и доказательства\
   \ его завершения.\n\nРаботайте в `~/quest` на workstation. Предоставленные файлы: `cronjob.json`.\n\n**Требования:**\n\
-  - CronJob `route-audit` не приостановлен.\n- CronJob `route-audit`:\n  - расписание `* * * * *`.\n- CronJob `route-audit`:\n\
-  \  - часовой пояс `Etc/UTC`.\n- CronJob `route-audit`:\n  - политика параллельных запусков `Forbid`.\n- CronJob\
-  \ `route-audit`:\n  - срок позднего запуска в секундах `20`.\n- CronJob `route-audit`:\n  - сохраняемые успешные\
-  \ Job `1`.\n- CronJob `route-audit`:\n  - сохраняемые неудачные Job `1`.\n- Последнее время запуска CronJob `route-audit`\
-  \ совпадает с временной меткой запланированного Job, которым он управляет.\n- Этот последний запланированный Job\
-  \ успешно завершается один раз, и его логи содержат ровно `north-104`.\n\n**Проверьте самостоятельно перед Check\
-  \ & finish:**\nВыполняйте эти команды наблюдения из `~/quest` на workstation; `kubectl exec` наблюдает контейнер\
-  \ указанной нагрузки.\n- `kubectl get cronjob route-audit -o yaml` — Настройки, идентичность и статус соответствуют\
-  \ требованиям.\n- `kubectl get jobs -o json` — Последний запланированный Job управляется контроллером, и его временная\
-  \ метка совпадает с последним временем расписания CronJob.\n- Логи выбранного запланированного Job содержат ровно\
-  \ `north-104`.\n\n  ```sh\n  cron=$(kubectl get cronjob route-audit -o json)\n  uid=$(jq -r .metadata.uid <<<\"\
-  $cron\")\n  at=$(jq -r .status.lastScheduleTime <<<\"$cron\")\n  job=$(kubectl get jobs -o json | jq -r --arg\
-  \ uid \"$uid\" --arg at \"$at\" '.items[] | select(any(.metadata.ownerReferences[]?; .uid==$uid and .controller==true))\
-  \ | select(.metadata.annotations[\"batch.kubernetes.io/cronjob-scheduled-timestamp\"]==$at) | .metadata.name'\
-  \ | head -1)\n  kubectl logs \"job/$job\"\n  ```\n\nСозданный вручную Job не доказывает запуск по расписанию;\
-  \ новая минута может обновить последнее время до завершения Job, поэтому проверьте снова после завершения.\n"
+  - CronJob `route-audit` включён с запуском раз в минуту в `Etc/UTC`, политикой параллельных запусков `Forbid`\
+  \ и сроком позднего запуска `20` секунд.\n- Лимиты истории CronJob `route-audit` — `1` успешный Job и `1` неудачный\
+  \ Job.\n- Последний запланированный контроллером Job `route-audit` успешно завершается один раз и выводит в логи\
+  \ ровно `north-104`.\n\n**Проверьте самостоятельно перед Check & finish:**\nВыполняйте эти команды наблюдения\
+  \ из `~/quest` на workstation; `kubectl exec` наблюдает контейнер указанной нагрузки.\n- `kubectl get cronjob\
+  \ route-audit -o yaml` — Настройки, идентичность и статус соответствуют требованиям.\n- `kubectl get jobs -o json`\
+  \ — У CronJob есть реальный запланированный контроллером Job для последнего запуска.\n- Логи выбранного запланированного\
+  \ Job содержат ровно `north-104`.\n\n  ```sh\n  uid=$(kubectl get cronjob route-audit -o jsonpath='{.metadata.uid}')\n\
+  \  job=$(\n    kubectl get jobs -o json |\n    jq -r --arg uid \"$uid\" '\n      [.items[] |\n        select(any(.metadata.ownerReferences[]?;\n\
+  \          .uid==$uid and .controller==true))]\n      | sort_by(.metadata.creationTimestamp)\n      | last | .metadata.name\n\
+  \    '\n  )\n  kubectl logs \"job/$job\"\n  ```\n\nСозданный вручную Job не доказывает запуск по расписанию; новая\
+  \ минута может обновить последнее время до завершения Job, поэтому проверьте снова после завершения.\n"
 debrief: Расписание проверено по реальному завершённому заданию контроллера, без ручной подмены.
 stages.0.brief: 'Последнее запланированное контроллером выполнение должно завершиться с требуемым выводом логов.
 
@@ -38,7 +34,8 @@ questions.1.points.1: Проверяйте владельца, scheduled time и
 questions.1.prompt: Доказывает ли ручной Job работоспособность расписания?
 diagnostics.last_time: cronjob/route-audit lastScheduleTime должен быть непустым.
 diagnostics.owned: У Job должна быть ссылка на управляющий CronJob с непустым UID route-audit.
-diagnostics.scheduled: У принадлежащего CronJob Job должна быть отметка планирования, совпадающая с непустым lastScheduleTime.
+diagnostics.scheduled: У последнего запланированного запуска CronJob `route-audit` должен быть Job, принадлежащий
+  его контроллеру.
 diagnostics.succeeded: У Job для lastScheduleTime должны быть succeeded=1 и непустое имя.
 diagnostics.logs: У успешного Job для lastScheduleTime должно быть непустое имя, а логи должны совпадать с north-104.
 diagnostics.field_suspend: cronjob/route-audit suspend должен совпадать с false.
@@ -49,14 +46,8 @@ diagnostics.field_startingdeadlineseconds: cronjob/route-audit startingDeadlineS
 diagnostics.field_successfuljobshistorylimit: cronjob/route-audit successfulJobsHistoryLimit должен совпадать с
   1.
 diagnostics.field_failedjobshistorylimit: cronjob/route-audit failedJobsHistoryLimit должен совпадать с 1.
-stages.0.objectives.0.text: CronJob `route-audit` не приостановлен.
-stages.0.objectives.1.text: 'CronJob `route-audit`: расписание `* * * * *`.'
-stages.0.objectives.2.text: 'CronJob `route-audit`: часовой пояс `Etc/UTC`.'
-stages.0.objectives.3.text: 'CronJob `route-audit`: политика параллельных запусков `Forbid`.'
-stages.0.objectives.4.text: 'CronJob `route-audit`: срок позднего запуска в секундах `20`.'
-stages.0.objectives.5.text: 'CronJob `route-audit`: сохраняемые успешные Job `1`.'
-stages.0.objectives.6.text: 'CronJob `route-audit`: сохраняемые неудачные Job `1`.'
-stages.0.objectives.7.text: Последнее время запуска CronJob `route-audit` совпадает с временной меткой запланированного
-  Job, которым он управляет.
-stages.0.objectives.8.text: Этот последний запланированный Job успешно завершается один раз, и его логи содержат
-  ровно `north-104`.
+stages.0.objectives.0.text: CronJob `route-audit` включён с запуском раз в минуту в `Etc/UTC`, политикой параллельных
+  запусков `Forbid` и сроком позднего запуска `20` секунд.
+stages.0.objectives.1.text: Лимиты истории CronJob `route-audit` — `1` успешный Job и `1` неудачный Job.
+stages.0.objectives.2.text: Последний запланированный контроллером Job `route-audit` успешно завершается один раз
+  и выводит в логи ровно `north-104`.

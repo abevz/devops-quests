@@ -21,21 +21,10 @@ cd ~/quest
 failed=0
 board=$(kubectl get deployment board -o json 2>/dev/null || true)
 check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
-check 'watcher restartPolicy = Always [DQ:restart]' '.spec.template.spec.initContainers[1].restartPolicy=="Always"' "$board"
-exit "$failed"
-
-)
-[ $? -eq 0 ] || failed=1
-(
-set -e
-set -euo pipefail
-cd ~/quest
-failed=0
-board=$(kubectl get deployment board -o json 2>/dev/null || true)
-check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
 check 'watcher startup command = test -s /shared/heartbeat [DQ:startup_command]' '.spec.template.spec.initContainers[1].startupProbe.exec.command==["test","-s","/shared/heartbeat"]' "$board"
 check 'watcher startup periodSeconds = 1 [DQ:period]' '.spec.template.spec.initContainers[1].startupProbe.periodSeconds==1' "$board"
 check 'watcher startup failureThreshold = 10 [DQ:threshold]' '.spec.template.spec.initContainers[1].startupProbe.failureThreshold==10' "$board"
+check 'watcher restartPolicy = Always [DQ:restart]' '.spec.template.spec.initContainers[1].restartPolicy=="Always"' "$board"
 exit "$failed"
 
 )

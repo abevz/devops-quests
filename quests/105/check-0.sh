@@ -8,29 +8,6 @@ set -euo pipefail
 cd ~/quest
 failed=0
 check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
-dns=$(kubectl get deployment station-dns -o json 2>/dev/null || true)
-check 'station-dns command = /coredns -conf /etc/station/Corefile [DQ:command]' '.spec.template.spec.containers[0].command==["/coredns","-conf","/etc/station/Corefile"]' "$dns"
-exit "$failed"
-
-)
-[ $? -eq 0 ] || failed=1
-(
-set -e
-set -euo pipefail
-cd ~/quest
-failed=0
-check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
-service=$(kubectl get service station-dns -o json 2>/dev/null || true)
-check 'station-dns ports = TCP/UDP 53 to 1053 [DQ:ports]' '[.spec.ports[] | [.port,.targetPort,.protocol]] | sort == [[53,1053,"TCP"],[53,1053,"UDP"]]' "$service"
-exit "$failed"
-
-)
-[ $? -eq 0 ] || failed=1
-(
-set -e
-set -euo pipefail
-cd ~/quest
-failed=0
 dns_answer_has() {
   local result=$1 expected=$2
   awk -v expected="$expected" '
@@ -42,8 +19,12 @@ dns_answer_has() {
     END { exit !found }
   ' <<<"$result"
 }
+dns=$(kubectl get deployment station-dns -o json 2>/dev/null || true)
+service=$(kubectl get service station-dns -o json 2>/dev/null || true)
 core=$(kubectl get configmap station-dns -o jsonpath='{.data.Corefile}' 2>/dev/null || true)
 expected=$(cat /run/dq/facts/0/expected-dns-address 2>/dev/null || true)
+check 'station-dns command = /coredns -conf /etc/station/Corefile [DQ:command]' '.spec.template.spec.containers[0].command==["/coredns","-conf","/etc/station/Corefile"]' "$dns"
+check 'station-dns ports = TCP/UDP 53 to 1053 [DQ:ports]' '[.spec.ports[] | [.port,.targetPort,.protocol]] | sort == [[53,1053,"TCP"],[53,1053,"UDP"]]' "$service"
 if ! test -n "$expected" || ! python3 - "$core" "$expected" <<'DQ_CORE'
 import re,sys
 actual=re.sub(r'\s+',' ',sys.argv[1]).strip()
@@ -61,19 +42,9 @@ set -euo pipefail
 cd ~/quest
 failed=0
 check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
-client=$(kubectl get deployment client -o json 2>/dev/null || true)
-check 'deployment/client dnsPolicy = None [DQ:dns_policy]' '.spec.template.spec.dnsPolicy=="None"' "$client"
-exit "$failed"
-
-)
-[ $? -eq 0 ] || failed=1
-(
-set -e
-set -euo pipefail
-cd ~/quest
-failed=0
 dns_ip=$(kubectl get service station-dns -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
 client=$(kubectl get deployment client -o json 2>/dev/null || true)
+check 'deployment/client dnsPolicy = None [DQ:dns_policy]' '.spec.template.spec.dnsPolicy=="None"' "$client"
 if ! test -n "$dns_ip" || ! jq -e --arg ip "$dns_ip" '.spec.template.spec.dnsConfig.nameservers==[$ip]' <<<"$client" >/dev/null 2>&1; then printf '%s\n' 'deployment/client nameservers = [station-dns Service IP]: ✗ [DQ:nameserver]'; failed=1; fi
 exit "$failed"
 

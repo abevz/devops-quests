@@ -13,12 +13,24 @@ stages:
 
       failed=0
 
-      uid=$(timeout 2s kubectl get deployment board -o jsonpath=''{.metadata.uid}'' 2>/dev/null || true)
+      check() { local id=$1 label=$2 expression=$3 document=$4; if ! jq -e "$expression" <<<"$document" >/dev/null
+      2>&1; then printf ''%s\n'' "$label: ✗ [DQ:$id]"; failed=1; fi; }
 
-      original=$(cat /run/dq/facts/0/original-deployment-uid 2>/dev/null || true)
+      if ! timeout 5s kubectl kustomize overlays/recovery > /tmp/rendered-overlay.yaml 2>/dev/null; then printf
+      ''%s\n'' ''render overlays/recovery: ✗ [DQ:render]''; failed=1; fi
 
-      if ! test -n "$uid" || ! test -n "$original" || ! test "$uid" = "$original"; then printf ''%s\n'' ''deployment/board
-      UID = original-deployment-uid: ✗ [DQ:uid]''; failed=1; fi
+      rendered=$(python3 -c ''import json,yaml; print(json.dumps(list(yaml.safe_load_all(open("/tmp/rendered-overlay.yaml")))))''
+      2>/dev/null || true)
+
+      cm=$(jq -c ''first(.[] | select(.kind=="ConfigMap")) // {}'' <<<"$rendered" 2>/dev/null || true)
+
+      rendered_board=$(jq -c ''first(.[] | select(.kind=="Deployment")) // {}'' <<<"$rendered" 2>/dev/null || true)
+
+      check cm_data ''rendered ConfigMap data = ROUTE north-108'' ''.data=={ROUTE:"north-108"}'' "$cm"
+
+      check cm_name ''rendered ConfigMap name starts route-'' ''.metadata.name | startswith("route-")'' "$cm"
+
+      check rendered_replicas ''rendered Deployment replicas = 2'' ''.spec.replicas==2'' "$rendered_board"
 
       exit "$failed"
 
@@ -30,118 +42,12 @@ stages:
 
       failed=0
 
-      if ! timeout 5s kubectl kustomize overlays/recovery > /tmp/rendered-overlay.yaml 2>/dev/null; then printf
-      ''%s\n'' ''render overlays/recovery: ✗ [DQ:render]''; failed=1; fi
-
-      exit "$failed"
-
-      '
-  - text: stages.0.objectives.2.text
-    check: 'set -euo pipefail
-
-      cd ~/quest
-
-      failed=0
-
       check() { local id=$1 label=$2 expression=$3 document=$4; if ! jq -e "$expression" <<<"$document" >/dev/null
       2>&1; then printf ''%s\n'' "$label: ✗ [DQ:$id]"; failed=1; fi; }
 
-      timeout 5s kubectl kustomize overlays/recovery > /tmp/rendered-overlay.yaml 2>/dev/null || true
+      uid=$(timeout 2s kubectl get deployment board -o jsonpath=''{.metadata.uid}'' 2>/dev/null || true)
 
-      rendered=$(python3 -c ''import json,yaml; print(json.dumps(list(yaml.safe_load_all(open("/tmp/rendered-overlay.yaml")))))''
-      2>/dev/null || true)
-
-      cm=$(jq -c ''first(.[] | select(.kind=="ConfigMap")) // {}'' <<<"$rendered" 2>/dev/null || true)
-
-      check cm_data ''rendered ConfigMap data = ROUTE north-108'' ''.data=={ROUTE:"north-108"}'' "$cm"
-
-      exit "$failed"
-
-      '
-  - text: stages.0.objectives.3.text
-    check: 'set -euo pipefail
-
-      cd ~/quest
-
-      failed=0
-
-      check() { local id=$1 label=$2 expression=$3 document=$4; if ! jq -e "$expression" <<<"$document" >/dev/null
-      2>&1; then printf ''%s\n'' "$label: ✗ [DQ:$id]"; failed=1; fi; }
-
-      timeout 5s kubectl kustomize overlays/recovery > /tmp/rendered-overlay.yaml 2>/dev/null || true
-
-      rendered=$(python3 -c ''import json,yaml; print(json.dumps(list(yaml.safe_load_all(open("/tmp/rendered-overlay.yaml")))))''
-      2>/dev/null || true)
-
-      cm=$(jq -c ''first(.[] | select(.kind=="ConfigMap")) // {}'' <<<"$rendered" 2>/dev/null || true)
-
-      check cm_name ''rendered ConfigMap name starts route-'' ''.metadata.name | startswith("route-")'' "$cm"
-
-      exit "$failed"
-
-      '
-  - text: stages.0.objectives.4.text
-    check: 'set -euo pipefail
-
-      cd ~/quest
-
-      failed=0
-
-      check() { local id=$1 label=$2 expression=$3 document=$4; if ! jq -e "$expression" <<<"$document" >/dev/null
-      2>&1; then printf ''%s\n'' "$label: ✗ [DQ:$id]"; failed=1; fi; }
-
-      timeout 5s kubectl kustomize overlays/recovery > /tmp/rendered-overlay.yaml 2>/dev/null || true
-
-      rendered=$(python3 -c ''import json,yaml; print(json.dumps(list(yaml.safe_load_all(open("/tmp/rendered-overlay.yaml")))))''
-      2>/dev/null || true)
-
-      rendered_board=$(jq -c ''first(.[] | select(.kind=="Deployment")) // {}'' <<<"$rendered" 2>/dev/null || true)
-
-      check rendered_replicas ''rendered Deployment replicas = 2'' ''.spec.replicas==2'' "$rendered_board"
-
-      exit "$failed"
-
-      '
-  - text: stages.0.objectives.5.text
-    check: 'set -euo pipefail
-
-      cd ~/quest
-
-      failed=0
-
-      check() { local id=$1 label=$2 expression=$3 document=$4; if ! jq -e "$expression" <<<"$document" >/dev/null
-      2>&1; then printf ''%s\n'' "$label: ✗ [DQ:$id]"; failed=1; fi; }
-
-      board=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
-
-      check live_replicas ''live board replicas = 2'' ''.spec.replicas==2'' "$board"
-
-      exit "$failed"
-
-      '
-  - text: stages.0.objectives.6.text
-    check: 'set -euo pipefail
-
-      cd ~/quest
-
-      failed=0
-
-      check() { local id=$1 label=$2 expression=$3 document=$4; if ! jq -e "$expression" <<<"$document" >/dev/null
-      2>&1; then printf ''%s\n'' "$label: ✗ [DQ:$id]"; failed=1; fi; }
-
-      board=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
-
-      check ready ''live board readyReplicas = 2'' ''.status.readyReplicas==2'' "$board"
-
-      exit "$failed"
-
-      '
-  - text: stages.0.objectives.7.text
-    check: 'set -euo pipefail
-
-      cd ~/quest
-
-      failed=0
+      original=$(cat /run/dq/facts/0/original-deployment-uid 2>/dev/null || true)
 
       timeout 5s kubectl kustomize overlays/recovery > /tmp/rendered-overlay.yaml 2>/dev/null || true
 
@@ -153,41 +59,26 @@ stages:
       name=$(jq -r ''.metadata.name // ""'' <<<"$cm" 2>/dev/null || true)
 
       board=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
+
+      live_cm=$(timeout 2s kubectl get configmap "$name" -o json 2>/dev/null || true)
+
+      if ! test -n "$uid" || ! test -n "$original" || ! test "$uid" = "$original"; then printf ''%s\n'' ''deployment/board
+      UID = original-deployment-uid: ✗ [DQ:uid]''; failed=1; fi
+
+      check live_replicas ''live board replicas = 2'' ''.spec.replicas==2'' "$board"
+
+      check ready ''live board readyReplicas = 2'' ''.status.readyReplicas==2'' "$board"
 
       if ! test -n "$name" || ! jq -e --arg name "$name" ''.spec.template.spec.containers[0].env==[{name:"ROUTE",valueFrom:{configMapKeyRef:{name:$name,key:"ROUTE"}}}]''
       <<<"$board" >/dev/null 2>&1; then printf ''%s\n'' ''board env = single ROUTE reference to rendered ConfigMap:
       ✗ [DQ:env]''; failed=1; fi
-
-      exit "$failed"
-
-      '
-  - text: stages.0.objectives.8.text
-    check: 'set -euo pipefail
-
-      cd ~/quest
-
-      failed=0
-
-      check() { local id=$1 label=$2 expression=$3 document=$4; if ! jq -e "$expression" <<<"$document" >/dev/null
-      2>&1; then printf ''%s\n'' "$label: ✗ [DQ:$id]"; failed=1; fi; }
-
-      timeout 5s kubectl kustomize overlays/recovery > /tmp/rendered-overlay.yaml 2>/dev/null || true
-
-      rendered=$(python3 -c ''import json,yaml; print(json.dumps(list(yaml.safe_load_all(open("/tmp/rendered-overlay.yaml")))))''
-      2>/dev/null || true)
-
-      cm=$(jq -c ''first(.[] | select(.kind=="ConfigMap")) // {}'' <<<"$rendered" 2>/dev/null || true)
-
-      name=$(jq -r ''.metadata.name // ""'' <<<"$cm" 2>/dev/null || true)
-
-      live_cm=$(timeout 2s kubectl get configmap "$name" -o json 2>/dev/null || true)
 
       check live_data ''live ConfigMap data = ROUTE north-108'' ''.data=={ROUTE:"north-108"}'' "$live_cm"
 
       exit "$failed"
 
       '
-  - text: stages.0.objectives.9.text
+  - text: stages.0.objectives.2.text
     check: 'set -euo pipefail
 
       cd ~/quest
