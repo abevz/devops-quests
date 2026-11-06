@@ -1,34 +1,60 @@
 title: Хранение образов реестра
-brief: |
-  В реестре ожидается запрос на очистку; защищённые выпуски должны остаться доступными.
+brief: 'В реестре ожидается запрос на очистку; защищённые выпуски должны остаться доступными.
 
-  Работайте на workstation в `~/quest` с файлами `platform.env`, `registry-ca.crt`, `release-catalog.json`, `retention.json`, `prune.sh`.
+
+  Работайте на рабочей станции в `~/quest` с `platform.env`, `registry-ca.crt`, `retention.json`, `prune.sh`.
+
 
   **Требования:**
-  - Авторитетный каталог на workstation:
-    - Путь: `/run/dq/facts/0/release-catalog.json`.
-  - Файл на workstation:
-    - Путь: `~/quest/retention.json`.
-    - Список `delete` содержит только digest `obsolete` из каталога.
-  - Манифесты реестра через TLS с проверкой сертификата:
-    - Реестр и credentials заданы в `~/quest/platform.env` на workstation; доверенный CA — `~/quest/registry-ca.crt` на workstation.
-    - `current`, `rollback`: HTTP `200`; `obsolete`: HTTP `404`.
 
-  **Самопроверка перед Check & finish:**
-  - `jq -e --slurpfile c /run/dq/facts/0/release-catalog.json '.delete==[$c[0].obsolete]' retention.json` — Печатает `true` для сохранённого запроса удаления.
-  - `source platform.env; for kind in current rollback obsolete; do digest=$(jq -r --arg kind "$kind" '.[$kind]' /run/dq/facts/0/release-catalog.json); code=$(curl -sS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' -o /dev/null -w '%{http_code}' "https://$REGISTRY/v2/parcel/manifests/$digest"); printf "%s %s\n" "$kind" "$code"; done` — Сообщает `current 200`, `rollback 200`, `obsolete 404`, с включённой проверкой сертификата.
+  - Файл `~/quest/retention.json` на рабочей станции выбирает только устаревший релиз, указанный в авторитетном
+  каталоге.
 
-  Проверка наблюдает удаление манифеста, а не garbage collection; файлы в `~/quest` — рабочие копии, авторитетный источник на workstation — `/run/dq/facts/0/`.
+  - При проверяемом TLS текущий манифест и манифест отката остаются доступны с HTTP `200`, а устаревший манифест
+  возвращает `404`.
+
+
+  Проверка наблюдает удаление манифеста, а не garbage collection; файлы в `~/quest` — рабочие копии, авторитетный
+  источник на workstation — `/run/dq/facts/0/`.
+
+  '
 debrief: Retention удалил устаревший manifest, сохранив реальную ссылку отката.
 stages.0.brief: Результат очистки должен сохранить оба защищённых выпуска.
 hints.0.text: Теги — изменяемые ссылки; безопасность retention зависит от защищённых manifests.
-hints.1.text: Предложенный retention.json выбирает rollback. Идентичности защищённых digest берутся из доступного
+hints.1.text: 'Предложенный retention.json выбирает rollback. Идентичности защищённых digest берутся из доступного
   только для чтения /run/dq/facts/0/release-catalog.json, а не из рабочей копии.
-hints.2.text: Выберите только obsolete и выполните bash prune.sh; helper отклоняет защищённые digest и проверяет
+
+
+  Изучите поставленные входные данные и наблюдаемое состояние:
+
+
+  ```sh
+
+  cat retention.json
+
+  cat /run/dq/facts/0/release-catalog.json
+
+  ```'
+hints.2.text: 'Выберите только obsolete и выполните bash prune.sh; helper отклоняет защищённые digest и проверяет
   TLS через registry-ca.crt.
+
+
+  Проверьте наблюдаемый результат:
+
+
+  - `jq -e --slurpfile c /run/dq/facts/0/release-catalog.json ''.delete==[$c[0].obsolete]'' retention.json`
+  — Печатает `true` для сохранённого запроса удаления.
+
+  - `source platform.env; for kind in current rollback obsolete; do digest=$(jq -r --arg kind "$kind" ''.[$kind]''
+  /run/dq/facts/0/release-catalog.json); code=$(curl -sS --cacert registry-ca.crt --config <(printf ''user
+  = "%s:%s"\n'' "$REGISTRY_USER" "$REGISTRY_PASSWORD") -H ''Accept: application/vnd.docker.distribution.manifest.v2+json,
+  application/vnd.oci.image.manifest.v1+json'' -o /dev/null -w ''%{http_code}'' "https://$REGISTRY/v2/parcel/manifests/$digest");
+  printf "%s %s\n" "$kind" "$code"; done` — Сообщает `current 200`, `rollback 200`, `obsolete 404`, с включённой
+  проверкой сертификата.'
 phrases.0: Я защитил digest отката до удаления устаревших manifests.
 phrases.1: Я проверил TLS вместо обхода проверки сертификата.
 phrases.2: Я различал удаление manifest и garbage collection хранилища.
-stages.0.objectives.0.text: Файл `~/quest/retention.json` на workstation выбирает только obsolete digest из `/run/dq/facts/0/release-catalog.json`.
-stages.0.objectives.1.text: Через TLS с проверкой сертификата манифесты реестра `current` и `rollback` возвращают
-  HTTP `200`, а `obsolete` — `404`, согласно `/run/dq/facts/0/release-catalog.json` на workstation.
+stages.0.objectives.0.text: Файл `~/quest/retention.json` на рабочей станции выбирает только устаревший релиз,
+  указанный в авторитетном каталоге.
+stages.0.objectives.1.text: При проверяемом TLS текущий манифест и манифест отката остаются доступны с HTTP
+  `200`, а устаревший манифест возвращает `404`.

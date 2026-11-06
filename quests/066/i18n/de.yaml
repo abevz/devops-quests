@@ -1,34 +1,61 @@
 title: Aufbewahrung der Registrierung
-brief: |
-  In der Registry steht eine Aufbewahrungsanfrage aus; geschützte Versionen müssen verfügbar bleiben.
+brief: 'In der Registry steht eine Aufbewahrungsanfrage aus; geschützte Versionen müssen verfügbar bleiben.
 
-  Arbeite auf der Workstation in `~/quest` mit `platform.env`, `registry-ca.crt`, `release-catalog.json`, `retention.json`, `prune.sh`.
+
+  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `registry-ca.crt`, `retention.json`, `prune.sh`.
+
 
   **Anforderungen:**
-  - Maßgeblicher Katalog auf der Workstation:
-    - Pfad: `/run/dq/facts/0/release-catalog.json`.
-  - Datei auf der Workstation:
-    - Pfad: `~/quest/retention.json`.
-    - Die Auswahl `delete` enthält nur den Katalog-Digest `obsolete`.
-  - Registry-Manifeste über geprüftes TLS:
-    - Registry und Zugangsdaten stammen aus der Workstation-Datei `~/quest/platform.env`; die vertrauenswürdige CA ist die Workstation-Datei `~/quest/registry-ca.crt`.
-    - `current`, `rollback`: HTTP `200`; `obsolete`: HTTP `404`.
 
-  **Selbstprüfung vor Check & finish:**
-  - `jq -e --slurpfile c /run/dq/facts/0/release-catalog.json '.delete==[$c[0].obsolete]' retention.json` — Gibt `true` für den gespeicherten Löschauftrag aus.
-  - `source platform.env; for kind in current rollback obsolete; do digest=$(jq -r --arg kind "$kind" '.[$kind]' /run/dq/facts/0/release-catalog.json); code=$(curl -sS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' -o /dev/null -w '%{http_code}' "https://$REGISTRY/v2/parcel/manifests/$digest"); printf "%s %s\n" "$kind" "$code"; done` — Meldet `current 200`, `rollback 200`, `obsolete 404` bei aktivierter Zertifikatsprüfung.
+  - `~/quest/retention.json` auf der Workstation wählt ausschließlich die im maßgeblichen Katalog bezeichnete
+  veraltete Version aus.
 
-  Die Prüfung beobachtet Manifestlöschung, nicht Garbage Collection; Dateien in `~/quest` sind Arbeitskopien, während `/run/dq/facts/0/` auf der Workstation maßgeblich ist.
+  - Über verifiziertes TLS bleiben das aktuelle Manifest und das Rollback-Manifest mit HTTP `200` verfügbar;
+  das veraltete Manifest liefert `404`.
+
+
+  Die Prüfung beobachtet Manifestlöschung, nicht Garbage Collection; Dateien in `~/quest` sind Arbeitskopien,
+  während `/run/dq/facts/0/` auf der Workstation maßgeblich ist.
+
+  '
 debrief: Retention hat einen veralteten manifest entfernt, ohne eine echte Rollback-Referenz zu zerstören.
 stages.0.brief: Das Aufbewahrungsergebnis muss beide geschützten Versionen erhalten.
-hints.0.text: Tags sind veränderliche Referenzen; Die Sicherheit von retention hängt vom geschützten manifests ab.
-hints.1.text: Der vorgeschlagene retention.json wählt rollback. Geschützte Digest-Identitäten stammen aus der schreibgeschützten
-  /run/dq/facts/0/release-catalog.json, nicht der Arbeitskopie.
-hints.2.text: Wähle nur obsolete und führe bash prune.sh aus; der Helfer verweigert geschützte Digests und prüft
-  TLS mit registry-ca.crt.
+hints.0.text: Tags sind veränderliche Referenzen; Die Sicherheit von retention hängt vom geschützten manifests
+  ab.
+hints.1.text: 'Der vorgeschlagene retention.json wählt rollback. Geschützte Digest-Identitäten stammen aus
+  der schreibgeschützten /run/dq/facts/0/release-catalog.json, nicht der Arbeitskopie.
+
+
+  Prüfen Sie die mitgelieferten Eingaben und den beobachteten Zustand:
+
+
+  ```sh
+
+  cat retention.json
+
+  cat /run/dq/facts/0/release-catalog.json
+
+  ```'
+hints.2.text: 'Wähle nur obsolete und führe bash prune.sh aus; der Helfer verweigert geschützte Digests und
+  prüft TLS mit registry-ca.crt.
+
+
+  Prüfen Sie das beobachtete Ergebnis:
+
+
+  - `jq -e --slurpfile c /run/dq/facts/0/release-catalog.json ''.delete==[$c[0].obsolete]'' retention.json`
+  — Gibt `true` für den gespeicherten Löschauftrag aus.
+
+  - `source platform.env; for kind in current rollback obsolete; do digest=$(jq -r --arg kind "$kind" ''.[$kind]''
+  /run/dq/facts/0/release-catalog.json); code=$(curl -sS --cacert registry-ca.crt --config <(printf ''user
+  = "%s:%s"\n'' "$REGISTRY_USER" "$REGISTRY_PASSWORD") -H ''Accept: application/vnd.docker.distribution.manifest.v2+json,
+  application/vnd.oci.image.manifest.v1+json'' -o /dev/null -w ''%{http_code}'' "https://$REGISTRY/v2/parcel/manifests/$digest");
+  printf "%s %s\n" "$kind" "$code"; done` — Meldet `current 200`, `rollback 200`, `obsolete 404` bei aktivierter
+  Zertifikatsprüfung.'
 phrases.0: Ich habe Rollback-Digests geschützt, bevor ich veraltete manifests gelöscht habe.
 phrases.1: Ich habe TLS verifiziert, anstatt die Zertifikatsprüfungen zu umgehen.
 phrases.2: Ich habe die Entfernung von manifest aus dem Speicher garbage collection unterschieden.
-stages.0.objectives.0.text: Die Workstation-Datei `~/quest/retention.json` wählt nur den obsolete-Digest aus `/run/dq/facts/0/release-catalog.json`.
-stages.0.objectives.1.text: Über geprüftes TLS liefern die Registry-Manifeste `current` und `rollback` HTTP `200`,
-  `obsolete` liefert `404`, gemäß `/run/dq/facts/0/release-catalog.json` auf der Workstation.
+stages.0.objectives.0.text: '`~/quest/retention.json` auf der Workstation wählt ausschließlich die im maßgeblichen
+  Katalog bezeichnete veraltete Version aus.'
+stages.0.objectives.1.text: Über verifiziertes TLS bleiben das aktuelle Manifest und das Rollback-Manifest
+  mit HTTP `200` verfügbar; das veraltete Manifest liefert `404`.

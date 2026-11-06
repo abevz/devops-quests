@@ -1,39 +1,65 @@
 title: Учётные данные реестра
-brief: |
-  Приватный потребитель `board` недоступен.
+brief: 'Приватный потребитель `board` недоступен.
 
-  Работайте на workstation в `~/quest` с файлами `platform.env`, `board.yaml`.
+
+  Работайте на рабочей станции в `~/quest` с `platform.env`, `board.yaml`.
+
 
   **Требования:**
-  - Deployment в namespace песочницы:
-    - Имя: `board`.
-    - Образ: `PRIVATE_IMAGE` из `~/quest/platform.env` на workstation.
-    - Политика загрузки: `Always`.
-    - Secret загрузки образа: `registry-pull`.
-    - Других Secrets загрузки образа нет.
-    - Требуемые реплики: `1`.
-    - Rollout завершён.
-  - Secret в namespace песочницы:
-    - Имя: `registry-pull`.
-    - Тип: `kubernetes.io/dockerconfigjson`.
-    - Credentials для `REGISTRY`: `REGISTRY_USER` и `REGISTRY_PASSWORD` из `~/quest/platform.env` на workstation.
-  - HTTP внутри Pod Deployment `board`:
-    - Путь: `http://127.0.0.1:8080`.
-    - Ответ: `north-42`.
 
-  **Самопроверка перед Check & finish:**
-  - `source platform.env; kubectl get secret registry-pull -o json | jq -e 'env as $e | .type=="kubernetes.io/dockerconfigjson" and ((.data[".dockerconfigjson"]|@base64d|fromjson|.auths[$e.REGISTRY].auth|@base64d)==($e.REGISTRY_USER+":"+$e.REGISTRY_PASSWORD))'` — Печатает `true`, не раскрывая credentials.
-  - `source platform.env; kubectl get deployment board -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas,IMAGE:.spec.template.spec.containers[0].image,PULL:.spec.template.spec.containers[0].imagePullPolicy,SECRETS:.spec.template.spec.imagePullSecrets[*].name` — Показывает `board`, число реплик `1`, предоставленный `PRIVATE_IMAGE`, `Always` и только `registry-pull`.
-  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -- wget -qO- -T 3 http://127.0.0.1:8080` — Rollout завершается; HTTP возвращает `north-42`.
+  - Deployment `board` использует поставленный приватный образ, политику загрузки `Always` и только существующий
+  Secret аутентификации реестра.
 
-  Base64 — кодирование, а не шифрование; текущие проверки credentials, rollout и ответа не доказывают успешность всех будущих загрузок.
+  - Требуемое число реплик Deployment `board` равно `1`.
+
+  - Существующий Secret аутентификации реестра содержит действительные учётные данные Docker-реестра, соответствующие
+  поставленному окружению.
+
+  - Deployment `board` завершает rollout в namespace песочницы.
+
+  - Внутри Pod Deployment `board` адрес `http://127.0.0.1:8080` возвращает `north-42`.
+
+
+  Base64 — кодирование, а не шифрование; текущие проверки credentials, rollout и ответа не доказывают успешность
+  всех будущих загрузок.
+
+  '
 debrief: Авторизация registry и конфигурация потребителя Kubernetes оказались разными частями ротации.
 stages.0.brief: Приватный выпуск должен соответствовать контракту credentials и потребителя.
 hints.0.text: Успешный push с workstation не авторизует kubelet.
-hints.1.text: Изучите imagePullSecrets и ошибку загрузки Pod без вывода учётных данных.
-hints.2.text: |-
-  Замените устаревший Docker auth Secret и перезапустите неработающий потребитель. И данные API Secret, и вложенный auth должны использовать корректный канонический base64.
+hints.1.text: 'Изучите поставленные входные данные и наблюдаемое состояние:
+
+
+  ```sh
+
+  cat board.yaml
+
+  kubectl describe pod -l app=board
+
+  kubectl get secrets
+
+  ```'
+hints.2.text: 'Изучите imagePullSecrets и ошибку загрузки Pod без вывода учётных данных.
+
+
+  Замените устаревший Docker auth Secret и перезапустите неработающий потребитель. И данные API Secret, и вложенный
+  auth должны использовать корректный канонический base64.
+
   Не выводите значения credentials и не сохраняйте их в истории shell.
+
+
+  Проверьте наблюдаемый результат:
+
+
+  - `source platform.env; kubectl get secret registry-pull -o json | jq -e ''env as $e | .type=="kubernetes.io/dockerconfigjson"
+  and ((.data[".dockerconfigjson"]|@base64d|fromjson|.auths[$e.REGISTRY].auth|@base64d)==($e.REGISTRY_USER+":"+$e.REGISTRY_PASSWORD))''`
+  — Печатает `true`, не раскрывая credentials.
+
+  - `source platform.env; kubectl get deployment board -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas,IMAGE:.spec.template.spec.containers[0].image,PULL:.spec.template.spec.containers[0].imagePullPolicy,SECRETS:.spec.template.spec.imagePullSecrets[*].name`
+  — Показывает `board`, число реплик `1`, предоставленный `PRIVATE_IMAGE`, `Always` и только `registry-pull`.
+
+  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board
+  -- wget -qO- -T 3 http://127.0.0.1:8080` — Rollout завершается; HTTP возвращает `north-42`.'
 phrases.0: Я отделил авторизацию registry от учётных данных загрузки kubelet.
 phrases.1: Я обновил Secret потребителя и сохранил неизменяемую ссылку образа.
 phrases.2: Я проверил новую приватную загрузку и ответ восстановленного приложения.
@@ -55,10 +81,10 @@ diagnostics.auth: registry-pull auth должен использовать ка�
 diagnostics.credentials: Декодированный registry-pull auth должен совпадать с пользователем и паролем из platform.env.
 diagnostics.rollout: Выкатка deployment/board должна завершиться.
 diagnostics.http: Запрос к localhost:8080 Pod board должен вернуть north-42.
-stages.0.objectives.0.text: Deployment `board` использует `PRIVATE_IMAGE` из `platform.env` на workstation, политику
-  загрузки `Always` и только Secret загрузки `registry-pull`.
+stages.0.objectives.0.text: Deployment `board` использует поставленный приватный образ, политику загрузки `Always`
+  и только существующий Secret аутентификации реестра.
 stages.0.objectives.1.text: Требуемое число реплик Deployment `board` равно `1`.
-stages.0.objectives.2.text: Secret `registry-pull` имеет тип `kubernetes.io/dockerconfigjson` и действительные Docker
-  credentials для `REGISTRY`, совпадающие с `platform.env` на workstation.
+stages.0.objectives.2.text: Существующий Secret аутентификации реестра содержит действительные учётные данные
+  Docker-реестра, соответствующие поставленному окружению.
 stages.0.objectives.3.text: Deployment `board` завершает rollout в namespace песочницы.
 stages.0.objectives.4.text: Внутри Pod Deployment `board` адрес `http://127.0.0.1:8080` возвращает `north-42`.

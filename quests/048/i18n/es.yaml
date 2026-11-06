@@ -1,55 +1,86 @@
 title: Renovación Vault
-brief: |
-  La carga de trabajo `reader` no puede obtener su configuración respaldada por Vault.
+brief: 'La carga de trabajo `reader` no puede obtener su configuración respaldada por Vault.
 
-  Trabaja en la workstation en `~/quest` con `platform.env`, `station-token`, `issue-token.sh`, `issue-request.json`, `renew-token.sh`, `renew-request.json`, `sync-secret.sh`, `reader.yaml`.
+
+  Trabaja en la estación de trabajo en `~/quest` con `platform.env`, `station-token`, `issue-token.sh`, `issue-request.json`,
+  `renew-token.sh`, `renew-request.json`, `sync-secret.sh`, `reader.yaml`.
+
 
   **Requisitos:**
-  - Archivo en la workstation:
-    - Ruta: `~/quest/station-token`.
-    - Modo de acceso: `0600`.
-  - Lease del token en Vault de práctica:
-    - TTL restante: `>90` s.
-    - Renovable: `true`.
-    - TTL máximo: `600` s.
-    - Políticas exactas: `default`, `rail-reader`.
-  - Acceso con el token de `station-token` en la workstation:
-    - `secret/data/dispatch`: `read`.
-    - `secret/data/other`, `sys/mounts`: `deny`.
-  - Capabilities del emisor suministrado:
-    - `auth/token/create/rail-station`: `update`.
-    - `auth/token/create/other`, `sys/policies/acl/rail-reader`: `deny`.
-  - Deployment en el namespace de la bahía:
-    - Nombre: `reader`.
-    - Rollout completo.
-  - Configuración dentro de un Pod del Deployment `reader`:
-    - `/tmp/route`: `north-secret`.
-    - `ROUTE`, Secret `route-secret`, key `value`.
-    - El manifiesto de la carga de trabajo no contiene el valor del token de `~/quest/station-token` en la workstation.
 
-  **Verifica antes de Check & finish:**
-  - `source platform.env; token=$(cat station-token); ls -l station-token; curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$token") "$VAULT_ADDR/v1/auth/token/lookup-self" | jq '.data | {ttl,renewable,explicit_max_ttl,policies}'` — Modo `-rw-------`, TTL mayor que `90`, renewable `true`, TTL máximo `600` y políticas `default`, `rail-reader`.
-  - `source platform.env; token=$(cat station-token); curl -fsS -X POST -H @<(printf 'X-Vault-Token: %s\n' "$token") -H 'Content-Type: application/json' --data '{"paths":["secret/data/dispatch","secret/data/other","sys/mounts"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '.data // .'; curl -fsS -X POST -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN") -H 'Content-Type: application/json' --data '{"paths":["sys/policies/acl/rail-reader","auth/token/create/rail-station","auth/token/create/other"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '.data // .'` — El token tiene `read` solo para dispatch; el emisor tiene `update` para `auth/token/create/rail-station`; las otras rutas nombradas tienen `deny`.
-  - `kubectl rollout status deployment/reader --timeout=10s; kubectl get deployment reader -o json | jq -e --rawfile token station-token 'tostring|contains($token|sub("\n+$";""))|not'; kubectl exec deployment/reader -- sh -c 'test "$(cat /tmp/route)" = north-secret && printf "configuration matches\n"'` — El rollout se completa, la prueba de ausencia del token imprime `true` y el consumidor imprime `configuration matches`.
-debrief: La emisión, renovación y entrega de credenciales se verificaron como acciones separadas, incluida una lease
-  real restante.
+  - El archivo `~/quest/station-token` en la workstation tiene modo `0600`.
+
+  - El token de `station-token` en la workstation es renovable, tiene TTL mayor que `90` segundos, TTL máximo
+  `600` y exactamente las políticas `default` y `rail-reader`.
+
+  - El token de `station-token` en la estación de trabajo puede leer la configuración de despacho requerida,
+  pero no otros datos ni administrar montajes.
+
+  - El emisor suministrado puede emitir tokens solo mediante el perfil de estación; los demás perfiles y los
+  cambios en la política de lectura siguen denegados.
+
+  - Dentro de un Pod del Deployment `reader`, `/tmp/route` contiene la configuración de despacho suministrada
+  desde el Secret existente de Kubernetes; la carga no contiene ningún token de Vault.
+
+  - El Deployment `reader` completa su rollout en el namespace de la bahía.
+
+  '
+debrief: La emisión, renovación y entrega de credenciales se verificaron como acciones separadas, incluida
+  una lease real restante.
 stages.0.brief: El consumidor de configuración debe tener un lease limitado válido y acceso privado.
-hints.0.text: Un token expirado no puede renovarse a sí mismo; primero emite un token de acceso limitado nuevo mediante
-  issue-token.sh.
-hints.1.text: Un token nuevo solo dura 60s. Establezca la renovación increment en renew-request.json en 180s (dentro
-  del límite de rol 600s) y ejecute renew-token.sh para que el lease restante supere 90s.
-hints.2.text: Mantenga station-token en el modo 0600, ejecute sync-secret.sh para entregar el valor de la aplicación
-  en Kubernetes Secret y recupere la carga de trabajo reader.
+hints.0.text: La vigencia de las credenciales y su entrega al consumidor son responsabilidades distintas.
+hints.1.text: 'Un token expirado no puede renovarse a sí mismo; primero emite un token de acceso limitado nuevo
+  mediante issue-token.sh.
+
+
+  Inspecciona las entradas suministradas y el estado observado:
+
+
+  ```sh
+
+  cat issue-request.json renew-request.json reader.yaml
+
+  cat issue-token.sh renew-token.sh sync-secret.sh
+
+  kubectl describe deployment reader
+
+  ```'
+hints.2.text: 'Un token nuevo solo dura 60s. Establezca la renovación increment en renew-request.json en 180s
+  (dentro del límite de rol 600s) y ejecute renew-token.sh para que el lease restante supere 90s.
+
+
+  Mantenga station-token en el modo 0600, ejecute sync-secret.sh para entregar el valor de la aplicación en
+  Kubernetes Secret y recupere la carga de trabajo reader.
+
+
+  Verifica el resultado observado:
+
+
+  - `source platform.env; token=$(cat station-token); ls -l station-token; curl -fsS -H @<(printf ''X-Vault-Token:
+  %s\n'' "$token") "$VAULT_ADDR/v1/auth/token/lookup-self" | jq ''.data | {ttl,renewable,explicit_max_ttl,policies}''`
+  — Modo `-rw-------`, TTL mayor que `90`, renewable `true`, TTL máximo `600` y políticas `default`, `rail-reader`.
+
+  - `source platform.env; token=$(cat station-token); curl -fsS -X POST -H @<(printf ''X-Vault-Token: %s\n''
+  "$token") -H ''Content-Type: application/json'' --data ''{"paths":["secret/data/dispatch","secret/data/other","sys/mounts"]}''
+  "$VAULT_ADDR/v1/sys/capabilities-self" | jq ''.data // .''; curl -fsS -X POST -H @<(printf ''X-Vault-Token:
+  %s\n'' "$VAULT_MANAGER_TOKEN") -H ''Content-Type: application/json'' --data ''{"paths":["sys/policies/acl/rail-reader","auth/token/create/rail-station","auth/token/create/other"]}''
+  "$VAULT_ADDR/v1/sys/capabilities-self" | jq ''.data // .''` — El token tiene `read` solo para dispatch; el
+  emisor tiene `update` para `auth/token/create/rail-station`; las otras rutas nombradas tienen `deny`.
+
+  - `kubectl rollout status deployment/reader --timeout=10s; kubectl get deployment reader -o json | jq -e
+  --rawfile token station-token ''tostring|contains($token|sub("\n+$";""))|not''; kubectl exec deployment/reader
+  -- sh -c ''test "$(cat /tmp/route)" = north-secret && printf "configuration matches\n"''` — El rollout se
+  completa, la prueba de ausencia del token imprime `true` y el consumidor imprime `configuration matches`.'
 phrases.0: Distinguí la emisión de una credencial de la renovación de su restante lease.
 phrases.1: Verifiqué el TTL real dentro de una vida útil limitada.
 phrases.2: Mantuve el Vault token privado y entregué solo el valor de la aplicación en un Kubernetes Secret.
 stages.0.objectives.0.text: El archivo `~/quest/station-token` en la workstation tiene modo `0600`.
-stages.0.objectives.1.text: El token de `station-token` en la workstation es renovable, tiene TTL mayor que `90`
-  segundos, TTL máximo `600` y exactamente las políticas `default` y `rail-reader`.
-stages.0.objectives.2.text: El token de `station-token` en la workstation tiene `read` en `secret/data/dispatch`
-  y `deny` en `secret/data/other` y `sys/mounts`.
-stages.0.objectives.3.text: El emisor suministrado tiene `update` en `auth/token/create/rail-station`, y `deny`
-  en `auth/token/create/other` y `sys/policies/acl/rail-reader`.
-stages.0.objectives.4.text: Dentro de un Pod del Deployment `reader`, `/tmp/route` contiene `north-secret`; el manifiesto
-  de la carga de trabajo no contiene el valor del token de `~/quest/station-token` en la workstation.
+stages.0.objectives.1.text: El token de `station-token` en la workstation es renovable, tiene TTL mayor que
+  `90` segundos, TTL máximo `600` y exactamente las políticas `default` y `rail-reader`.
+stages.0.objectives.2.text: El token de `station-token` en la estación de trabajo puede leer la configuración
+  de despacho requerida, pero no otros datos ni administrar montajes.
+stages.0.objectives.3.text: El emisor suministrado puede emitir tokens solo mediante el perfil de estación;
+  los demás perfiles y los cambios en la política de lectura siguen denegados.
+stages.0.objectives.4.text: Dentro de un Pod del Deployment `reader`, `/tmp/route` contiene la configuración
+  de despacho suministrada desde el Secret existente de Kubernetes; la carga no contiene ningún token de Vault.
 stages.0.objectives.5.text: El Deployment `reader` completa su rollout en el namespace de la bahía.
