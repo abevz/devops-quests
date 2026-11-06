@@ -1,5 +1,5 @@
 title: Cross-stack contracts
-brief: |
+brief: |-
   The consumers do not agree with the required route contract.
 
   Work on the workstation in `~/quest` with `main.tf`, `modules/station/main.tf`, `rollout.yml`, `inventory.ini`, `ansible.cfg`, `route.yaml`, `board.yaml`.
@@ -7,7 +7,7 @@ brief: |
   **Requirements:**
   - Root outputs:
     - Output name: `managed_id`.
-    - Matching receipt on the workstation: `/run/dq/facts/0/original-id`.
+    - The `managed_id` output retains the resource ID originally assigned by the provider.
   - Files on the workstation:
     - `~/quest/managed-route.txt`: `north-98`.
   - Root outputs:
@@ -26,26 +26,35 @@ brief: |
     - Port and endpoint: `8080`, `/`.
     - Response: `north-98`.
   - Route data in the bay namespace:
-    - ConfigMap: `route`.
-    - `route`: `north-98`.
+    - The supplied route ConfigMap provides `north-98`.
   - Consumer in the bay namespace:
     - Deployment: `board`.
     - Replicas: `1`.
-    - Its container exposes `ROUTE` with value `north-98`.
+    - Deployment `board` has one replica, and its running container receives `north-98` through the supplied environment contract.
     - From inside the `board` container, HTTP `http://board:8080` returns `north-98`.
 
-  **Verify yourself before Check & finish:**
+  The check observes current values and retained output-reference constraints, not whether a plan was reviewed or how consumers were supplied.
+debrief: The checks observed matching producer, fleet and board values, the retained ID and the module
+  output reference.
+stages.0.brief: The producer and every consumer must meet the route contract.
+hints.0.text: One producer contract can supply several independently managed consumers.
+hints.1.text: |-
+  Start at the producer: a stale output can make many healthy consumers consistently wrong. Derive the root output directly from local_file.contract.content, then regenerate contract.json with tofu output -json contract.
+
+  Inspect the supplied configuration and live observations on the workstation:
+
+  ```sh
+  cat main.tf modules/station/main.tf route.yaml board.yaml
+  tofu state list
+  ```
+hints.2.text: |-
+  Use the contract for both Ansible and ConfigMap; env-based Pods need a restart.
+
+  Verify the result from `~/quest` on the workstation:
+
   - `cat managed-route.txt; tofu output -raw managed_id; printf '\n'; cat /run/dq/facts/0/original-id; tofu output -json contract; cat contract.json; tofu plan -input=false -detailed-exitcode -no-color` — The producer and both contracts show `north-98`, the ID matches its receipt, and planning exits `0`.
   - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat -A /srv/site/message; ls -l /srv/site/message'; for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Every host shows `north-98` with at most one end-of-line marker, file mode `-rw-r--r--`, and the HTTP response `north-98`.
   - `kubectl get configmap route -o jsonpath='{.data.route}'; printf '\n'; kubectl get deployment board -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas; kubectl exec --pod-running-timeout=5s deployment/board -- printenv ROUTE; kubectl exec --pod-running-timeout=5s deployment/board -- wget -qO- -T 3 http://board:8080` — ConfigMap `route`, the running `ROUTE` and the `board` HTTP response show `north-98`; Deployment `board` has desired replica count `1`.
-
-  The check observes current values and retained output-reference constraints, not whether a plan was reviewed or how consumers were supplied.
-debrief: The checks observed matching producer, fleet and board values, the retained ID and the module output reference.
-stages.0.brief: The producer and every consumer must meet the route contract.
-hints.0.text: 'Start at the producer: a stale output can make many healthy consumers consistently wrong.'
-hints.1.text: Derive the root output directly from local_file.contract.content, then regenerate contract.json with
-  tofu output -json contract.
-hints.2.text: Use the contract for both Ansible and ConfigMap; env-based Pods need a restart.
 phrases.0: I traced inconsistent consumers to a stale producer output.
 phrases.1: I propagated one contract across configuration and runtime.
 phrases.2: I verified identity and each live consumer after reconciliation.
@@ -54,24 +63,31 @@ diagnostics.route_file: managed-route.txt must equal north-98.
 diagnostics.contract_output: The OpenTofu contract output must equal {route:north-98}.
 diagnostics.contract_file: contract.json must equal {route:north-98}.
 diagnostics.plan: The OpenTofu plan must exit with code 0.
-diagnostics.reference: The module route output must reference local_file.contract.content in the saved plan.
+diagnostics.reference: The module route output must reference local_file.contract.content in the saved
+  plan.
 diagnostics.configmap: ConfigMap route data must equal {route:north-98}.
 diagnostics.replicas: Deployment board replicas must equal 1.
-diagnostics.board_env: The first board container env must contain only ROUTE from ConfigMap route, key route.
+diagnostics.board_env: The first board container env must contain only ROUTE from ConfigMap route, key
+  route.
 diagnostics.board_http: The request to board:8080 must return north-98.
-diagnostics.content_1: app1 /srv/site/message must contain exactly north-98, optionally followed by one newline.
+diagnostics.content_1: app1 /srv/site/message must contain exactly north-98, optionally followed by one
+  newline.
 diagnostics.mode_1: app1 /srv/site/message mode must be 644.
 diagnostics.http_1: app1 on port 8080 must return north-98.
-diagnostics.content_2: app2 /srv/site/message must contain exactly north-98, optionally followed by one newline.
+diagnostics.content_2: app2 /srv/site/message must contain exactly north-98, optionally followed by one
+  newline.
 diagnostics.mode_2: app2 /srv/site/message mode must be 644.
 diagnostics.http_2: app2 on port 8080 must return north-98.
-diagnostics.content_3: app3 /srv/site/message must contain exactly north-98, optionally followed by one newline.
+diagnostics.content_3: app3 /srv/site/message must contain exactly north-98, optionally followed by one
+  newline.
 diagnostics.mode_3: app3 /srv/site/message mode must be 644.
 diagnostics.http_3: app3 on port 8080 must return north-98.
-stages.0.objectives.0.text: The `managed_id` output matches workstation `/run/dq/facts/0/original-id`.
-stages.0.objectives.1.text: The workstation producer file and contracts, fleet HTTP services, ConfigMap `route`
-  and `board` response all report `north-98`.
-stages.0.objectives.2.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/message` contains exactly
-  `north-98`, optionally followed by one newline, with mode `0644`.
+stages.0.objectives.0.text: The `managed_id` output retains the resource ID originally assigned by the
+  provider.
+stages.0.objectives.1.text: The workstation producer file and published contracts, fleet HTTP services,
+  supplied route configuration and `board` response all report `north-98`.
+stages.0.objectives.2.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/message` contains
+  exactly `north-98`, optionally followed by one newline, with mode `0644`.
 stages.0.objectives.3.text: OpenTofu reports no pending infrastructure changes.
-stages.0.objectives.4.text: Deployment `board` has one replica and its container exposes `ROUTE` with value `north-98`.
+stages.0.objectives.4.text: Deployment `board` has one replica, and its running container receives `north-98`
+  through the supplied environment contract.

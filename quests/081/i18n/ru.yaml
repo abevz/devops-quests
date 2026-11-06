@@ -1,5 +1,5 @@
 title: Доставка через несколько систем
-brief: |
+brief: |-
   Выпуск не доступен согласованно всем своим потребителям.
 
   Работайте на workstation в `~/quest` с файлами `main.tf`, `inventory.ini`, `ansible.cfg`, `rollout.yml`, `deployment.yaml`.
@@ -7,7 +7,7 @@ brief: |
   **Требования:**
   - Этап 1:
     - Состояние OpenTofu:
-      - Требуемые адреса: `local_file.release`.
+      - Предоставленный файл производителя релиза учтён в state OpenTofu.
     - Файлы на workstation:
       - `~/quest/release.txt`: `release-81`.
     - Согласованность инфраструктуры:
@@ -25,22 +25,30 @@ brief: |
     - Потребитель в namespace песочницы:
       - Deployment: `relay`.
       - Rollout завершён.
-      - Внутри его работающего контейнера: `RELEASE` имеет значение `release-81`.
-
-  **Самопроверка перед Check & finish:**
-  - `tofu show -no-color; cat release.txt; tofu plan -input=false -detailed-exitcode -no-color` — Этап 1: состояние содержит `local_file.release`, файл показывает `release-81`, планирование завершается с кодом `0`.
-  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat -A /srv/site/message; ls -l /srv/site/message'; for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Этап 2: Каждый хост показывает `release-81` не более чем с одним маркером конца строки, режим файла `-rw-r--r--` и HTTP-ответ `release-81`.
-  - `kubectl rollout status deployment/relay --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/relay -- printenv RELEASE` — Этап 3: rollout завершается, процесс печатает `release-81`.
+      - В работающем контейнере Deployment `relay` предоставленный контракт окружения передаёт `release-81`.
 
   Проверки флота наблюдают значения файлов, режимы и HTTP, а не использованные команды; итоговая проверка потребителя читает статус rollout и окружение процесса, а не отдаваемое содержимое.
 stages.0.brief: Маркер выпуска на workstation должен соответствовать контракту.
 stages.1.brief: Каждый потребитель флота должен получить требуемый выпуск.
 stages.2.brief: Потребитель Kubernetes должен работать с требуемым выпуском.
-hints.0.text: Проследите релиз от state через fleet до pod.
-hints.1.text: У каждого этапа свой live check; правка позднего звена не заменит раннее.
-hints.2.text: Инициализируйте и примените маркер из main.tf. Выполните ansible-playbook rollout.yml с обработчиком
-  dq-service reload для доставки и перезагрузки флота. Исправьте deployment.yaml и обновите переменную RELEASE в
-  deployment/relay.
+hints.0.text: Независимые уровни доставки могут разделять единый контракт релиза.
+hints.1.text: |-
+  Проследите релиз от state через fleet до pod. У каждого этапа свой live check; правка позднего звена не заменит раннее.
+
+  Изучите предоставленную конфигурацию и текущие наблюдения на workstation:
+
+  ```sh
+  cat main.tf rollout.yml deployment.yaml
+  tofu state list
+  ```
+hints.2.text: |-
+  Инициализируйте и примените маркер из main.tf. Выполните ansible-playbook rollout.yml с обработчиком dq-service reload для доставки и перезагрузки флота. Исправьте deployment.yaml и обновите переменную RELEASE в deployment/relay.
+
+  Проверьте результат из `~/quest` на workstation:
+
+  - `tofu show -no-color; cat release.txt; tofu plan -input=false -detailed-exitcode -no-color` — Этап 1: состояние содержит `local_file.release`, файл показывает `release-81`, планирование завершается с кодом `0`.
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat -A /srv/site/message; ls -l /srv/site/message'; for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Этап 2: Каждый хост показывает `release-81` не более чем с одним маркером конца строки, режим файла `-rw-r--r--` и HTTP-ответ `release-81`.
+  - `kubectl rollout status deployment/relay --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/relay -- printenv RELEASE` — Этап 3: rollout завершается, процесс печатает `release-81`.
 debrief: Проверки подтвердили управляемый маркер, файлы и ответы парка, а также rollout и окружение relay.
 phrases.0: Я проверил фактическое состояние до изменения.
 phrases.1: Я нашёл причину и менял по одному параметру.
@@ -50,24 +58,25 @@ diagnostics.file: release.txt должен совпадать с release-81.
 diagnostics.plan: План OpenTofu должен завершиться с кодом 0.
 diagnostics.rollout: Выкатка Deployment relay должна завершиться.
 diagnostics.relay: RELEASE Deployment relay должен быть release-81.
-diagnostics.content_1: На app1 /srv/site/message должен содержать точно release-81, допускается один символ новой
-  строки.
+diagnostics.content_1: На app1 /srv/site/message должен содержать точно release-81, допускается один символ
+  новой строки.
 diagnostics.mode_1: На app1 права /srv/site/message должны быть 644.
 diagnostics.http_1: app1 на порту 8080 должен вернуть release-81.
-diagnostics.content_2: На app2 /srv/site/message должен содержать точно release-81, допускается один символ новой
-  строки.
+diagnostics.content_2: На app2 /srv/site/message должен содержать точно release-81, допускается один символ
+  новой строки.
 diagnostics.mode_2: На app2 права /srv/site/message должны быть 644.
 diagnostics.http_2: app2 на порту 8080 должен вернуть release-81.
-diagnostics.content_3: На app3 /srv/site/message должен содержать точно release-81, допускается один символ новой
-  строки.
+diagnostics.content_3: На app3 /srv/site/message должен содержать точно release-81, допускается один символ
+  новой строки.
 diagnostics.mode_3: На app3 права /srv/site/message должны быть 644.
 diagnostics.http_3: app3 на порту 8080 должен вернуть release-81.
-stages.0.objectives.0.text: Состояние OpenTofu содержит `local_file.release`.
+stages.0.objectives.0.text: Предоставленный файл производителя релиза учтён в state OpenTofu.
 stages.0.objectives.1.text: На workstation `release.txt` содержит `release-81`.
 stages.0.objectives.2.text: OpenTofu не сообщает об ожидающих изменениях инфраструктуры.
-stages.1.objectives.0.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/message` содержит
-  в точности `release-81`, возможно с одним переводом строки в конце, и имеет режим `0644`.
-stages.1.objectives.1.text: HTTP на порту `8080` возвращает `release-81` на каждом управляемом хосте (`app1`, `app2`,
-  `app3`).
+stages.1.objectives.0.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/message`
+  содержит в точности `release-81`, возможно с одним переводом строки в конце, и имеет режим `0644`.
+stages.1.objectives.1.text: HTTP на порту `8080` возвращает `release-81` на каждом управляемом хосте (`app1`,
+  `app2`, `app3`).
 stages.2.objectives.0.text: Deployment `relay` завершает rollout в namespace песочницы.
-stages.2.objectives.1.text: Работающий контейнер `relay` имеет переменную `RELEASE` со значением `release-81`.
+stages.2.objectives.1.text: В работающем контейнере Deployment `relay` предоставленный контракт окружения
+  передаёт `release-81`.
