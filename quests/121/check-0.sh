@@ -1,6 +1,12 @@
 set -euo pipefail
 cd ~/quest
 failed=0
+set +e
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
 name=dq-webhook-${DQ_NAMESPACE#dq-}
 webhook=$(kubectl get validatingwebhookconfiguration "$name" -o json 2>/dev/null || true)
 namespace=$(kubectl get namespace "$DQ_NAMESPACE" -o json 2>/dev/null || true)
@@ -46,17 +52,18 @@ if ! test -n "$installation" || ! jq -e --arg install "$installation" --arg run 
   printf '%s\n' 'webhook namespaceSelector = bay installation and run labels: ✗ [DQ:namespace]'
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
 route=$(kubectl get configmap route -o json 2>/dev/null || true)
 if ! jq -e '.data.route=="north-121"' <<<"$route" >/dev/null 2>&1; then
   printf '%s\n' 'configmap/route data.route = north-121: ✗ [DQ:route]'
-  failed=1
-fi
-if ! kubectl get deployment board -o json 2>/dev/null | jq -e '.status.readyReplicas==1' >/dev/null 2>&1; then
-  printf '%s\n' 'deployment/board readyReplicas = 1: ✗ [DQ:ready]'
-  failed=1
-fi
-if ! test "$(kubectl exec --pod-running-timeout=2s deployment/client -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = north-121; then
-  printf '%s\n' 'deployment/client → board:8080 = north-121: ✗ [DQ:http]'
   failed=1
 fi
 tmpdir=$(mktemp -d)
@@ -65,6 +72,18 @@ if ! jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp
   printf '%s\n' 'configmap/route north-121 server dry-run: ✗ [DQ:valid]'
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
+route=$(kubectl get configmap route -o json 2>/dev/null || true)
+tmpdir=$(mktemp -d)
+trap 'rm -f "$tmpdir/valid.json" "$tmpdir/invalid.json" "$tmpdir/denial.log"; rmdir "$tmpdir"' EXIT
 if ! jq '.data.route="closed" | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' <<<"$route" > "$tmpdir/invalid.json" 2>/dev/null; then
   printf '%s\n' 'configmap/route closed dry-run input: ✗ [DQ:invalid_input]'
   failed=1
@@ -75,4 +94,25 @@ elif ! grep -F 'Station route must be north-121' "$tmpdir/denial.log" >/dev/null
   printf '%s\n' 'closed denial = Station route must be north-121: ✗ [DQ:denial_text]'
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
+if ! kubectl get deployment board -o json 2>/dev/null | jq -e '.status.readyReplicas==1' >/dev/null 2>&1; then
+  printf '%s\n' 'deployment/board readyReplicas = 1: ✗ [DQ:ready]'
+  failed=1
+fi
+if ! test "$(kubectl exec --pod-running-timeout=2s deployment/client -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = north-121; then
+  printf '%s\n' 'deployment/client → board:8080 = north-121: ✗ [DQ:http]'
+  failed=1
+fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
 exit "$failed"

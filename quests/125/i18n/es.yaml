@@ -1,37 +1,32 @@
 title: Contratos RBAC con privilegios mínimos
-brief: 'Un controller debe leer únicamente el ConfigMap route. Su Role también permite listar ConfigMaps y leer Secrets, y
-  el binding incluye por error la identidad observer. Restringe station-reader a get sobre configmaps con resourceNames [route]
-  y vincula únicamente el ServiceAccount controller en este namespace. Ambos Pods ya tienen tokens API proyectados de corta
-  duración. Prueba peticiones HTTPS reales utilizando la CA y el endpoint registrados; nunca imprimas los tokens. controller
-  solo puede hacer get de route; otros ConfigMaps, las operaciones list y los Secrets deben devolver 403, y observer debe
-  perder el acceso a route.
-
-
-  Archivos de búsqueda en `~/quest` (algunos aparecen en etapas posteriores): `controller-sa.json`, `observer-sa.json`, `controller.json`,
-  `observer.json`, `role.json`, `binding.json`, `route.json`, `offlimits.json`, `secret.json`, `api-ca.pem`, `api-endpoint`.
-
-
-  La bahía no tiene Internet ni DNS externo. Utilice únicamente archivos proporcionados, imágenes precargadas y servicios
-  privados. Cambie sólo esta bahía.
-
-
-  Criterios iniciales de éxito: Solo controller puede hacer get del objeto llamado route; las peticiones reales demuestran
-  que se deniegan list, los objetos no relacionados, Secrets y el acceso de observer.
-
-
-  La Role `station-reader` debe contener exactamente una regla de la API core: `get` sobre `configmaps` con `resourceNames:
-  [route]`. Su RoleBinding debe contener exactamente un sujeto, la ServiceAccount `controller` en el namespace de la bahía.
-  La petición controller a `configmaps/route` verificada con CA debe devolver 200 y `.data.route: north-125`; las peticiones
-  controller a `configmaps`, `configmaps/offlimits`, `secrets` y `secrets/control` deben devolver cada una 403. La petición
-  observer a `configmaps/route` también debe devolver 403. Las comprobaciones observan esas peticiones y objetos, no todos
-  los permisos posibles ni quién ejecutó los comandos.'
-debrief: Se verificó el privilegio mínimo tanto para las operaciones como para identities, incluidas las solicitudes API negativas
-  reales.
-stages.0.brief: La Role y binding exactos, la respuesta controller para route y las peticiones denegadas indicadas coinciden
-  con la descripción.
-stages.0.objectives.0.text: La Role y binding exactos, la respuesta controller para route y las peticiones denegadas indicadas
-  coinciden con la descripción.
-hints.0.text: Un enlace selecciona identities; a Role define las operaciones permitidas.
+brief: "El lector de rutas debe tener acceso limitado. Restaure la respuesta esperada de controller mientras las\
+  \ solicitudes ajenas y de observer siguen prohibidas.\n\nTrabaje en `~/quest` en la estación de trabajo. Archivos\
+  \ suministrados: `controller-sa.json`, `observer-sa.json`, `controller.json`, `observer.json`, `role.json`, `binding.json`,\
+  \ `route.json`, `offlimits.json`, `secret.json`, `api-ca.pem`, `api-endpoint`.\n\n**Requirements:**\n\n- El Role\
+  \ `station-reader` permite solo `get` del ConfigMap `route` de la API principal, y su RoleBinding incluye solo\
+  \ al ServiceAccount `controller` de este namespace.\n- Un GET de la API verificado con CA y el token montado de\
+  \ controller devuelve HTTP `200` y ruta `north-125` para ConfigMap `route`.\n- Las solicitudes de controller para\
+  \ listar ConfigMaps, obtener ConfigMap `offlimits`, listar Secrets y obtener Secret `control`, y el GET de observer\
+  \ del ConfigMap `route`, reciben HTTP `403`.\n\n**Verify yourself before Check & finish:** Ejecute estos comandos\
+  \ de observación desde `~/quest` en la estación de trabajo.\n\n- La configuración, identidades y estado cumplen\
+  \ los requisitos.\n\n  ```sh\n  kubectl get role station-reader -o yaml\n  kubectl get rolebinding station-reader\
+  \ -o yaml\n  ```\n\n- La ruta indicada devuelve `north-125` con HTTP `200`; las otras cuatro solicitudes devuelven\
+  \ HTTP `403`. Nunca imprima ni guarde el token.\n\n  ```sh\n  api=$(cat api-endpoint)\n  token=$(kubectl exec\
+  \ deployment/controller -- cat /credential/token)\n  for path in configmaps/route configmaps configmaps/offlimits\
+  \ secrets secrets/control; do\n    printf 'header = \"Authorization: Bearer %s\"\\n' \"$token\" |\n      curl\
+  \ --config - --cacert api-ca.pem -sS -w '\\nHTTP %{http_code}\\n' \\\n      \"$api/api/v1/namespaces/$DQ_NAMESPACE/$path\"\
+  \n  done\n  unset token\n  ```\n\n- La solicitud de observer devuelve HTTP `403` sin revelar la credencial.\n\n\
+  \  ```sh\n  api=$(cat api-endpoint)\n  token=$(kubectl exec deployment/observer -- cat /credential/token)\n  printf\
+  \ 'header = \"Authorization: Bearer %s\"\\n' \"$token\" |\n    curl --config - --cacert api-ca.pem -sS -o /dev/null\
+  \ -w 'HTTP %{http_code}\\n' \\\n    \"$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route\"\n  unset token\n\
+  \  ```\n\nLas comprobaciones cubren las solicitudes y objetos indicados, no todos los permisos posibles ni quién\
+  \ ejecutó comandos; nunca imprima tokens."
+debrief: Se verificó el privilegio mínimo tanto para las operaciones como para identities, incluidas las solicitudes
+  API negativas reales.
+stages.0.brief: Solo el lector previsto puede obtener la ruta indicada.
+hints.0.text: Un enlace selecciona identities; a Role define las operaciones permitidas. El Role suministrado permite
+  listas extra de ConfigMaps y lecturas de Secrets, y el binding incluye observer. Ambas cargas ya tienen tokens
+  proyectados de corta duración.
 hints.1.text: get by resourceName es más estrecho que list, incluso para el mismo recurso kind.
 hints.2.text: Restrinja tanto Role rules como subjects y luego pruebe las rutas de acceso denegadas explícitas.
 phrases.0: Obtuve acceso de lectura a un objeto con nombre.
@@ -52,3 +47,9 @@ diagnostics.denied_configmaps: controller GET configmaps debe devolver HTTP 403.
 diagnostics.denied_configmaps_offlimits: controller GET configmaps/offlimits debe devolver HTTP 403.
 diagnostics.denied_secrets: controller GET secrets debe devolver HTTP 403.
 diagnostics.denied_secrets_control: controller GET secrets/control debe devolver HTTP 403.
+stages.0.objectives.0.text: El Role `station-reader` permite solo `get` del ConfigMap `route` de la API principal,
+  y su RoleBinding incluye solo al ServiceAccount `controller` de este namespace.
+stages.0.objectives.1.text: Un GET de la API verificado con CA y el token montado de controller devuelve HTTP `200`
+  y ruta `north-125` para ConfigMap `route`.
+stages.0.objectives.2.text: Las solicitudes de controller para listar ConfigMaps, obtener ConfigMap `offlimits`,
+  listar Secrets y obtener Secret `control`, y el GET de observer del ConfigMap `route`, reciben HTTP `403`.

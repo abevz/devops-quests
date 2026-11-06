@@ -1,27 +1,32 @@
 title: Odzyskiwanie webhooka dostępu
-brief: 'Pracuj w `~/quest`; przeczytaj `route.json`, `webhook-repair.json`, `admission-ca.pem`, `admission-target.json`, `board.json`,
-  `service.json` i `client.json`. Prywatny webhook walidujący ma stary URL, więc przy fail-closed blokuje ConfigMap trasy.
-  Webhook to wywołanie API, które może dopuścić lub odrzucić żądanie. Gracz ma dostęp tylko do odczytu jego konfiguracji.
-
-
-  Zapisz `{"action":"restore-path"}` do `webhook-repair.json` i poczekaj na ograniczonego agenta zatoki; może on przywrócić
-  tylko ścieżkę dostarczonego serwera. Konfiguracja `dq-webhook-<bay id>` musi zawierać jeden webhook `route.training.devops-quests.local`,
-  `failurePolicy: Fail`, `timeoutSeconds: 2` i URL `https://dq-webhook-<bay id>:8443/validate`. Jego pakiet CA musi odpowiadać
-  `admission-ca.pem`, a selektor przestrzeni nazw etykietom zatoki `devops-quests.installation` i `devops-quests.run`. Te
-  dokładne pola zachowują jeden pierwotny ograniczony callback obsługiwany przez agenta.
-
-
-  Zastosuj `data.route: north-121`. Sprawdź jedną gotową replikę board, odpowiedź `north-121` na HTTP klienta do `board:8080`
-  oraz próby serwerowe dry-run: poprawna trasa ma się powieść, a `closed` ma zostać odrzucone z `Station route must be north-121`.
-  Kontrole obserwują bieżącą konfigurację i decyzje; nie dowodzą całej historii odzyskiwania. Pracuj tylko w zatoce offline.'
+brief: "Aktualizacje trasy nie docierają do obciążenia. Przywróć prywatny kontrakt admission i oczekiwane wyniki\
+  \ dopuszczonych oraz odrzuconych żądań.\n\nPracuj w `~/quest` na stacji roboczej. Dostarczone pliki: `route.json`,\
+  \ `webhook-repair.json`, `admission-ca.pem`, `admission-target.json`, `board.json`, `service.json`, `client.json`.\n\
+  \n**Requirements:**\n\n- Webhook walidacyjny ograniczony do piaskownicy ufa swojemu prywatnemu CA i ma jeden callback\
+  \ `route.training.devops-quests.local`, zasadę awarii `Fail` i limit czasu `2` sekundy.\n  - Endpoint callbacku\
+  \ odpowiada `admission-target.json`, a CA `admission-ca.pem`, oba w `~/quest` na stacji. Zakres namespace odpowiada\
+  \ bieżącym etykietom piaskownicy `devops-quests.installation` i `devops-quests.run`; konfiguracja `dq-webhook-${DQ_NAMESPACE#dq-}`\
+  \ jest dla gracza tylko do odczytu.\n- ConfigMap `route` zawiera trasę `north-121`, a jego serwerowa próba admission\
+  \ kończy się powodzeniem (dry-run).\n- Próba serwerowa z trasą `closed` jest odrzucana z `Station route must be\
+  \ north-121` (dry-run).\n- Deployment `board` ma jedną gotową replikę, a `http://board:8080` zwraca `north-121`\
+  \ do Deployment `client`.\n\n**Verify yourself before Check & finish:** Wykonaj te polecenia obserwacji z `~/quest`\
+  \ na stacji roboczej.\n\n- Ustawienia, tożsamości i stan odpowiadają wymaganiom.\n\n  ```sh\n  name=\"dq-webhook-${DQ_NAMESPACE#dq-}\"\
+  \n  kubectl get validatingwebhookconfiguration \"$name\" -o yaml\n  kubectl get namespace \"$DQ_NAMESPACE\" -o\
+  \ yaml\n  kubectl get deployment board -o yaml\n  cat admission-target.json admission-ca.pem\n  ```\n\n- Bieżąca\
+  \ trasa jest dopuszczona bez zapisu zmiany; odbiorca otrzymuje `north-121`.\n\n  ```sh\n  kubectl get configmap\
+  \ route -o json |\n    jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)'\
+  \ |\n    kubectl apply --dry-run=server -f -\n  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080\n\
+  \  ```\n\n- Próba jest odrzucana z `Station route must be north-121` i nie zmienia zapisanego obiektu (dry-run).\n\
+  \n  ```sh\n  kubectl get configmap route -o json |\n    jq '.data.route=\"closed\" | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)'\
+  \ |\n    kubectl apply --dry-run=server -f -\n  ```\n\nKontrole obserwują bieżącą konfigurację callbacku i decyzje\
+  \ admission, nie pełną historię odzyskiwania."
 debrief: Bieżąca konfiguracja webhooka, trasa, odpowiedź oraz poprawna i błędna próby dry-run odpowiadały kontrolom.
-stages.0.brief: Ograniczona konfiguracja webhooka, trasa, gotowy board, odpowiedź klienta i obie próby dry-run odpowiadają
-  opisowi.
-stages.0.objectives.0.text: Ograniczona konfiguracja webhooka, trasa, gotowy board, odpowiedź klienta i obie próby dry-run
-  odpowiadają opisowi.
-hints.0.text: Fail-closed odróżnia nieosiągalny webhook od obiektu odrzuconego.
+stages.0.brief: Ograniczony callback admission musi egzekwować wymaganą trasę i pozwalać obciążeniu ją obsługiwać.
+hints.0.text: Fail-closed odróżnia nieosiągalny webhook od obiektu odrzuconego. Dostarczony URL callbacku wskazuje
+  wycofaną ścieżkę, więc admission fail-closed blokuje ConfigMap trasy przed dotarciem do obciążenia.
 hints.1.text: Konfiguracja jest tylko do odczytu; żądanie naprawy nie może zmienić zakresu namespace, CA ani serwera.
-hints.2.text: Poproś o restore-path, napraw data.route, a następnie przetestuj oba wyniki przyjęcia.
+hints.2.text: Poproś o restore-path, napraw data.route, a następnie przetestuj oba wyniki przyjęcia. Zapisz `{"action":"restore-path"}`
+  w `webhook-repair.json` i poczekaj na ograniczonego agenta; przywraca on tylko dostarczoną ścieżkę serwera.
 phrases.0: Rozróżniłem błąd transportu webhook od odmowy policy.
 phrases.1: Zachowałem walidację fail-closed i zakres namespace.
 phrases.2: Przetestowałem zarówno przyjęte, jak i odrzucone żądania API.
@@ -36,10 +41,10 @@ diagnostics.name: webhook name musi być równe route.training.devops-quests.loc
 diagnostics.failure_policy: webhook failurePolicy musi być równe Fail.
 diagnostics.timeout: webhook timeoutSeconds musi być równe 2.
 diagnostics.url: webhook clientConfig.url musi być równy `https://dq-webhook-<bay>:8443/validate` dla tej zatoki.
-diagnostics.ca: webhook caBundle musi być poprawnym base64 i odpowiadać niepustemu admission-ca.pem po usunięciu białych znaków
-  na brzegach.
-diagnostics.namespace: Etykieta instalacji zatoki musi być niepusta, a webhook namespaceSelector musi dokładnie odpowiadać
-  jej etykietom instalacji i uruchomienia.
+diagnostics.ca: webhook caBundle musi być poprawnym base64 i odpowiadać niepustemu admission-ca.pem po usunięciu
+  białych znaków na brzegach.
+diagnostics.namespace: Etykieta instalacji zatoki musi być niepusta, a webhook namespaceSelector musi dokładnie
+  odpowiadać jej etykietom instalacji i uruchomienia.
 diagnostics.route: configmap/route data.route musi być równe north-121.
 diagnostics.ready: deployment/board readyReplicas musi być równe 1.
 diagnostics.http: Żądanie do board:8080 musi zwrócić north-121.
@@ -47,3 +52,11 @@ diagnostics.valid: Przygotowanie danych route i jego serwerowy dry-run muszą si
 diagnostics.invalid_input: Przygotowanie danych dry-run dla route closed musi się powieść.
 diagnostics.denial: Serwerowy dry-run musi odrzucić route closed.
 diagnostics.denial_text: Odmowa musi zawierać Station route must be north-121.
+stages.0.objectives.0.text: Webhook walidacyjny ograniczony do piaskownicy ufa swojemu prywatnemu CA i ma jeden
+  callback `route.training.devops-quests.local`, zasadę awarii `Fail` i limit czasu `2` sekundy.
+stages.0.objectives.1.text: ConfigMap `route` zawiera trasę `north-121`, a jego serwerowa próba admission kończy
+  się powodzeniem (dry-run).
+stages.0.objectives.2.text: Próba serwerowa z trasą `closed` jest odrzucana z `Station route must be north-121`
+  (dry-run).
+stages.0.objectives.3.text: Deployment `board` ma jedną gotową replikę, a `http://board:8080` zwraca `north-121`
+  do Deployment `client`.

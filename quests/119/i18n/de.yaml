@@ -1,27 +1,31 @@
 title: NetworkPolicy und DNS Ausgang
-brief: 'Arbeite in `~/quest`; lies `client.json`, `board.json`, `closed.json`, `service.json`, `closed-service.json` und `egress.json`.
-  Der Client ist zunächst durch `client-egress` isoliert. In Kubernetes erlaubt jede Egress-Regel alle Kombinationen ihrer
-  Ziele und Ports; getrennte Regeln addieren Berechtigungen.
-
-
-  Konfiguriere `client-egress` mit einem `podSelector`, der genau `app: client` auswählt, und nur `Egress`; nutze `matchLabels`
-  oder einen gleichwertigen `In`-Ausdruck mit einem Wert. Erlaube DNS UDP und TCP 53 zu einem gemeinsamen Ziel mit Namespace-Label
-  `kubernetes.io/metadata.name: kube-system` und Pod-Label `k8s-app: kube-dns` sowie TCP 8080 zum Pod-Label `app: board` im
-  selben Namespace. Verwende genau diese Label-Selektoren für die bereitgestellten Ziele; Regeln und Ports dürfen anders angeordnet
-  oder aufgeteilt werden. Andere Policies, die den Client auswählen, dürfen kein breiteres Egress erlauben.
-
-
-  Prüfe Client-DNS für `board.$DQ_NAMESPACE.svc.cluster.local.`, Client-HTTP zu `board:8080` mit Antwort `north-119` und eine
-  fehlgeschlagene Client-Anfrage zur IP des Service `closed` auf Port 8080. Eine Kontrollanfrage von board an diese IP muss
-  `closed-119` liefern und zeigt damit die Erreichbarkeit von einem anderen Pod. Eine fehlgeschlagene Client-Anfrage allein
-  beweist ihre Ursache nicht. Arbeite nur in der Offline-Umgebung.'
-debrief: Die begrenzten Egress-Policies sowie beobachtetes DNS, Antworten und fehlgeschlagene Client-Anfrage entsprachen den
-  Prüfungen.
-stages.0.brief: Die Policy erlaubt nur die angegebenen DNS- und board-Flüsse; Client-DNS und -HTTP funktionieren, die closed-Anfrage
-  schlägt fehl und die board-Kontrolle gelingt.
-stages.0.objectives.0.text: Die Policy erlaubt nur die angegebenen DNS- und board-Flüsse; Client-DNS und -HTTP funktionieren,
-  die closed-Anfrage schlägt fehl und die board-Kontrolle gelingt.
+brief: "Der anfragende Workload erreicht nicht alle benötigten Ziele. Stellen Sie eng begrenzten Egress bei erhaltener\
+  \ Isolation vom geschlossenen Dienst her.\n\nArbeiten Sie in `~/quest` auf der Workstation. Bereitgestellte Dateien:\
+  \ `client.json`, `board.json`, `closed.json`, `service.json`, `closed-service.json`, `egress.json`.\n\n**Requirements:**\n\
+  \n- NetworkPolicy `client-egress` wählt nur Pods mit Label `app=client`, gilt nur für `Egress` und erlaubt nur\
+  \ DNS UDP/TCP `53` zu den DNS-Pods in kube-system sowie TCP `8080` zu Pods mit Label `app=board` im selben Namespace;\
+  \ keine andere auswählende Richtlinie erweitert diesen Egress.\n  - DNS-Ziele sind Pods mit Label `k8s-app=kube-dns`\
+  \ im Namespace mit Label `kubernetes.io/metadata.name=kube-system`. `In`-Selektoren mit einem Wert sowie umgeordnete\
+  \ oder aufgeteilte Regeln/Ports sind erlaubt.\n- Von Deployment `client` ist die A-Abfrage für `board.$DQ_NAMESPACE.svc.cluster.local.`\
+  \ erfolgreich.\n- Von Deployment `client` liefert `http://board:8080` den Wert `north-119`.\n- Die Service-IP\
+  \ von `closed` auf Port `8080` liefert Deployment `board` den Wert `closed-119`, während dieselbe Anfrage von\
+  \ Deployment `client` fehlschlägt.\n\n**Verify yourself before Check & finish:** Führen Sie diese Beobachtungsbefehle\
+  \ aus `~/quest` auf der Workstation aus.\n\n- Einstellungen, Identitäten und Status entsprechen den Anforderungen.\n\
+  \n  ```sh\n  kubectl get networkpolicies -o yaml\n  kubectl get pods -l app=client --show-labels\n  kubectl exec\
+  \ deployment/client -- nslookup -type=A \"board.$DQ_NAMESPACE.svc.cluster.local.\"\n  ```\n\n- Die erlaubten Anfragen\
+  \ liefern entsprechend `north-119` und `closed-119`.\n\n  ```sh\n  kubectl exec deployment/client -- wget -qO-\
+  \ -T 3 http://board:8080\n  closed=$(kubectl get service closed -o jsonpath='{.spec.clusterIP}')\n  kubectl exec\
+  \ deployment/board -- wget -qO- -T 3 \"http://$closed:8080\"\n  ```\n\n- Die Anfrage des isolierten Verbrauchers\
+  \ endet mit einem Exitstatus ungleich null.\n\n  ```sh\n  closed=$(kubectl get service closed -o jsonpath='{.spec.clusterIP}')\n\
+  \  kubectl exec deployment/client -- wget -qO- -T 2 \"http://$closed:8080\"\n  ```\n\nEine fehlgeschlagene Anfrage\
+  \ allein beweist nicht ihre Ursache; verwenden Sie das erreichbare Kontrollziel als Beleg und ändern Sie nur diese\
+  \ Bay."
+debrief: Die begrenzten Egress-Policies sowie beobachtetes DNS, Antworten und fehlgeschlagene Client-Anfrage entsprachen
+  den Prüfungen.
+stages.0.brief: Erforderlicher Egress muss funktionieren, während das geschlossene Ziel blockiert bleibt.
 hints.0.text: Wenn Sie einen Pod mit einem egress policy auswählen, ändert sich dessen Standardverhalten egress.
+  Ein ausgewählter Pod wird für Egress isoliert. Jede Peer-/Port-Kombination einer Regel ist erlaubt; getrennte
+  Regeln addieren Freigaben.
 hints.1.text: DNS benötigt UDP und manchmal TCP; Setzen Sie beide Selektoren in denselben peer.
 hints.2.text: Erlauben Sie nur DNS und den board-Port und testen Sie dann auch den verbotenen Dienst.
 phrases.0: Ich habe DNS als explizite Egress-Abhängigkeit beibehalten.
@@ -43,12 +47,21 @@ diagnostics.named: Es muss genau eine NetworkPolicy namens client-egress geben.
 diagnostics.selector: Der podSelector von client-egress muss genau app:client entsprechen.
 diagnostics.types: policyTypes von client-egress darf nur Egress enthalten.
 diagnostics.egress: Peers und Ports von client-egress müssen die in der Aufgabenbeschreibung beschränkte Form verwenden.
-diagnostics.unexpected: client-egress darf keinen unerwarteten Datenfluss enthalten; das Original nennt Ziel, Protokoll und
-  Port.
-diagnostics.other_egress: Eine andere NetworkPolicy, die einen Client auswählt, darf keinen zusätzlichen ausgehenden Verkehr
-  erlauben; ihr Name steht im Original.
-diagnostics.other_invalid: Eine andere NetworkPolicy hat einen ungültigen Selector oder Egress; ihr Name steht im Original.
+diagnostics.unexpected: client-egress darf keinen unerwarteten Datenfluss enthalten; das Original nennt Ziel, Protokoll
+  und Port.
+diagnostics.other_egress: Eine andere NetworkPolicy, die einen Client auswählt, darf keinen zusätzlichen ausgehenden
+  Verkehr erlauben; ihr Name steht im Original.
+diagnostics.other_invalid: Eine andere NetworkPolicy hat einen ungültigen Selector oder Egress; ihr Name steht im
+  Original.
 diagnostics.invalid_input: NetworkPolicies und Client-Pod-Labels müssen im erwarteten Format lesbar sein.
 diagnostics.missing_dns_udp_53: client-egress muss dns UDP 53 erlauben.
 diagnostics.missing_dns_tcp_53: client-egress muss dns TCP 53 erlauben.
 diagnostics.missing_board_tcp_8080: client-egress muss board TCP 8080 erlauben.
+stages.0.objectives.0.text: NetworkPolicy `client-egress` wählt nur Pods mit Label `app=client`, gilt nur für `Egress`
+  und erlaubt nur DNS UDP/TCP `53` zu den DNS-Pods in kube-system sowie TCP `8080` zu Pods mit Label `app=board`
+  im selben Namespace; keine andere auswählende Richtlinie erweitert diesen Egress.
+stages.0.objectives.1.text: Von Deployment `client` ist die A-Abfrage für `board.$DQ_NAMESPACE.svc.cluster.local.`
+  erfolgreich.
+stages.0.objectives.2.text: Von Deployment `client` liefert `http://board:8080` den Wert `north-119`.
+stages.0.objectives.3.text: Die Service-IP von `closed` auf Port `8080` liefert Deployment `board` den Wert `closed-119`,
+  während dieselbe Anfrage von Deployment `client` fehlschlägt.
