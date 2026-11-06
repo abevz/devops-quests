@@ -1,26 +1,38 @@
 title: RBAC
-brief: 'ServiceAccount reader está vinculado a un Role que nombra una configuración retired. Permitir
-  exactamente entrar en ConfigMap route; leer restricted y enumerar Secrets debe permanecer prohibido.
-  identity se ejecuta con la cuenta reader y expone su propio token montado para una verificación de autorización
-  real. No se necesita ningún rol cluster-wide.
+brief: |
+  El consumidor de configuración no puede leer su ruta.
 
+  Trabaja en la workstation en `~/quest` con `account.json`, `role.json`, `binding.json`, `identity.json`, `route.json`, `restricted.json`.
 
-  Archivos de búsqueda en `~/quest` (algunos aparecen en etapas posteriores): `account.json`, `role.json`,
-  `binding.json`, `identity.json`, `route.json`, `restricted.json`.
+  **Requisitos:**
+  - Role `route-reader` tiene exactamente una regla solo con estos campos:
+    - `apiGroups`: `[""]`.
+    - `resources`: `["configmaps"]`.
+    - `resourceNames`: `["route"]`.
+    - `verbs`: `["get"]`.
+  - Acceso con el token montado dentro del Pod `app=identity`:
+    - Token: `/var/run/secrets/kubernetes.io/serviceaccount/token`.
+    - Se permite obtener ConfigMap `route`; su clave `route` contiene `north`.
+    - Se prohíbe obtener ConfigMap `restricted`.
+    - Se prohíbe listar Secrets.
 
-
-  La bahía no tiene Internet ni DNS externo. Utilice únicamente archivos proporcionados, imágenes precargadas
-  y servicios privados. Cambie sólo esta bahía.'
+  **Verifica antes de Check & finish:**
+  - `kubectl get role route-reader -o json` — muestra exactamente la única regla indicada en los requisitos.
+  - `identity_token=$(kubectl exec deployment/identity -- cat /var/run/secrets/kubernetes.io/serviceaccount/token)` y `kubectl --token="$identity_token" get configmap route -o jsonpath='{.data.route}'` — imprime `north` con el token leído dentro del Pod; el token en sí no se imprime.
+  - `kubectl --token="$identity_token" get configmap restricted` y `kubectl --token="$identity_token" get secrets` — ambos fallan con `Forbidden` usando el mismo token del Pod.
 debrief: La carga de trabajo real identity aprobó una acción permitida y falló dos acciones prohibidas.
-stages.0.brief: Cambie sólo esta bahía.
+stages.0.brief: |
+  El consumidor debe mantener su límite de acceso restringido.
 stages.0.objectives.0.text: El Role `route-reader` permite solo `get` sobre ConfigMap `route`.
 stages.0.objectives.1.text: El token montado del Pod identity permite obtener ConfigMap `route`, cuya
   clave `route` contiene `north`.
 stages.0.objectives.2.text: El token montado del Pod `app=identity` no permite obtener ConfigMap `restricted`.
 stages.0.objectives.3.text: El token montado del Pod `app=identity` no permite listar Secrets.
 hints.0.text: Utilice el reader identity, no el player identity.
-hints.1.text: resourceNames limita el acceso con nombre.
-hints.2.text: Conserve core API group, configmaps/get y un nombre de recurso.
+hints.1.text: |
+  resourceNames limita el acceso con nombre. La Role nombra una configuración obsoleta.
+hints.2.text: |
+  Conserve core API group, configmaps/get y un nombre de recurso. No se necesita una Role de ámbito de clúster.
 phrases.0: Solo otorgué la lectura requerida con el nombre ConfigMap.
 phrases.1: Verifiqué las operaciones denegadas y la solicitud permitida.
 phrases.2: Mantuve la función service account dentro de su namespace.

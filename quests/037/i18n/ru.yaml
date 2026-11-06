@@ -1,26 +1,39 @@
 title: Права RBAC
-brief: 'ServiceAccount reader связан с Role для устаревшей конфигурации. Разрешите ровно get ConfigMap
-  route; чтение restricted и список Secrets должны оставаться запрещены. identity работает от reader и
-  даёт свой смонтированный token для фактической проверки. Cluster-wide Role не нужен.
+brief: |
+  Потребитель конфигурации не может прочитать маршрут.
 
+  Работайте на workstation в `~/quest` с файлами `account.json`, `role.json`, `binding.json`, `identity.json`, `route.json`, `restricted.json`.
 
-  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `account.json`, `role.json`, `binding.json`,
-  `identity.json`, `route.json`, `restricted.json`.
+  **Требования:**
+  - Role `route-reader` содержит ровно одно правило только с этими полями:
+    - `apiGroups`: `[""]`.
+    - `resources`: `["configmaps"]`.
+    - `resourceNames`: `["route"]`.
+    - `verbs`: `["get"]`.
+  - Доступ с использованием токена, смонтированного внутри Pod `app=identity`:
+    - Токен: `/var/run/secrets/kubernetes.io/serviceaccount/token`.
+    - Чтение ConfigMap `route` разрешено; ключ `route` содержит `north`.
+    - Чтение ConfigMap `restricted` запрещено.
+    - Получение списка Secrets запрещено.
 
-
-  В песочнице нет интернета и внешнего DNS. Используйте выданные файлы, предварительно загруженные образы
-  и приватные сервисы. Менять можно только эту песочницу.'
+  **Самопроверка перед Check & finish:**
+  - `kubectl get role route-reader -o json` — показывает ровно одно правило, перечисленное в требованиях.
+  - `identity_token=$(kubectl exec deployment/identity -- cat /var/run/secrets/kubernetes.io/serviceaccount/token)` и `kubectl --token="$identity_token" get configmap route -o jsonpath='{.data.route}'` — выводит `north` с токеном, прочитанным внутри Pod; сам токен не выводится.
+  - `kubectl --token="$identity_token" get configmap restricted` и `kubectl --token="$identity_token" get secrets` — обе завершаются отказом `Forbidden` с тем же токеном Pod.
 debrief: Реальная identity нагрузки выполнила разрешённое действие и получила отказ
   на два запрещённых.
-stages.0.brief: Менять можно только эту песочницу.
+stages.0.brief: |
+  Потребитель должен сохранять узкие границы доступа.
 stages.0.objectives.0.text: Role `route-reader` разрешает только `get` для ConfigMap `route`.
 stages.0.objectives.1.text: Смонтированный токен Pod identity позволяет получить ConfigMap `route`, в
   ключе `route` которого находится `north`.
 stages.0.objectives.2.text: Смонтированный токен Pod `app=identity` не позволяет получить ConfigMap `restricted`.
 stages.0.objectives.3.text: Смонтированный токен Pod `app=identity` не позволяет получить список Secrets.
 hints.0.text: Используйте identity reader, а не player.
-hints.1.text: resourceNames ограничивает именованный get.
-hints.2.text: Сохраните core API group, configmaps/get и одно имя.
+hints.1.text: |
+  resourceNames ограничивает именованный get. Role указывает на устаревшую конфигурацию.
+hints.2.text: |
+  Сохраните core API group, configmaps/get и одно имя. Роль уровня кластера не нужна.
 phrases.0: Я выдал только нужное чтение именованного ConfigMap.
 phrases.1: Я проверил запрещённые операции вместе с разрешённым запросом.
 phrases.2: Я сохранил роль service account в пределах namespace.
