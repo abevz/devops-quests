@@ -1,8 +1,15 @@
 set -euo pipefail
 cd ~/quest
-jq '.spec.limits[0].default.cpu="200m" | .spec.limits[0].defaultRequest.cpu="100m"' defaults.json > /tmp/fixed-defaults.json
-cp /tmp/fixed-defaults.json defaults.json
-kubectl apply -f defaults.json
+python3 - defaults.yaml <<'DQ_YAML_FIX_126' > /tmp/fixed-defaults.yaml
+import sys,yaml
+from pathlib import Path
+value=yaml.safe_load(Path(sys.argv[1]).read_text())
+value["spec"]["limits"][0]["default"]["cpu"]="200m"
+value["spec"]["limits"][0]["defaultRequest"]["cpu"]="100m"
+sys.stdout.write(yaml.safe_dump(value, sort_keys=False))
+DQ_YAML_FIX_126
+cp /tmp/fixed-defaults.yaml defaults.yaml
+kubectl apply -f defaults.yaml
 # With the client and one board Pod, the quota has no room for a surge Pod.
 kubectl scale deployment/board --replicas=0
 settled=false
