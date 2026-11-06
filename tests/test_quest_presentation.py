@@ -21,10 +21,8 @@ CRITERIA = re.compile(r"(?mi)^\s*(?:Initial success criteria|Success criteria)\s
 # Their brief is being restored in the K2 briefs batch; remove ids as they migrate.
 GOAL_RESTORE_PENDING = {51, 57, 62, 67, 77, 82, 85, 88, 94}
 # Machine notation that belongs to checks, not to learner-facing objectives.
-# Quests migrated before presentation v2 (2026-11-06) may still carry the brief's Verify block.
-# Batches never edit this list (parallel PRs would conflict); a quest whose Verify block is gone
-# is checked by the v2 rules automatically. The list is pruned once at the end of dq-57.
-LEGACY_VERIFY = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29, 31, 32, 33, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44, 46, 47, 48, 49, 51, 52, 53, 54, 55, 56, 57, 58, 59, 61, 62, 63, 64, 65, 66, 67, 68, 69, 71, 72, 74, 76, 77, 79, 81, 82, 84, 85, 86, 87, 88, 89, 92, 94, 96, 98, 101, 102, 103, 104, 105, 106, 107, 108, 109, 111, 112, 113, 114, 115, 116, 117, 118, 119, 121, 124, 125, 126, 127, 128, 129})
+# All quests follow presentation v2; no legacy Verify exceptions remain.
+LEGACY_VERIFY = frozenset()
 MACHINE = re.compile(
     r"\[\s*\{|\{\s*\"|\.spec\.|\.status\.|\.metadata\.|containers\[\d+\]|env\[\d+\]|\bjq\b"
 )
