@@ -1,37 +1,95 @@
 title: Security context y Pod Security
-brief: "El endpoint board no está disponible. Restaure la carga aislada sin debilitar la política de seguridad de\
-  \ la bahía.\n\nTrabaje en `~/quest` en la estación de trabajo. Archivos suministrados: `board.yaml`, `service.yaml`.\n\
-  \n**Requirements:**\n\n- El namespace mantiene Pod Security en modo `restricted`.\n- El Deployment `board` tiene\
-  \ exactamente un contenedor `worker` y una réplica lista.\n- El Pod `board` no tiene acceso al host, se ejecuta\
-  \ sin root con UID `1000` y seccomp `RuntimeDefault`; todos los contenedores impiden la escalada, eliminan `ALL`\
-  \ capabilities, no añaden ninguna y tienen sistemas raíz de solo lectura; solo el volumen `scratch`, emptyDir\
-  \ en `/tmp`, permite escritura y funciona.\n  - Sin red del host, PID/IPC del host ni hostPath; todos los contenedores\
-  \ normales e init no son privilegiados, no escalan y usan seccomp de contenedor ausente o `RuntimeDefault`. Los\
-  \ demás montajes son de solo lectura; se aceptan capabilities adicionales eliminadas y campos seguros equivalentes.\n\
-  - Desde Deployment `board`, `http://board:8080` devuelve `north-109`.\n\n**Verify yourself before Check & finish:**\
-  \ Ejecute estos comandos de observación desde `~/quest` en la estación de trabajo.\n\n- La configuración, identidad\
-  \ y estado cumplen los requisitos.\n\n  ```sh\n  kubectl get namespace \"$DQ_NAMESPACE\" -o yaml\n  kubectl get\
-  \ deployment board -o yaml\n  ```\n\n- `kubectl exec deployment/board -- sh -c 'id -u; cat /proc/mounts; test\
-  \ -w /tmp'` — El UID real es `1000`, el montaje raíz es de solo lectura y `/tmp` es escribible dentro de `worker`.\n\
-  \n- `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080` — El consumidor board recibe `north-109`.\n\
-  \nLas comprobaciones observan la configuración actual, no el historial de cambios del namespace."
-debrief: La seguridad del workload, el montaje activo, el UID, el espacio temporal y la respuesta del servicio coincidieron
-  con las comprobaciones.
+brief: 'El endpoint board no está disponible. Restaure la carga aislada sin debilitar la política de seguridad
+  de la bahía.
+
+
+  Trabaje en `~/quest` en la estación de trabajo. Archivos suministrados: `board.yaml`, `service.yaml`.
+
+
+  **Requisitos:**
+
+  - El namespace mantiene Pod Security en modo `restricted`.
+
+  - El Deployment `board` tiene exactamente un contenedor `worker` y una réplica lista.
+
+  - El Pod no tiene red de host, acceso a procesos o IPC del host ni volúmenes del sistema de archivos del
+  host. Todos los contenedores normales e init se ejecutan sin privilegios elevados, no pueden obtener privilegios,
+  no conservan ni añaden capabilities Linux y tienen el sistema raíz de solo lectura. El Pod se ejecuta sin
+  root con el filtro de llamadas al sistema predeterminado; los contenedores no pueden sustituirlo por otro
+  filtro. Solo el almacenamiento temporal suministrado dentro del Pod en `/tmp` es escribible; los demás montajes
+  son de solo lectura.
+
+  - Desde Deployment `board`, `http://board:8080` devuelve `north-109`.
+
+
+  Las comprobaciones observan la configuración actual, no el historial de cambios del namespace.
+
+  '
+debrief: La seguridad del workload, el montaje activo, el UID, el espacio temporal y la respuesta del servicio
+  coincidieron con las comprobaciones.
 stages.0.brief: La carga board aislada debe estar lista y funcionar.
-hints.0.text: Se produce un rechazo de admission antes de que un contenedor pueda fallar o generar registros de
-  aplicaciones. El contenedor board privilegiado suministrado es rechazado por restricted Pod Security; examine
-  los eventos de ReplicaSet.
-hints.1.text: Non-root identity, los controles de privilegios y los sistemas de archivos read-only resuelven diferentes
+hints.0.text: La admisión y la salud en ejecución son etapas distintas de la recuperación de una carga.
+hints.1.text: 'Se produce un rechazo de admission antes de que un contenedor pueda fallar o generar registros
+  de aplicaciones. El contenedor board privilegiado suministrado es rechazado por restricted Pod Security;
+  examine los eventos de ReplicaSet.
+
+
+  Non-root identity, los controles de privilegios y los sistemas de archivos read-only resuelven diferentes
   problemas.
-hints.2.text: Elimine los privilegios, conserve el root filesystem read-only y otorgue a la aplicación solo su /tmp
-  emptyDir.
+
+
+  Inspecciona las definiciones suministradas, los recursos actuales y los eventos.
+
+
+  ```sh
+
+  cat board.yaml
+
+  kubectl describe replicasets
+
+  kubectl get deployment board -o yaml
+
+  kubectl get namespace "$DQ_NAMESPACE" -o yaml
+
+  ```'
+hints.2.text: 'Elimine los privilegios, conserve el root filesystem read-only y otorgue a la aplicación solo
+  su /tmp emptyDir.
+
+
+  Verifica el resultado observado:
+
+
+  ```sh
+
+  kubectl get deployment board
+
+  kubectl exec deployment/board -- sh -c ''id -u; cat /proc/mounts; test -w /tmp''
+
+  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  Se esperan una réplica lista, UID en ejecución 1000, un montaje raíz de solo lectura, /tmp escribible y la
+  respuesta HTTP north-109.
+
+
+  Restricciones y detalles suministrados: El Pod `board` no tiene acceso al host, se ejecuta sin root con UID
+  `1000` y seccomp `RuntimeDefault`; todos los contenedores impiden la escalada, eliminan `ALL` capabilities,
+  no añaden ninguna y tienen sistemas raíz de solo lectura; solo el volumen `scratch`, emptyDir en `/tmp`,
+  permite escritura y funciona.
+
+
+  Las restricciones cubren todos los contenedores normales e init: sin red/PID/IPC de host ni hostPath, sin
+  escalada ni capabilities añadidas, eliminar ALL; seccomp del contenedor ausente o RuntimeDefault, otros montajes
+  de solo lectura; se aceptan campos seguros y capabilities eliminadas adicionales.'
 phrases.0: Diagnostiqué una falla de admission antes de iniciar la depuración de la aplicación.
 phrases.1: Mantuve la carga de trabajo non-root y eliminé privilegios innecesarios.
 phrases.2: Verifiqué el almacenamiento read-only root y las escrituras temporales de alcance.
-questions.0.points.0: No; RBAC controla las acciones de API, mientras que admission valida las propiedades de carga
-  de trabajo solicitadas.
-questions.0.points.1: Una persona que llama a la que se le permite crear un Deployment aún puede solicitar una plantilla
-  Pod rechazada.
+questions.0.points.0: No; RBAC controla las acciones de API, mientras que admission valida las propiedades
+  de carga de trabajo solicitadas.
+questions.0.points.1: Una persona que llama a la que se le permite crear un Deployment aún puede solicitar
+  una plantilla Pod rechazada.
 questions.0.prompt: ¿Son intercambiables RBAC y Pod Security Admission?
 questions.1.points.0: Protege el sistema de archivos de imágenes del contenedor, no todos los volúmenes montados.
 questions.1.points.1: Proporcione solo el writable volumes explícito que la aplicación necesita.
@@ -55,15 +113,19 @@ diagnostics.host_hostnetwork: deployment/board hostNetwork no debe estar activad
 diagnostics.host_hostpid: deployment/board hostPID no debe estar activado.
 diagnostics.host_hostipc: deployment/board hostIPC no debe estar activado.
 diagnostics.security_privileged: Ningún contenedor puede ser privilegiado.
-diagnostics.security_allowprivilegeescalation: container securityContext allowPrivilegeEscalation debe ser igual
-  a false.
-diagnostics.security_readonlyrootfilesystem: container securityContext readOnlyRootFilesystem debe ser igual a true.
+diagnostics.security_allowprivilegeescalation: container securityContext allowPrivilegeEscalation debe ser
+  igual a false.
+diagnostics.security_readonlyrootfilesystem: container securityContext readOnlyRootFilesystem debe ser igual
+  a true.
 diagnostics.security_drop: Cada contenedor debe retirar la capability ALL.
 diagnostics.security_add: container securityContext add debe ser igual a [].
 diagnostics.security_seccomp: Container seccompProfile.type debe ser RuntimeDefault o estar ausente.
 stages.0.objectives.0.text: El namespace mantiene Pod Security en modo `restricted`.
 stages.0.objectives.1.text: El Deployment `board` tiene exactamente un contenedor `worker` y una réplica lista.
-stages.0.objectives.2.text: El Pod `board` no tiene acceso al host, se ejecuta sin root con UID `1000` y seccomp
-  `RuntimeDefault`; todos los contenedores impiden la escalada, eliminan `ALL` capabilities, no añaden ninguna y
-  tienen sistemas raíz de solo lectura; solo el volumen `scratch`, emptyDir en `/tmp`, permite escritura y funciona.
+stages.0.objectives.2.text: El Pod no tiene red de host, acceso a procesos o IPC del host ni volúmenes del
+  sistema de archivos del host. Todos los contenedores normales e init se ejecutan sin privilegios elevados,
+  no pueden obtener privilegios, no conservan ni añaden capabilities Linux y tienen el sistema raíz de solo
+  lectura. El Pod se ejecuta sin root con el filtro de llamadas al sistema predeterminado; los contenedores
+  no pueden sustituirlo por otro filtro. Solo el almacenamiento temporal suministrado dentro del Pod en `/tmp`
+  es escribible; los demás montajes son de solo lectura.
 stages.0.objectives.3.text: Desde Deployment `board`, `http://board:8080` devuelve `north-109`.

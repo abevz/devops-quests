@@ -1,28 +1,73 @@
 title: DaemonSet Platzierung
-brief: "Der knotenlokale Routenendpunkt ist nicht verfügbar. Stellen Sie den Workload auf dem geeigneten Linux-Knoten\
-  \ unter Wahrung seiner Isolation her.\n\nArbeiten Sie in `~/quest` auf der Workstation. Bereitgestellte Dateien:\
-  \ `relay.yaml`, `service.yaml`.\n\n**Anforderungen:**\n- DaemonSet `relay` zielt nur auf Knoten mit OS `linux`.\n\
-  - Pod-Isolation:\n  - Der Pod `relay` nutzt weder Host-Netzwerk/PID/IPC noch hostPath, hat eine Pod-Richtlinie\
-  \ ohne root und seccomp `RuntimeDefault`.\n  - Alle regulären und Init-Container sind nicht privilegiert, verbieten\
-  \ Privilegienerhöhung, verwerfen `ALL` Capabilities und fügen keine hinzu.\n- DaemonSet `relay` plant genau `1`\
-  \ kontrollierten Pod auf `DQ_NODE_NAME`; er ist bereit, verfügbar und wird nicht beendet.\n- Im Workload `relay`\
-  \ liefern sowohl `http://127.0.0.1:8080` als auch `http://relay:8080` den Wert `north-103`.\n\n**Vor Check & finish\
-  \ selbst prüfen:**\nFühren Sie diese Beobachtungsbefehle in `~/quest` auf der Workstation aus; `kubectl exec`\
-  \ beobachtet den Container des genannten Workloads.\n- Einstellungen, Identität und Status entsprechen den Anforderungen.\n\
-  \n  ```sh\n  kubectl get daemonset relay -o yaml\n  kubectl get pods -l app=relay -o json\n  ```\n- `kubectl exec\
-  \ daemonset/relay -- wget -qO- -T 3 http://127.0.0.1:8080` — Der Workload-Verbraucher erhält `north-103`.\n- `kubectl\
-  \ exec daemonset/relay -- wget -qO- -T 3 http://relay:8080` — Der Workload-Verbraucher erhält `north-103`.\n\n\
-  Geprüft werden aktuelle Ergebnisse, keine früheren Änderungen an Knotenlabels oder anderen Deployments.\n"
+brief: 'Der knotenlokale Routenendpunkt ist nicht verfügbar. Stellen Sie seine Antwort auf dem bestehenden
+  Knoten wieder her und erhalten Sie die Workload-Isolation.
+
+
+  Arbeiten Sie in `~/quest` auf der Workstation. Bereitgestellte Dateien: `relay.yaml`, `service.yaml`.
+
+
+  **Anforderungen:**
+
+  - Die bestehende knotenlokale Workload kann auf dem Bay-Knoten laufen, ohne den Knoten zu ändern.
+
+  - Die knotenlokale Workload hat weder Hostzugriff noch erhöhte Rechte, läuft ohne Root und behält die mitgelieferte
+  Systemaufruf-Isolation.
+
+  - Der aktuelle knotenlokale Controller besitzt genau einen bereiten, verfügbaren Pod auf dem Bay-Knoten;
+  dieser wird nicht beendet.
+
+  - Im Workload `relay` liefern sowohl `http://127.0.0.1:8080` als auch `http://relay:8080` den Wert `north-103`.
+
+
+  Geprüft werden aktuelle Ergebnisse, keine früheren Änderungen an Knotenlabels oder anderen Deployments.
+
+  '
 debrief: Selektor, Sicherheitseinstellungen, Zähler, zugehöriger Pod und Antwort entsprachen den Prüfungen.
-stages.0.brief: 'Der isolierte knotenlokale Workload muss bereit sein und die geforderte Route liefern.
-
-  '
+stages.0.brief: Der isolierte knotenlokale Workload muss bereit sein und die geforderte Route liefern.
 hints.0.text: Desired zero kann bedeuten, dass kein geeigneter Knoten vorhanden ist, kein Container-Absturz.
-hints.1.text: Ein DaemonSet platziert einen Pod pro berechtigtem Knoten, anstatt einen replicas-Wert anzunehmen.
-hints.2.text: 'Ersetzen Sie nur die veralteten selector und inspect durch die echten controller owner. Der einzige
-  Selektor ist kubernetes.io/os=linux. Behalten Sie Knotenlabels bei und erstellen Sie kein Ersatz-Deployment.
+hints.1.text: 'Ein DaemonSet platziert einen Pod pro berechtigtem Knoten, anstatt einen replicas-Wert anzunehmen.
 
-  '
+
+  Prüfen Sie die mitgelieferten Definitionen, aktuellen Ressourcen und Ereignisse.
+
+
+  ```sh
+
+  cat relay.yaml
+
+  kubectl describe daemonset relay
+
+  kubectl get nodes --show-labels
+
+  kubectl get pods -l app=relay -o yaml
+
+  ```'
+hints.2.text: 'Ersetzen Sie nur die veralteten selector und inspect durch die echten controller owner. Der
+  einzige Selektor ist kubernetes.io/os=linux. Behalten Sie Knotenlabels bei und erstellen Sie kein Ersatz-Deployment.
+
+
+  Prüfen Sie das beobachtete Ergebnis:
+
+
+  ```sh
+
+  kubectl get daemonset relay
+
+  kubectl exec daemonset/relay -- wget -qO- -T 3 http://127.0.0.1:8080
+
+  kubectl exec daemonset/relay -- wget -qO- -T 3 http://relay:8080
+
+  ```
+
+
+  Erwartet werden je eins für desired, ready und available sowie north-103 an beiden HTTP-Adressen.
+
+
+  Mitgelieferte Einschränkungen und Details: DaemonSet `relay` zielt nur auf Knoten mit OS `linux`. Der Pod
+  `relay` nutzt weder Host-Netzwerk/PID/IPC noch hostPath, hat eine Pod-Richtlinie ohne root und seccomp `RuntimeDefault`;
+  alle regulären und Init-Container sind nicht privilegiert, verbieten Privilegienerhöhung, verwerfen `ALL`
+  Capabilities und fügen keine hinzu. DaemonSet `relay` plant genau `1` kontrollierten Pod auf `DQ_NODE_NAME`;
+  er ist bereit, verfügbar und wird nicht beendet.'
 phrases.0: Ich habe die Knotenberechtigung von der Containergesundheit getrennt.
 phrases.1: Ich habe die Besitz- und Planungszahlen von DaemonSet überprüft.
 phrases.2: Ich habe den unnötigen Host privileges vermieden.
@@ -36,25 +81,26 @@ diagnostics.hostpath: DaemonSet relay darf keine hostPath-Volumes verwenden.
 diagnostics.nonroot: daemonset/relay runAsNonRoot muss true entsprechen.
 diagnostics.seccomp: daemonset/relay seccompProfile.type muss RuntimeDefault entsprechen.
 diagnostics.node_selector: daemonset/relay nodeSelector muss {kubernetes.io/os:linux} entsprechen.
-diagnostics.owned: Auf dem Node der Umgebung muss DaemonSet relay einen nicht zur Löschung markierten Pod mit mindestens
-  einem bereiten Container kontrollieren.
+diagnostics.owned: Auf dem Node der Umgebung muss DaemonSet relay einen nicht zur Löschung markierten Pod mit
+  mindestens einem bereiten Container kontrollieren.
 diagnostics.local_http: daemonset/relay Pod 127.0.0.1:8080 muss north-103 entsprechen.
 diagnostics.service_http: relay:8080 muss north-103 entsprechen.
 diagnostics.host_hostnetwork: daemonset/relay hostNetwork darf nicht aktiviert sein.
 diagnostics.host_hostpid: daemonset/relay hostPID darf nicht aktiviert sein.
 diagnostics.host_hostipc: daemonset/relay hostIPC darf nicht aktiviert sein.
 diagnostics.security_privileged: Kein Container darf privilegiert sein.
-diagnostics.security_allowprivilegeescalation: container securityContext allowPrivilegeEscalation muss false entsprechen.
+diagnostics.security_allowprivilegeescalation: container securityContext allowPrivilegeEscalation muss false
+  entsprechen.
 diagnostics.security_drop: Jeder Container muss die Capability ALL entfernen.
 diagnostics.security_add: Weder reguläre Container noch Init-Container dürfen hinzugefügte Capabilities haben.
 diagnostics.status_desirednumberscheduled: daemonset/relay desiredNumberScheduled muss 1 entsprechen.
 diagnostics.status_numberready: daemonset/relay numberReady muss 1 entsprechen.
 diagnostics.status_numberavailable: daemonset/relay numberAvailable muss 1 entsprechen.
-stages.0.objectives.0.text: DaemonSet `relay` zielt nur auf Knoten mit OS `linux`.
-stages.0.objectives.1.text: Der Pod `relay` nutzt weder Host-Netzwerk/PID/IPC noch hostPath, hat eine Pod-Richtlinie
-  ohne root und seccomp `RuntimeDefault`; alle regulären und Init-Container sind nicht privilegiert, verbieten Privilegienerhöhung,
-  verwerfen `ALL` Capabilities und fügen keine hinzu.
-stages.0.objectives.2.text: DaemonSet `relay` plant genau `1` kontrollierten Pod auf `DQ_NODE_NAME`; er ist bereit,
-  verfügbar und wird nicht beendet.
+stages.0.objectives.0.text: Die bestehende knotenlokale Workload kann auf dem Bay-Knoten laufen, ohne den Knoten
+  zu ändern.
+stages.0.objectives.1.text: Die knotenlokale Workload hat weder Hostzugriff noch erhöhte Rechte, läuft ohne
+  Root und behält die mitgelieferte Systemaufruf-Isolation.
+stages.0.objectives.2.text: Der aktuelle knotenlokale Controller besitzt genau einen bereiten, verfügbaren
+  Pod auf dem Bay-Knoten; dieser wird nicht beendet.
 stages.0.objectives.3.text: Im Workload `relay` liefern sowohl `http://127.0.0.1:8080` als auch `http://relay:8080`
   den Wert `north-103`.

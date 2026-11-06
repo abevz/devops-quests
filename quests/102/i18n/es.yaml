@@ -1,43 +1,70 @@
 title: Estrategias de implementación y reversión
-brief: "Se perdió la disponibilidad durante una versión. Recupera la primera respuesta y después conserva el contenido\
-  \ nuevo de la siguiente etapa.\n\nTrabaja en `~/quest` en la workstation. Archivos suministrados: `board.yaml`,\
-  \ `service.yaml`, `healthy-revision`, `original-deployment-uid`.\n\n**Requisitos:**\n- Etapa 1:\n  - El Deployment\
-  \ `board` usa `RollingUpdate` con `0` réplicas no disponibles y `1` adicional, y readiness HTTP en el puerto `8080`.\n\
-  \  - El Deployment `board` original conserva exactamente `2` réplicas, ambas listas.\n    - La referencia del\
-  \ UID original está en `/run/dq/facts/0/original-deployment-uid` en la workstation.\n  - Desde `deployment/board`,\
-  \ HTTP `http://board:8080` devuelve `north-102`.\n- Etapa 2:\n  - El Deployment `board` usa `RollingUpdate` con\
-  \ `0` réplicas no disponibles y `1` adicional, y readiness HTTP en el puerto `8080`.\n  - El Deployment `board`\
-  \ original conserva exactamente `2` réplicas, ambas listas.\n    - La referencia del UID original está en `/run/dq/facts/0/original-deployment-uid`\
-  \ en la workstation.\n  - Desde `deployment/board`, HTTP `http://board:8080` devuelve `north-102-v3`.\n\n**Verifica\
-  \ antes de Check & finish:**\nEjecuta estos comandos de observación desde `~/quest` en la workstation; `kubectl\
-  \ exec` observa el contenedor de la carga indicada.\n- Los ajustes, la identidad y el estado coinciden con Requisitos.\n\
-  \n  ```sh\n  kubectl get deployment board -o yaml\n  cat /run/dq/facts/0/original-deployment-uid\n  ```\n- `kubectl\
-  \ exec deployment/board -- wget -qO- -T 3 http://board:8080` — La etapa 1 devuelve `north-102`; la etapa 2 devuelve\
-  \ `north-102-v3`, con dos réplicas listas en ambas.\n\nSe observan ajustes y respuestas actuales, no toda la plantilla\
-  \ histórica ni los comandos utilizados.\n"
-debrief: Las comprobaciones observaron la identidad del Deployment, la estrategia, el puerto de readiness y la respuesta
-  de cada etapa.
-stages.0.brief: 'Recupera la respuesta inicial con el Deployment original y los ajustes de disponibilidad requeridos.
+brief: "Se perdió la disponibilidad durante una versión. Recupera la primera respuesta y después conserva el\
+  \ contenido nuevo de la siguiente etapa.\n\nTrabaja en `~/quest` en la workstation. Archivos suministrados:\
+  \ `board.yaml`, `service.yaml`, `healthy-revision`.\n\n**Requisitos:**\n- Etapa 1:\n  - El Deployment `board`\
+  \ sustituye réplicas sin indisponibilidad prevista, con como máximo `1` réplica adicional y la comprobación\
+  \ HTTP de disponibilidad suministrada.\n  - El Deployment `board` original conserva exactamente `2` réplicas,\
+  \ ambas listas.\n  - Desde `deployment/board`, HTTP `http://board:8080` devuelve `north-102`.\n- Etapa 2:\n\
+  \  - El Deployment `board` sustituye réplicas sin indisponibilidad prevista, con como máximo `1` réplica\
+  \ adicional y la comprobación HTTP de disponibilidad suministrada.\n  - El Deployment `board` original conserva\
+  \ exactamente `2` réplicas, ambas listas.\n  - Desde `deployment/board`, HTTP `http://board:8080` devuelve\
+  \ `north-102-v3`.\n\nSe observan ajustes y respuestas actuales, no toda la plantilla histórica ni los comandos\
+  \ utilizados.\n"
+debrief: Las comprobaciones observaron la identidad del Deployment, la estrategia, el puerto de readiness y
+  la respuesta de cada etapa.
+stages.0.brief: Recupera la respuesta inicial con el Deployment original y los ajustes de disponibilidad requeridos.
+stages.1.brief: Mantén disponible el contenido de la siguiente etapa con la misma identidad y garantías de
+  disponibilidad.
+hints.0.text: Una versión debe equilibrar el avance de la sustitución y la disponibilidad continua del servicio.
+hints.1.text: 'Recreate elimina la revisión anterior antes de que la sustituta esté lista. Aquí se desplegó
+  una sonda de readiness incorrecta con Recreate.
 
-  '
-stages.1.brief: 'Mantén disponible el contenido de la siguiente etapa con la misma identidad y garantías de disponibilidad.
 
-  '
-hints.0.text: 'Recreate elimina la revisión anterior antes de que la sustituta esté lista. Aquí se desplegó una
-  sonda de readiness incorrecta con Recreate.
+  Undo cambia la plantilla Pod; strategy es un campo Deployment independiente.
 
-  '
-hints.1.text: Undo cambia la plantilla Pod; strategy es un campo Deployment independiente.
-hints.2.text: 'Recupera la revisión sana conocida, conserva los límites rolling y diagnostica la siguiente sonda
-  sin descartar contenido nuevo. Revisa el historial y usa kubectl rollout undo deployment/board --to-revision=N
+
+  Inspecciona las definiciones suministradas, los recursos actuales y los eventos.
+
+
+  ```sh
+
+  cat board.yaml
+
+  kubectl get deployment board -o yaml
+
+  kubectl rollout history deployment/board
+
+  ```'
+hints.2.text: 'Recupera la revisión sana conocida, conserva los límites rolling y diagnostica la siguiente
+  sonda sin descartar contenido nuevo. Revisa el historial y usa kubectl rollout undo deployment/board --to-revision=N
   con N de healthy-revision. Usa RollingUpdate con maxUnavailable=0 y maxSurge=1 numéricos, sin campos rollingUpdate
   adicionales.
 
-  '
+
+  Verifica el resultado observado:
+
+
+  ```sh
+
+  kubectl rollout status deployment/board --timeout=3s
+
+  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  Se esperan dos réplicas listas y north-102 en la etapa 1, luego north-102-v3 en la etapa 2; conserva el Deployment
+  original en todo momento.
+
+
+  Restricciones y detalles suministrados: El Deployment `board` usa `RollingUpdate` con `0` réplicas no disponibles
+  y `1` adicional, y readiness HTTP en el puerto `8080`. El Deployment `board` usa `RollingUpdate` con `0`
+  réplicas no disponibles y `1` adicional, y readiness HTTP en el puerto `8080`.'
 phrases.0: Recuperé una revisión Deployment conocida y saludable.
 phrases.1: Configuré surge y unavailable limits explícitamente.
 phrases.2: Verifiqué el nuevo contenido y readiness después del lanzamiento.
-questions.0.points.0: No; La corrección de readiness, la capacidad y el cierre de la aplicación también son importantes.
+questions.0.points.0: No; La corrección de readiness, la capacidad y el cierre de la aplicación también son
+  importantes.
 questions.0.points.1: Restringe el presupuesto de réplica disponible del controlador.
 questions.0.prompt: ¿maxUnavailable zero garantiza el tiempo de inactividad de zero?
 questions.1.points.0: Restaura una plantilla Pod anterior del historial de revisiones.
@@ -52,11 +79,11 @@ diagnostics.ready: deployment/board readyReplicas debe ser igual a 2.
 diagnostics.readiness: El puerto HTTP de disponibilidad del primer contenedor debe ser 8080.
 diagnostics.http_v1: board:8080 debe ser igual a north-102.
 diagnostics.http_v3: board:8080 debe ser igual a north-102-v3.
-stages.0.objectives.0.text: El Deployment `board` usa `RollingUpdate` con `0` réplicas no disponibles y `1` adicional,
-  y readiness HTTP en el puerto `8080`.
+stages.0.objectives.0.text: El Deployment `board` sustituye réplicas sin indisponibilidad prevista, con como
+  máximo `1` réplica adicional y la comprobación HTTP de disponibilidad suministrada.
 stages.0.objectives.1.text: El Deployment `board` original conserva exactamente `2` réplicas, ambas listas.
 stages.0.objectives.2.text: Desde `deployment/board`, HTTP `http://board:8080` devuelve `north-102`.
-stages.1.objectives.0.text: El Deployment `board` usa `RollingUpdate` con `0` réplicas no disponibles y `1` adicional,
-  y readiness HTTP en el puerto `8080`.
+stages.1.objectives.0.text: El Deployment `board` sustituye réplicas sin indisponibilidad prevista, con como
+  máximo `1` réplica adicional y la comprobación HTTP de disponibilidad suministrada.
 stages.1.objectives.1.text: El Deployment `board` original conserva exactamente `2` réplicas, ambas listas.
 stages.1.objectives.2.text: Desde `deployment/board`, HTTP `http://board:8080` devuelve `north-102-v3`.
