@@ -1,5 +1,5 @@
 title: Восстановление модуля
-brief: |
+brief: |-
   Реестр недоступен по требуемому управляемому адресу.
 
   Работайте на workstation в `~/quest` с файлами `main.tf`, `modules/ledger/main.tf`, `safe-state.json`.
@@ -7,13 +7,12 @@ brief: |
   **Требования:**
   - Резервная копия на workstation:
     - Путь: `~/quest/safe-state.json`.
-    - Зафиксированная квитанция SHA-256: `/run/dq/facts/0/safe-state.sha256`.
-    - Содержит `module.north.local_file.ledger`.
+    - Предоставленная резервная копия восстановления `safe-state.json` на workstation остаётся неповреждённой.
   - Состояние OpenTofu:
-    - Точный состав: `module.station.local_file.ledger`.
+    - State OpenTofu содержит только настроенный ресурс реестра.
   - Корневые выводы:
     - Имя вывода: `ledger_id`.
-    - Соответствующая квитанция на workstation: `/run/dq/facts/0/original-id`.
+    - Выходное значение `ledger_id` сохраняет ID ресурса, изначально назначенный провайдером.
   - Файлы на workstation:
     - `~/quest/ledger.txt`: `north-92`.
   - Сохранённый план восстановления на workstation:
@@ -22,39 +21,51 @@ brief: |
   - Согласованность инфраструктуры:
     - Нет ожидающих изменений инфраструктуры; код завершения подробного плана `0`.
 
-  **Самопроверка перед Check & finish:**
-  - `sha256sum safe-state.json; cat /run/dq/facts/0/safe-state.sha256; jq -r '.resources[] | select(.type=="local_file" and .name=="ledger") | .module + "." + .type + "." + .name' safe-state.json` — Хеши совпадают, резервная копия содержит `module.north.local_file.ledger`.
-  - `tofu output -raw ledger_id; printf '\n'; cat /run/dq/facts/0/original-id; cat ledger.txt; tofu show -no-color` — ID совпадают; `ledger.txt` показывает `north-92`; состояние содержит только `module.station.local_file.ledger`.
-  - `jq -r '.resource_changes[] | .address + " " + (.change.actions | join(","))' recovery-plan.json; tofu plan -input=false -detailed-exitcode -no-color` — Ровно одна сохранённая запись имеет действие `no-op`; текущее планирование завершается с кодом `0`.
-
   Проверка изучает резервную копию, текущее состояние и сохранённый план; она не доказывает историю восстановления или время сохранения плана.
-debrief: Контрольная сумма копии, текущий адрес состояния, ID и файл ledger и сохранённый план соответствуют условиям
-  восстановления; итоговый план не содержит изменений.
-stages.0.brief: Реестр должен соответствовать контракту результата с записанной идентичностью и неизменной резервной
-  копией.
-hints.0.text: Backup state — свидетельство; восстановление всего файла может потерять более новое корректное состояние.
-hints.1.text: Сопоставьте module.north в backup с module.orphan в текущем state.
+debrief: Контрольная сумма копии, текущий адрес состояния, ID и файл ledger и сохранённый план соответствуют
+  условиям восстановления; итоговый план не содержит изменений.
+stages.0.brief: Реестр должен соответствовать контракту результата с записанной идентичностью и неизменной
+  резервной копией.
+hints.0.text: Backup state — свидетельство; восстановление всего файла может потерять более новое корректное
+  состояние.
+hints.1.text: |-
+  Сопоставьте module.north в backup с module.orphan в текущем state.
+
+  Изучите предоставленную конфигурацию и текущие наблюдения на workstation:
+
+  ```sh
+  cat main.tf modules/ledger/main.tf
+  tofu state list
+  ls -l safe-state.json
+  ```
 hints.2.text: |-
   Перенесите текущий адрес модуля в module.station.
   Сохраните бинарный план и экспортируйте его через tofu show -json в требуемый JSON-артефакт.
+
+  Проверьте результат из `~/quest` на workstation:
+
+  - `sha256sum safe-state.json; cat /run/dq/facts/0/safe-state.sha256; jq -r '.resources[] | select(.type=="local_file" and .name=="ledger") | .module + "." + .type + "." + .name' safe-state.json` — Хеши совпадают, резервная копия содержит `module.north.local_file.ledger`.
+  - `tofu output -raw ledger_id; printf '\n'; cat /run/dq/facts/0/original-id; cat ledger.txt; tofu show -no-color` — ID совпадают; `ledger.txt` показывает `north-92`; состояние содержит только `module.station.local_file.ledger`.
+  - `jq -r '.resource_changes[] | .address + " " + (.change.actions | join(","))' recovery-plan.json; tofu plan -input=false -detailed-exitcode -no-color` — Ровно одна сохранённая запись имеет действие `no-op`; текущее планирование завершается с кодом `0`.
 phrases.0: Я проверил backup до использования при восстановлении.
 phrases.1: Я согласовал адреса модулей без замены ресурса.
 phrases.2: Я проверил identity, outputs и пустой итоговый plan.
-diagnostics.condition_0: /run/dq/facts/0/safe-state.sha256 должен быть непустым, а sha256(safe-state.json) должен
-  совпадать с его содержимым.
+diagnostics.condition_0: /run/dq/facts/0/safe-state.sha256 должен быть непустым, а sha256(safe-state.json)
+  должен совпадать с его содержимым.
 diagnostics.condition_1: safe-state.json resources должен содержать module.north.local_file.ledger.
 diagnostics.condition_2: tofu state list должен совпадать с module.station.local_file.ledger.
-diagnostics.condition_3: /run/dq/facts/0/original-id должен быть непустым, а tofu output -raw ledger_id должен совпадать
-  с его содержимым.
+diagnostics.condition_3: /run/dq/facts/0/original-id должен быть непустым, а tofu output -raw ledger_id
+  должен совпадать с его содержимым.
 diagnostics.condition_4: ledger.txt должен совпадать с north-92.
 diagnostics.condition_5: recovery-plan.json resource_changes length должен совпадать с 1.
 diagnostics.condition_6: У каждой записи в recovery-plan.json resource_changes должно быть actions ["no-op"].
 diagnostics.condition_7: План OpenTofu с detailed-exitcode должен завершиться с кодом 0.
-stages.0.objectives.0.text: Файл `safe-state.json` на workstation соответствует `/run/dq/facts/0/safe-state.sha256`
-  и содержит `module.north.local_file.ledger`.
-stages.0.objectives.1.text: Состояние OpenTofu содержит в точности `module.station.local_file.ledger`.
-stages.0.objectives.2.text: Вывод `ledger_id` совпадает с `/run/dq/facts/0/original-id` на workstation.
+stages.0.objectives.0.text: Предоставленная резервная копия восстановления `safe-state.json` на workstation
+  остаётся неповреждённой.
+stages.0.objectives.1.text: State OpenTofu содержит только настроенный ресурс реестра.
+stages.0.objectives.2.text: Выходное значение `ledger_id` сохраняет ID ресурса, изначально назначенный
+  провайдером.
 stages.0.objectives.3.text: На workstation `ledger.txt` содержит `north-92`.
-stages.0.objectives.4.text: Файл `recovery-plan.json` на workstation содержит ровно одну запись ресурса с действием
-  `no-op`.
+stages.0.objectives.4.text: Файл `recovery-plan.json` на workstation содержит ровно одну запись ресурса
+  с действием `no-op`.
 stages.0.objectives.5.text: OpenTofu не сообщает об ожидающих изменениях инфраструктуры.

@@ -1,5 +1,5 @@
 title: Контракты между системами
-brief: |
+brief: |-
   Потребители не соответствуют требуемому контракту маршрута.
 
   Работайте на workstation в `~/quest` с файлами `main.tf`, `modules/station/main.tf`, `rollout.yml`, `inventory.ini`, `ansible.cfg`, `route.yaml`, `board.yaml`.
@@ -7,7 +7,7 @@ brief: |
   **Требования:**
   - Корневые выводы:
     - Имя вывода: `managed_id`.
-    - Соответствующая квитанция на workstation: `/run/dq/facts/0/original-id`.
+    - Выходное значение `managed_id` сохраняет ID ресурса, изначально назначенный провайдером.
   - Файлы на workstation:
     - `~/quest/managed-route.txt`: `north-98`.
   - Корневые выводы:
@@ -26,26 +26,35 @@ brief: |
     - Порт и путь: `8080`, `/`.
     - Ответ: `north-98`.
   - Данные маршрута в namespace песочницы:
-    - ConfigMap: `route`.
-    - `route`: `north-98`.
+    - Предоставленный ConfigMap маршрута передаёт `north-98`.
   - Потребитель в namespace песочницы:
     - Deployment: `board`.
     - Реплики: `1`.
-    - Его контейнер предоставляет `ROUTE` со значением `north-98`.
+    - Deployment `board` имеет одну реплику, а его работающий контейнер получает `north-98` через предоставленный контракт окружения.
     - Изнутри контейнера `board` HTTP `http://board:8080` возвращает `north-98`.
 
-  **Самопроверка перед Check & finish:**
+  Проверка наблюдает текущие значения и сохранённые ограничения ссылки вывода, а не факт просмотра плана или способ снабжения потребителей.
+debrief: Проверки обнаружили совпадающие значения производителя, парка и board, сохранённый ID и ссылку
+  выхода модуля.
+stages.0.brief: Производитель и каждый потребитель должны соответствовать контракту маршрута.
+hints.0.text: Один контракт производителя может снабжать несколько независимо управляемых потребителей.
+hints.1.text: |-
+  Начните с производителя: устаревший output делает несколько исправных потребителей одинаково неверными. Получите корневой вывод непосредственно из local_file.contract.content, затем заново создайте contract.json через tofu output -json contract.
+
+  Изучите предоставленную конфигурацию и текущие наблюдения на workstation:
+
+  ```sh
+  cat main.tf modules/station/main.tf route.yaml board.yaml
+  tofu state list
+  ```
+hints.2.text: |-
+  Используйте контракт в Ansible и ConfigMap; Pod с env требует перезапуска.
+
+  Проверьте результат из `~/quest` на workstation:
+
   - `cat managed-route.txt; tofu output -raw managed_id; printf '\n'; cat /run/dq/facts/0/original-id; tofu output -json contract; cat contract.json; tofu plan -input=false -detailed-exitcode -no-color` — Производитель и оба контракта показывают `north-98`, ID совпадает с квитанцией, планирование завершается с кодом `0`.
   - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat -A /srv/site/message; ls -l /srv/site/message'; for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Каждый хост показывает `north-98` не более чем с одним маркером конца строки, режим файла `-rw-r--r--` и HTTP-ответ `north-98`.
   - `kubectl get configmap route -o jsonpath='{.data.route}'; printf '\n'; kubectl get deployment board -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas; kubectl exec --pod-running-timeout=5s deployment/board -- printenv ROUTE; kubectl exec --pod-running-timeout=5s deployment/board -- wget -qO- -T 3 http://board:8080` — ConfigMap `route`, работающая переменная `ROUTE` и HTTP-ответ `board` показывают `north-98`; требуемое число реплик Deployment `board` — `1`.
-
-  Проверка наблюдает текущие значения и сохранённые ограничения ссылки вывода, а не факт просмотра плана или способ снабжения потребителей.
-debrief: Проверки обнаружили совпадающие значения производителя, парка и board, сохранённый ID и ссылку выхода модуля.
-stages.0.brief: Производитель и каждый потребитель должны соответствовать контракту маршрута.
-hints.0.text: 'Начните с производителя: устаревший output делает несколько исправных потребителей одинаково неверными.'
-hints.1.text: Получите корневой вывод непосредственно из local_file.contract.content, затем заново создайте contract.json
-  через tofu output -json contract.
-hints.2.text: Используйте контракт в Ansible и ConfigMap; Pod с env требует перезапуска.
 phrases.0: Я нашёл источник рассогласования потребителей в устаревшем output.
 phrases.1: Я передал единый контракт в конфигурацию и runtime.
 phrases.2: Я проверил identity и каждого работающего потребителя после согласования.
@@ -54,28 +63,31 @@ diagnostics.route_file: managed-route.txt должен совпадать с nor
 diagnostics.contract_output: Вывод OpenTofu contract должен совпадать с {route:north-98}.
 diagnostics.contract_file: contract.json должен совпадать с {route:north-98}.
 diagnostics.plan: План OpenTofu должен завершиться с кодом 0.
-diagnostics.reference: Вывод route модуля должен ссылаться на local_file.contract.content в сохранённом плане.
+diagnostics.reference: Вывод route модуля должен ссылаться на local_file.contract.content в сохранённом
+  плане.
 diagnostics.configmap: Данные ConfigMap route должны совпадать с {route:north-98}.
 diagnostics.replicas: Число реплик Deployment board должно быть равно 1.
-diagnostics.board_env: В env первого контейнера board должен быть только ROUTE из ConfigMap route, ключ route.
+diagnostics.board_env: В env первого контейнера board должен быть только ROUTE из ConfigMap route, ключ
+  route.
 diagnostics.board_http: Запрос к board:8080 должен вернуть north-98.
-diagnostics.content_1: На app1 /srv/site/message должен содержать точно north-98, допускается один символ новой
-  строки.
+diagnostics.content_1: На app1 /srv/site/message должен содержать точно north-98, допускается один символ
+  новой строки.
 diagnostics.mode_1: На app1 права /srv/site/message должны быть 644.
 diagnostics.http_1: app1 на порту 8080 должен вернуть north-98.
-diagnostics.content_2: На app2 /srv/site/message должен содержать точно north-98, допускается один символ новой
-  строки.
+diagnostics.content_2: На app2 /srv/site/message должен содержать точно north-98, допускается один символ
+  новой строки.
 diagnostics.mode_2: На app2 права /srv/site/message должны быть 644.
 diagnostics.http_2: app2 на порту 8080 должен вернуть north-98.
-diagnostics.content_3: На app3 /srv/site/message должен содержать точно north-98, допускается один символ новой
-  строки.
+diagnostics.content_3: На app3 /srv/site/message должен содержать точно north-98, допускается один символ
+  новой строки.
 diagnostics.mode_3: На app3 права /srv/site/message должны быть 644.
 diagnostics.http_3: app3 на порту 8080 должен вернуть north-98.
-stages.0.objectives.0.text: Вывод `managed_id` совпадает с `/run/dq/facts/0/original-id` на workstation.
-stages.0.objectives.1.text: Файл производителя и контракты на workstation, HTTP-сервисы флота, ConfigMap `route`
-  и ответ `board` сообщают `north-98`.
-stages.0.objectives.2.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/message` содержит
-  в точности `north-98`, возможно с одним переводом строки в конце, и имеет режим `0644`.
+stages.0.objectives.0.text: Выходное значение `managed_id` сохраняет ID ресурса, изначально назначенный
+  провайдером.
+stages.0.objectives.1.text: Файл производителя и опубликованные контракты на workstation, HTTP-сервисы
+  флота, предоставленная конфигурация маршрута и ответ `board` сообщают `north-98`.
+stages.0.objectives.2.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/message`
+  содержит в точности `north-98`, возможно с одним переводом строки в конце, и имеет режим `0644`.
 stages.0.objectives.3.text: OpenTofu не сообщает об ожидающих изменениях инфраструктуры.
-stages.0.objectives.4.text: Deployment `board` имеет одну реплику, а его контейнер предоставляет `ROUTE` со значением
-  `north-98`.
+stages.0.objectives.4.text: Deployment `board` имеет одну реплику, а его работающий контейнер получает
+  `north-98` через предоставленный контракт окружения.
