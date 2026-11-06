@@ -1,6 +1,6 @@
-"""Re-hash the Russian guide texts after editing them; translations then show as stale.
+"""Re-hash the English guide texts after editing them; translations then show as stale.
 
-The Russian text in docs/guides/<resource>/i18n/ru.yaml is the source of truth.
+The English text in docs/guides/<resource>/i18n/en.yaml is the source of truth.
 """
 
 import json
@@ -17,7 +17,7 @@ def refresh(root=ROOT):
     refreshed = set()
     for item in index.values():
         resource = item["resource"]
-        path = root / "docs/guides" / resource / "i18n/ru.yaml"
+        path = root / "docs/guides" / resource / "i18n/en.yaml"
         values = yaml.safe_load(path.read_text())
         item["source_hash"] = digest(values["text"])
         if resource not in refreshed:
@@ -33,4 +33,4 @@ def refresh(root=ROOT):
 
 
 if __name__ == "__main__":
-    print("Re-hashed Russian guides:", refresh())
+    print("Re-hashed English guides:", refresh())

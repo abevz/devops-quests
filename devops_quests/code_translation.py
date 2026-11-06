@@ -37,14 +37,32 @@ PROTECTED = re.compile(
     r"%(?:\([^)]+\))?[-+ #0-9.*\[\]$hljztL]*[a-zA-Z%]|\\.|"
     r"</?[A-Za-z][^<>]*>|&&|\|\||[;&<>|]|"
     r"https?://[^\s\"']+|(?<![\w>])(?:~|\.{1,2})?/[^\s\"',;<>]+|"
-    r"\b[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+\b|`[^`]+`|[0-9]+"
+    r"--[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*(?:=[A-Za-z0-9_./:@~-]+)?|"
+    r"\b[A-Za-z_][A-Za-z0-9_-]*=[A-Za-z0-9_./:@~-]+|"
+    r"\b[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+\b|"
+    r"\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+\b|`[^`]+`|[0-9]+"
 )
-# Existing Latin fragments in a Russian explanation can be commands, flags or
+# Existing Latin fragments in a Cyrillic explanation can be commands, flags or
 # identifiers. Preserve them generically rather than guessing command names.
 LATIN_FRAGMENT = re.compile(
     r"[-+./]*[A-Za-z_][A-Za-z_0-9./:=+@~-]*"
     r"(?:[ \t]+[-+./]*[A-Za-z_][A-Za-z_0-9./:=+@~-]*)*"
 )
+LATIN_TOKEN = re.compile(r"[-+./]*[A-Za-z_][A-Za-z_0-9./:=+@~-]*")
+CYRILLIC = re.compile(r"[А-Яа-яЁё]")
+
+
+def technical_token(token):
+    """Flags, assignments, identifiers and paths; plain English words are prose."""
+    token = token.rstrip(".:")
+    return bool(re.search(r"[0-9_./:=@~]|^-|[a-z][A-Z]", token))
+
+
+def contains_fragment(fragment, text, start=0):
+    return re.search(
+        r"(?<![\w./:=+@~-])" + re.escape(fragment) + r"(?![\w./:=+@~-])",
+        text[start:],
+    )
 
 
 def fenced_blocks(text):
@@ -385,17 +403,23 @@ def quoted_body(lines, depth):
 def preserves_fragments(original, translated):
     """Retain existing technical text even when it is not marked as inline code.
 
-    A Latin phrase already present in the source is not Russian prose needing
-    translation. Require it verbatim and in order. This intentionally fails
-    closed on ambiguous mixed prose, without a command-name allowlist.
+    A Latin phrase already present in a Cyrillic explanation is not prose needing
+    translation. Require it verbatim and in order in both directions. This
+    intentionally fails closed on ambiguous mixed prose, without a command-name
+    allowlist.
     """
+    if not CYRILLIC.search(original) and CYRILLIC.search(translated):
+        # English source, Cyrillic translation: technical tokens of the source
+        # must survive. Plain words cannot be told apart from prose without an
+        # allowlist, so they are checked only in the reverse direction below.
+        for match in LATIN_TOKEN.finditer(original):
+            token = match[0].rstrip(".:")
+            if technical_token(token) and contains_fragment(token, translated) is None:
+                return False
+        original, translated = translated, original
     cursor = 0
     for match in LATIN_FRAGMENT.finditer(original):
-        fragment = match[0]
-        found = re.search(
-            r"(?<![\w./:=+@~-])" + re.escape(fragment) + r"(?![\w./:=+@~-])",
-            translated[cursor:],
-        )
+        found = contains_fragment(match[0], translated, cursor)
         if found is None:
             return False
         cursor += found.end()

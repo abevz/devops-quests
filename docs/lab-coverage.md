@@ -67,7 +67,7 @@ smoke logs. Historical outputs and diagrams are not runnable tests.
   proves that workload rollback does not reverse that side effect; it does not
   simulate database transactional correctness. GitOps uses the private repository.
 
-The Russian guide text in the repository is the source of truth. Re-hashing it
+The English guide text in the repository is the source of truth. Re-hashing it
 (`python -m scripts.guide_excerpts`) preserves `guide-lessons.yaml` and
 `guide-topics.yaml`; stale source hashes require a new editorial/coverage review
 before release.

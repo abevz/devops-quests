@@ -132,7 +132,7 @@ class Catalog:
             "lesson_stale": bool(
                 lesson and lesson["source_hash"] != item["source_hash"]
             ),
-            "source_language": "ru",
+            "source_language": "en",
             "source_hash": item["source_hash"],
             "translation_hashes": {
                 lang: value.get("source_hash") for lang, value in messages.items()

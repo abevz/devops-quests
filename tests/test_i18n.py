@@ -177,7 +177,7 @@ def test_validator_rejects_missing_english_changed_code_and_stale_translation(tm
     values = yaml.safe_load(message.read_text())
     del values["title"]
     message.write_text(yaml.safe_dump(values))
-    translation = root / "docs/guides/kubernetes-4/i18n/en.yaml"
+    translation = root / "docs/guides/kubernetes-4/i18n/ru.yaml"
     values = yaml.safe_load(translation.read_text())
     values["source_hash"] = "0" * 64
     values["text"] = values["text"].replace("apiVersion:", "changedApiVersion:")

@@ -333,7 +333,7 @@ def audit(root=ROOT):
     index = json.loads((root / "docs/guide-excerpts.json").read_text())
     for name, item in index.items():
         values = resources[str(root / "docs/guides" / item["resource"] / "i18n")]
-        original = values.get("ru", {}).get("text", "")
+        original = values.get("en", {}).get("text", "")
         if digest(original) != item["source_hash"]:
             errors.append({"guide": name, "error": "original_hash_mismatch"})
         for language, translation in values.items():
