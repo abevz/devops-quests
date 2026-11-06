@@ -1,29 +1,56 @@
 title: Mantenimiento controlado
 brief: "Una entrega de mantenimiento está incompleta en los hosts gestionados y la aplicación.\n\nTrabaja en `~/quest`\
   \ en la estación de trabajo. Entradas por etapa:\n- Etapa 1: `inventory.ini`, `ansible.cfg`, `rollout.yml`.\n\
-  - Etapa 2: `board.yaml`, `service.yaml`.\n\n**Requisitos:**\n\n- Etapa 1:\n  - Cada play de `rollout.yml` está\
-  \ configurado para procesar un host gestionado a la vez.\n  - En cada host gestionado (`app1`, `app2`, `app3`),\
-  \ `/srv/site/maintenance.txt` contiene `north-40`.\n  - El playbook inspeccionado es `~/quest/rollout.yml` en\
-  \ la estación de trabajo.\n- Etapa 2:\n  - El Deployment `board` completa su rollout con `2` réplicas y `2` réplicas\
-  \ disponibles; su RollingUpdate permite `0` no disponibles y `1` réplica adicional.\n  - El Service `board` selecciona\
-  \ `app=board` y dirige el puerto `8080` al puerto de destino `8080`.\n  - Cada Pod no terminado en fase `Running`\
-  \ con etiqueta `app=board` recibe `north-40` de `http://board:8080`.\n\n**Compruébalo antes de Check & finish:**\n\
-  \n- Etapa 1: La vista previa procesa un host por lote y cada uno de `app1`, `app2`, `app3` muestra `north-40`.\n\
-  \n  ```sh\n  ansible-playbook rollout.yml --check\n  for n in 1 2 3; do\n    host=\"app${n}-${DQ_NAMESPACE#dq-}\"\
-  \n    printf \"%s: \" \"$host\"\n    ssh -n -o BatchMode=yes -p 2222 \"root@$host\" 'cat /srv/site/maintenance.txt'\n\
-  \  done\n  ```\n\n- Etapa 2: El Deployment y el Service cumplen los requisitos; las peticiones de los consumidores\
-  \ imprimen `north-40`.\n\n  ```sh\n  kubectl get deployment board -o yaml\n  kubectl get service board -o yaml\n\
-  \  for pod in $(kubectl get pods -l app=board -o json | jq -r '.items[]|select(.metadata.deletionTimestamp==null\
-  \ and .status.phase==\"Running\")|.metadata.name'); do\n    kubectl exec \"$pod\" -- wget -qO- http://board:8080\n\
-  \    printf \"\\n\"\n  done\n  ```\n\nLa comprobación inspecciona la política de lotes declarada, recursos y respuestas\
-  \ actuales; no prueba el orden de ejecución, la conservación de identidad del Service ni la configuración de readiness-probe."
+  - Etapa 2: `board.yaml`, `service.yaml`.\n\n**Requisitos:**\n\n- Etapa 1:\n  - El mantenimiento tiene un límite\
+  \ de seguridad de un host a la vez.\n  - En cada host gestionado (`app1`, `app2`, `app3`), `/srv/site/maintenance.txt`\
+  \ contiene `north-40`.\n- Etapa 2:\n  - El Deployment `board` completa su rollout con `2` réplicas disponibles.\n\
+  \  - El Service `board` expone la aplicación en el puerto `8080`.\n  - Cada Pod de la aplicación en ejecución\
+  \ recibe `north-40` de `http://board:8080`.\n\nLa comprobación inspecciona la política de lotes declarada, recursos\
+  \ y respuestas actuales; no prueba el orden de ejecución, la conservación de identidad del Service ni la configuración\
+  \ de readiness-probe. El límite de un host se comprueba mediante su declaración; no se rastrean el orden de ejecución\
+  \ ni la disponibilidad ininterrumpida."
 debrief: Las actualizaciones de objetivos en serie y el reemplazo continuo basado en la preparación proporcionaron
   distintos mecanismos de disponibilidad.
 stages.0.brief: Los lotes de mantenimiento declarados deben contener un host.
 stages.1.brief: La disponibilidad de la aplicación y el enrutamiento del servicio deben coincidir.
 hints.0.text: Separe el contrato de flota de la aplicación rollout.
-hints.1.text: 'serial y Deployment strategy controlan diferentes sistemas. Usa `serial: 1` en cada play de mantenimiento.'
-hints.2.text: Conserve readiness y selectors mientras cambia la respuesta.
+hints.1.text: 'serial y Deployment strategy controlan diferentes sistemas. Usa `serial: 1` en cada play de mantenimiento.
+
+
+  Inspecciona la definición de mantenimiento, los eventos y la descripción del Service.
+
+
+  ```sh
+
+  cat rollout.yml
+
+  kubectl describe deployment board
+
+  kubectl describe service board
+
+  ```
+
+
+  Etapa 2: Inspecciona estas definiciones de recursos para esta etapa.
+
+
+  ```sh
+
+  kubectl get deployment board -o yaml
+
+  kubectl get service board -o yaml
+
+  ```'
+hints.2.text: "Conserve readiness y selectors mientras cambia la respuesta.\n\nVerifica la etapa correspondiente\
+  \ tras repararla.\n\nEtapa 1: La vista previa procesa un host por lote y cada uno de `app1`, `app2`, `app3` muestra\
+  \ `north-40`.\n\n```sh\nansible-playbook rollout.yml --check\nfor n in 1 2 3; do\n  host=\"app${n}-${DQ_NAMESPACE#dq-}\"\
+  \n  printf \"%s: \" \"$host\"\n  ssh -n -o BatchMode=yes -p 2222 \"root@$host\" 'cat /srv/site/maintenance.txt'\n\
+  done\n```\n\nEtapa 2: El rollout finaliza con `2` réplicas disponibles; las peticiones de los consumidores imprimen\
+  \ `north-40`.\n\n```sh\nkubectl get deployment board\nkubectl rollout status deployment/board --timeout=3s\nfor\
+  \ pod in $(kubectl get pods -l app=board -o json | jq -r '.items[]|select(.metadata.deletionTimestamp==null and\
+  \ .status.phase==\"Running\")|.metadata.name'); do\n  kubectl exec \"$pod\" -- wget -qO- http://board:8080\n \
+  \ printf \"\\n\"\ndone\n```\n\nObservaciones esperadas para la etapa completa:\n- Etapa 2: El Deployment y el\
+  \ Service cumplen los requisitos; las peticiones de los consumidores imprimen `north-40`."
 phrases.0: Limité lotes de mantenimiento con uno serial.
 phrases.1: Verifiqué el contrato de mantenimiento en cada objetivo.
 phrases.2: Verifiqué las réplicas listas y el Service retenido durante la implementación.
@@ -38,12 +65,9 @@ questions.1.prompt: ¿Una política segura rollout demuestra que no se pierden s
 diagnostics.maintenance_1: En app1, /srv/site/maintenance.txt debe contener north-40.
 diagnostics.maintenance_2: En app2, /srv/site/maintenance.txt debe contener north-40.
 diagnostics.maintenance_3: En app3, /srv/site/maintenance.txt debe contener north-40.
-stages.0.objectives.0.text: Cada play de `rollout.yml` está configurado para procesar un host gestionado a la vez.
+stages.0.objectives.0.text: El mantenimiento tiene un límite de seguridad de un host a la vez.
 stages.0.objectives.1.text: En cada host gestionado (`app1`, `app2`, `app3`), `/srv/site/maintenance.txt` contiene
   `north-40`.
-stages.1.objectives.0.text: El Deployment `board` completa su rollout con `2` réplicas y `2` réplicas disponibles;
-  su RollingUpdate permite `0` no disponibles y `1` réplica adicional.
-stages.1.objectives.1.text: El Service `board` selecciona `app=board` y dirige el puerto `8080` al puerto de destino
-  `8080`.
-stages.1.objectives.2.text: Cada Pod no terminado en fase `Running` con etiqueta `app=board` recibe `north-40` de
-  `http://board:8080`.
+stages.1.objectives.0.text: El Deployment `board` completa su rollout con `2` réplicas disponibles.
+stages.1.objectives.1.text: El Service `board` expone la aplicación en el puerto `8080`.
+stages.1.objectives.2.text: Cada Pod de la aplicación en ejecución recibe `north-40` de `http://board:8080`.

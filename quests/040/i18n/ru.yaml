@@ -1,29 +1,55 @@
 title: Управляемое обслуживание
 brief: "Передача на обслуживание не завершена на управляемых хостах и в приложении.\n\nРаботайте в `~/quest` на\
   \ рабочей станции. Входные файлы по этапам:\n- Этап 1: `inventory.ini`, `ansible.cfg`, `rollout.yml`.\n- Этап\
-  \ 2: `board.yaml`, `service.yaml`.\n\n**Требования:**\n\n- Этап 1:\n  - Каждый play в `rollout.yml` настроен на\
-  \ обработку одного управляемого хоста за раз.\n  - На каждом управляемом хосте (`app1`, `app2`, `app3`) `/srv/site/maintenance.txt`\
-  \ содержит `north-40`.\n  - Проверяемый playbook — `~/quest/rollout.yml` на рабочей станции.\n- Этап 2:\n  - Deployment\
-  \ `board` завершает развёртывание с `2` репликами и `2` доступными репликами; его RollingUpdate допускает `0`\
-  \ недоступных и `1` дополнительную реплику.\n  - Service `board` выбирает `app=board` и направляет порт `8080`\
-  \ на целевой порт `8080`.\n  - Каждый не завершающийся Pod в фазе `Running` с меткой `app=board` получает `north-40`\
-  \ от `http://board:8080`.\n\n**Проверьте себя перед Check & finish:**\n\n- Этап 1: Предварительный прогон обрабатывает\
-  \ по одному хосту в партии, а каждый из `app1`, `app2`, `app3` показывает `north-40`.\n\n  ```sh\n  ansible-playbook\
-  \ rollout.yml --check\n  for n in 1 2 3; do\n    host=\"app${n}-${DQ_NAMESPACE#dq-}\"\n    printf \"%s: \" \"\
-  $host\"\n    ssh -n -o BatchMode=yes -p 2222 \"root@$host\" 'cat /srv/site/maintenance.txt'\n  done\n  ```\n\n\
-  - Этап 2: Deployment и Service соответствуют требованиям; запросы потребителей выводят `north-40`.\n\n  ```sh\n\
-  \  kubectl get deployment board -o yaml\n  kubectl get service board -o yaml\n  for pod in $(kubectl get pods\
-  \ -l app=board -o json | jq -r '.items[]|select(.metadata.deletionTimestamp==null and .status.phase==\"Running\"\
-  )|.metadata.name'); do\n    kubectl exec \"$pod\" -- wget -qO- http://board:8080\n    printf \"\\n\"\n  done\n\
-  \  ```\n\nПроверка изучает объявленную политику партий, текущие ресурсы и ответы; она не доказывает порядок выполнения,\
-  \ сохранение идентичности Service или настройку readiness-probe."
+  \ 2: `board.yaml`, `service.yaml`.\n\n**Требования:**\n\n- Этап 1:\n  - Для обслуживания действует ограничение:\
+  \ не более одного хоста одновременно.\n  - На каждом управляемом хосте (`app1`, `app2`, `app3`) `/srv/site/maintenance.txt`\
+  \ содержит `north-40`.\n- Этап 2:\n  - Deployment `board` завершает развёртывание с `2` доступными репликами.\n\
+  \  - Service `board` предоставляет приложение на порту `8080`.\n  - Каждый работающий Pod приложения получает\
+  \ `north-40` от `http://board:8080`.\n\nПроверка изучает объявленную политику партий, текущие ресурсы и ответы;\
+  \ она не доказывает порядок выполнения, сохранение идентичности Service или настройку readiness-probe. Ограничение\
+  \ одного хоста проверяется по объявлению; порядок выполнения и непрерывная доступность не отслеживаются."
 debrief: Последовательные обновления целей и rolling-замена с readiness обеспечили разные механизмы доступности.
 stages.0.brief: Объявленные партии обслуживания должны включать по одному хосту.
 stages.1.brief: Доступность приложения и маршрутизация сервиса должны быть согласованы.
 hints.0.text: Разделите контракт парка и rollout приложения.
 hints.1.text: 'serial и strategy Deployment управляют разными системами. Используйте `serial: 1` для каждого play
-  обслуживания.'
-hints.2.text: Сохраните readiness и selectors при смене ответа.
+  обслуживания.
+
+
+  Изучите описание обслуживания, события приложения и описание Service.
+
+
+  ```sh
+
+  cat rollout.yml
+
+  kubectl describe deployment board
+
+  kubectl describe service board
+
+  ```
+
+
+  Этап 2: Изучите определения этих ресурсов для данного этапа.
+
+
+  ```sh
+
+  kubectl get deployment board -o yaml
+
+  kubectl get service board -o yaml
+
+  ```'
+hints.2.text: "Сохраните readiness и selectors при смене ответа.\n\nПроверьте соответствующий этап после исправления.\n\
+  \nЭтап 1: Предварительный прогон обрабатывает по одному хосту в партии, а каждый из `app1`, `app2`, `app3` показывает\
+  \ `north-40`.\n\n```sh\nansible-playbook rollout.yml --check\nfor n in 1 2 3; do\n  host=\"app${n}-${DQ_NAMESPACE#dq-}\"\
+  \n  printf \"%s: \" \"$host\"\n  ssh -n -o BatchMode=yes -p 2222 \"root@$host\" 'cat /srv/site/maintenance.txt'\n\
+  done\n```\n\nЭтап 2: Развёртывание завершается с `2` доступными репликами; запросы потребителей выводят `north-40`.\n\
+  \n```sh\nkubectl get deployment board\nkubectl rollout status deployment/board --timeout=3s\nfor pod in $(kubectl\
+  \ get pods -l app=board -o json | jq -r '.items[]|select(.metadata.deletionTimestamp==null and .status.phase==\"\
+  Running\")|.metadata.name'); do\n  kubectl exec \"$pod\" -- wget -qO- http://board:8080\n  printf \"\\n\"\ndone\n\
+  ```\n\nОжидаемые наблюдения для этапа целиком:\n- Этап 2: Deployment и Service соответствуют требованиям; запросы\
+  \ потребителей выводят `north-40`."
 phrases.0: 'Я ограничил пачки обслуживания с помощью serial: 1.'
 phrases.1: Я проверил контракт обслуживания на каждом целевом узле.
 phrases.2: Я проверил готовые реплики и сохранённый Service при выкатке.
@@ -38,11 +64,9 @@ questions.1.prompt: Доказывает ли безопасная полити�
 diagnostics.maintenance_1: На app1 /srv/site/maintenance.txt должен содержать north-40.
 diagnostics.maintenance_2: На app2 /srv/site/maintenance.txt должен содержать north-40.
 diagnostics.maintenance_3: На app3 /srv/site/maintenance.txt должен содержать north-40.
-stages.0.objectives.0.text: Каждый play в `rollout.yml` настроен на обработку одного управляемого хоста за раз.
+stages.0.objectives.0.text: 'Для обслуживания действует ограничение: не более одного хоста одновременно.'
 stages.0.objectives.1.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) `/srv/site/maintenance.txt` содержит
   `north-40`.
-stages.1.objectives.0.text: Deployment `board` завершает развёртывание с `2` репликами и `2` доступными репликами;
-  его RollingUpdate допускает `0` недоступных и `1` дополнительную реплику.
-stages.1.objectives.1.text: Service `board` выбирает `app=board` и направляет порт `8080` на целевой порт `8080`.
-stages.1.objectives.2.text: Каждый не завершающийся Pod в фазе `Running` с меткой `app=board` получает `north-40`
-  от `http://board:8080`.
+stages.1.objectives.0.text: Deployment `board` завершает развёртывание с `2` доступными репликами.
+stages.1.objectives.1.text: Service `board` предоставляет приложение на порту `8080`.
+stages.1.objectives.2.text: Каждый работающий Pod приложения получает `north-40` от `http://board:8080`.

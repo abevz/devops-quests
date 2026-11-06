@@ -1,32 +1,45 @@
 title: Repeatable rollout
 brief: "Release delivery is incomplete between the managed local artifact and the live fleet banners.\n\nWork in\
   \ `~/quest` on the workstation. Inputs by stage:\n- Stage 1: `main.tf`.\n- Stage 2: `inventory.ini`, `ansible.cfg`,\
-  \ `rollout.yml`.\n\n**Requirements:**\n\n- Stage 1:\n  - OpenTofu state contains `local_file.release`.\n  - On\
-  \ the workstation, `release.txt` contains `release-20`.\n  - OpenTofu output `release` is `release-20`.\n  - The\
-  \ OpenTofu plan exits `0` with no changes.\n  - The managed file is `~/quest/release.txt` on the workstation.\n\
-  - Stage 2:\n  - On every managed host (`app1`, `app2`, `app3`), `/srv/site/message` contains `release-20` with\
-  \ mode `0644`.\n  - From the workstation, `app1`, `app2` and `app3` each return `release-20` over HTTP on port\
-  \ `8080`.\n  - A repeat of `rollout.yml` succeeds and reports `changed=0` and `failed=0` for `app1`, `app2` and\
-  \ `app3`.\n\n**Verify yourself before Check & finish:**\n\n- Stage 1: The state includes `local_file.release`;\
-  \ the file and output both show `release-20`; the plan exits `0` without changes.\n\n  ```sh\n  tofu state list\n\
-  \  cat release.txt\n  printf \"\\n\"\n  tofu output -raw release\n  printf \"\\n\"\n  tofu plan -input=false -detailed-exitcode\
-  \ -no-color\n  ```\n\n- Stage 2: Each managed host shows `release-20`, file mode `644`, and HTTP `release-20`\
-  \ on port `8080`.\n\n  ```sh\n  for n in 1 2 3; do\n    host=\"app${n}-${DQ_NAMESPACE#dq-}\"\n    printf \"%s:\
-  \ \" \"$host\"\n    ssh -n -o BatchMode=yes -p 2222 \"root@$host\" 'cat /srv/site/message; stat -c %a /srv/site/message'\n\
-  \    curl -fsS --max-time 3 \"http://$host:8080\"\n    printf \"\\n\"\n  done\n  ```\n\n- Stage 2: The preview\
-  \ reports `changed=0` and `failed=0` for `app1`, `app2` and `app3`.\n\n  ```sh\n  ansible-playbook rollout.yml\
-  \ --check\n  ```\n\nThe read-only preview predicts repeat behavior; Check actually repeats `rollout.yml` and saves\
-  \ its recap in `~/quest/second-run.txt` on the workstation. Current responses and recap do not prove the original\
+  \ `rollout.yml`.\n\n**Requirements:**\n\n- Stage 1:\n  - OpenTofu records the managed release artifact in state.\n\
+  \  - On the workstation, `release.txt` contains `release-20`.\n  - The configured release output reports `release-20`.\n\
+  \  - The OpenTofu plan exits `0` with no changes.\n- Stage 2:\n  - On every managed host (`app1`, `app2`, `app3`),\
+  \ `/srv/site/message` contains `release-20` with mode `0644`.\n  - From the workstation, `app1`, `app2` and `app3`\
+  \ each return `release-20` over HTTP on port `8080`.\n  - Repeating delivery succeeds without changing any managed\
+  \ host.\n\nThe read-only preview predicts repeat behavior; Check actually repeats `rollout.yml` and saves its\
+  \ recap in `~/quest/second-run.txt` on the workstation. Current responses and recap do not prove the original\
   \ delivery commands or when a reload occurred."
 debrief: The local artifact became a shared contract between OpenTofu and Ansible. File state, live HTTP responses
   and the second-run recap prove delivery and repeatability separately.
 stages.0.brief: The local release must be consistent with its saved management state.
 stages.1.brief: Delivery must remain stable when repeated.
-hints.0.text: Separate the managed local artifact from its remote delivery. Use `tofu init` and `tofu apply` for
-  the managed local artifact.
-hints.1.text: A successful play with zero matched hosts does not configure the fleet.
-hints.2.text: Use a handler for the live banner reload and inspect the second recap. Notify a handler that runs
-  `dq-service reload` when `/srv/site/message` changes; run the delivery with `ansible-playbook rollout.yml`.
+hints.0.text: Separate the managed local artifact from its remote delivery.
+hints.1.text: 'A successful play with zero matched hosts does not configure the fleet.
+
+
+  Inspect the managed artifact and inventory before comparing hosts.
+
+
+  ```sh
+
+  cat main.tf
+
+  cat rollout.yml
+
+  ansible-inventory --list
+
+  ```'
+hints.2.text: "Use `tofu init` and `tofu apply` for the managed local artifact.\n\nUse a handler for the live banner\
+  \ reload and inspect the second recap. Notify a handler that runs `dq-service reload` when `/srv/site/message`\
+  \ changes; run the delivery with `ansible-playbook rollout.yml`.\n\nVerify the relevant stage after repairing\
+  \ it.\n\nStage 1: The state includes `local_file.release`; the file and output both show `release-20`; the plan\
+  \ exits `0` without changes.\n\n```sh\ntofu state list\ncat release.txt\nprintf \"\\n\"\ntofu output -raw release\n\
+  printf \"\\n\"\ntofu plan -input=false -detailed-exitcode -no-color\n```\n\nStage 2: Each managed host shows `release-20`,\
+  \ file mode `644`, and HTTP `release-20` on port `8080`.\n\n```sh\nfor n in 1 2 3; do\n  host=\"app${n}-${DQ_NAMESPACE#dq-}\"\
+  \n  printf \"%s: \" \"$host\"\n  ssh -n -o BatchMode=yes -p 2222 \"root@$host\" 'cat /srv/site/message; stat -c\
+  \ %a /srv/site/message'\n  curl -fsS --max-time 3 \"http://$host:8080\"\n  printf \"\\n\"\ndone\n```\n\nStage\
+  \ 2: The preview reports `changed=0` and `failed=0` for `app1`, `app2` and `app3`.\n\n```sh\nansible-playbook\
+  \ rollout.yml --check\n```"
 phrases.0: I repaired the release as declared state.
 phrases.1: I let the local_file resource create the release artifact.
 phrases.2: I verified the deployed contract and a repeatable empty plan.
@@ -50,13 +63,12 @@ diagnostics.recap_2_changed: app2 second-run recap changed must equal 0.
 diagnostics.recap_2_failed: app2 second-run recap failed must equal 0.
 diagnostics.recap_3_changed: app3 second-run recap changed must equal 0.
 diagnostics.recap_3_failed: app3 second-run recap failed must equal 0.
-stages.0.objectives.0.text: OpenTofu state contains `local_file.release`.
+stages.0.objectives.0.text: OpenTofu records the managed release artifact in state.
 stages.0.objectives.1.text: On the workstation, `release.txt` contains `release-20`.
-stages.0.objectives.2.text: OpenTofu output `release` is `release-20`.
+stages.0.objectives.2.text: The configured release output reports `release-20`.
 stages.0.objectives.3.text: The OpenTofu plan exits `0` with no changes.
 stages.1.objectives.0.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/message` contains `release-20`
   with mode `0644`.
 stages.1.objectives.1.text: From the workstation, `app1`, `app2` and `app3` each return `release-20` over HTTP on
   port `8080`.
-stages.1.objectives.2.text: A repeat of `rollout.yml` succeeds and reports `changed=0` and `failed=0` for `app1`,
-  `app2` and `app3`.
+stages.1.objectives.2.text: Repeating delivery succeeds without changing any managed host.
