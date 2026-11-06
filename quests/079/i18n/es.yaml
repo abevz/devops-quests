@@ -1,36 +1,54 @@
 title: Recuperación de flota
-brief: 'En `~/quest`, lee `inventory.ini`, `ansible.cfg` y `rollout.yml`. Los tres hosts de la flota parten de estados diferentes.
-  Un play idempotente no cambia nada al repetirse. El handler suministrado `Reload banner` usa el adaptador de la bahía `dq-service
-  reload`.
+brief: |-
+  La flota parte de estados parciales distintos y necesita un resultado de servicio uniforme.
 
+  Trabaja en la workstation en `~/quest` con `inventory.ini`, `ansible.cfg`, `rollout.yml`.
 
-  Usa un play para `fleet` y tres tareas incondicionales file/copy: directorio `/srv/site/config` con modo `0755`, banner
-  `/srv/site/message` con modo `0644` y contenido `north-79` seguido de salto de línea, y ruta `/srv/site/config/route` con
-  modo `0644` y contenido `route=north` seguido de salto de línea. Crea el directorio antes del archivo de ruta y notifica
-  a `Reload banner` cuando cambie el banner. Se aceptan los alias `file`/`copy`, modos octales equivalentes, una lista notify
-  de un elemento y otro orden seguro. Mantén solo los argumentos de módulo indicados y el comando de handler `dq-service reload`;
-  omite en el play `pre_tasks`, `post_tasks`, `roles`, `check_mode`, `changed_when` y en las tareas `when`, `check_mode`,
-  `changed_when`: esos límites hacen que las tareas evaluadas se ejecuten en todos los hosts sin ocultar cambios ni añadir
-  operaciones no verificadas.
+  **Requisitos:**
+  - Evidencia en la workstation:
+    - Archivo no vacío: `~/quest/repair.log`.
+    - `~/quest/second.log`: los resúmenes de `app1`, `app2`, `app3` muestran `changed=0`, `unreachable=0`, `failed=0`.
+  - Directorio en cada host administrado (`app1`, `app2`, `app3`):
+    - Ruta: `/srv/site/config`.
+    - Modo de acceso: `0755`.
+  - Archivos en cada host administrado (`app1`, `app2`, `app3`):
+    - `/srv/site/message`: `north-79`.
+    - `/srv/site/config/route`: `route=north`.
+    - Modo de acceso: `0644`.
+  - Servicio activo en cada host administrado (`app1`, `app2`, `app3`):
+    - HTTP: `8080`, `/`.
+    - Respuesta: `north-79`.
 
+  **Verifica antes de Check & finish:**
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat /srv/site/message /srv/site/config/route; ls -ld /srv/site/config; ls -l /srv/site/message /srv/site/config/route'` — Cada host muestra `north-79`, `route=north`, permisos de directorio `drwxr-xr-x` y permisos de archivo `-rw-r--r--`.
+  - `cat ~/quest/repair.log ~/quest/second.log` — El registro de reparación no está vacío; `second.log` informa `changed=0`, `unreachable=0`, `failed=0` para los tres hosts.
+  - `for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Muestra `north-79` de `app1`, `app2`, `app3`.
 
-  Ejecuta el play en `repair.log` y otra vez en `second.log`. El primer registro debe estar no vacío; cada resumen de app1/app2/app3
-  en el segundo debe mostrar `changed=0`, `unreachable=0`, `failed=0` en ese orden. Cada host debe tener los contenidos y
-  modos indicados, y HTTP en el puerto 8080 debe devolver `north-79`. Los registros se inspeccionan como archivos y no demuestran
-  cuándo se ejecutaron. Trabaja solo en la bahía sin conexión.
-
-
-  El play solo puede usar `name`, `hosts`, `gather_facts`, `handlers` y `tasks`; cada tarea puede usar `name`, un módulo file/copy
-  y `notify` solo para el banner. Usa exactamente un handler con solo `name` y `command` (o `ansible.builtin.command`). Esto
-  excluye acciones no verificadas.'
+  Los registros se examinan como archivos; no demuestran cuándo se ejecutaron las operaciones.
 debrief: El playbook, los resúmenes registrados y el estado real de la flota coincidieron con las comprobaciones.
-stages.0.brief: El playbook limitado, los resúmenes, los contenidos y modos de los tres hosts y las respuestas HTTP coinciden
-  con el enunciado.
-stages.0.objectives.0.text: El playbook limitado, los resúmenes, los contenidos y modos de los tres hosts y las respuestas
-  HTTP coinciden con el enunciado.
+stages.0.brief: Cada host administrado debe alcanzar el estado de servicio requerido con un registro limpio de repetición.
+stages.0.objectives.0.text: 'Evidencia no vacía en la workstation: `repair.log`.'
+stages.0.objectives.1.text: El archivo `second.log` de la workstation informa `changed=0`, `unreachable=0`, `failed=0`
+  para `app1`, `app2`, `app3`.
+stages.0.objectives.2.text: En cada host administrado (`app1`, `app2`, `app3`), `/srv/site/config` tiene el modo
+  `0755`.
+stages.0.objectives.3.text: En cada host administrado (`app1`, `app2`, `app3`), `/srv/site/message` y `/srv/site/config/route`
+  tienen el modo `0644`.
+stages.0.objectives.4.text: En cada host administrado (`app1`, `app2`, `app3`), `/srv/site/message` contiene `north-79`.
+stages.0.objectives.5.text: En cada host administrado (`app1`, `app2`, `app3`), `/srv/site/config/route` contiene
+  `route=north`.
+stages.0.objectives.6.text: HTTP en el puerto `8080` devuelve `north-79` en cada host administrado (`app1`, `app2`,
+  `app3`).
 hints.0.text: Una flota puede partir de diferentes estados parciales válidos e inválidos.
 hints.1.text: Declare directorios antes que archivos y mantenga el reload vinculado a los cambios reales del banner.
-hints.2.text: Repare los permisos, ejecute dos veces y verifique el segundo recap más todos los HTTP endpoints.
+hints.2.text: 'Repare los permisos, ejecute dos veces y verifique el segundo recap más todos los HTTP endpoints.
+  Límites de fuente conservados: un play `fleet` solo con `name`, `hosts`, `gather_facts`, `handlers`, `tasks`;
+  tres tareas file/copy incondicionales solo con `name`, un módulo y `notify` únicamente en el banner. Los argumentos
+  de directorio son exactamente `path`, `state`, `mode`; los de copy, exactamente `dest`, `content`, `mode`. Crea
+  el directorio antes del archivo de ruta; el mensaje y la ruta incluyen un salto de línea. Solo el banner notifica
+  a `Reload banner`. Conserva un handler solo con `name` y un módulo command que ejecute `dq-service reload`. Se
+  aceptan alias file/copy, formas octales equivalentes y una lista notify de un elemento. Guarda ejecuciones reales
+  con `ansible-playbook rollout.yml > repair.log` y `ansible-playbook rollout.yml > second.log`.'
 phrases.0: Recuperé hosts con diferentes configuraciones parciales.
 phrases.1: Verifiqué las recargas de servicios impulsadas por el controlador.
 phrases.2: Demostré la idempotencia con una segunda ejecución y un estado administrado real.
@@ -56,13 +74,14 @@ diagnostics.path_mode_dir: El modo de la tarea /srv/site/config debe ser 0755.
 diagnostics.path_banner: rollout.yml debe incluir una tarea para /srv/site/message.
 diagnostics.path_module_banner: La tarea /srv/site/message debe usar el módulo copy.
 diagnostics.path_mode_banner: El modo de la tarea /srv/site/message debe ser 0644.
-diagnostics.path_content_banner: El contenido de la tarea /srv/site/message debe ser north-79 seguido de un salto de línea.
+diagnostics.path_content_banner: El contenido de la tarea /srv/site/message debe ser north-79 seguido de un salto
+  de línea.
 diagnostics.path_args_banner: La tarea copy para /srv/site/message debe usar solo dest, content y mode.
 diagnostics.path_route: rollout.yml debe incluir una tarea para /srv/site/config/route.
 diagnostics.path_module_route: La tarea /srv/site/config/route debe usar el módulo copy.
 diagnostics.path_mode_route: El modo de la tarea /srv/site/config/route debe ser 0644.
-diagnostics.path_content_route: El contenido de la tarea /srv/site/config/route debe ser route=north seguido de un salto de
-  línea.
+diagnostics.path_content_route: El contenido de la tarea /srv/site/config/route debe ser route=north seguido de
+  un salto de línea.
 diagnostics.path_args_route: La tarea copy para /srv/site/config/route debe usar solo dest, content y mode.
 diagnostics.recap_1: second.log debe mostrar para app1 changed=0, unreachable=0 y failed=0 en ese orden.
 diagnostics.ssh_1: El intento SSH a app1 falló sin devolver diagnósticos remotos.

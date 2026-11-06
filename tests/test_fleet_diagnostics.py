@@ -45,8 +45,18 @@ exec bash -c "$script"
     )
     assert result.returncode != 0
     for n in (1, 2, 3):
-        assert f"app{n}-test /srv/site/message = {expected}: ✗" in result.stdout
-        assert f"app{n}-test /srv/site/message mode = 644: ✗" in result.stdout
+        if number == 63:
+            assert (
+                f"Host app{n} /srv/site/message: content = {expected} : ✗ [DQ:content_{n}]"
+                in result.stdout
+            )
+            assert (
+                f"Host app{n} /srv/site/message: mode = 644 : ✗ [DQ:mode_{n}]"
+                in result.stdout
+            )
+        else:
+            assert f"app{n}-test /srv/site/message = {expected}: ✗" in result.stdout
+            assert f"app{n}-test /srv/site/message mode = 644: ✗" in result.stdout
 
 
 def test_rescue_requires_a_block_to_handle_failure(tmp_path):

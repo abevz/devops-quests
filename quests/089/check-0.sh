@@ -1,5 +1,110 @@
 set -euo pipefail
 cd ~/quest
-ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/release.txt)" = release-89 && test "$(stat -c %a /srv/site/reader.token)" = 600 && test "$(cat /srv/site/reader.token)" = game-only-reader'
-ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/release.txt)" = release-89 && test "$(stat -c %a /srv/site/reader.token)" = 600 && test "$(cat /srv/site/reader.token)" = game-only-reader'
-ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/release.txt)" = release-89 && test "$(stat -c %a /srv/site/reader.token)" = 600 && test "$(cat /srv/site/reader.token)" = game-only-reader'
+failed=0
+set +e
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/release.txt)" = release-89'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app1 /srv/site/release.txt: content = release-89 : ✗ [DQ:release_1]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/release.txt)" = release-89'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app2 /srv/site/release.txt: content = release-89 : ✗ [DQ:release_2]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/release.txt)" = release-89'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app3 /srv/site/release.txt: content = release-89 : ✗ [DQ:release_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/reader.token)" = game-only-reader'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app1 /srv/site/reader.token: content = game-only-reader : ✗ [DQ:token_1]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/reader.token)" = game-only-reader'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app2 /srv/site/reader.token: content = game-only-reader : ✗ [DQ:token_2]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/reader.token)" = game-only-reader'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app3 /srv/site/reader.token: content = game-only-reader : ✗ [DQ:token_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/reader.token)" = 600'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app1 /srv/site/reader.token: mode = 600 : ✗ [DQ:token_mode_1]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/reader.token)" = 600'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app2 /srv/site/reader.token: mode = 600 : ✗ [DQ:token_mode_2]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/reader.token)" = 600'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app3 /srv/site/reader.token: mode = 600 : ✗ [DQ:token_mode_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || failed=1
+exit "$failed"

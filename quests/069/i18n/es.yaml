@@ -1,29 +1,44 @@
 title: Permisos Secret
-brief: 'Se copia un station credential con permisos de archivos públicos y registro habilitado. Corrija
-  rollout.yml al modo 0600 y no_log: verdadero para la tarea sensitive copy, luego ejecute ansible-playbook
-  --diff rollout.yml > deployment.log. El credential es sintético y pertenece únicamente a este fleet.
-  Verifique su valor y permisos reales en los tres hosts sin imprimirlos ni filtrarlos en el registro
-  de implementación. no_log limita la producción de tareas; no es cifrado de credentials.yml.
+brief: |-
+  La flota necesita una entrega privada de la credencial sintética suministrada.
 
+  Trabaja en la workstation en `~/quest` con `inventory.ini`, `ansible.cfg`, `rollout.yml`, `credentials.yml`.
 
-  Archivos de búsqueda en `~/quest` (algunos aparecen en etapas posteriores): `inventory.ini`, `ansible.cfg`,
-  `rollout.yml`, `credentials.yml`, `deployment.log`.
+  **Requisitos:**
+  - Archivo en cada host administrado (`app1`, `app2`, `app3`):
+    - Ruta: `/srv/site/station-token`.
+    - Contenido: `game-station-secret-69`.
+    - Modo de acceso: `0600`.
+  - Registro de despliegue:
+    - En la workstation, `~/quest/deployment.log` no debe contener `game-station-secret-69`.
+    - El archivo no está vacío.
 
+  **Verifica antes de Check & finish:**
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'test "$(cat /srv/site/station-token)" = game-station-secret-69 && printf "credential matches\n"'` — Cada host confirma `credential matches` sin imprimir la credencial.
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'ls -l /srv/site/station-token; if runuser -u nobody -- cat /srv/site/station-token >/dev/null 2>&1; then exit 1; else printf "unprivileged read denied\n"; fi'` — Cada host muestra `-rw-------` y confirma `unprivileged read denied` para el usuario `nobody`.
+  - `python3 -c 'from pathlib import Path; import yaml; s=yaml.safe_load(Path("credentials.yml").read_text())["station_token"]; log=Path("deployment.log").read_text(); assert log and s not in log; print("nonempty private deployment record")'` — Confirma `nonempty private deployment record` sin mostrar la credencial ni el contenido del registro.
 
-  La bahía no tiene Internet ni DNS externo. Utilice únicamente archivos proporcionados, imágenes precargadas
-  y servicios privados. Cambie sólo esta bahía.
-
-
-  Criterios de éxito iniciales: los tres archivos de token contienen el juego credential en el modo 0600,
-  el copy tiene no_log y el registro de implementación no expone su valor.'
+  `no_log` limita la salida de tarea; no cifra `credentials.yml`.
 debrief: El credential sintético es privado en el disco y no aparece en la salida de la tarea diff.
-stages.0.brief: 'Criterios de éxito: los tres archivos de token contienen el juego credential en el modo
-  0600, el copy tiene no_log y el registro de implementación no expone su valor.'
-stages.0.objectives.0.text: Los tres archivos de token contienen el juego credential en modo 0600, el
-  copy tiene no_log y el registro de implementación no expone su valor.
+stages.0.brief: La entrega de credenciales debe mantener privados los archivos de destino y la salida registrada.
+stages.0.objectives.0.text: El archivo `deployment.log` de la workstation no está vacío y no expone la credencial
+  de juego suministrada.
+stages.0.objectives.1.text: En cada host administrado (`app1`, `app2`, `app3`), `/srv/site/station-token` contiene
+  `game-station-secret-69`.
+stages.0.objectives.2.text: En cada host administrado (`app1`, `app2`, `app3`), `/srv/site/station-token` tiene
+  el modo `0600`.
 hints.0.text: Los permisos de archivos y la supresión de salida resuelven diferentes rutas de exposición.
 hints.1.text: Una diferencia puede revelar contenido copiado a menos que sensitive task suprima el registro.
-hints.2.text: Utilice el modo 0600 más los modos objetivo reales no_log y inspect sin imprimir el valor.
+hints.2.text: Usa el modo `0600` junto con `no_log`. Guarda la salida del despliegue con `ansible-playbook --diff
+  rollout.yml > deployment.log`.
 phrases.0: Protegí tanto los permisos del archivo de destino como la salida de la tarea.
 phrases.1: Verifiqué el secreto sin imprimirlo.
 phrases.2: No traté a no_log como cifrado en reposo.
+diagnostics.deployment_log: El archivo `~/quest/deployment.log` de la workstation no debe estar vacío.
+diagnostics.redaction: El archivo `deployment.log` de la workstation no expone la credencial de juego suministrada.
+diagnostics.content_1: 'app1, `/srv/site/station-token`: contenido `game-station-secret-69`.'
+diagnostics.content_2: 'app2, `/srv/site/station-token`: contenido `game-station-secret-69`.'
+diagnostics.content_3: 'app3, `/srv/site/station-token`: contenido `game-station-secret-69`.'
+diagnostics.mode_1: 'app1, `/srv/site/station-token`: modo de acceso `600`.'
+diagnostics.mode_2: 'app2, `/srv/site/station-token`: modo de acceso `600`.'
+diagnostics.mode_3: 'app3, `/srv/site/station-token`: modo de acceso `600`.'

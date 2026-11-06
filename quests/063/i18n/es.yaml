@@ -1,23 +1,48 @@
 title: Flujo de trabajo de rescate
-brief: 'Trabaja en `~/quest` con `inventory.ini`, `ansible.cfg`, `rollout.yml`, `previous.txt`, `previous.sha256` y `candidate.txt`.
-  En Ansible, `block` agrupa tareas, `rescue` gestiona fallos, `always` se ejecuta tras cualquier resultado y `serial: 1`
-  procesa un host cada vez. Verifica `previous.txt` con `sha256sum -c previous.sha256`. El candidato es deliberadamente inválido.
+brief: |-
+  La flota necesita un resultado de recuperación verificado tras una entrega fallida.
 
+  Trabaja en la workstation en `~/quest` con `inventory.ini`, `ansible.cfg`, `rollout.yml`, `previous.txt`, `previous.sha256`, `candidate.txt`.
 
-  En `rollout.yml`, el primer play debe seleccionar `fleet` con `serial: 1` numérico; su primera tarea debe contener listas
-  `block`, `rescue` y `always` no vacías. La primera tarea de rescue debe usar exactamente `ansible.builtin.copy` con `src:
-  previous.txt`, `dest: /srv/site/message` y `mode: "0644"`, y notificar a `Reload banner`. El handler suministrado ejecuta
-  `dq-service reload` para que el servicio relea el archivo. Ejecuta `ansible-playbook rollout.yml`. En app1, app2 y app3,
-  `/srv/site/message` debe contener `stable-63` con modo `0644`, `/srv/site/recovery-checked` debe contener `checked` y HTTP
-  en el puerto 8080 debe devolver `stable-63`. Las comprobaciones observan suma, playbook y resultados actuales; no demuestran
-  el orden de acciones anteriores. Trabaja solo en la bahía sin conexión.'
-debrief: Las comprobaciones verificaron la suma, estructura del playbook, archivos de la flota y respuestas de los servicios.
-stages.0.brief: La suma, estructura indicada del playbook, archivos de la flota y respuestas HTTP coinciden con la descripción.
-stages.0.objectives.0.text: La suma, estructura indicada del playbook, archivos de la flota y respuestas HTTP coinciden con
-  la descripción.
+  **Requisitos:**
+  - Artefacto de recuperación en la workstation:
+    - Ruta: `~/quest/previous.txt`.
+    - Comprobante correspondiente: `~/quest/previous.sha256`.
+  - Archivo en cada host administrado (`app1`, `app2`, `app3`):
+    - Ruta: `/srv/site/message`.
+    - Contenido: `stable-63`.
+    - Modo de acceso: `0644`.
+  - Archivo en cada host administrado (`app1`, `app2`, `app3`):
+    - Ruta: `/srv/site/recovery-checked`.
+    - Contenido: `checked`.
+  - Servicio activo en cada host administrado (`app1`, `app2`, `app3`):
+    - HTTP: `8080`, `/`.
+    - Respuesta: `stable-63`.
+
+  **Verifica antes de Check & finish:**
+  - `sha256sum -c previous.sha256` — Informa `previous.txt: OK`.
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat /srv/site/message /srv/site/recovery-checked; ls -l /srv/site/message'` — Cada host muestra `stable-63`, `checked` y `-rw-r--r--`.
+  - `for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Muestra `stable-63` de `app1`, `app2`, `app3`.
+
+  La comprobación examina la suma, la recuperación configurada y los resultados actuales; no demuestra el orden de acciones pasadas.
+debrief: Las comprobaciones verificaron la suma, estructura del playbook, archivos de la flota y respuestas de los
+  servicios.
+stages.0.brief: La recuperación debe dejar un resultado estable verificado en toda la flota.
+stages.0.objectives.0.text: En la workstation, `previous.txt` coincide con `previous.sha256`.
+stages.0.objectives.1.text: En cada host administrado (`app1`, `app2`, `app3`), `/srv/site/message` contiene `stable-63`.
+stages.0.objectives.2.text: En cada host administrado (`app1`, `app2`, `app3`), `/srv/site/message` tiene el modo
+  `0644`.
+stages.0.objectives.3.text: En cada host administrado (`app1`, `app2`, `app3`), `/srv/site/recovery-checked` contiene
+  `checked`.
+stages.0.objectives.4.text: HTTP en el puerto `8080` devuelve `stable-63` en cada host administrado (`app1`, `app2`,
+  `app3`).
 hints.0.text: Una falla rescatada no prueba que se haya restaurado el estado anterior.
 hints.1.text: Restaure el artifact verificado en rescue y notifique al handler.
-hints.2.text: Mantén `always` separado de `rescue`; verifica archivos y HTTP en todos los hosts.
+hints.2.text: 'Mantén `always` separado de `rescue`. Usa un `block` no vacío para la entrega, `rescue` para una
+  entrega fallida y `always` para la verificación final. La forma conservada es el primer play con `hosts: fleet`,
+  `serial: 1` entero y estas tres listas no vacías en su primera tarea. La primera acción rescue es exactamente
+  `ansible.builtin.copy` con `src: previous.txt`, `dest: /srv/site/message`, `mode: "0644"` y `notify: Reload banner`.
+  El handler suministrado ejecuta `dq-service reload`. Tras validar el artefacto, ejecuta `ansible-playbook rollout.yml`.'
 phrases.0: Verifiqué la reversión artifact antes de distribuirlo.
 phrases.1: Utilicé rescue para la recuperación y siempre para el marker final.
 phrases.2: Revisé los servicios en vivo después de la recuperación en serie.

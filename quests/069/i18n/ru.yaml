@@ -1,29 +1,44 @@
 title: Права на секрет
-brief: 'Credential станции копируется с общедоступными правами и включённым логированием.
-  Исправьте sensitive copy в rollout.yml на mode 0600 и no_log: true, затем выполните
-  ansible-playbook --diff rollout.yml > deployment.log. Credential синтетический,
-  только для этого fleet. Проверьте значение и права на трёх целях без печати и попадания
-  в лог запуска. no_log ограничивает вывод задачи, но не шифрует credentials.yml.
+brief: |-
+  Флоту нужна конфиденциальная доставка предоставленных синтетических учётных данных.
 
+  Работайте на workstation в `~/quest` с файлами `inventory.ini`, `ansible.cfg`, `rollout.yml`, `credentials.yml`.
 
-  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `inventory.ini`,
-  `ansible.cfg`, `rollout.yml`, `credentials.yml`, `deployment.log`.
+  **Требования:**
+  - Файл на каждом управляемом хосте (`app1`, `app2`, `app3`):
+    - Путь: `/srv/site/station-token`.
+    - Содержимое: `game-station-secret-69`.
+    - Режим доступа: `0600`.
+  - Журнал развёртывания:
+    - На workstation файл `~/quest/deployment.log` не должен содержать `game-station-secret-69`.
+    - Файл непуст.
 
+  **Самопроверка перед Check & finish:**
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'test "$(cat /srv/site/station-token)" = game-station-secret-69 && printf "credential matches\n"'` — Каждый хост подтверждает `credential matches`, не печатая учётные данные.
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'ls -l /srv/site/station-token; if runuser -u nobody -- cat /srv/site/station-token >/dev/null 2>&1; then exit 1; else printf "unprivileged read denied\n"; fi'` — Каждый хост показывает `-rw-------` и подтверждает `unprivileged read denied` для пользователя `nobody`.
+  - `python3 -c 'from pathlib import Path; import yaml; s=yaml.safe_load(Path("credentials.yml").read_text())["station_token"]; log=Path("deployment.log").read_text(); assert log and s not in log; print("nonempty private deployment record")'` — Подтверждает `nonempty private deployment record`, не показывая учётные данные или содержимое журнала.
 
-  В песочнице нет интернета и внешнего DNS. Используйте выданные файлы, предварительно
-  загруженные образы и приватные сервисы. Менять можно только эту песочницу.
-
-
-  Цели первого этапа: Три файла содержат игровой credential при mode 0600, copy использует
-  no_log, значение отсутствует в логе запуска.'
+  `no_log` ограничивает вывод задачи; он не шифрует `credentials.yml`.
 debrief: Синтетический credential закрыт на диске и отсутствует в diff задачи.
-stages.0.brief: 'Результат проверки: Три файла содержат игровой credential при mode
-  0600, copy использует no_log, значение отсутствует в логе запуска.'
-stages.0.objectives.0.text: Три файла содержат игровой credential при mode 0600, copy
-  использует no_log, значение отсутствует в логе запуска.
+stages.0.brief: Доставка учётных данных должна сохранять конфиденциальность файлов на хостах и записанного вывода.
+stages.0.objectives.0.text: Файл `deployment.log` на workstation непуст и не раскрывает предоставленные игровые
+  учётные данные.
+stages.0.objectives.1.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/station-token`
+  содержит `game-station-secret-69`.
+stages.0.objectives.2.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) путь `/srv/site/station-token`
+  имеет режим `0600`.
 hints.0.text: Права файла и скрытие вывода закрывают разные пути утечки.
 hints.1.text: Diff раскрывает содержимое copy, если sensitive task не скрывает вывод.
-hints.2.text: Используйте mode 0600 и no_log; проверяйте права целей без печати значения.
+hints.2.text: Используйте режим `0600` и `no_log`. Сохраните вывод развёртывания через `ansible-playbook --diff
+  rollout.yml > deployment.log`.
 phrases.0: Я защитил права файла цели и вывод задачи.
 phrases.1: Я проверил секрет без его печати.
 phrases.2: Я не считал no_log шифрованием данных на диске.
+diagnostics.deployment_log: Файл `~/quest/deployment.log` на workstation должен быть непустым.
+diagnostics.redaction: Файл `deployment.log` на workstation не раскрывает предоставленные игровые учётные данные.
+diagnostics.content_1: 'app1, `/srv/site/station-token`: содержимое `game-station-secret-69`.'
+diagnostics.content_2: 'app2, `/srv/site/station-token`: содержимое `game-station-secret-69`.'
+diagnostics.content_3: 'app3, `/srv/site/station-token`: содержимое `game-station-secret-69`.'
+diagnostics.mode_1: 'app1, `/srv/site/station-token`: режим доступа `600`.'
+diagnostics.mode_2: 'app2, `/srv/site/station-token`: режим доступа `600`.'
+diagnostics.mode_3: 'app3, `/srv/site/station-token`: режим доступа `600`.'

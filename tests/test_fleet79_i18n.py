@@ -17,6 +17,28 @@ def catalog():
     return Catalog()
 
 
+def write_remote_transport(binaries):
+    """Execute the actual inline SSH payload; map file arguments, not diagnostics."""
+    ssh = binaries / "ssh"
+    ssh.write_text(
+        "#!/usr/bin/python3\n"
+        "import os,subprocess,sys\n"
+        "host=next(arg for arg in sys.argv[1:] if arg.startswith('root@app')).split('@',1)[1].split('-',1)[0]\n"
+        "selected=os.environ.get('ONLY_HOST')\n"
+        "if selected and host != selected: sys.exit(0)\n"
+        "sys.exit(subprocess.run(['bash','-c',sys.argv[-1]],env=dict(os.environ,HOST=host)).returncode)\n"
+    )
+    ssh.chmod(0o755)
+    for command in ("cat", "stat"):
+        binary = binaries / command
+        binary.write_text(
+            "#!/usr/bin/python3\nimport os,sys\n"
+            "args=[os.environ['MISSING_SITE']+a[len('/srv/site'):] if a=='/srv/site' or a.startswith('/srv/site/') else a for a in sys.argv[1:]]\n"
+            f"os.execv('/usr/bin/{command}',['/usr/bin/{command}',*args])\n"
+        )
+        binary.chmod(0o755)
+
+
 def check_markers(catalog, output):
     markers = re.findall(r"\[DQ:([a-z0-9_]+)\]", output)
     assert markers and len(markers) == len(output.splitlines()), output
@@ -42,7 +64,12 @@ def check_markers(catalog, output):
 def test_malformed_or_invalid_play_has_diagnostic(tmp_path, catalog, play):
     (tmp_path / "rollout.yml").write_text(yaml.safe_dump(play))
     source = (ROOT / "quests/079/check-0.sh").read_text()
-    assert source == catalog.quests[79]["stages"][0]["objectives"][0]["check"]
+    checks = [goal["check"] for goal in catalog.quests[79]["stages"][0]["objectives"]]
+    expected = "set -euo pipefail\ncd ~/quest\nfailed=0\nset +e\n"
+    for check in checks:
+        expected += "(\nset -e\n" + check + "\n)\n[ $? -eq 0 ] || failed=1\n"
+    expected += 'exit "$failed"\n'
+    assert source == expected
     code = source.split("<<'DQ_FLEET'\n", 1)[1].split("\nDQ_FLEET\n", 1)[0]
     result = subprocess.run(
         [sys.executable, "-"],
@@ -77,21 +104,36 @@ def test_malformed_or_invalid_play_has_diagnostic(tmp_path, catalog, play):
 
 @pytest.mark.parametrize("host", [1, 2, 3])
 def test_remote_file_failures_include_host_identity(tmp_path, catalog, host):
-    source = (ROOT / "quests/079/check-0.sh").read_text()
-    code = (
-        source.split("<<'DQ_REMOTE'\n", 1)[1]
-        .split("\nDQ_REMOTE\n", 1)[0]
-        .replace("/srv/site", str(tmp_path / "missing"))
-    )
-    result = subprocess.run(
-        ["bash", "-c", code],
-        env={**os.environ, "HOST": f"app{host}"},
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    assert result.returncode != 0
-    markers = check_markers(catalog, result.stdout)
+    (tmp_path / "quest").mkdir()
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    write_remote_transport(binaries)
+    checks = [
+        goal["check"]
+        for goal in catalog.quests[79]["stages"][0]["objectives"]
+        if re.search(r"\bssh\b", goal["check"])
+    ]
+    assert checks, "The fleet's remote conditions must be exercised"
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "PATH": f"{binaries}:{os.environ['PATH']}",
+        "DQ_NAMESPACE": "dq-test",
+        "ONLY_HOST": f"app{host}",
+        "MISSING_SITE": str(tmp_path / "missing"),
+    }
+    output = []
+    for check in checks:
+        result = subprocess.run(
+            ["bash", "-c", "set -euo pipefail\ncd ~/quest\n" + check],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode != 0
+        output.append(result.stdout)
+    markers = check_markers(catalog, "".join(output))
     assert set(markers) == {
         f"host_{host}_{key}"
         for key in (
@@ -157,11 +199,7 @@ def test_many_failures_fit_the_interactive_detail_limit(tmp_path, catalog):
     )
     binaries = tmp_path / "bin"
     binaries.mkdir()
-    ssh = binaries / "ssh"
-    ssh.write_text(
-        "#!/usr/bin/python3\nimport os,subprocess,sys\ncommand=sys.argv[-1]; env=dict(os.environ, HOST=command.split()[0].split('=',1)[1]); source=sys.stdin.read().replace('/srv/site',os.environ['MISSING_SITE']); sys.exit(subprocess.run(['bash','-c',source],env=env).returncode)\n"
-    )
-    ssh.chmod(0o755)
+    write_remote_transport(binaries)
     curl = binaries / "curl"
     curl.write_text("#!/bin/sh\nexit 1\n")
     curl.chmod(0o755)

@@ -1,22 +1,48 @@
 title: Восстановление rescue
-brief: 'Работайте в `~/quest` с `inventory.ini`, `ansible.cfg`, `rollout.yml`, `previous.txt`, `previous.sha256` и `candidate.txt`.
-  В Ansible `block` группирует задачи, `rescue` обрабатывает ошибку, `always` выполняется при любом результате, а `serial:
-  1` обрабатывает по одному узлу. Проверьте `previous.txt` командой `sha256sum -c previous.sha256`. Кандидат намеренно неверен.
+brief: |-
+  После неудачной доставки флоту нужен проверенный результат восстановления.
 
+  Работайте на workstation в `~/quest` с файлами `inventory.ini`, `ansible.cfg`, `rollout.yml`, `previous.txt`, `previous.sha256`, `candidate.txt`.
 
-  В `rollout.yml` первый play должен выбирать `fleet` с числовым `serial: 1`; его первая задача должна содержать непустые
-  списки `block`, `rescue` и `always`. Первая задача rescue должна использовать ровно `ansible.builtin.copy` с `src: previous.txt`,
-  `dest: /srv/site/message` и `mode: "0644"`, уведомляя `Reload banner`. Готовый обработчик выполняет `dq-service reload`,
-  чтобы сервис перечитал файл. Выполните `ansible-playbook rollout.yml`. На app1, app2 и app3 файл `/srv/site/message` должен
-  содержать `stable-63` с режимом `0644`, `/srv/site/recovery-checked` — `checked`, а HTTP на порту 8080 должен возвращать
-  `stable-63`. Проверки наблюдают контрольную сумму, playbook и текущие результаты, но не доказывают порядок прошлых действий.
-  Работайте только в офлайн-песочнице.'
+  **Требования:**
+  - Артефакт восстановления на workstation:
+    - Путь: `~/quest/previous.txt`.
+    - Соответствующая квитанция: `~/quest/previous.sha256`.
+  - Файл на каждом управляемом хосте (`app1`, `app2`, `app3`):
+    - Путь: `/srv/site/message`.
+    - Содержимое: `stable-63`.
+    - Режим доступа: `0644`.
+  - Файл на каждом управляемом хосте (`app1`, `app2`, `app3`):
+    - Путь: `/srv/site/recovery-checked`.
+    - Содержимое: `checked`.
+  - Живой сервис на каждом управляемом хосте (`app1`, `app2`, `app3`):
+    - HTTP: `8080`, `/`.
+    - Ответ: `stable-63`.
+
+  **Самопроверка перед Check & finish:**
+  - `sha256sum -c previous.sha256` — Сообщает `previous.txt: OK`.
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat /srv/site/message /srv/site/recovery-checked; ls -l /srv/site/message'` — Каждый хост показывает `stable-63`, `checked` и `-rw-r--r--`.
+  - `for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Показывает `stable-63` от `app1`, `app2`, `app3`.
+
+  Проверка изучает контрольную сумму, настроенное восстановление и текущие результаты; она не доказывает порядок прошлых действий.
 debrief: Проверки подтвердили контрольную сумму, структуру playbook, файлы парка и ответы сервисов.
-stages.0.brief: Контрольная сумма, заданная структура playbook, файлы парка и HTTP-ответы соответствуют описанию.
-stages.0.objectives.0.text: Контрольная сумма, заданная структура playbook, файлы парка и HTTP-ответы соответствуют описанию.
+stages.0.brief: Восстановление должно оставить проверенный стабильный результат во всём флоте.
+stages.0.objectives.0.text: На workstation файл `previous.txt` соответствует `previous.sha256`.
+stages.0.objectives.1.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/message` содержит
+  `stable-63`.
+stages.0.objectives.2.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) путь `/srv/site/message` имеет
+  режим `0644`.
+stages.0.objectives.3.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/recovery-checked`
+  содержит `checked`.
+stages.0.objectives.4.text: HTTP на порту `8080` возвращает `stable-63` на каждом управляемом хосте (`app1`, `app2`,
+  `app3`).
 hints.0.text: Обработанная в rescue ошибка не доказывает восстановление состояния.
 hints.1.text: Восстановите проверенный artifact в rescue и вызовите handler.
-hints.2.text: Отделите `always` от `rescue`; проверьте файлы и HTTP всех узлов.
+hints.2.text: 'Отделите `always` от `rescue`. Используйте непустой `block` для доставки, `rescue` для неудачной
+  доставки и `always` для итоговой проверки. Сохранённая форма исходника: первый play с `hosts: fleet`, целочисленным
+  `serial: 1` и этими тремя непустыми списками в первой задаче. Первое действие rescue — в точности `ansible.builtin.copy`
+  с `src: previous.txt`, `dest: /srv/site/message`, `mode: "0644"` и `notify: Reload banner`. Предоставленный обработчик
+  выполняет `dq-service reload`. После проверки артефакта запустите `ansible-playbook rollout.yml`.'
 phrases.0: Я проверил artifact отката до его доставки.
 phrases.1: Я использовал rescue для восстановления, always — для итогового marker.
 phrases.2: Я проверил сервисы после последовательного восстановления.

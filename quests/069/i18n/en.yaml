@@ -1,32 +1,41 @@
 title: Secret permissions
-brief: 'A station credential is copied with public file permissions and logging enabled.
-  Correct rollout.yml to mode 0600 and no_log: true for the sensitive copy task, then
-  run ansible-playbook --diff rollout.yml > deployment.log. The credential is synthetic
-  and belongs only to this fleet. Verify its actual value and permissions on all three
-  hosts without printing it or leaking it into the deployment log. no_log limits task
-  output; it is not encryption of credentials.yml.
+brief: |-
+  The fleet needs private delivery of a supplied synthetic credential.
 
+  Work on the workstation in `~/quest` with `inventory.ini`, `ansible.cfg`, `rollout.yml`, `credentials.yml`.
 
-  Quest files in `~/quest` (some appear in later stages): `inventory.ini`, `ansible.cfg`,
-  `rollout.yml`, `credentials.yml`, `deployment.log`.
+  **Requirements:**
+  - File on every managed host (`app1`, `app2`, `app3`):
+    - Path: `/srv/site/station-token`.
+    - Content: `game-station-secret-69`.
+    - Access mode: `0600`.
+  - Deployment record:
+    - On the workstation, `~/quest/deployment.log` must not contain `game-station-secret-69`.
+    - The file is nonempty.
 
+  **Verify yourself before Check & finish:**
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'test "$(cat /srv/site/station-token)" = game-station-secret-69 && printf "credential matches\n"'` — Every host confirms `credential matches` without printing the credential.
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'ls -l /srv/site/station-token; if runuser -u nobody -- cat /srv/site/station-token >/dev/null 2>&1; then exit 1; else printf "unprivileged read denied\n"; fi'` — Every host shows `-rw-------` and confirms `unprivileged read denied` for user `nobody`.
+  - `python3 -c 'from pathlib import Path; import yaml; s=yaml.safe_load(Path("credentials.yml").read_text())["station_token"]; log=Path("deployment.log").read_text(); assert log and s not in log; print("nonempty private deployment record")'` — Confirms `nonempty private deployment record` without displaying the credential or log contents.
 
-  The bay has no Internet or external DNS. Use only supplied files, preloaded images
-  and private services. Change only this bay.
-
-
-  Initial success criteria: All three token files contain the game credential at mode
-  0600, the copy has no_log and the deployment log does not expose its value.'
+  `no_log` limits task output; it does not encrypt `credentials.yml`.
 debrief: The synthetic credential is private on disk and absent from task diff output.
-stages.0.brief: 'Success criteria: All three token files contain the game credential
-  at mode 0600, the copy has no_log and the deployment log does not expose its value.'
-stages.0.objectives.0.text: All three token files contain the game credential at mode
-  0600, the copy has no_log and the deployment log does not expose its value.
+stages.0.brief: Credential delivery must keep both target files and recorded output private.
+stages.0.objectives.0.text: The workstation `deployment.log` is nonempty and does not expose the supplied game credential.
+stages.0.objectives.1.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/station-token` contains `game-station-secret-69`.
+stages.0.objectives.2.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/station-token` has mode `0600`.
 hints.0.text: File permissions and output suppression solve different exposure paths.
-hints.1.text: A diff can reveal copied content unless the sensitive task suppresses
-  logging.
-hints.2.text: Use mode 0600 plus no_log and inspect actual target modes without printing
-  the value.
+hints.1.text: A diff can reveal copied content unless the sensitive task suppresses logging.
+hints.2.text: Use mode `0600` plus `no_log`. Save the deployment output with `ansible-playbook --diff rollout.yml
+  > deployment.log`.
 phrases.0: I protected both target-file permissions and task output.
 phrases.1: I verified the secret without printing it.
 phrases.2: I did not treat no_log as encryption at rest.
+diagnostics.deployment_log: Workstation `~/quest/deployment.log` must be nonempty.
+diagnostics.redaction: The workstation `deployment.log` does not expose the supplied game credential.
+diagnostics.content_1: 'app1, `/srv/site/station-token`: content `game-station-secret-69`.'
+diagnostics.content_2: 'app2, `/srv/site/station-token`: content `game-station-secret-69`.'
+diagnostics.content_3: 'app3, `/srv/site/station-token`: content `game-station-secret-69`.'
+diagnostics.mode_1: 'app1, `/srv/site/station-token`: access mode `600`.'
+diagnostics.mode_2: 'app2, `/srv/site/station-token`: access mode `600`.'
+diagnostics.mode_3: 'app3, `/srv/site/station-token`: access mode `600`.'

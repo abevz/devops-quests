@@ -1,30 +1,54 @@
 title: Kontrolowane przywracanie
-brief: 'Flota wymaga przywrócenia poprzedniej konfiguracji board z recovery.tar. Archiwum to dostarczony
-  element gry zawierający tylko message; jego zaufany SHA-256 jest zamrożony pod /run/dq/facts/0/artifact.sha256.
-  rollout.yml celowo oczekuje niewłaściwego checksum. Sprawdź ścieżki archiwum, popraw expected_sha256
-  z zaufanego potwierdzenia, a następnie użyj przywracania serial Ansible z asercją checksum, jawnymi
-  uprawnieniami własności root/0644 i ponownym załadowaniem handler. Nie wyłączaj weryfikacji ani nie
-  przywracaj niepowiązanych ścieżek.
+brief: |-
+  Flota potrzebuje przywrócenia zatwierdzonej konfiguracji tablicy z dostarczonego archiwum.
 
+  Pracuj na workstation w `~/quest` z plikami `recovery.tar`, `artifact.sha256`, `rollout.yml`.
 
-  Pliki zadań w `~/quest` (niektóre pojawiają się w późniejszych etapach): `recovery.tar`, `artifact.sha256`,
-  `rollout.yml`.
+  **Wymagania:**
+  - Zaufane archiwum na workstation:
+    - Ścieżka: `~/quest/recovery.tar`.
+    - Zamrożone potwierdzenie SHA-256: `/run/dq/facts/0/artifact.sha256`.
+    - Przywracanie z niezgodną sumą kontrolną jest odrzucane.
+  - Plik na każdym zarządzanym hoście (`app1`, `app2`, `app3`):
+    - Ścieżka: `/srv/site/message`.
+    - Treść: `north-96`.
+    - Tryb dostępu: `0644`.
+    - Właściciel i grupa: `root` / `root`.
+  - Aktywna usługa na każdym zarządzanym hoście (`app1`, `app2`, `app3`):
+    - HTTP: `8080`, `/`.
+    - Odpowiedź: `north-96`.
 
+  **Sprawdź przed Check & finish:**
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat /srv/site/message; ls -l /srv/site/message'` — Każdy host pokazuje `north-96`, uprawnienia `-rw-r--r--`, właściciela `root` i grupę `root`.
+  - `for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Pokazuje `north-96` z `app1`, `app2`, `app3`.
+  - `sha256sum recovery.tar; cat /run/dq/facts/0/artifact.sha256` — Suma archiwum jest zgodna z zamrożoną zaufaną sumą.
 
-  W zatoce nie ma Internetu ani zewnętrznego DNS. Korzystaj wyłącznie z dostarczonych plików, wstępnie
-  załadowanych obrazów i usług prywatnych. Zmień tylko tę zatokę.
-
-
-  Początkowe kryteria sukcesu: zweryfikowane archiwum przywraca wszystkie trzy cele z właściwymi właścicielami,
-  uprawnieniami i aktywnym HTTP; Wykonanie serial i asercje checksum pozostają skonfigurowane.'
+  Sprawdzenie bada bieżące wyniki i zachowane ograniczenia źródła; nie odtwarza każdego błędu ani nie dowodzi kolejności wcześniejszych operacji przywracania.
 debrief: Odzyskiwanie zachowało weryfikację artifact, kontrolowane wdrożenie i jawny plik metadata.
-stages.0.brief: 'Kryteria sukcesu: zweryfikowane archiwum przywraca wszystkie trzy cele z właściwymi właścicielami,
-  uprawnieniami i aktywnym HTTP; Wykonanie serial i potwierdzenia sumy kontrolnej pozostają skonfigurowane.'
-stages.0.objectives.0.text: Zweryfikowane archiwum przywraca wszystkie trzy cele z właściwymi właścicielami,
-  uprawnieniami i aktywnym HTTP; Wykonanie serial i potwierdzenia sumy kontrolnej pozostają skonfigurowane.
+stages.0.brief: Zweryfikowane przywracanie musi pozostawić zatwierdzoną treść i metadane tablicy w całej flocie.
+stages.0.objectives.0.text: Na workstation archiwum `recovery.tar` jest zgodne z zaufanym potwierdzeniem `/run/dq/facts/0/artifact.sha256`.
+stages.0.objectives.1.text: Przywracanie z niezgodną sumą kontrolną archiwum jest odrzucane.
+stages.0.objectives.2.text: Na każdym zarządzanym hoście (`app1`, `app2`, `app3`) plik `/srv/site/message` zawiera
+  `north-96`, ma tryb `0644` i należy do użytkownika `root` oraz grupy `root`.
+stages.0.objectives.3.text: HTTP na porcie `8080` zwraca `north-96` na każdym zarządzanym hoście (`app1`, `app2`,
+  `app3`).
 hints.0.text: Czytelne archiwum nie jest automatycznie zatwierdzonym odzyskiwaniem artifact.
-hints.1.text: Porównaj swój checksum z zamrożonym paragonem i wyświetl ścieżki członków.
-hints.2.text: Popraw oczekiwany checksum, zachowaj assertion i przywróć szeregowo z jawnym metadata.
+hints.1.text: Znajdź `expected_sha256` w `rollout.yml`; źródłem prawdy jest zamrożony przez backend plik `/run/dq/facts/0/artifact.sha256`.
+hints.2.text: Popraw oczekiwany checksum, zachowaj assertion i przywróć szeregowo z jawnym metadata. Przed przywracaniem
+  sprawdź ścieżki w archiwum przez `tar -tf recovery.tar`.
 phrases.0: Przed dystrybucją zweryfikowałem odzyskiwanie artifact.
 phrases.1: Przywróciłem wyraźną własność i uprawnienia.
 phrases.2: Sprawdziłem każdy cel i usługę na żywo po reload.
+diagnostics.artifact: Na workstation archiwum `recovery.tar` jest zgodne z zaufanym potwierdzeniem `/run/dq/facts/0/artifact.sha256`.
+diagnostics.content_1: 'app1, `/srv/site/message`: treść `north-96`.'
+diagnostics.content_2: 'app2, `/srv/site/message`: treść `north-96`.'
+diagnostics.content_3: 'app3, `/srv/site/message`: treść `north-96`.'
+diagnostics.mode_1: 'app1, `/srv/site/message`: tryb dostępu `644`.'
+diagnostics.mode_2: 'app2, `/srv/site/message`: tryb dostępu `644`.'
+diagnostics.mode_3: 'app3, `/srv/site/message`: tryb dostępu `644`.'
+diagnostics.owner_1: 'app1, `/srv/site/message`: właściciel i grupa `0:0`.'
+diagnostics.owner_2: 'app2, `/srv/site/message`: właściciel i grupa `0:0`.'
+diagnostics.owner_3: 'app3, `/srv/site/message`: właściciel i grupa `0:0`.'
+diagnostics.http_1: 'Host app1: HTTP `/` na porcie `8080` zwraca `north-96`.'
+diagnostics.http_2: 'Host app2: HTTP `/` na porcie `8080` zwraca `north-96`.'
+diagnostics.http_3: 'Host app3: HTTP `/` na porcie `8080` zwraca `north-96`.'

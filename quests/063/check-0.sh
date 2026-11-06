@@ -1,8 +1,124 @@
 set -euo pipefail
 cd ~/quest
 failed=0
-if ! sha256sum -c previous.sha256 >/dev/null 2>&1; then printf '%s\n' 'previous.txt matches previous.sha256: ✗ [DQ:checksum]'; failed=1; fi
-if ! python3 - <<'SCOPE'
+set +e
+(
+set -e
+if ! sha256sum -c previous.sha256 >/dev/null 2>&1; then printf '%s\n' 'previous.txt matches previous.sha256: ✗ [DQ:checksum]'; exit 1; fi
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
+ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = stable-63'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app1 /srv/site/message: content = stable-63 : ✗ [DQ:content_1]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = stable-63'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app2 /srv/site/message: content = stable-63 : ✗ [DQ:content_2]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = stable-63'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app3 /srv/site/message: content = stable-63 : ✗ [DQ:content_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
+ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/message)" = 644'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app1 /srv/site/message: mode = 644 : ✗ [DQ:mode_1]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/message)" = 644'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app2 /srv/site/message: mode = 644 : ✗ [DQ:mode_2]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/message)" = 644'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app3 /srv/site/message: mode = 644 : ✗ [DQ:mode_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
+ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/recovery-checked)" = checked'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app1 /srv/site/recovery-checked: content = checked : ✗ [DQ:marker_1]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/recovery-checked)" = checked'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app2 /srv/site/recovery-checked: content = checked : ✗ [DQ:marker_2]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/recovery-checked)" = checked'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app3 /srv/site/recovery-checked: content = checked : ✗ [DQ:marker_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+dq_result_failed=0
+set +e
+(
+set -e
+python3 - <<'SCOPE'
 import sys
 import yaml
 try:
@@ -27,13 +143,45 @@ for label, ok in checks:
     if not ok: print(label + ': ✗')
 sys.exit(not all(ok for _, ok in checks))
 SCOPE
-then failed=1; fi
-for n in 1 2 3; do
-  host="app${n}-${DQ_NAMESPACE#dq-}"
-  result=$(ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host" 'value=$(cat /srv/site/message 2>/dev/null || true); mode=$(stat -c %a /srv/site/message 2>/dev/null || true); if test "$value" = stable-63; then printf "content-ok\n"; fi; if test "$mode" = 644; then printf "mode-ok\n"; fi; marker=$(cat /srv/site/recovery-checked 2>/dev/null || true); if test "$marker" = checked; then printf "marker-ok\n"; fi' 2>/dev/null || true)
-  if ! grep -Fxq content-ok <<<"$result"; then printf '%s\n' "$host /srv/site/message = stable-63: ✗ [DQ:content_$n]"; failed=1; fi
-  if ! grep -Fxq mode-ok <<<"$result"; then printf '%s\n' "$host /srv/site/message mode = 644: ✗ [DQ:mode_$n]"; failed=1; fi
-  if ! grep -Fxq marker-ok <<<"$result"; then printf '%s\n' "$host /srv/site/recovery-checked = checked: ✗ [DQ:marker_$n]"; failed=1; fi
-  if ! test "$(curl -fsS --max-time 3 "http://$host:8080" 2>/dev/null)" = stable-63; then printf '%s\n' "$host:8080 = stable-63: ✗ [DQ:http_$n]"; failed=1; fi
-done
+)
+[ $? -eq 0 ] || dq_result_failed=1
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
+test "$(curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8080)" = stable-63
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app1 HTTP / on port 8080 = stable-63 : ✗ [DQ:http_1]'
+dq_group_failed=1
+fi
+(
+set -e
+test "$(curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8080)" = stable-63
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app2 HTTP / on port 8080 = stable-63 : ✗ [DQ:http_2]'
+dq_group_failed=1
+fi
+(
+set -e
+test "$(curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8080)" = stable-63
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app3 HTTP / on port 8080 = stable-63 : ✗ [DQ:http_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || dq_result_failed=1
+set -e
+test "$dq_result_failed" -eq 0
+)
+[ $? -eq 0 ] || failed=1
 exit "$failed"

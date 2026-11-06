@@ -1,32 +1,54 @@
 title: Управляемое восстановление
-brief: 'Флоту нужно восстановить прежнюю конфигурацию табло из recovery.tar. Выданный
-  игровой архив содержит только message; доверенный SHA-256 сохранён в /run/dq/facts/0/artifact.sha256.
-  В rollout.yml намеренно указан неверный checksum. Изучите пути архива, исправьте
-  expected_sha256 по доверенной квитанции, затем выполните последовательное восстановление
-  Ansible с assertion checksum, явными владельцем root, правами 0644 и handler перезагрузки.
-  Не отключайте проверку и не восстанавливайте посторонние пути.
+brief: |-
+  Флоту нужно восстановить утверждённую конфигурацию табло из предоставленного архива.
 
+  Работайте на workstation в `~/quest` с файлами `recovery.tar`, `artifact.sha256`, `rollout.yml`.
 
-  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `recovery.tar`,
-  `artifact.sha256`, `rollout.yml`.
+  **Требования:**
+  - Доверенный архив на workstation:
+    - Путь: `~/quest/recovery.tar`.
+    - Зафиксированная квитанция SHA-256: `/run/dq/facts/0/artifact.sha256`.
+    - Восстановление с несовпадающей контрольной суммой отклоняется.
+  - Файл на каждом управляемом хосте (`app1`, `app2`, `app3`):
+    - Путь: `/srv/site/message`.
+    - Содержимое: `north-96`.
+    - Режим доступа: `0644`.
+    - Владелец и группа: `root` / `root`.
+  - Живой сервис на каждом управляемом хосте (`app1`, `app2`, `app3`):
+    - HTTP: `8080`, `/`.
+    - Ответ: `north-96`.
 
+  **Самопроверка перед Check & finish:**
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat /srv/site/message; ls -l /srv/site/message'` — Каждый хост показывает `north-96`, права `-rw-r--r--`, владельца `root` и группу `root`.
+  - `for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Показывает `north-96` от `app1`, `app2`, `app3`.
+  - `sha256sum recovery.tar; cat /run/dq/facts/0/artifact.sha256` — Хеш архива совпадает с зафиксированным доверенным хешем.
 
-  В песочнице нет интернета и внешнего DNS. Используйте выданные файлы, предварительно
-  загруженные образы и приватные сервисы. Менять можно только эту песочницу.
-
-
-  Цели первого этапа: Проверенный архив восстановил три цели с верными владельцем,
-  правами и HTTP; serial и assertions checksum сохранены.'
-debrief: Восстановление сохранило проверку artifact, управляемую выкатку и явные metadata
-  файлов.
-stages.0.brief: 'Результат проверки: Проверенный архив восстановил три цели с верными
-  владельцем, правами и HTTP; serial и assertions checksum сохранены.'
-stages.0.objectives.0.text: Проверенный архив восстановил три цели с верными владельцем,
-  правами и HTTP; serial и assertions checksum сохранены.
+  Проверка изучает текущие результаты и сохранённые ограничения исходника; она не воспроизводит все сбои и не доказывает прошлый порядок восстановления.
+debrief: Восстановление сохранило проверку artifact, управляемую выкатку и явные metadata файлов.
+stages.0.brief: Проверенное восстановление должно оставить утверждённые содержимое и метаданные табло во всём флоте.
+stages.0.objectives.0.text: На workstation архив `recovery.tar` соответствует доверенной квитанции `/run/dq/facts/0/artifact.sha256`.
+stages.0.objectives.1.text: Восстановление с несовпадающей контрольной суммой архива отклоняется.
+stages.0.objectives.2.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/message` содержит
+  `north-96`, имеет режим `0644` и принадлежит пользователю `root` и группе `root`.
+stages.0.objectives.3.text: HTTP на порту `8080` возвращает `north-96` на каждом управляемом хосте (`app1`, `app2`,
+  `app3`).
 hints.0.text: Читаемый архив не обязательно является разрешённым artifact для восстановления.
-hints.1.text: Сравните checksum с сохранённой квитанцией и изучите пути внутри.
-hints.2.text: Исправьте ожидаемый checksum, сохраните assertion и восстанавливайте
-  последовательно с явными metadata.
+hints.1.text: В `rollout.yml` найдите `expected_sha256`; авторитетная квитанция — зафиксированный backend файл `/run/dq/facts/0/artifact.sha256`.
+hints.2.text: Исправьте ожидаемый checksum, сохраните assertion и восстанавливайте последовательно с явными metadata.
+  Перед восстановлением просмотрите пути внутри архива через `tar -tf recovery.tar`.
 phrases.0: Я проверил artifact восстановления до распространения.
 phrases.1: Я восстановил явные владельца и права.
 phrases.2: Я проверил каждую цель и работающий сервис после reload.
+diagnostics.artifact: На workstation архив `recovery.tar` соответствует доверенной квитанции `/run/dq/facts/0/artifact.sha256`.
+diagnostics.content_1: 'app1, `/srv/site/message`: содержимое `north-96`.'
+diagnostics.content_2: 'app2, `/srv/site/message`: содержимое `north-96`.'
+diagnostics.content_3: 'app3, `/srv/site/message`: содержимое `north-96`.'
+diagnostics.mode_1: 'app1, `/srv/site/message`: режим доступа `644`.'
+diagnostics.mode_2: 'app2, `/srv/site/message`: режим доступа `644`.'
+diagnostics.mode_3: 'app3, `/srv/site/message`: режим доступа `644`.'
+diagnostics.owner_1: 'app1, `/srv/site/message`: владелец и группа `0:0`.'
+diagnostics.owner_2: 'app2, `/srv/site/message`: владелец и группа `0:0`.'
+diagnostics.owner_3: 'app3, `/srv/site/message`: владелец и группа `0:0`.'
+diagnostics.http_1: 'Хост app1: HTTP `/` на порту `8080` возвращает `north-96`.'
+diagnostics.http_2: 'Хост app2: HTTP `/` на порту `8080` возвращает `north-96`.'
+diagnostics.http_3: 'Хост app3: HTTP `/` на порту `8080` возвращает `north-96`.'
