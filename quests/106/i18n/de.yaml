@@ -1,19 +1,30 @@
 title: Service-Typen und Zugriff
-brief: 'Arbeite in `~/quest`; lies `board.json`, `client.json`, `internal.json`, `headless.json`, `nodeport.json` und `service-contracts.json`.
-  Drei Services stellen dasselbe Board über ClusterIP, headless DNS und NodePort bereit. Korrigiere jeden Selektor genau auf
-  `app: board`; bewahre UID, Typ, Cluster-IPs und geordnete Ports jedes Service gemäß `service-contracts.json`. Der interne
-  Service ist ein nicht-headless ClusterIP, der headless Service hat `clusterIP: None`, und NodePort ist mindestens 30000.
-
-
-  Vom Client müssen jeder Service-Name auf Port 8080 und die private kind-Knotenadresse mit NodePort `north-106` liefern;
-  entnimm die Knotenadresse dem bereitgestellten kubeconfig. Die headless A-Antwort muss die vollständige IP des Board-Pods
-  enthalten. DNS- und Endpoint-Abgleich können dauern; warte und prüfe erneut. Die Prüfungen beobachten aktuelle Werte, nicht
-  die Änderungshistorie. Ein VM-Port oder externer Load-Balancer wird nicht verwendet.'
+brief: "Drei Zugriffswege liefern die vereinbarte Route nicht. Stellen Sie die Services unter Wahrung ihrer aufgezeichneten\
+  \ Verträge her.\n\nArbeiten Sie in `~/quest` auf der Workstation. Bereitgestellte Dateien: `board.json`, `client.json`,\
+  \ `internal.json`, `headless.json`, `nodeport.json`, `service-contracts.json`.\n\n**Anforderungen:**\n- Service-Zugriffsverträge:\n\
+  \  - Services `board-internal`, `board-headless` und `board-node` bewahren ursprüngliche Identitäten, Adressen\
+  \ und Portverträge mit ClusterIP-, Headless- bzw. NodePort-Zugriff.\n  - Der NodePort beträgt mindestens `30000`.\n\
+  \  - Der maßgebliche Service-Vertrag liegt in `/run/dq/facts/0/service-contracts.json` auf der Workstation: UID,\
+  \ Cluster-IPs und Portreihenfolge bleiben erhalten; `board-internal` ist normales `ClusterIP`, `board-headless`\
+  \ hat Cluster-IP `None` und `board-node` ist `NodePort`.\n- Alle drei erforderlichen Services wählen nur Pods\
+  \ mit Label `app=board`.\n- Von Deployment `client` liefert HTTP über `board-internal:8080`, `board-headless:8080`,\
+  \ `board-node:8080` und den privaten Knoten-NodePort jeweils `north-106`.\n- Von Deployment `client` enthält die\
+  \ A-Antwort für `board-headless` die vollständige Pod-IP.\n\n**Vor Check & finish selbst prüfen:**\nFühren Sie\
+  \ diese Beobachtungsbefehle in `~/quest` auf der Workstation aus; `kubectl exec` beobachtet den Container des\
+  \ genannten Workloads.\n- `kubectl exec deployment/client -- sh -c 'for name in board-internal board-headless\
+  \ board-node; do wget -qO- -T 3 \"http://$name:8080\"; done'` — Jede Anfrage über einen Service-Namen liefert\
+  \ `north-106`.\n- Der private NodePort liefert `north-106`; die Headless-DNS-Antwort enthält die vollständige\
+  \ Pod-IP.\n\n  ```sh\n  node=$(kubectl config view --minify -o json | jq -r '.clusters[0].cluster.server | sub(\"\
+  ^https://\";\"\") | split(\":\")[0]')\n  port=$(kubectl get service board-node -o jsonpath='{.spec.ports[0].nodePort}')\n\
+  \  kubectl exec deployment/client -- wget -qO- -T 3 \"http://$node:$port\"\n  kubectl exec deployment/client --\
+  \ nslookup -type=A \"board-headless.$DQ_NAMESPACE.svc.cluster.local.\"\n  kubectl get pods -l app=board -o wide\n\
+  \  ```\n- Einstellungen, Identität und Status entsprechen den Anforderungen.\n\n  ```sh\n  kubectl get service\
+  \ board-internal board-headless board-node -o yaml\n  cat /run/dq/facts/0/service-contracts.json\n  ```\n\nGeprüft\
+  \ werden aktuelle Werte statt Änderungshistorie; weder VM-Port noch externer Load Balancer sind beteiligt.\n"
 debrief: Die gleiche Anwendung wurde über drei echte Service-Mechanismen ohne externe Infrastruktur erreicht.
-stages.0.brief: Die drei Service-Verträge, Selektoren, Antworten über Namen und privaten Knoten sowie die headless DNS-Antwort
-  entsprechen der Beschreibung.
-stages.0.objectives.0.text: Die drei Service-Verträge, Selektoren, Antworten über Namen und privaten Knoten sowie die headless
-  DNS-Antwort entsprechen der Beschreibung.
+stages.0.brief: 'Alle drei privaten Service-Zugriffswege müssen die geforderte Route liefern.
+
+  '
 hints.0.text: Ein Service-Typ ändert die Belichtung, nicht aber, welche Pods einem Selektor entsprechen.
 hints.1.text: Headless DNS gibt Endpunktadressen anstelle einer virtuellen Service IP zurück.
 hints.2.text: Korrigieren Sie alle selectors und testen Sie dann sowohl die Dienstnamen- als auch die Knotenadresspfade.
@@ -37,36 +48,44 @@ diagnostics.node_selector: board-node selector muss app:board entsprechen.
 diagnostics.node_port: board-node nodePort muss mindestens 30000 sein.
 diagnostics.node_http: Die Anfrage an den NodePort des privaten Nodes muss north-106 liefern.
 diagnostics.headless_dns: Die DNS-Antwort von board-headless muss die IP des Board-Pods enthalten.
-diagnostics.contract_board_internal_uid: Genau ein Eintrag board-internal muss sowohl in den laufenden Services als auch in
-  service-contracts.json stehen; uid muss übereinstimmen.
-diagnostics.contract_board_internal_type: Genau ein Eintrag board-internal muss sowohl in den laufenden Services als auch
-  in service-contracts.json stehen; type muss übereinstimmen.
-diagnostics.contract_board_internal_clusterip: Genau ein Eintrag board-internal muss sowohl in den laufenden Services als
-  auch in service-contracts.json stehen; clusterIP muss übereinstimmen.
-diagnostics.contract_board_internal_clusterips: Genau ein Eintrag board-internal muss sowohl in den laufenden Services als
-  auch in service-contracts.json stehen; clusterIPs muss übereinstimmen.
-diagnostics.contract_board_internal_ports: Genau ein Eintrag board-internal muss sowohl in den laufenden Services als auch
-  in service-contracts.json stehen; ports muss übereinstimmen.
+diagnostics.contract_board_internal_uid: Genau ein Eintrag board-internal muss sowohl in den laufenden Services
+  als auch in service-contracts.json stehen; uid muss übereinstimmen.
+diagnostics.contract_board_internal_type: Genau ein Eintrag board-internal muss sowohl in den laufenden Services
+  als auch in service-contracts.json stehen; type muss übereinstimmen.
+diagnostics.contract_board_internal_clusterip: Genau ein Eintrag board-internal muss sowohl in den laufenden Services
+  als auch in service-contracts.json stehen; clusterIP muss übereinstimmen.
+diagnostics.contract_board_internal_clusterips: Genau ein Eintrag board-internal muss sowohl in den laufenden Services
+  als auch in service-contracts.json stehen; clusterIPs muss übereinstimmen.
+diagnostics.contract_board_internal_ports: Genau ein Eintrag board-internal muss sowohl in den laufenden Services
+  als auch in service-contracts.json stehen; ports muss übereinstimmen.
 diagnostics.http_board_internal: Die Anfrage an board-internal:8080 muss north-106 liefern.
-diagnostics.contract_board_headless_uid: Genau ein Eintrag board-headless muss sowohl in den laufenden Services als auch in
-  service-contracts.json stehen; uid muss übereinstimmen.
-diagnostics.contract_board_headless_type: Genau ein Eintrag board-headless muss sowohl in den laufenden Services als auch
-  in service-contracts.json stehen; type muss übereinstimmen.
-diagnostics.contract_board_headless_clusterip: Genau ein Eintrag board-headless muss sowohl in den laufenden Services als
-  auch in service-contracts.json stehen; clusterIP muss übereinstimmen.
-diagnostics.contract_board_headless_clusterips: Genau ein Eintrag board-headless muss sowohl in den laufenden Services als
-  auch in service-contracts.json stehen; clusterIPs muss übereinstimmen.
-diagnostics.contract_board_headless_ports: Genau ein Eintrag board-headless muss sowohl in den laufenden Services als auch
-  in service-contracts.json stehen; ports muss übereinstimmen.
+diagnostics.contract_board_headless_uid: Genau ein Eintrag board-headless muss sowohl in den laufenden Services
+  als auch in service-contracts.json stehen; uid muss übereinstimmen.
+diagnostics.contract_board_headless_type: Genau ein Eintrag board-headless muss sowohl in den laufenden Services
+  als auch in service-contracts.json stehen; type muss übereinstimmen.
+diagnostics.contract_board_headless_clusterip: Genau ein Eintrag board-headless muss sowohl in den laufenden Services
+  als auch in service-contracts.json stehen; clusterIP muss übereinstimmen.
+diagnostics.contract_board_headless_clusterips: Genau ein Eintrag board-headless muss sowohl in den laufenden Services
+  als auch in service-contracts.json stehen; clusterIPs muss übereinstimmen.
+diagnostics.contract_board_headless_ports: Genau ein Eintrag board-headless muss sowohl in den laufenden Services
+  als auch in service-contracts.json stehen; ports muss übereinstimmen.
 diagnostics.http_board_headless: Die Anfrage an board-headless:8080 muss north-106 liefern.
-diagnostics.contract_board_node_uid: Genau ein Eintrag board-node muss sowohl in den laufenden Services als auch in service-contracts.json
-  stehen; uid muss übereinstimmen.
-diagnostics.contract_board_node_type: Genau ein Eintrag board-node muss sowohl in den laufenden Services als auch in service-contracts.json
-  stehen; type muss übereinstimmen.
-diagnostics.contract_board_node_clusterip: Genau ein Eintrag board-node muss sowohl in den laufenden Services als auch in
-  service-contracts.json stehen; clusterIP muss übereinstimmen.
-diagnostics.contract_board_node_clusterips: Genau ein Eintrag board-node muss sowohl in den laufenden Services als auch in
-  service-contracts.json stehen; clusterIPs muss übereinstimmen.
-diagnostics.contract_board_node_ports: Genau ein Eintrag board-node muss sowohl in den laufenden Services als auch in service-contracts.json
-  stehen; ports muss übereinstimmen.
+diagnostics.contract_board_node_uid: Genau ein Eintrag board-node muss sowohl in den laufenden Services als auch
+  in service-contracts.json stehen; uid muss übereinstimmen.
+diagnostics.contract_board_node_type: Genau ein Eintrag board-node muss sowohl in den laufenden Services als auch
+  in service-contracts.json stehen; type muss übereinstimmen.
+diagnostics.contract_board_node_clusterip: Genau ein Eintrag board-node muss sowohl in den laufenden Services als
+  auch in service-contracts.json stehen; clusterIP muss übereinstimmen.
+diagnostics.contract_board_node_clusterips: Genau ein Eintrag board-node muss sowohl in den laufenden Services als
+  auch in service-contracts.json stehen; clusterIPs muss übereinstimmen.
+diagnostics.contract_board_node_ports: Genau ein Eintrag board-node muss sowohl in den laufenden Services als auch
+  in service-contracts.json stehen; ports muss übereinstimmen.
 diagnostics.http_board_node: Die Anfrage an board-node:8080 muss north-106 liefern.
+stages.0.objectives.0.text: Services `board-internal`, `board-headless` und `board-node` bewahren ursprüngliche
+  Identitäten, Adressen und Portverträge mit ClusterIP-, Headless- bzw. NodePort-Zugriff; der NodePort beträgt mindestens
+  `30000`.
+stages.0.objectives.1.text: Alle drei erforderlichen Services wählen nur Pods mit Label `app=board`.
+stages.0.objectives.2.text: Von Deployment `client` liefert HTTP über `board-internal:8080`, `board-headless:8080`,
+  `board-node:8080` und den privaten Knoten-NodePort jeweils `north-106`.
+stages.0.objectives.3.text: Von Deployment `client` enthält die A-Antwort für `board-headless` die vollständige
+  Pod-IP.

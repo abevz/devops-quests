@@ -1,19 +1,28 @@
 title: Типы Service и доступ
-brief: 'Работайте в `~/quest`; изучите `board.json`, `client.json`, `internal.json`, `headless.json`, `nodeport.json` и `service-contracts.json`.
-  Три Service открывают один board через ClusterIP, headless DNS и NodePort. Исправьте каждый селектор ровно на `app: board`;
-  сохраните UID, тип, IP кластера и порядок портов каждого Service согласно `service-contracts.json`. Внутренний Service —
-  не headless ClusterIP, у headless задано `clusterIP: None`, а NodePort не меньше 30000.
-
-
-  Из клиента каждое имя Service на порту 8080 и приватный адрес узла kind с NodePort должны возвращать `north-106`; получите
-  адрес узла из выданного kubeconfig. Ответ headless A должен содержать полный IP Pod board. Согласование DNS и endpoint может
-  занять время, поэтому подождите и повторите. Проверки наблюдают текущие значения, но не историю изменений полей. Порт VM
-  и внешний балансировщик не используются.'
+brief: "Три пути доступа не предоставляют согласованный маршрут. Восстановите Service с сохранением записанных контрактов.\n\
+  \nРаботайте в `~/quest` на workstation. Предоставленные файлы: `board.json`, `client.json`, `internal.json`, `headless.json`,\
+  \ `nodeport.json`, `service-contracts.json`.\n\n**Требования:**\n- Контракты доступа Service:\n  - Service `board-internal`,\
+  \ `board-headless` и `board-node` сохраняют исходные идентичности, адреса и контракты портов, с доступом ClusterIP,\
+  \ headless и NodePort соответственно.\n  - NodePort не ниже `30000`.\n  - Авторитетный контракт Service — `/run/dq/facts/0/service-contracts.json`\
+  \ на workstation: сохраните каждый UID, cluster IP и порядок портов; `board-internal` — обычный `ClusterIP`, `board-headless`\
+  \ имеет cluster IP `None`, а `board-node` — `NodePort`.\n- Все три требуемых Service выбирают только Pod с меткой\
+  \ `app=board`.\n- Из Deployment `client` HTTP через `board-internal:8080`, `board-headless:8080`, `board-node:8080`\
+  \ и NodePort частного узла возвращает `north-106`.\n- Из Deployment `client` A-ответ `board-headless` содержит\
+  \ полный IP Pod.\n\n**Проверьте самостоятельно перед Check & finish:**\nВыполняйте эти команды наблюдения из `~/quest`\
+  \ на workstation; `kubectl exec` наблюдает контейнер указанной нагрузки.\n- `kubectl exec deployment/client --\
+  \ sh -c 'for name in board-internal board-headless board-node; do wget -qO- -T 3 \"http://$name:8080\"; done'`\
+  \ — Каждый запрос по имени Service возвращает `north-106`.\n- Частный NodePort возвращает `north-106`; DNS-ответ\
+  \ headless содержит полный IP Pod.\n\n  ```sh\n  node=$(kubectl config view --minify -o json | jq -r '.clusters[0].cluster.server\
+  \ | sub(\"^https://\";\"\") | split(\":\")[0]')\n  port=$(kubectl get service board-node -o jsonpath='{.spec.ports[0].nodePort}')\n\
+  \  kubectl exec deployment/client -- wget -qO- -T 3 \"http://$node:$port\"\n  kubectl exec deployment/client --\
+  \ nslookup -type=A \"board-headless.$DQ_NAMESPACE.svc.cluster.local.\"\n  kubectl get pods -l app=board -o wide\n\
+  \  ```\n- Настройки, идентичность и статус соответствуют требованиям.\n\n  ```sh\n  kubectl get service board-internal\
+  \ board-headless board-node -o yaml\n  cat /run/dq/facts/0/service-contracts.json\n  ```\n\nПроверка наблюдает\
+  \ текущие значения, а не историю изменений; порт VM или внешний балансировщик не используются.\n"
 debrief: Одно приложение доступно через три реальных механизма Service без внешней инфраструктуры.
-stages.0.brief: Контракты трёх Service, селекторы, ответы имён и приватного узла, а также ответ headless DNS соответствуют
-  описанию.
-stages.0.objectives.0.text: Контракты трёх Service, селекторы, ответы имён и приватного узла, а также ответ headless DNS соответствуют
-  описанию.
+stages.0.brief: 'Все три частных пути доступа Service должны возвращать требуемый маршрут.
+
+  '
 hints.0.text: Тип Service меняет способ доступа, а не правило выбора Pod.
 hints.1.text: Headless DNS возвращает адреса endpoints вместо виртуального IP Service.
 hints.2.text: Исправьте все selectors, затем проверьте путь по имени Service и адресу узла.
@@ -37,36 +46,42 @@ diagnostics.node_selector: board-node selector должен совпадать �
 diagnostics.node_port: board-node nodePort должен быть не меньше 30000.
 diagnostics.node_http: Запрос к NodePort приватного узла должен вернуть north-106.
 diagnostics.headless_dns: Ответ DNS board-headless должен содержать IP Pod board.
-diagnostics.contract_board_internal_uid: Ровно одна запись board-internal должна быть среди действующих Service и в service-contracts.json,
-  а их uid должен совпадать.
-diagnostics.contract_board_internal_type: Ровно одна запись board-internal должна быть среди действующих Service и в service-contracts.json,
-  а их type должен совпадать.
-diagnostics.contract_board_internal_clusterip: Ровно одна запись board-internal должна быть среди действующих Service и в
-  service-contracts.json, а их clusterIP должен совпадать.
-diagnostics.contract_board_internal_clusterips: Ровно одна запись board-internal должна быть среди действующих Service и в
-  service-contracts.json, а их clusterIPs должен совпадать.
-diagnostics.contract_board_internal_ports: Ровно одна запись board-internal должна быть среди действующих Service и в service-contracts.json,
-  а их ports должен совпадать.
+diagnostics.contract_board_internal_uid: Ровно одна запись board-internal должна быть среди действующих Service
+  и в service-contracts.json, а их uid должен совпадать.
+diagnostics.contract_board_internal_type: Ровно одна запись board-internal должна быть среди действующих Service
+  и в service-contracts.json, а их type должен совпадать.
+diagnostics.contract_board_internal_clusterip: Ровно одна запись board-internal должна быть среди действующих Service
+  и в service-contracts.json, а их clusterIP должен совпадать.
+diagnostics.contract_board_internal_clusterips: Ровно одна запись board-internal должна быть среди действующих Service
+  и в service-contracts.json, а их clusterIPs должен совпадать.
+diagnostics.contract_board_internal_ports: Ровно одна запись board-internal должна быть среди действующих Service
+  и в service-contracts.json, а их ports должен совпадать.
 diagnostics.http_board_internal: Запрос к board-internal:8080 должен вернуть north-106.
-diagnostics.contract_board_headless_uid: Ровно одна запись board-headless должна быть среди действующих Service и в service-contracts.json,
-  а их uid должен совпадать.
-diagnostics.contract_board_headless_type: Ровно одна запись board-headless должна быть среди действующих Service и в service-contracts.json,
-  а их type должен совпадать.
-diagnostics.contract_board_headless_clusterip: Ровно одна запись board-headless должна быть среди действующих Service и в
-  service-contracts.json, а их clusterIP должен совпадать.
-diagnostics.contract_board_headless_clusterips: Ровно одна запись board-headless должна быть среди действующих Service и в
-  service-contracts.json, а их clusterIPs должен совпадать.
-diagnostics.contract_board_headless_ports: Ровно одна запись board-headless должна быть среди действующих Service и в service-contracts.json,
-  а их ports должен совпадать.
+diagnostics.contract_board_headless_uid: Ровно одна запись board-headless должна быть среди действующих Service
+  и в service-contracts.json, а их uid должен совпадать.
+diagnostics.contract_board_headless_type: Ровно одна запись board-headless должна быть среди действующих Service
+  и в service-contracts.json, а их type должен совпадать.
+diagnostics.contract_board_headless_clusterip: Ровно одна запись board-headless должна быть среди действующих Service
+  и в service-contracts.json, а их clusterIP должен совпадать.
+diagnostics.contract_board_headless_clusterips: Ровно одна запись board-headless должна быть среди действующих Service
+  и в service-contracts.json, а их clusterIPs должен совпадать.
+diagnostics.contract_board_headless_ports: Ровно одна запись board-headless должна быть среди действующих Service
+  и в service-contracts.json, а их ports должен совпадать.
 diagnostics.http_board_headless: Запрос к board-headless:8080 должен вернуть north-106.
 diagnostics.contract_board_node_uid: Ровно одна запись board-node должна быть среди действующих Service и в service-contracts.json,
   а их uid должен совпадать.
 diagnostics.contract_board_node_type: Ровно одна запись board-node должна быть среди действующих Service и в service-contracts.json,
   а их type должен совпадать.
-diagnostics.contract_board_node_clusterip: Ровно одна запись board-node должна быть среди действующих Service и в service-contracts.json,
-  а их clusterIP должен совпадать.
-diagnostics.contract_board_node_clusterips: Ровно одна запись board-node должна быть среди действующих Service и в service-contracts.json,
-  а их clusterIPs должен совпадать.
+diagnostics.contract_board_node_clusterip: Ровно одна запись board-node должна быть среди действующих Service и
+  в service-contracts.json, а их clusterIP должен совпадать.
+diagnostics.contract_board_node_clusterips: Ровно одна запись board-node должна быть среди действующих Service и
+  в service-contracts.json, а их clusterIPs должен совпадать.
 diagnostics.contract_board_node_ports: Ровно одна запись board-node должна быть среди действующих Service и в service-contracts.json,
   а их ports должен совпадать.
 diagnostics.http_board_node: Запрос к board-node:8080 должен вернуть north-106.
+stages.0.objectives.0.text: Service `board-internal`, `board-headless` и `board-node` сохраняют исходные идентичности,
+  адреса и контракты портов, с доступом ClusterIP, headless и NodePort соответственно; NodePort не ниже `30000`.
+stages.0.objectives.1.text: Все три требуемых Service выбирают только Pod с меткой `app=board`.
+stages.0.objectives.2.text: Из Deployment `client` HTTP через `board-internal:8080`, `board-headless:8080`, `board-node:8080`
+  и NodePort частного узла возвращает `north-106`.
+stages.0.objectives.3.text: Из Deployment `client` A-ответ `board-headless` содержит полный IP Pod.

@@ -1,36 +1,42 @@
 title: Contenedores de inicio y native sidecars
-brief: 'Trabaja en `~/quest` con `route.json`, `board.json` y `service.json`. El contenedor init ordinario lee una entrada
-  inexistente e impide el inicio. Repara `prepare` y conserva el sidecar nativo. Usa solo la bahía sin conexión.
-
-
-  Lee `board.json` para conocer los comandos init en orden, la startup probe de watcher y los volúmenes ordenados; conserva
-  el volumen de ConfigMap de entrada, el emptyDir compartido, el modo predeterminado `0644` (`defaultMode: 420` en JSON) y
-  ningún volumen adicional. En un Pod no marcado para eliminación con etiqueta `app=board`, `prepare` debe terminar con 0,
-  `watcher` debe estar iniciado y ejecutándose, y un contenedor normal debe estar listo. El archivo `/shared/heartbeat` de
-  watcher debe ser no vacío y `board:8080/route` debe devolver `north-101`. Espera el rollout e inspecciona el estado del
-  Pod; las comprobaciones observan la configuración actual, no si solo se cambió un campo.
-
-
-  Establece el comando del primer contenedor init exactamente en `["sh", "-c", "cp /input/route /shared/route"]`. El comando
-  de la startup probe del segundo contenedor init debe ser `["test", "-s", "/shared/heartbeat"]` con `periodSeconds: 1` y
-  `failureThreshold: 10`.
-
-
-  La comprobación del heartbeat usa un Pod seleccionado por `kubectl exec deployment/board`; no establece que sea el mismo
-  Pod de la comprobación de estado.'
+brief: "El inicio de la aplicación no termina. La inicialización suministrada, el sidecar nativo y la aplicación\
+  \ deben funcionar juntos.\n\nTrabaja en `~/quest` en la workstation. Archivos suministrados: `route.json`, `board.json`,\
+  \ `service.json`.\n\n**Requisitos:**\n- El init container `prepare` deja la ruta del ConfigMap suministrado disponible\
+  \ en `/shared/route` dentro del Pod.\n- El sidecar nativo `watcher` usa política de reinicio `Always` y una comprobación\
+  \ de inicio que exige `/shared/heartbeat` no vacío dentro del contenedor, cada `1` segundo con umbral `10`.\n\
+  - El Deployment `board` conserva solo los volúmenes suministrados y ordenados: `input` de ConfigMap `route`, modo\
+  \ `0644`, seguido del volumen emptyDir compartido `shared`.\n- Un mismo Pod con etiqueta `app=board`, sin terminar,\
+  \ tiene `prepare` completado con código `0`, `watcher` iniciado y en ejecución y un contenedor normal listo.\n\
+  - Dentro del contenedor `watcher` seleccionado del Deployment `board`, `/shared/heartbeat` existe y no está vacío.\n\
+  - Desde `deployment/board`, HTTP `http://board:8080/route` devuelve `north-101`.\n\n**Verifica antes de Check\
+  \ & finish:**\nEjecuta estos comandos de observación desde `~/quest` en la workstation; `kubectl exec` observa\
+  \ el contenedor de la carga indicada.\n- Los ajustes, la identidad y el estado coinciden con Requisitos.\n\n \
+  \ ```sh\n  kubectl get deployment board -o yaml\n  kubectl get pods -l app=board -o json\n  ```\n- `kubectl exec\
+  \ deployment/board -c watcher -- wc -c /shared/heartbeat` — El archivo heartbeat dentro de `watcher` tiene un\
+  \ número positivo de bytes.\n- `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080/route` — El\
+  \ consumidor recibe `north-101`.\n\nSe observan ajustes actuales, no un historial de un único campo; no se demuestra\
+  \ que el Pod de heartbeat elegido del Deployment sea el mismo que el de estado.\n"
 debrief: Las comprobaciones observaron configuración init, estados del Pod, heartbeat y respuesta HTTP.
-stages.0.brief: La configuración init, los estados del Pod, el heartbeat de watcher y la respuesta HTTP de board coinciden
-  con la descripción.
-stages.0.objectives.0.text: La configuración init, los estados del Pod, el heartbeat de watcher y la respuesta HTTP de board
-  coinciden con la descripción.
-hints.0.text: Un init normal y defectuoso bloquea la inicialización y el inicio de la aplicación posteriores.
+stages.0.brief: 'La inicialización y el sidecar nativo deben permitir una aplicación lista y la ruta requerida.
+
+  '
+hints.0.text: 'Un init normal fallido bloquea la inicialización posterior y el inicio de la aplicación. Su ruta
+  de origen suministrada apunta a una entrada inexistente.
+
+  '
 hints.1.text: Native sidecars son reiniciables init containers; El init containers ordinario debe terminar.
-hints.2.text: Corrija la ruta de origen sin mover watcher a la lista normal containers.
+hints.2.text: 'Corrige la ruta de origen sin mover watcher a la lista de contenedores normales. El comando prepare
+  es sh -c con cp /input/route /shared/route. La comprobación de inicio de watcher es test -s /shared/heartbeat,
+  con periodSeconds 1 y failureThreshold 10. Mantén prepare primero y watcher segundo en la lista de init containers.
+
+  '
 phrases.0: Diagnostiqué el inicio a través del estado init container.
 phrases.1: Separé la preparación única de un native sidecar.
 phrases.2: Verifiqué la respuesta HTTP de board.
-questions.0.points.0: Debe completarse el init ordinario; un native sidecar es un init container con restartPolicy Always.
-questions.0.points.1: Un inicio sidecar probe puede pasar al siguiente paso de inicio mientras el sidecar sigue ejecutándose.
+questions.0.points.0: Debe completarse el init ordinario; un native sidecar es un init container con restartPolicy
+  Always.
+questions.0.points.1: Un inicio sidecar probe puede pasar al siguiente paso de inicio mientras el sidecar sigue
+  ejecutándose.
 questions.0.prompt: ¿En qué se diferencia un init normal de un native sidecar?
 questions.1.points.0: No; pertenece a esta vida útil Pod.
 questions.1.points.1: Puede sobrevivir a un reinicio de contenedor dentro del mismo Pod.
@@ -41,9 +47,21 @@ diagnostics.threshold: watcher startupProbe.failureThreshold debe ser igual a 10
 diagnostics.prepare: prepare command debe ser igual a sh -c cp /input/route /shared/route.
 diagnostics.restart: watcher restartPolicy debe ser igual a Always.
 diagnostics.volumes: Los volúmenes board deben coincidir exactamente con los volúmenes input y shared proporcionados.
-diagnostics.prepare_status: Un Pod board no marcado para eliminación debe tener el contenedor prepare finalizado correctamente.
+diagnostics.prepare_status: Un Pod board no marcado para eliminación debe tener el contenedor prepare finalizado
+  correctamente.
 diagnostics.watcher_status: Un Pod board no marcado para eliminación debe tener watcher iniciado y en ejecución.
 diagnostics.ready: Un Pod board no marcado para eliminación debe tener un contenedor normal listo.
 diagnostics.same: Un mismo Pod board no marcado para eliminación debe cumplir las tres condiciones de contenedores.
 diagnostics.http: board:8080/route debe ser igual a north-101.
 diagnostics.heartbeat: El archivo watcher /shared/heartbeat debe existir y no estar vacío.
+stages.0.objectives.0.text: El init container `prepare` deja la ruta del ConfigMap suministrado disponible en `/shared/route`
+  dentro del Pod.
+stages.0.objectives.1.text: El sidecar nativo `watcher` usa política de reinicio `Always` y una comprobación de
+  inicio que exige `/shared/heartbeat` no vacío dentro del contenedor, cada `1` segundo con umbral `10`.
+stages.0.objectives.2.text: 'El Deployment `board` conserva solo los volúmenes suministrados y ordenados: `input`
+  de ConfigMap `route`, modo `0644`, seguido del volumen emptyDir compartido `shared`.'
+stages.0.objectives.3.text: Un mismo Pod con etiqueta `app=board`, sin terminar, tiene `prepare` completado con
+  código `0`, `watcher` iniciado y en ejecución y un contenedor normal listo.
+stages.0.objectives.4.text: Dentro del contenedor `watcher` seleccionado del Deployment `board`, `/shared/heartbeat`
+  existe y no está vacío.
+stages.0.objectives.5.text: Desde `deployment/board`, HTTP `http://board:8080/route` devuelve `north-101`.

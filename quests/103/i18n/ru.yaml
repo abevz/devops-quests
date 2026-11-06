@@ -1,24 +1,27 @@
 title: Размещение DaemonSet
-brief: 'Работайте в `~/quest` с `relay.json` и `service.json`. DaemonSet `relay` имеет устаревший селектор и не выбирает ни
-  одного узла. DaemonSet размещает Pod на каждом подходящем узле; в приватном кластере один узел Linux. Замените селектор
-  точно на `kubernetes.io/os: linux`: дополнительные селекторы ограничили бы выбор сильнее, чем предусмотренные узлы Linux.
-  Не меняйте метки узлов и не создавайте заменяющий Deployment.
-
-
-  Оставьте Pod в пространстве имён: без сети хоста, host PID, host IPC и hostPath. Контекст безопасности Pod должен задавать
-  `runAsNonRoot: true` и `seccompProfile.type: RuntimeDefault`; каждый контейнер и init container должен быть непривилегированным,
-  задавать `allowPrivilegeEscalation: false`, удалять возможности `ALL` и не добавлять их. Дополнительное удаление возможностей
-  безопасно. Дождитесь значения 1 для desired, ready и available. Проверьте, что готовый незавершающийся Pod, принадлежащий
-  DaemonSet `relay`, работает на `DQ_NODE_NAME`, а его локальный `127.0.0.1:8080` и `relay:8080` возвращают `north-103`. Проверки
-  наблюдают результаты, но не доказывают, менялись ли ранее метки узлов или другие Deployment. Работайте только в офлайн-песочнице.'
+brief: "Локальный для узла адрес маршрута недоступен. Восстановите нагрузку на подходящем Linux-узле с сохранением\
+  \ изоляции.\n\nРаботайте в `~/quest` на workstation. Предоставленные файлы: `relay.json`, `service.json`.\n\n\
+  **Требования:**\n- DaemonSet `relay` предназначен только для узлов с ОС `linux`.\n- Изоляция Pod:\n  - Pod `relay`\
+  \ не использует сеть/PID/IPC хоста и hostPath, имеет политику Pod без root и seccomp `RuntimeDefault`.\n  - Все\
+  \ обычные и init-контейнеры непривилегированны, запрещают повышение привилегий, сбрасывают `ALL` capabilities\
+  \ и не добавляют новых.\n- DaemonSet `relay` размещает ровно `1` управляемый Pod на `DQ_NODE_NAME`; он готов,\
+  \ доступен и не завершается.\n- Внутри нагрузки `relay` и `http://127.0.0.1:8080`, и `http://relay:8080` возвращают\
+  \ `north-103`.\n\n**Проверьте самостоятельно перед Check & finish:**\nВыполняйте эти команды наблюдения из `~/quest`\
+  \ на workstation; `kubectl exec` наблюдает контейнер указанной нагрузки.\n- Настройки, идентичность и статус соответствуют\
+  \ требованиям.\n\n  ```sh\n  kubectl get daemonset relay -o yaml\n  kubectl get pods -l app=relay -o json\n  ```\n\
+  - `kubectl exec daemonset/relay -- wget -qO- -T 3 http://127.0.0.1:8080` — Потребитель нагрузки получает `north-103`.\n\
+  - `kubectl exec daemonset/relay -- wget -qO- -T 3 http://relay:8080` — Потребитель нагрузки получает `north-103`.\n\
+  \nПроверка наблюдает текущие результаты, а не прошлые изменения меток узлов или других Deployment.\n"
 debrief: Селектор, настройки безопасности, счётчики, принадлежащий Pod и ответ соответствовали проверкам.
-stages.0.brief: Селектор DaemonSet, настройки безопасности, три счётчика, принадлежащий готовый Pod и ответ сервиса соответствуют
-  заданию.
-stages.0.objectives.0.text: Селектор DaemonSet, настройки безопасности, три счётчика, принадлежащий готовый Pod и ответ сервиса
-  соответствуют заданию.
+stages.0.brief: 'Изолированная локальная нагрузка узла должна быть готова и обслуживать требуемый маршрут.
+
+  '
 hints.0.text: Desired zero может означать отсутствие подходящих узлов, а не сбой контейнера.
 hints.1.text: DaemonSet размещает один Pod на подходящий узел вместо заданного replicas.
-hints.2.text: Замените только устаревший selector и изучите реального controller owner.
+hints.2.text: 'Замените только устаревший selector и изучите реального controller owner. Единственный селектор —
+  kubernetes.io/os=linux. Сохраните метки узлов и не создавайте заменяющий Deployment.
+
+  '
 phrases.0: Я отделил выбор узла от здоровья контейнера.
 phrases.1: Я проверил владельца DaemonSet и счётчики размещения.
 phrases.2: Я избежал ненужных host privileges.
@@ -32,17 +35,26 @@ diagnostics.hostpath: DaemonSet relay не должен использовать
 diagnostics.nonroot: daemonset/relay runAsNonRoot должен совпадать с true.
 diagnostics.seccomp: daemonset/relay seccompProfile.type должен совпадать с RuntimeDefault.
 diagnostics.node_selector: daemonset/relay nodeSelector должен совпадать с {kubernetes.io/os:linux}.
-diagnostics.owned: На узле песочницы DaemonSet relay должен контролировать Pod, не отмеченный для удаления, хотя бы с одним
-  готовым контейнером.
+diagnostics.owned: На узле песочницы DaemonSet relay должен контролировать Pod, не отмеченный для удаления, хотя
+  бы с одним готовым контейнером.
 diagnostics.local_http: daemonset/relay Pod 127.0.0.1:8080 должен совпадать с north-103.
 diagnostics.service_http: relay:8080 должен совпадать с north-103.
 diagnostics.host_hostnetwork: daemonset/relay hostNetwork не должен быть включён.
 diagnostics.host_hostpid: daemonset/relay hostPID не должен быть включён.
 diagnostics.host_hostipc: daemonset/relay hostIPC не должен быть включён.
 diagnostics.security_privileged: Ни один контейнер не должен быть привилегированным.
-diagnostics.security_allowprivilegeescalation: container securityContext allowPrivilegeEscalation должен совпадать с false.
+diagnostics.security_allowprivilegeescalation: container securityContext allowPrivilegeEscalation должен совпадать
+  с false.
 diagnostics.security_drop: Каждый контейнер должен удалить capability ALL.
 diagnostics.security_add: Ни у одного обычного или init-контейнера не должно быть добавленных capabilities.
 diagnostics.status_desirednumberscheduled: daemonset/relay desiredNumberScheduled должен совпадать с 1.
 diagnostics.status_numberready: daemonset/relay numberReady должен совпадать с 1.
 diagnostics.status_numberavailable: daemonset/relay numberAvailable должен совпадать с 1.
+stages.0.objectives.0.text: DaemonSet `relay` предназначен только для узлов с ОС `linux`.
+stages.0.objectives.1.text: Pod `relay` не использует сеть/PID/IPC хоста и hostPath, имеет политику Pod без root
+  и seccomp `RuntimeDefault`; все обычные и init-контейнеры непривилегированны, запрещают повышение привилегий,
+  сбрасывают `ALL` capabilities и не добавляют новых.
+stages.0.objectives.2.text: DaemonSet `relay` размещает ровно `1` управляемый Pod на `DQ_NODE_NAME`; он готов, доступен
+  и не завершается.
+stages.0.objectives.3.text: Внутри нагрузки `relay` и `http://127.0.0.1:8080`, и `http://relay:8080` возвращают
+  `north-103`.
