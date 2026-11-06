@@ -17,7 +17,13 @@ Consecutive revealed hints with the same link show it only once.
 Run real integration only on an isolated Linux host with disposable synthetic state:
 `DQ_INTEGRATION=1 .venv/bin/python -m pytest 'tests/test_quests.py::test_quest[ID]' -q`.
 Stop the app first; the fixture intentionally holds its runtime lock. Changes to levels
-require only their affected matrix. Do not use your live learning profile for tests.
+require only their affected matrix; text-only quest edits need none. Do not use your live
+learning profile for tests.
+
+CI (`.github/workflows/ci.yml`) runs once per pull request commit and on `main`: Ruff, the full
+pytest suite, `npm test`, `validate_i18n.py` and a package build. It never starts sandboxes.
+Locally, run the fast checks from `AGENTS.md` and the tests for the areas you touched; the full
+suite in CI is the merge gate.
 
 Guides are curated in `docs/guide-lessons.yaml`, `docs/guide-topics.yaml` and localized
 snapshots under `docs/guides/`. The English `en.yaml` text is the source of truth: after editing
