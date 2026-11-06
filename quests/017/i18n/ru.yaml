@@ -1,26 +1,39 @@
 title: Readiness
-brief: 'Service departures выбирает stable и quarantine. Сохраните работающий карантинный процесс с ROUTE=retired,
-  но исключите его из трафика Service правильной readiness probe. Стабильный экземпляр north должен оставаться
-  Ready. Не удаляйте Deployment и метки селектора Service.
+brief: |
+  Трафик отправлений попадает на неподходящий экземпляр.
 
+  Работайте на workstation в `~/quest` с файлами `stable.json`, `quarantine.json`, `service.json`.
 
-  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `stable.json`, `quarantine.json`, `service.json`.
+  **Требования:**
+  - Доступность нагрузки:
+    - Deployment: `stable`.
+    - Состояние: Rollout завершён.
+  - Текущий карантинный Pod:
+    - Метка Pod: `app=quarantine`.
+    - Ровно один Pod без начавшегося удаления находится в фазе `Running`.
+    - Условие: `Ready=False`.
+    - Переменная окружения: `ROUTE=retired`.
+  - Готовые endpoints Service `departures`:
+    - Единственный целевой Pod — текущий Pod `app=stable`.
 
-
-  В песочнице нет интернета и внешнего DNS. Используйте выданные файлы, предварительно загруженные образы
-  и приватные сервисы. Менять можно только эту песочницу.'
+  **Самопроверка перед Check & finish:**
+  - `kubectl rollout status deployment/stable --timeout=3s` — завершается с кодом `0` и сообщает о завершённом rollout.
+  - `kubectl get pods -l app=quarantine -o json` и `kubectl exec deployment/quarantine -- printenv ROUTE` — показывают ровно один Pod без начавшегося удаления в фазе `Running` с `Ready=False` и выводят `retired`.
+  - `kubectl get pods -l app=stable -o name` и `kubectl get endpointslices -l kubernetes.io/service-name=departures -o json` — показывают, что единственная цель готовых endpoints — текущий Pod `app=stable`.
 debrief: 'Readiness управляет допуском в трафик Service. Процесс может оставаться Running для диагностики,
   но не получать трафик: это отличается от перезапуска по liveness.'
-stages.0.brief: Неуспешная readiness должна менять маршрутизацию, а не убивать процесс. Обслуживать трафик
-  может маршрут north.
+stages.0.brief: |
+  Карантинный экземпляр должен оставаться доступным для наблюдения, не получая трафик через готовые endpoints Service.
 stages.0.objectives.0.text: Deployment `stable` завершает rollout.
 stages.0.objectives.1.text: Ровно один текущий Pod `quarantine` находится в Running.
 stages.0.objectives.2.text: У текущего Running Pod `quarantine` установлено `Ready=False`.
 stages.0.objectives.3.text: В текущем Running Pod `quarantine` задано `ROUTE=retired`.
 stages.0.objectives.4.text: Готовые endpoints Service `departures` содержат только Pod `stable`.
-hints.0.text: Сравните условие Ready с фазой Running.
+hints.0.text: |
+  Сравните условие Ready с фазой Running. Сбой readiness меняет допуск к трафику, не завершая процесс.
 hints.1.text: Service использует готовые записи EndpointSlice, а не все работающие процессы.
-hints.2.text: Пусть readiness проверяет маршрут процесса без изменения карантинной идентичности.
+hints.2.text: |
+  Пусть readiness проверяет маршрут процесса без изменения карантинной идентичности. Нужный маршрут stable — north. При настройке readiness probe quarantine сохраните оба Deployment и их метки selector Service.
 phrases.0: Я разделил готовность к трафику и жизнеспособность процесса.
 phrases.1: Я исправил readiness probe, не скрывая ошибку приложения.
 phrases.2: Я проверил готовые endpoints и выдаваемый маршрут.
