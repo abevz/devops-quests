@@ -1,37 +1,42 @@
 title: Здоровье Argo CD
-brief: 'Приватный Application может синхронизироваться, но probe в Git обращается
-  к 9090, а HTTP слушает 8080. Исправьте repository/manifests/board.json, закоммитьте
-  и отправьте в main одноразовой Gitea, затем обновите Argo. Сохраните историю baseline-commit.
-  Одного Synced недостаточно: записанный текущий revision должен стать Healthy и реально
-  отдавать north-68. Во время ожидания неисправного rollout controller может показывать
-  Progressing.
+brief: |
+  Управляемый через Git выпуск `board` не готов для своих потребителей.
 
+  Работайте на workstation в `~/quest` с файлами `platform.env`, `application.yaml`, `repository/manifests/board.yaml`, `release-commit`.
 
-  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `platform.env`,
-  `application.json`, `repository/manifests/board.json`, `repository/manifests/service.json`,
-  `baseline-commit`, `release-commit`.
+  **Требования:**
+  - Application в namespace песочницы:
+    - Имя: `board`.
+    - Репозиторий: `GIT_URL` из `~/quest/platform.env` на workstation.
+    - Ветка и каталог источника: `main`, `manifests`.
+  - Наблюдаемый результат Application:
+    - Статус: `Synced`, `Healthy`.
+    - Синхронизированная ревизия совпадает с `~/quest/release-commit` на workstation.
+  - Deployment в namespace песочницы:
+    - Имя: `board`.
+    - Rollout завершён.
+  - HTTP внутри Pod Deployment `board`:
+    - Путь: `http://board:8080`.
+    - Ответ: `north-68`.
+  - Опубликованный результат Git в `~/quest/repository` на workstation:
+    - `origin/main` совпадает с `~/quest/release-commit` на workstation и отличается от исходного коммита в `/run/dq/facts/0/baseline-commit` на workstation.
+    - Исходный коммит остаётся предком опубликованного коммита.
+    - Манифест в `origin/main` репозитория `~/quest/repository` на workstation: `manifests/board.yaml`.
+    - Живой Deployment `board` соответствует этому манифесту; выпуск имеет статус `Healthy`.
 
+  **Самопроверка перед Check & finish:**
+  - `kubectl get application board -o custom-columns=NAME:.metadata.name,PROJECT:.spec.project,REPO:.spec.source.repoURL,PATH:.spec.source.path,BRANCH:.spec.source.targetRevision,NAMESPACE:.spec.destination.namespace,SERVER:.spec.destination.server,SYNC:.status.sync.status,HEALTH:.status.health.status,REVISION:.status.sync.revision; cat release-commit` — Показывает предоставленный репозиторий, `main` / `manifests`, `Synced` / `Healthy` и ревизию, совпадающую с записанным коммитом.
+  - `git -C repository ls-remote origin refs/heads/main; cat release-commit /run/dq/facts/0/baseline-commit; git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/baseline-commit)" origin/main; printf "ancestry status: %s\n" "$?"; git -C repository diff --stat "$(cat /run/dq/facts/0/baseline-commit)" origin/main` — ID удалённого коммита и выпуска совпадают и отличаются от исходного; ancestry status равен `0`; сводка изменений включает `manifests/board.yaml`.
+  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -- wget -qO- -T 3 http://board:8080` — Rollout завершается, HTTP возвращает `north-68`.
 
-  В песочнице нет интернета и внешнего DNS. Используйте выданные файлы, предварительно
-  загруженные образы и приватные сервисы. Менять можно только эту песочницу.
-
-
-  Цели первого этапа: Исправленный Git commit синхронизирован и Healthy, readiness
-  использует 8080, реальный endpoint возвращает north-68.
-
-
-  Исходные метки проверки доступны только для чтения в `/run/dq/facts/0/`; одноимённые
-  файлы в `~/quest` — рабочие копии.'
-debrief: Git и исправность workload согласованы; прямой live patch был бы отменён
-  self-heal.
-stages.0.brief: 'Результат проверки: Исправленный Git commit синхронизирован и Healthy,
-  readiness использует 8080, реальный endpoint возвращает north-68.'
-stages.0.objectives.0.text: Исправленный Git commit синхронизирован и Healthy, readiness
-  использует 8080, реальный endpoint возвращает north-68.
+  Данные setup в `/run/dq/facts/0/` на workstation авторитетны; совпадающие файлы в `~/quest` — рабочие копии.
+debrief: Git и исправность workload согласованы; прямой live patch был бы отменён self-heal.
+stages.0.brief: Опубликованная ревизия Git должна быть готова для своих потребителей.
 hints.0.text: Sync сравнивает желаемые ресурсы; health описывает их состояние.
-hints.1.text: Сравните probe в Git с командой работающего контейнера.
-hints.2.text: Закоммитьте исправление порта в Git, обновите и проверьте revision,
-  readiness и HTTP.
+hints.1.text: Закоммиченный readiness probe направлен на 9090, а HTTP слушает 8080. Во время неуспешного rollout
+  application-controller может кратко сообщать Progressing.
+hints.2.text: Исправьте repository/manifests/board.yaml, закоммитьте и отправьте в приватную ветку main, затем обновите
+  Argo. Сохраните историю baseline-commit.
 phrases.0: Я разделил синхронизацию и исправность приложения.
 phrases.1: Я исправил исходный commit вместо борьбы с self-heal.
 phrases.2: Я проверил наблюдаемый revision и реальный HTTP-ответ.
@@ -43,3 +48,12 @@ questions.1.points.0: Изменить основной источник в Git.
 questions.1.points.1: Проверить новый наблюдаемый revision после сверки.
 questions.1.points.2: Не полагаться на временный live patch.
 questions.1.prompt: Какое исправление сохранится при включённом self-heal?
+stages.0.objectives.0.text: Application `board` отслеживает `main` / `manifests` в приватном репозитории из `platform.env`
+  на workstation (`GIT_URL`).
+stages.0.objectives.1.text: Application `board` сообщает `Synced` и `Healthy` для `~/quest/release-commit`.
+stages.0.objectives.2.text: Deployment `board` завершает rollout в namespace песочницы.
+stages.0.objectives.3.text: Внутри Pod Deployment `board` адрес `http://board:8080` возвращает `north-68`.
+stages.0.objectives.4.text: Удалённая `origin/main` совпадает с `release-commit` на workstation и является новым
+  потомком исходного коммита из `/run/dq/facts/0/baseline-commit`.
+stages.0.objectives.5.text: 'Исправление закоммичено в Git: живой Deployment `board` соответствует `manifests/board.yaml`
+  в репозитории, а выпуск имеет статус Healthy.'

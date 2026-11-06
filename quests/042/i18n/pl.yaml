@@ -1,25 +1,39 @@
 title: Poświadczenia rejestru
-brief: 'Pracuj w `~/quest` z `platform.env` i `board.json`. Prywatny rejestr ma nowe dane dostępowe gry, ale Secret board
-  jest nieaktualny. Secret pobierania obrazu z tej samej przestrzeni nazw przekazuje kubeletowi dane rejestru; nie wypisuj
-  ich ani nie zapisuj w historii powłoki. Zmień `registry-pull`, korzystając z adresu, użytkownika i hasła w `platform.env`.
-  Wpis auth `.dockerconfigjson` dla `REGISTRY` musi dekodować się do podanego użytkownika i hasła. Zachowaj jedną replikę
-  `board`, obraz pierwszego kontenera równy `PRIVATE_IMAGE`, politykę `Always` i dokładnie jeden Secret pobierania `registry-pull`.
-  Poczekaj na rollout i sprawdź, czy `127.0.0.1:8080` w Podzie board zwraca `north-42`. Bieżące kontrole Secret, rolloutu
-  i odpowiedzi nie dowodzą każdego przyszłego pobrania. Pracuj tylko w zatoce offline.
+brief: |
+  Prywatny odbiorca `board` jest niedostępny.
 
+  Pracuj na workstation w `~/quest` z plikami `platform.env`, `board.yaml`.
 
-  Dane Secret z API i zagnieżdżony auth muszą mieć poprawny kanoniczny base64. Base64 jest kodowaniem, nie szyfrowaniem; zachowaj
-  wartości w tajemnicy.
+  **Wymagania:**
+  - Deployment w przestrzeni nazw zatoki:
+    - Nazwa: `board`.
+    - Obraz: `PRIVATE_IMAGE` z `~/quest/platform.env` na workstation.
+    - Polityka pobierania: `Always`.
+    - Secret pobierania obrazu: `registry-pull`.
+    - Brak innych Secretów pobierania obrazu.
+    - Żądane repliki: `1`.
+    - Rollout zakończony.
+  - Secret w przestrzeni nazw zatoki:
+    - Nazwa: `registry-pull`.
+    - Typ: `kubernetes.io/dockerconfigjson`.
+    - Dane dostępowe do `REGISTRY`: `REGISTRY_USER` i `REGISTRY_PASSWORD` z `~/quest/platform.env` na workstation.
+  - HTTP wewnątrz Poda Deployment `board`:
+    - Ścieżka: `http://127.0.0.1:8080`.
+    - Odpowiedź: `north-42`.
 
+  **Sprawdź przed Check & finish:**
+  - `source platform.env; kubectl get secret registry-pull -o json | jq -e 'env as $e | .type=="kubernetes.io/dockerconfigjson" and ((.data[".dockerconfigjson"]|@base64d|fromjson|.auths[$e.REGISTRY].auth|@base64d)==($e.REGISTRY_USER+":"+$e.REGISTRY_PASSWORD))'` — Wypisuje `true` bez ujawniania danych dostępowych.
+  - `source platform.env; kubectl get deployment board -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas,IMAGE:.spec.template.spec.containers[0].image,PULL:.spec.template.spec.containers[0].imagePullPolicy,SECRETS:.spec.template.spec.imagePullSecrets[*].name` — Pokazuje `board`, liczbę replik `1`, dostarczone `PRIVATE_IMAGE`, `Always` i tylko `registry-pull`.
+  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -- wget -qO- -T 3 http://127.0.0.1:8080` — Rollout się kończy; HTTP zwraca `north-42`.
 
-  Secret musi mieć typ `kubernetes.io/dockerconfigjson`.'
+  Base64 to kodowanie, nie szyfrowanie; bieżące sprawdzenia danych dostępowych, rollout i odpowiedzi nie dowodzą powodzenia każdego przyszłego pobrania.
 debrief: Uwierzytelnianie rejestru i konfiguracja konsumencka Kubernetes były odrębnymi częściami rotacji.
-stages.0.brief: Dane rejestru, obraz i ustawienia pobierania board, rollout oraz lokalna odpowiedź HTTP odpowiadają opisowi.
-stages.0.objectives.0.text: Dane rejestru, obraz i ustawienia pobierania board, rollout oraz lokalna odpowiedź HTTP odpowiadają
-  opisowi.
+stages.0.brief: Prywatne wydanie musi spełniać kontrakt danych dostępowych i odbiorcy.
 hints.0.text: Pomyślne push z workstation nie uwierzytelnia kubelet.
 hints.1.text: Sprawdź błąd ściągania imagePullSecrets i Pod bez poświadczeń drukowania.
-hints.2.text: Wymień uwierzytelnienie Docker Secret i zrestartuj klienta, który uległ awarii.
+hints.2.text: |-
+  Zastąp stary Secret Docker auth i uruchom ponownie niedziałającego odbiorcę. Zarówno dane Secretu API, jak i zagnieżdżone auth muszą używać poprawnego kanonicznego base64.
+  Nie wyświetlaj wartości danych dostępowych ani nie zapisuj ich w historii powłoki.
 phrases.0: Oddzieliłem uwierzytelnianie registry od poświadczenia ściągania kubelet.
 phrases.1: Obróciłem konsumenta Secret, zachowując niezmienne odniesienie do obrazu.
 phrases.2: Zweryfikowałem świeże prywatne pobranie i odzyskaną odpowiedź aplikacji.
@@ -41,3 +55,10 @@ diagnostics.auth: registry-pull auth musi używać kanonicznego base64.
 diagnostics.credentials: Odkodowane registry-pull auth musi odpowiadać użytkownikowi i hasłu w platform.env.
 diagnostics.rollout: Wdrożenie deployment/board musi się zakończyć.
 diagnostics.http: Żądanie do localhost:8080 Poda board musi zwrócić north-42.
+stages.0.objectives.0.text: Deployment `board` używa `PRIVATE_IMAGE` z `platform.env` na workstation, polityki pobierania
+  `Always` i tylko Secretu pobierania `registry-pull`.
+stages.0.objectives.1.text: Deployment `board` ma żądaną liczbę replik `1`.
+stages.0.objectives.2.text: Secret `registry-pull` ma typ `kubernetes.io/dockerconfigjson` i poprawne dane dostępowe
+  Docker dla `REGISTRY`, zgodne z `platform.env` na workstation.
+stages.0.objectives.3.text: Deployment `board` kończy rollout w przestrzeni nazw zatoki.
+stages.0.objectives.4.text: Wewnątrz Poda Deployment `board` adres `http://127.0.0.1:8080` zwraca `north-42`.
