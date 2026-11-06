@@ -37,7 +37,14 @@ def test_polish_machine_translation_covers_all_public_content_and_keeps_code():
         (99, "brief", "rail-reader"),
         (94, "brief", "50m"),
     ]:
-        assert literal in catalog.text(number, key)["pl"]
+        visible = catalog.text(number, key)["pl"]
+        if (number, key, literal) == (129, "brief", "training.devops-quests.local/cleanup"):
+            # The cleanup technique may live in hints instead of revealing it in the brief.
+            visible += "\n" + "\n".join(
+                catalog.text(number, hint["text"])["pl"]
+                for hint in catalog.quests[number]["hints"]
+            )
+        assert literal in visible
     # Exact inline-code spans and fenced blocks retain commands and their literals.
     sources = [
         *ROOT.glob("quests/*/i18n/en.yaml"),
