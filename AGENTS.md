@@ -32,9 +32,13 @@ outside Git. Verify actual entrypoints and fixture layouts before changing produ
 - Deploy by immutable version/digest; block active attempts/Labs and pending briefing hints.
 - Do not publish, merge or deploy without the owner's authorization.
 
-Validate with `.venv/bin/python -m pytest -q`, `npm test`, `ruff check .` and
-`python scripts/validate_i18n.py`. Excerpt provenance, code-block parity and diagram tests
-are required. Native Linux amd64 is the qualified target; do not invent portability claims.
+Before pushing, run the fast local checks: `ruff check .`, `python scripts/validate_i18n.py`,
+`npm test` and `.venv/bin/python -m pytest -q <tests for the touched areas>`. The full
+`pytest -q` suite runs in CI on every pull request and is the merge gate; run it locally only
+for cross-cutting changes or to reproduce a CI failure. Excerpt provenance, code-block parity
+and diagram tests are required (they run in the full suite). Run the real-sandbox integration
+matrix only when checks, setup scripts or solutions change, and only for affected levels;
+text-only changes need none. Native Linux amd64 is the qualified target; do not invent portability claims.
 
 <!-- BEGIN DIBS INTEGRATION v:2 -->
 This repo is coordinated by [dibs](https://github.com/abevz/dibs).
