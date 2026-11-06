@@ -1,32 +1,60 @@
 title: Least-privilege RBAC contracts
-brief: "The route consumer must have narrowly limited access. Restore the intended controller response while unrelated\
-  \ and observer requests remain forbidden.\n\nWork in `~/quest` on the workstation. Supplied files: `controller-sa.yaml`,\
-  \ `observer-sa.yaml`, `controller.yaml`, `observer.yaml`, `role.yaml`, `binding.yaml`, `route.yaml`, `offlimits.yaml`,\
-  \ `secret.yaml`, `api-ca.pem`, `api-endpoint`.\n\n**Requirements:**\n\n- Role `station-reader` allows only `get`\
-  \ on core-API ConfigMap `route`, and its RoleBinding has only ServiceAccount `controller` from this bay namespace\
-  \ as subject.\n- A CA-verified API GET using the mounted controller token returns HTTP `200` and route `north-125`\
-  \ for ConfigMap `route`.\n- Controller requests to list ConfigMaps, get ConfigMap `offlimits`, list Secrets and\
-  \ get Secret `control`, plus the observer GET of ConfigMap `route`, all receive HTTP `403`.\n\n**Verify yourself\
-  \ before Check & finish:** Run these observation commands from `~/quest` on the workstation.\n\n- Settings, identities\
-  \ and status match Requirements.\n\n  ```sh\n  kubectl get role station-reader -o yaml\n  kubectl get rolebinding\
-  \ station-reader -o yaml\n  ```\n\n- The named route returns `north-125` with HTTP `200`; the other four requests\
-  \ return HTTP `403`. Never print or save the token.\n\n  ```sh\n  api=$(cat api-endpoint)\n  token=$(kubectl exec\
-  \ deployment/controller -- cat /credential/token)\n  for path in configmaps/route configmaps configmaps/offlimits\
-  \ secrets secrets/control; do\n    printf 'header = \"Authorization: Bearer %s\"\\n' \"$token\" |\n      curl\
-  \ --config - --cacert api-ca.pem -sS -w '\\nHTTP %{http_code}\\n' \\\n      \"$api/api/v1/namespaces/$DQ_NAMESPACE/$path\"\
-  \n  done\n  unset token\n  ```\n\n- The observer request returns HTTP `403`, without revealing the credential.\n\
-  \n  ```sh\n  api=$(cat api-endpoint)\n  token=$(kubectl exec deployment/observer -- cat /credential/token)\n \
-  \ printf 'header = \"Authorization: Bearer %s\"\\n' \"$token\" |\n    curl --config - --cacert api-ca.pem -sS\
-  \ -o /dev/null -w 'HTTP %{http_code}\\n' \\\n    \"$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route\"\n \
-  \ unset token\n  ```\n\nChecks cover the specified requests and objects, not every possible permission or who\
-  \ issued commands; never print tokens."
-debrief: Least privilege was verified for both operations and identities, including real negative API requests.
-stages.0.brief: Only the intended identity may get the named route.
-hints.0.text: A binding selects identities; a Role defines allowed operations. The supplied Role permits extra ConfigMap
-  lists and Secret reads, and the binding includes the observer. Both workloads already have short-lived projected
-  tokens.
-hints.1.text: get by resourceName is narrower than list, even for the same resource kind.
-hints.2.text: Restrict both the Role rules and subjects, then test explicit denied paths.
+brief: |-
+  The route consumer must have narrowly limited access. Restore the intended controller response while unrelated and observer requests remain forbidden.
+
+  Work on the workstation in `~/quest` with the supplied files:
+  - `controller-sa.yaml`, `observer-sa.yaml`, `controller.yaml`, `observer.yaml`, `role.yaml`, `binding.yaml`, `route.yaml`, `offlimits.yaml`, `secret.yaml`, `api-ca.pem`, `api-endpoint`.
+
+  **Requirements:**
+
+  - The supplied namespaced Role grants only named-read access to the existing route configuration, and its binding grants that access only to the supplied controller identity.
+  - A CA-verified API GET with the mounted controller credential returns HTTP `200` and route `north-125` from the existing route configuration.
+  - Controller requests to list ConfigMaps or Secrets, read the separate protected configuration or control Secret, and the observer request to read the route all receive HTTP `403`.
+
+  Checks cover the specified requests and objects, not every possible permission or who issued commands; never print tokens.
+debrief: Least privilege was verified for both operations and identities, including real negative API
+  requests.
+stages.0.brief: Keep both credentials private and preserve denied access.
+hints.0.text: A binding selects identities; a Role defines allowed operations. The supplied Role permits
+  extra ConfigMap lists and Secret reads, and the binding includes the observer. Both workloads already
+  have short-lived projected tokens.
+hints.1.text: |-
+  get by resourceName is narrower than list, even for the same resource kind.
+
+  Inspect the supplied inputs and live observations:
+
+  ```sh
+  kubectl get role station-reader -o yaml
+    kubectl get rolebinding station-reader -o yaml
+  ```
+hints.2.text: |-
+  Restrict both the Role rules and subjects, then test explicit denied paths.
+
+  Verify the result from `~/quest` on the workstation:
+
+  - The named route returns `north-125` with HTTP `200`; the other four requests return HTTP `403`. Never print or save the token.
+
+    ```sh
+    api=$(cat api-endpoint)
+    token=$(kubectl exec deployment/controller -- cat /credential/token)
+    for path in configmaps/route configmaps configmaps/offlimits secrets secrets/control; do
+      printf 'header = "Authorization: Bearer %s"\n' "$token" |
+        curl --config - --cacert api-ca.pem -sS -w '\nHTTP %{http_code}\n' \
+        "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
+    done
+    unset token
+    ```
+
+  - The observer request returns HTTP `403`, without revealing the credential.
+
+    ```sh
+    api=$(cat api-endpoint)
+    token=$(kubectl exec deployment/observer -- cat /credential/token)
+    printf 'header = "Authorization: Bearer %s"\n' "$token" |
+      curl --config - --cacert api-ca.pem -sS -o /dev/null -w 'HTTP %{http_code}\n' \
+      "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route"
+    unset token
+    ```
 phrases.0: I scoped read access to one named object.
 phrases.1: I removed the unintended RoleBinding subject.
 phrases.2: I verified denied operations using the actual identities.
@@ -45,9 +73,9 @@ diagnostics.denied_configmaps: controller GET configmaps must return HTTP 403.
 diagnostics.denied_configmaps_offlimits: controller GET configmaps/offlimits must return HTTP 403.
 diagnostics.denied_secrets: controller GET secrets must return HTTP 403.
 diagnostics.denied_secrets_control: controller GET secrets/control must return HTTP 403.
-stages.0.objectives.0.text: Role `station-reader` allows only `get` on core-API ConfigMap `route`, and its RoleBinding
-  has only ServiceAccount `controller` from this bay namespace as subject.
-stages.0.objectives.1.text: A CA-verified API GET using the mounted controller token returns HTTP `200` and route
-  `north-125` for ConfigMap `route`.
-stages.0.objectives.2.text: Controller requests to list ConfigMaps, get ConfigMap `offlimits`, list Secrets and
-  get Secret `control`, plus the observer GET of ConfigMap `route`, all receive HTTP `403`.
+stages.0.objectives.0.text: The supplied namespaced Role grants only named-read access to the existing
+  route configuration, and its binding grants that access only to the supplied controller identity.
+stages.0.objectives.1.text: A CA-verified API GET with the mounted controller credential returns HTTP
+  `200` and route `north-125` from the existing route configuration.
+stages.0.objectives.2.text: Controller requests to list ConfigMaps or Secrets, read the separate protected
+  configuration or control Secret, and the observer request to read the route all receive HTTP `403`.

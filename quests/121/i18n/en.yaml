@@ -1,32 +1,57 @@
 title: Admission webhook recovery
-brief: "Route updates are not reaching the workload. Restore the private admission contract and the expected allowed\
-  \ and rejected results.\n\nWork in `~/quest` on the workstation. Supplied files: `route.yaml`, `webhook-repair.json`,\
-  \ `admission-ca.pem`, `admission-target.json`, `board.yaml`, `service.yaml`, `client.yaml`.\n\n**Requirements:**\n\
-  \n- The bay-scoped validating webhook trusts its private CA and has one `route.training.devops-quests.local` callback,\
-  \ failure policy `Fail` and timeout `2` seconds.\n  - The callback endpoint matches `admission-target.json` and\
-  \ its CA matches `admission-ca.pem`, both in `~/quest` on the workstation. Its namespace scope matches the live\
-  \ bay labels `devops-quests.installation` and `devops-quests.run`; configuration `dq-webhook-${DQ_NAMESPACE#dq-}`\
-  \ is read-only to the player.\n- ConfigMap `route` contains route `north-121`, and its server-side admission dry-run\
-  \ succeeds.\n- A server-side dry-run with route `closed` is rejected with `Station route must be north-121`.\n\
-  - Deployment `board` has one ready replica, and `http://board:8080` returns `north-121` to Deployment `client`.\n\
-  \n**Verify yourself before Check & finish:** Run these observation commands from `~/quest` on the workstation.\n\
-  \n- Settings, identities and status match Requirements.\n\n  ```sh\n  name=\"dq-webhook-${DQ_NAMESPACE#dq-}\"\n\
-  \  kubectl get validatingwebhookconfiguration \"$name\" -o yaml\n  kubectl get namespace \"$DQ_NAMESPACE\" -o\
-  \ yaml\n  kubectl get deployment board -o yaml\n  cat admission-target.json admission-ca.pem\n  ```\n\n- The current\
-  \ route is admitted without persisting a change; the consumer receives `north-121`.\n\n  ```sh\n  kubectl get\
-  \ configmap route -o json |\n    jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)'\
-  \ |\n    kubectl apply --dry-run=server -f -\n  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080\n\
-  \  ```\n\n- The dry-run fails with `Station route must be north-121` and changes no stored object.\n\n  ```sh\n\
-  \  kubectl get configmap route -o json |\n    jq '.data.route=\"closed\" | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)'\
-  \ |\n    kubectl apply --dry-run=server -f -\n  ```\n\nChecks observe current callback configuration and admission\
-  \ decisions, not the complete recovery history."
-debrief: The current webhook configuration, route, response and valid and invalid dry-runs matched the checks.
-stages.0.brief: The scoped admission callback must enforce the required route and allow the workload to serve it.
-hints.0.text: Fail-closed distinguishes an unreachable webhook from a rejected object. The supplied callback URL
-  refers to a retired path, so fail-closed admission blocks the route ConfigMap before it reaches the workload.
-hints.1.text: The configuration is read-only; the repair request cannot change namespace scope, CA or server.
-hints.2.text: Request restore-path, repair data.route, then test both admission outcomes. Write `{"action":"restore-path"}`
-  to `webhook-repair.json` and wait for the bounded agent; it can restore only the supplied server path.
+brief: |-
+  Route updates are not reaching the workload. Restore the private admission contract and the expected allowed and rejected results.
+
+  Work on the workstation in `~/quest` with the supplied files:
+  - `board.yaml`, `service.yaml`, `client.yaml`, `route.yaml`, `webhook-repair.json`, `admission-ca.pem`, `admission-target.json`.
+
+  **Requirements:**
+
+  - The bay-scoped admission callback retains the supplied identity, private CA, namespace boundary and fail-closed timeout contract, and reaches its intended private endpoint.
+  - The existing route configuration contains `north-121`, and its server-side admission dry-run succeeds.
+  - A server-side admission dry-run of the closed route is rejected with the private webhook’s route validation error.
+  - Deployment `board` has one ready replica, and `http://board:8080` returns `north-121` to Deployment `client`.
+
+  Checks observe current callback configuration and admission decisions, not the complete recovery history.
+debrief: The current webhook configuration, route, response and valid and invalid dry-runs matched the
+  checks.
+stages.0.brief: The admission configuration stays read-only; recovery stays within the supplied adapter.
+hints.0.text: Fail-closed distinguishes an unreachable webhook from a rejected object. The supplied callback
+  URL refers to a retired path, so fail-closed admission blocks the route ConfigMap before it reaches
+  the workload.
+hints.1.text: |-
+  The configuration is read-only; the repair request cannot change namespace scope, CA or server.
+
+  Inspect the supplied inputs and live observations:
+
+  ```sh
+  name="dq-webhook-${DQ_NAMESPACE#dq-}"
+    kubectl get validatingwebhookconfiguration "$name" -o yaml
+    kubectl get namespace "$DQ_NAMESPACE" -o yaml
+    kubectl get deployment board -o yaml
+    cat admission-target.json admission-ca.pem
+  ```
+hints.2.text: |-
+  Request restore-path, repair data.route, then test both admission outcomes. Write `{"action":"restore-path"}` to `webhook-repair.json` and wait for the bounded agent; it can restore only the supplied server path.
+
+  Verify the result from `~/quest` on the workstation:
+
+  - The current route is admitted without persisting a change; the consumer receives `north-121`.
+
+    ```sh
+    kubectl get configmap route -o json |
+      jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' |
+      kubectl apply --dry-run=server -f -
+    kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+    ```
+
+  - The dry-run fails with `Station route must be north-121` and changes no stored object.
+
+    ```sh
+    kubectl get configmap route -o json |
+      jq '.data.route="closed" | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' |
+      kubectl apply --dry-run=server -f -
+    ```
 phrases.0: I distinguished webhook transport failure from policy denial.
 phrases.1: I preserved fail-closed validation and namespace scope.
 phrases.2: I tested both admitted and denied API requests.
@@ -40,11 +65,12 @@ diagnostics.count: webhook configuration webhooks length must equal 1.
 diagnostics.name: webhook name must equal route.training.devops-quests.local.
 diagnostics.failure_policy: webhook failurePolicy must equal Fail.
 diagnostics.timeout: webhook timeoutSeconds must equal 2.
-diagnostics.url: webhook clientConfig.url must equal `https://dq-webhook-<bay>:8443/validate` for this bay.
-diagnostics.ca: webhook caBundle must be valid base64 and match nonempty admission-ca.pem after trimming surrounding
-  whitespace.
-diagnostics.namespace: The bay installation label must be nonempty, and webhook namespaceSelector must exactly match
-  its installation and run labels.
+diagnostics.url: webhook clientConfig.url must equal `https://dq-webhook-<bay>:8443/validate` for this
+  bay.
+diagnostics.ca: webhook caBundle must be valid base64 and match nonempty admission-ca.pem after trimming
+  surrounding whitespace.
+diagnostics.namespace: The bay installation label must be nonempty, and webhook namespaceSelector must
+  exactly match its installation and run labels.
 diagnostics.route: configmap/route data.route must equal north-121.
 diagnostics.ready: deployment/board readyReplicas must equal 1.
 diagnostics.http: The request to board:8080 must return north-121.
@@ -52,10 +78,11 @@ diagnostics.valid: Preparing the route input and its server dry-run must succeed
 diagnostics.invalid_input: Preparing the closed route dry-run input must succeed.
 diagnostics.denial: The server dry-run must reject route closed.
 diagnostics.denial_text: The denial must contain Station route must be north-121.
-stages.0.objectives.0.text: The bay-scoped validating webhook trusts its private CA and has one `route.training.devops-quests.local`
-  callback, failure policy `Fail` and timeout `2` seconds.
-stages.0.objectives.1.text: ConfigMap `route` contains route `north-121`, and its server-side admission dry-run
-  succeeds.
-stages.0.objectives.2.text: A server-side dry-run with route `closed` is rejected with `Station route must be north-121`.
-stages.0.objectives.3.text: Deployment `board` has one ready replica, and `http://board:8080` returns `north-121`
-  to Deployment `client`.
+stages.0.objectives.0.text: The bay-scoped admission callback retains the supplied identity, private CA,
+  namespace boundary and fail-closed timeout contract, and reaches its intended private endpoint.
+stages.0.objectives.1.text: The existing route configuration contains `north-121`, and its server-side
+  admission dry-run succeeds.
+stages.0.objectives.2.text: A server-side admission dry-run of the closed route is rejected with the private
+  webhook’s route validation error.
+stages.0.objectives.3.text: Deployment `board` has one ready replica, and `http://board:8080` returns
+  `north-121` to Deployment `client`.

@@ -1,29 +1,52 @@
 title: Blue-green und Replikat canary
-brief: "Der Board-Endpunkt benötigt zwei aufeinanderfolgende Release-Zustände. Bedienen Sie zuerst nur green und\
-  \ danach einen bereiten Blue/Green-Pool im Verhältnis drei zu eins.\n\nArbeiten Sie in `~/quest` auf der Workstation.\
-  \ Bereitgestellte Dateien: `blue.yaml`, `green.yaml`, `service.yaml`, `client.yaml`.\n\n**Requirements:**\n\n\
-  - Stufe 1:\n  - Service `board` wählt nur Pods mit Label `app=green` und liefert Deployment `client` unter `http://board:8080`\
-  \ den Wert `green-115`.\n- Stufe 2:\n  - Deployments `blue` und `green` haben genau `3` beziehungsweise `1` Replikate,\
-  \ alle bereit.\n  - Service `board` wählt nur Pods mit Label `release=board` und hat `4` verschiedene bereite\
-  \ EndpointSlice-Ziele.\n  - Von Deployment `client` antwortet jede blaue und grüne Pod-IP auf Port `8080` mit\
-  \ dem zugehörigen `blue-115` oder `green-115`, und Service `board:8080` liefert einen dieser Werte.\n\n**Verify\
-  \ yourself before Check & finish:** Führen Sie diese Beobachtungsbefehle aus `~/quest` auf der Workstation aus.\n\
-  \n- Einstellungen, Identität und Status entsprechen den Anforderungen.\n\n  ```sh\n  kubectl get deployment blue\
-  \ green -o yaml\n  kubectl get service board -o yaml\n  kubectl get endpointslices -l kubernetes.io/service-name=board\
-  \ -o yaml\n  ```\n\n- `kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080` — Stufe eins liefert\
-  \ `green-115`; Stufe zwei liefert `blue-115` oder `green-115`.\n\n- Jeder blaue Pod liefert `blue-115`, jeder\
-  \ grüne Pod `green-115`.\n\n  ```sh\n  for version in blue green; do\n    for ip in $(kubectl get pods -l \"app=$version\"\
-  \ -o jsonpath='{.items[*].status.podIP}'); do\n      kubectl exec deployment/client -- wget -qO- -T 3 \"http://$ip:8080\"\
-  \n    done\n  done\n  ```\n\nEin Replikatverhältnis `3:1` garantiert keine `25%` bei kleinen Stichproben oder\
-  \ sitzungsgebundenem Traffic; die Prüfungen ordnen Endpunktnamen nicht diesen Pods zu, messen keine Verteilung\
-  \ und beweisen keinen Änderungsverlauf."
+brief: |-
+  Der Board-Endpunkt benötigt zwei aufeinanderfolgende Release-Zustände. Bedienen Sie zuerst nur green und danach einen bereiten Blue/Green-Pool im Verhältnis drei zu eins.
+
+  Arbeiten Sie auf der Workstation in `~/quest` mit den bereitgestellten Dateien:
+  - `blue.yaml`, `green.yaml`, `service.yaml`, `client.yaml`.
+
+  **Requirements:**
+
+  - Stufe 1:
+    - In Stufe 1 bedient Service `board` nur das grüne Release und liefert `green-115` an Deployment `client` unter `http://board:8080`.
+
+  - Stufe 2:
+    - Deployments `blue` und `green` haben genau `3` beziehungsweise `1` Replikate, alle bereit.
+    - In Stufe 2 bedient Service `board` nur den bereitgestellten blue/green-Release-Pool und hat `4` verschiedene bereite EndpointSlice-Ziele.
+    - Von Deployment `client` antwortet jede blaue und grüne Pod-IP auf Port `8080` mit dem zugehörigen `blue-115` oder `green-115`, und Service `board:8080` liefert einen dieser Werte.
+
+  Ein Replikatverhältnis `3:1` garantiert keine `25%` bei kleinen Stichproben oder sitzungsgebundenem Traffic; die Prüfungen ordnen Endpunktnamen nicht diesen Pods zu, messen keine Verteilung und beweisen keinen Änderungsverlauf.
 debrief: Die Standardversionen Services und Deployments bieten eine einfache Release-Aufteilung ohne gewichtetes
   Routing auf Mesh-Ebene oder eine Null-Ausfallzeit-Garantie.
 stages.0.brief: Nur das grüne Release darf board bedienen.
 stages.1.brief: Beide Releases müssen im Drei-zu-eins-Pool verfügbar bleiben.
 hints.0.text: Blue-green ändert die vollständige Version, die der Service auswählt.
-hints.1.text: Ein erweiterter selector benötigt eine gemeinsame Bezeichnung auf beiden Pod-Vorlagen.
-hints.2.text: Skalieren Sie stable Deployment auf drei und candidate auf eins, dann ist inspect bereit für endpoints.
+hints.1.text: |-
+  Ein erweiterter selector benötigt eine gemeinsame Bezeichnung auf beiden Pod-Vorlagen.
+
+  Prüfen Sie die bereitgestellten Eingaben und laufenden Beobachtungen:
+
+  ```sh
+  kubectl get deployment blue green -o yaml
+    kubectl get service board -o yaml
+    kubectl get endpointslices -l kubernetes.io/service-name=board -o yaml
+  ```
+hints.2.text: |-
+  Skalieren Sie stable Deployment auf drei und candidate auf eins, dann ist inspect bereit für endpoints.
+
+  Prüfen Sie das Ergebnis in `~/quest` auf der Workstation:
+
+  - `kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080` — Stufe eins liefert `green-115`; Stufe zwei liefert `blue-115` oder `green-115`.
+
+  - Jeder blaue Pod liefert `blue-115`, jeder grüne Pod `green-115`.
+
+    ```sh
+    for version in blue green; do
+      for ip in $(kubectl get pods -l "app=$version" -o jsonpath='{.items[*].status.podIP}'); do
+        kubectl exec deployment/client -- wget -qO- -T 3 "http://$ip:8080"
+      done
+    done
+    ```
 phrases.0: Ich habe den blue-green Service selector gewechselt.
 phrases.1: Ich habe stable und candidate endpoints überprüft.
 phrases.2: Ich habe aus einer kleinen Stichprobe keine genauen Traffic-Gewichte abgeleitet.
@@ -46,12 +69,13 @@ diagnostics.ips_green: green Pod IP muss vorhanden sein.
 diagnostics.pod_blue: Jede zurückgegebene blue-Pod-IP muss blue-115 liefern.
 diagnostics.pod_green: Jede zurückgegebene green-Pod-IP muss green-115 liefern.
 diagnostics.canary_http: board:8080 muss blue-115 oder green-115 liefern.
-stages.0.objectives.0.text: Service `board` wählt nur Pods mit Label `app=green` und liefert Deployment `client`
-  unter `http://board:8080` den Wert `green-115`.
-stages.1.objectives.0.text: Deployments `blue` und `green` haben genau `3` beziehungsweise `1` Replikate, alle bereit.
-stages.1.objectives.1.text: Service `board` wählt nur Pods mit Label `release=board` und hat `4` verschiedene bereite
-  EndpointSlice-Ziele.
-stages.1.objectives.2.text: Von Deployment `client` antwortet jede blaue und grüne Pod-IP auf Port `8080` mit dem
-  zugehörigen `blue-115` oder `green-115`, und Service `board:8080` liefert einen dieser Werte.
-diagnostics.probe_budget: Das Zeitbudget der Prüfungen ist abgelaufen, bevor alle Pod-IPs geprüft wurden. Nicht
-  geprüfte IPs stehen in der Diagnoseausgabe; ihre Antworten wurden nicht bewertet.
+stages.0.objectives.0.text: In Stufe 1 bedient Service `board` nur das grüne Release und liefert `green-115`
+  an Deployment `client` unter `http://board:8080`.
+stages.1.objectives.0.text: Deployments `blue` und `green` haben genau `3` beziehungsweise `1` Replikate,
+  alle bereit.
+stages.1.objectives.1.text: In Stufe 2 bedient Service `board` nur den bereitgestellten blue/green-Release-Pool
+  und hat `4` verschiedene bereite EndpointSlice-Ziele.
+stages.1.objectives.2.text: Von Deployment `client` antwortet jede blaue und grüne Pod-IP auf Port `8080`
+  mit dem zugehörigen `blue-115` oder `green-115`, und Service `board:8080` liefert einen dieser Werte.
+diagnostics.probe_budget: Das Zeitbudget der Prüfungen ist abgelaufen, bevor alle Pod-IPs geprüft wurden.
+  Nicht geprüfte IPs stehen in der Diagnoseausgabe; ihre Antworten wurden nicht bewertet.

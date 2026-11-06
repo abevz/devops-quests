@@ -1,30 +1,57 @@
 title: Prometheus scrape diagnosis
-brief: "Monitoring is not showing the expected board queue results. Restore real scrape health and the agreed gauge\
-  \ observations.\n\nWork in `~/quest` on the workstation. Supplied files: `metrics.yaml`, `board.yaml`, `service.yaml`,\
-  \ `client.yaml`, `prometheus-target.json`.\n\n**Requirements:**\n\n- Service `board` selects only Pods labelled\
-  \ `app=board` and connects its declared HTTP port to the application listener.\n  - The declared Service HTTP\
-  \ port is `8080`; the exporter listener is specified in `board.yaml`. Observe the private Prometheus URL from\
-  \ `prometheus-target.json` on the workstation; its scrape target is `board:8080/metrics.txt`.\n- Private Prometheus\
-  \ reports one `up` result of `1` for job `board`, and at least one active `board` target is `up` with no scrape\
-  \ error.\n- For job `board` and route `north`, `station_queue_depth` has exactly `2` series with sum `7`; both\
-  \ aggregate queries succeed with one result.\n\n**Verify yourself before Check & finish:** Run these observation\
-  \ commands from `~/quest` on the workstation.\n\n- The Service matches its declared listener contract; an active\
-  \ `board` target is `up` with no scrape error.\n\n  ```sh\n  kubectl get service board -o yaml\n  url=$(jq -r\
-  \ .url prometheus-target.json)\n  kubectl exec deployment/client -- wget -qO- -T 3 \"$url/api/v1/targets?state=active\"\
-  \n  ```\n\n- The query succeeds with one result whose value is `1`.\n\n  ```sh\n  url=$(jq -r .url prometheus-target.json)\n\
-  \  kubectl exec deployment/client -- wget -qO- -T 3 \"$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D\"\n  ```\n\
-  \n- Both queries succeed with one result: sum `7`, count `2`.\n\n  ```sh\n  url=$(jq -r .url prometheus-target.json)\n\
-  \  for aggregate in sum count; do\n    kubectl exec deployment/client -- wget -qO- -T 3 \"$url/api/v1/query?query=$aggregate%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29\"\
-  \n  done\n  ```\n\nThe gauge is a synthetic training fixture; Prometheus and its two-second scrape are real. Checks\
-  \ observe current Service/query results, not edit history or who issued queries."
-debrief: A real scrape and query proved recovery; readiness alone would not prove recorded application metrics.
-stages.0.brief: The real scrape must be healthy and the queue queries must show the required results.
+brief: |-
+  Monitoring is not showing the expected board queue results. Restore real scrape health and the agreed gauge observations.
+
+  Work on the workstation in `~/quest` with the supplied files:
+  - `metrics.yaml`, `board.yaml`, `service.yaml`, `client.yaml`, `prometheus-target.json`.
+
+  **Requirements:**
+
+  - The existing board Service reaches only the supplied board workload through its declared HTTP interface and application listener.
+  - Private Prometheus reports one `up` result of `1` for job `board`, and at least one active `board` target is `up` with no scrape error.
+  - For job `board` and route `north`, `station_queue_depth` has exactly `2` series with sum `7`; both aggregate queries succeed with one result.
+
+  The gauge is a synthetic training fixture; Prometheus and its two-second scrape are real. Checks observe current Service/query results, not edit history or who issued queries.
+debrief: A real scrape and query proved recovery; readiness alone would not prove recorded application
+  metrics.
+stages.0.brief: Report real scrape and gauge observations, not inferred traffic history.
 hints.0.text: Separate exporter response, Service forwarding and scrape health.
-hints.1.text: An up value of zero means the scrape failed, not that the queue is empty. Queue depth is a current-value
-  gauge, so `rate()` is not appropriate for it.
-hints.2.text: Repair the Service backend port, wait for a scrape and query both count and sum. The board listener
-  serves `8080`, but the supplied Service backend is `8099`; restore only its targetPort to `8080` and wait for
-  a scrape.
+hints.1.text: |-
+  An up value of zero means the scrape failed, not that the queue is empty. Queue depth is a current-value gauge, so `rate()` is not appropriate for it.
+
+  Inspect the supplied inputs and live observations:
+
+  ```sh
+  kubectl get service board -o yaml
+  cat prometheus-target.json
+  ```
+hints.2.text: |-
+  Repair the Service backend port, wait for a scrape and query both count and sum. The board listener serves `8080`, but the supplied Service backend is `8099`; restore only its targetPort to `8080` and wait for a scrape.
+
+  Verify the result from `~/quest` on the workstation:
+
+  - The query succeeds with one result whose value is `1`.
+
+    ```sh
+    url=$(jq -r .url prometheus-target.json)
+    kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
+    ```
+
+  - Both queries succeed with one result: sum `7`, count `2`.
+
+    ```sh
+    url=$(jq -r .url prometheus-target.json)
+    for aggregate in sum count; do
+      kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=$aggregate%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29"
+    done
+    ```
+
+  An active board target is up with no scrape error:
+
+  ```sh
+  url=$(jq -r .url prometheus-target.json)
+  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/targets?state=active"
+  ```
 phrases.0: I traced the scrape failure through the Service.
 phrases.1: I verified up and the recorded metric labels.
 phrases.2: I used aggregation appropriate for a gauge.
@@ -47,9 +74,9 @@ diagnostics.sum_value: sum query value must be 7.
 diagnostics.count_status: count query must succeed.
 diagnostics.count_count: count query must return exactly one result.
 diagnostics.count_value: count query value must be 2.
-stages.0.objectives.0.text: Service `board` selects only Pods labelled `app=board` and connects its declared HTTP
-  port to the application listener.
-stages.0.objectives.1.text: Private Prometheus reports one `up` result of `1` for job `board`, and at least one
-  active `board` target is `up` with no scrape error.
-stages.0.objectives.2.text: For job `board` and route `north`, `station_queue_depth` has exactly `2` series with
-  sum `7`; both aggregate queries succeed with one result.
+stages.0.objectives.0.text: The existing board Service reaches only the supplied board workload through
+  its declared HTTP interface and application listener.
+stages.0.objectives.1.text: Private Prometheus reports one `up` result of `1` for job `board`, and at
+  least one active `board` target is `up` with no scrape error.
+stages.0.objectives.2.text: For job `board` and route `north`, `station_queue_depth` has exactly `2` series
+  with sum `7`; both aggregate queries succeed with one result.

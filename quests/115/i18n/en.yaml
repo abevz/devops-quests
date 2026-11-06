@@ -1,28 +1,52 @@
 title: Blue-green and replica canary
-brief: "The board endpoint needs two successive release states. First serve green only, then provide a ready three-to-one\
-  \ blue/green pool.\n\nWork in `~/quest` on the workstation. Supplied files: `blue.yaml`, `green.yaml`, `service.yaml`,\
-  \ `client.yaml`.\n\n**Requirements:**\n\n- Stage 1:\n  - Service `board` selects only Pods labelled `app=green`\
-  \ and returns `green-115` to Deployment `client` at `http://board:8080`.\n- Stage 2:\n  - Deployments `blue` and\
-  \ `green` have exactly `3` and `1` replicas respectively, all ready.\n  - Service `board` selects only Pods labelled\
-  \ `release=board` and has `4` distinct ready EndpointSlice targets.\n  - From Deployment `client`, every blue\
-  \ and green Pod IP responds on port `8080` with its corresponding `blue-115` or `green-115`, and Service `board:8080`\
-  \ returns either value.\n\n**Verify yourself before Check & finish:** Run these observation commands from `~/quest`\
-  \ on the workstation.\n\n- Settings, identity and status match Requirements.\n\n  ```sh\n  kubectl get deployment\
-  \ blue green -o yaml\n  kubectl get service board -o yaml\n  kubectl get endpointslices -l kubernetes.io/service-name=board\
-  \ -o yaml\n  ```\n\n- `kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080` — Stage one returns\
-  \ `green-115`; stage two returns `blue-115` or `green-115`.\n\n- Each blue Pod returns `blue-115` and each green\
-  \ Pod returns `green-115`.\n\n  ```sh\n  for version in blue green; do\n    for ip in $(kubectl get pods -l \"\
-  app=$version\" -o jsonpath='{.items[*].status.podIP}'); do\n      kubectl exec deployment/client -- wget -qO-\
-  \ -T 3 \"http://$ip:8080\"\n    done\n  done\n  ```\n\nA `3:1` replica ratio does not guarantee `25%` of small-sample\
-  \ or session-affine traffic; checks neither match endpoint names to those Pods nor measure distribution or prove\
-  \ edit history."
-debrief: Standard Services and Deployments provide a simple release split, without mesh-level weighted routing or
-  a zero-downtime guarantee.
+brief: |-
+  The board endpoint needs two successive release states. First serve green only, then provide a ready three-to-one blue/green pool.
+
+  Work on the workstation in `~/quest` with the supplied files:
+  - `blue.yaml`, `green.yaml`, `service.yaml`, `client.yaml`.
+
+  **Requirements:**
+
+  - Stage 1:
+    - In stage 1, Service `board` serves only the green release and returns `green-115` to Deployment `client` at `http://board:8080`.
+
+  - Stage 2:
+    - Deployments `blue` and `green` have exactly `3` and `1` replicas respectively, all ready.
+    - In stage 2, Service `board` serves only the supplied blue and green release pool and has `4` distinct ready EndpointSlice targets.
+    - From Deployment `client`, every blue and green Pod IP responds on port `8080` with its corresponding `blue-115` or `green-115`, and Service `board:8080` returns either value.
+
+  A `3:1` replica ratio does not guarantee `25%` of small-sample or session-affine traffic; checks neither match endpoint names to those Pods nor measure distribution or prove edit history.
+debrief: Standard Services and Deployments provide a simple release split, without mesh-level weighted
+  routing or a zero-downtime guarantee.
 stages.0.brief: Only the green release must serve board.
 stages.1.brief: Both releases must remain available in the three-to-one pool.
 hints.0.text: Blue-green changes which complete release the Service selects.
-hints.1.text: A widened selector needs a common label on both Pod templates.
-hints.2.text: Scale the stable Deployment to three and candidate to one, then inspect ready endpoints.
+hints.1.text: |-
+  A widened selector needs a common label on both Pod templates.
+
+  Inspect the supplied inputs and live observations:
+
+  ```sh
+  kubectl get deployment blue green -o yaml
+    kubectl get service board -o yaml
+    kubectl get endpointslices -l kubernetes.io/service-name=board -o yaml
+  ```
+hints.2.text: |-
+  Scale the stable Deployment to three and candidate to one, then inspect ready endpoints.
+
+  Verify the result from `~/quest` on the workstation:
+
+  - `kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080` — Stage one returns `green-115`; stage two returns `blue-115` or `green-115`.
+
+  - Each blue Pod returns `blue-115` and each green Pod returns `green-115`.
+
+    ```sh
+    for version in blue green; do
+      for ip in $(kubectl get pods -l "app=$version" -o jsonpath='{.items[*].status.podIP}'); do
+        kubectl exec deployment/client -- wget -qO- -T 3 "http://$ip:8080"
+      done
+    done
+    ```
 phrases.0: I switched the blue-green Service selector.
 phrases.1: I verified stable and candidate endpoints.
 phrases.2: I did not infer exact traffic weights from a small sample.
@@ -45,12 +69,13 @@ diagnostics.ips_green: green Pod IP must be present.
 diagnostics.pod_blue: Every returned blue Pod IP must return blue-115.
 diagnostics.pod_green: Every returned green Pod IP must return green-115.
 diagnostics.canary_http: board:8080 must return blue-115 or green-115.
-stages.0.objectives.0.text: Service `board` selects only Pods labelled `app=green` and returns `green-115` to Deployment
-  `client` at `http://board:8080`.
-stages.1.objectives.0.text: Deployments `blue` and `green` have exactly `3` and `1` replicas respectively, all ready.
-stages.1.objectives.1.text: Service `board` selects only Pods labelled `release=board` and has `4` distinct ready
-  EndpointSlice targets.
-stages.1.objectives.2.text: From Deployment `client`, every blue and green Pod IP responds on port `8080` with its
-  corresponding `blue-115` or `green-115`, and Service `board:8080` returns either value.
-diagnostics.probe_budget: The probe time budget expired before all Pod IPs were checked. The unchecked IPs are listed
-  in the diagnostic output; their responses were not evaluated.
+stages.0.objectives.0.text: In stage 1, Service `board` serves only the green release and returns `green-115`
+  to Deployment `client` at `http://board:8080`.
+stages.1.objectives.0.text: Deployments `blue` and `green` have exactly `3` and `1` replicas respectively,
+  all ready.
+stages.1.objectives.1.text: In stage 2, Service `board` serves only the supplied blue and green release
+  pool and has `4` distinct ready EndpointSlice targets.
+stages.1.objectives.2.text: From Deployment `client`, every blue and green Pod IP responds on port `8080`
+  with its corresponding `blue-115` or `green-115`, and Service `board:8080` returns either value.
+diagnostics.probe_budget: The probe time budget expired before all Pod IPs were checked. The unchecked
+  IPs are listed in the diagnostic output; their responses were not evaluated.

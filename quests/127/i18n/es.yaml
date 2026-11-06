@@ -1,32 +1,57 @@
 title: Diagnóstico de la recopilación de métricas de Prometheus
-brief: "La monitorización no muestra los resultados esperados de la cola board. Restaure la salud real del scrape\
-  \ y las observaciones acordadas del gauge.\n\nTrabaje en `~/quest` en la estación de trabajo. Archivos suministrados:\
-  \ `metrics.yaml`, `board.yaml`, `service.yaml`, `client.yaml`, `prometheus-target.json`.\n\n**Requirements:**\n\
-  \n- El Service `board` selecciona solo Pods con etiqueta `app=board` y conecta su puerto HTTP declarado al listener\
-  \ de la aplicación.\n  - El puerto HTTP declarado del Service es `8080`; el listener del exporter está en `board.yaml`.\
-  \ Observe la URL privada de Prometheus de `prometheus-target.json` en la estación; su destino de scrape es `board:8080/metrics.txt`.\n\
-  - Prometheus privado informa un resultado `up` de `1` para el job `board`, y al menos un destino `board` activo\
-  \ está `up` sin error de scrape.\n- Para job `board` y ruta `north`, `station_queue_depth` tiene exactamente `2`\
-  \ series con suma `7`; ambas consultas agregadas tienen éxito con un resultado.\n\n**Verify yourself before Check\
-  \ & finish:** Ejecute estos comandos de observación desde `~/quest` en la estación de trabajo.\n\n- El Service\
-  \ cumple su contrato declarado de listener; un destino `board` activo está `up` sin error de scrape.\n\n  ```sh\n\
-  \  kubectl get service board -o yaml\n  url=$(jq -r .url prometheus-target.json)\n  kubectl exec deployment/client\
-  \ -- wget -qO- -T 3 \"$url/api/v1/targets?state=active\"\n  ```\n\n- La consulta tiene éxito con un resultado\
-  \ cuyo valor es `1`.\n\n  ```sh\n  url=$(jq -r .url prometheus-target.json)\n  kubectl exec deployment/client\
-  \ -- wget -qO- -T 3 \"$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D\"\n  ```\n\n- Ambas consultas tienen éxito\
-  \ con un resultado: suma `7`, cantidad `2`.\n\n  ```sh\n  url=$(jq -r .url prometheus-target.json)\n  for aggregate\
-  \ in sum count; do\n    kubectl exec deployment/client -- wget -qO- -T 3 \"$url/api/v1/query?query=$aggregate%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29\"\
-  \n  done\n  ```\n\nEl gauge es un fixture sintético de práctica; Prometheus y su scrape cada dos segundos son\
-  \ reales. Las comprobaciones observan resultados actuales del Service/consultas, no el historial ni quién consultó."
-debrief: Un verdadero scrape y query demostraron recuperación; readiness por sí solo no demostraría las métricas
-  de aplicación registradas.
-stages.0.brief: El scrape real debe estar sano y las consultas de cola mostrar los resultados requeridos.
+brief: |-
+  La monitorización no muestra los resultados esperados de la cola board. Restaure la salud real del scrape y las observaciones acordadas del gauge.
+
+  Trabaja en la workstation en `~/quest` con los archivos suministrados:
+  - `metrics.yaml`, `board.yaml`, `service.yaml`, `client.yaml`, `prometheus-target.json`.
+
+  **Requirements:**
+
+  - El Service board existente alcanza solo la carga board suministrada mediante su interfaz HTTP declarada y el listener de la aplicación.
+  - Prometheus privado informa un resultado `up` de `1` para el job `board`, y al menos un destino `board` activo está `up` sin error de scrape.
+  - Para job `board` y ruta `north`, `station_queue_depth` tiene exactamente `2` series con suma `7`; ambas consultas agregadas tienen éxito con un resultado.
+
+  El gauge es un fixture sintético de práctica; Prometheus y su scrape cada dos segundos son reales. Las comprobaciones observan resultados actuales del Service/consultas, no el historial ni quién consultó.
+debrief: Un verdadero scrape y query demostraron recuperación; readiness por sí solo no demostraría las
+  métricas de aplicación registradas.
+stages.0.brief: Demuestra observaciones reales de scrape y gauge, no un historial de tráfico inferido.
 hints.0.text: Separe la respuesta exporter, el reenvío Service y el estado scrape.
-hints.1.text: Un valor de up de cero significa que el scrape falló, no que la cola esté vacía. La profundidad de
-  cola es un gauge de valor actual, por lo que `rate()` no es apropiado.
-hints.2.text: Reparar el puerto Service backend, esperar un scrape y consultar tanto el conteo como el sum. El listener
-  board sirve en `8080`, pero el backend suministrado del Service es `8099`; restaure solo targetPort a `8080` y
-  espere un scrape.
+hints.1.text: |-
+  Un valor de up de cero significa que el scrape falló, no que la cola esté vacía. La profundidad de cola es un gauge de valor actual, por lo que `rate()` no es apropiado.
+
+  Inspecciona los datos suministrados y las observaciones activas:
+
+  ```sh
+  kubectl get service board -o yaml
+  cat prometheus-target.json
+  ```
+hints.2.text: |-
+  Reparar el puerto Service backend, esperar un scrape y consultar tanto el conteo como el sum. El listener board sirve en `8080`, pero el backend suministrado del Service es `8099`; restaure solo targetPort a `8080` y espere un scrape.
+
+  Verifica el resultado desde `~/quest` en la workstation:
+
+  - La consulta tiene éxito con un resultado cuyo valor es `1`.
+
+    ```sh
+    url=$(jq -r .url prometheus-target.json)
+    kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
+    ```
+
+  - Ambas consultas tienen éxito con un resultado: suma `7`, cantidad `2`.
+
+    ```sh
+    url=$(jq -r .url prometheus-target.json)
+    for aggregate in sum count; do
+      kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=$aggregate%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29"
+    done
+    ```
+
+  Un destino board activo está up sin error de scrape:
+
+  ```sh
+  url=$(jq -r .url prometheus-target.json)
+  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/targets?state=active"
+  ```
 phrases.0: Seguí la falla de scrape a través del Service.
 phrases.1: Verifiqué up y la métrica registrada labels.
 phrases.2: Utilicé la agregación adecuada para un gauge.
@@ -49,9 +74,9 @@ diagnostics.sum_value: El valor de la consulta sum debe ser 7.
 diagnostics.count_status: La consulta count debe tener éxito.
 diagnostics.count_count: La consulta count debe devolver exactamente un resultado.
 diagnostics.count_value: El valor de la consulta count debe ser 2.
-stages.0.objectives.0.text: El Service `board` selecciona solo Pods con etiqueta `app=board` y conecta su puerto
-  HTTP declarado al listener de la aplicación.
-stages.0.objectives.1.text: Prometheus privado informa un resultado `up` de `1` para el job `board`, y al menos
-  un destino `board` activo está `up` sin error de scrape.
-stages.0.objectives.2.text: Para job `board` y ruta `north`, `station_queue_depth` tiene exactamente `2` series
-  con suma `7`; ambas consultas agregadas tienen éxito con un resultado.
+stages.0.objectives.0.text: El Service board existente alcanza solo la carga board suministrada mediante
+  su interfaz HTTP declarada y el listener de la aplicación.
+stages.0.objectives.1.text: Prometheus privado informa un resultado `up` de `1` para el job `board`, y
+  al menos un destino `board` activo está `up` sin error de scrape.
+stages.0.objectives.2.text: Para job `board` y ruta `north`, `station_queue_depth` tiene exactamente `2`
+  series con suma `7`; ambas consultas agregadas tienen éxito con un resultado.

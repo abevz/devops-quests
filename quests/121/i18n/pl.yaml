@@ -1,32 +1,57 @@
 title: Odzyskiwanie webhooka dostępu
-brief: "Aktualizacje trasy nie docierają do obciążenia. Przywróć prywatny kontrakt admission i oczekiwane wyniki\
-  \ dopuszczonych oraz odrzuconych żądań.\n\nPracuj w `~/quest` na stacji roboczej. Dostarczone pliki: `route.yaml`,\
-  \ `webhook-repair.json`, `admission-ca.pem`, `admission-target.json`, `board.yaml`, `service.yaml`, `client.yaml`.\n\
-  \n**Requirements:**\n\n- Webhook walidacyjny ograniczony do piaskownicy ufa swojemu prywatnemu CA i ma jeden callback\
-  \ `route.training.devops-quests.local`, zasadę awarii `Fail` i limit czasu `2` sekundy.\n  - Endpoint callbacku\
-  \ odpowiada `admission-target.json`, a CA `admission-ca.pem`, oba w `~/quest` na stacji. Zakres namespace odpowiada\
-  \ bieżącym etykietom piaskownicy `devops-quests.installation` i `devops-quests.run`; konfiguracja `dq-webhook-${DQ_NAMESPACE#dq-}`\
-  \ jest dla gracza tylko do odczytu.\n- ConfigMap `route` zawiera trasę `north-121`, a jego serwerowa próba admission\
-  \ kończy się powodzeniem (dry-run).\n- Próba serwerowa z trasą `closed` jest odrzucana z `Station route must be\
-  \ north-121` (dry-run).\n- Deployment `board` ma jedną gotową replikę, a `http://board:8080` zwraca `north-121`\
-  \ do Deployment `client`.\n\n**Verify yourself before Check & finish:** Wykonaj te polecenia obserwacji z `~/quest`\
-  \ na stacji roboczej.\n\n- Ustawienia, tożsamości i stan odpowiadają wymaganiom.\n\n  ```sh\n  name=\"dq-webhook-${DQ_NAMESPACE#dq-}\"\
-  \n  kubectl get validatingwebhookconfiguration \"$name\" -o yaml\n  kubectl get namespace \"$DQ_NAMESPACE\" -o\
-  \ yaml\n  kubectl get deployment board -o yaml\n  cat admission-target.json admission-ca.pem\n  ```\n\n- Bieżąca\
-  \ trasa jest dopuszczona bez zapisu zmiany; odbiorca otrzymuje `north-121`.\n\n  ```sh\n  kubectl get configmap\
-  \ route -o json |\n    jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)'\
-  \ |\n    kubectl apply --dry-run=server -f -\n  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080\n\
-  \  ```\n\n- Próba jest odrzucana z `Station route must be north-121` i nie zmienia zapisanego obiektu (dry-run).\n\
-  \n  ```sh\n  kubectl get configmap route -o json |\n    jq '.data.route=\"closed\" | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)'\
-  \ |\n    kubectl apply --dry-run=server -f -\n  ```\n\nKontrole obserwują bieżącą konfigurację callbacku i decyzje\
-  \ admission, nie pełną historię odzyskiwania."
-debrief: Bieżąca konfiguracja webhooka, trasa, odpowiedź oraz poprawna i błędna próby dry-run odpowiadały kontrolom.
-stages.0.brief: Ograniczony callback admission musi egzekwować wymaganą trasę i pozwalać obciążeniu ją obsługiwać.
-hints.0.text: Fail-closed odróżnia nieosiągalny webhook od obiektu odrzuconego. Dostarczony URL callbacku wskazuje
-  wycofaną ścieżkę, więc admission fail-closed blokuje ConfigMap trasy przed dotarciem do obciążenia.
-hints.1.text: Konfiguracja jest tylko do odczytu; żądanie naprawy nie może zmienić zakresu namespace, CA ani serwera.
-hints.2.text: Poproś o restore-path, napraw data.route, a następnie przetestuj oba wyniki przyjęcia. Zapisz `{"action":"restore-path"}`
-  w `webhook-repair.json` i poczekaj na ograniczonego agenta; przywraca on tylko dostarczoną ścieżkę serwera.
+brief: |-
+  Aktualizacje trasy nie docierają do obciążenia. Przywróć prywatny kontrakt admission i oczekiwane wyniki dopuszczonych oraz odrzuconych żądań.
+
+  Pracuj na workstation w `~/quest` z dostarczonymi plikami:
+  - `board.yaml`, `service.yaml`, `client.yaml`, `route.yaml`, `webhook-repair.json`, `admission-ca.pem`, `admission-target.json`.
+
+  **Requirements:**
+
+  - Callback admission ograniczony do bay zachowuje dostarczoną tożsamość, prywatne CA, granicę namespace i kontrakt limitu czasu z blokowaniem przy awarii oraz dociera do zamierzonego prywatnego endpointu.
+  - Istniejąca konfiguracja trasy zawiera `north-121`, a jej próbne admission po stronie serwera kończy się powodzeniem.
+  - Próbne admission zamkniętej trasy po stronie serwera zostaje odrzucone z błędem walidacji trasy z prywatnego webhooka.
+  - Deployment `board` ma jedną gotową replikę, a `http://board:8080` zwraca `north-121` do Deployment `client`.
+
+  Kontrole obserwują bieżącą konfigurację callbacku i decyzje admission, nie pełną historię odzyskiwania.
+debrief: Bieżąca konfiguracja webhooka, trasa, odpowiedź oraz poprawna i błędna próby dry-run odpowiadały
+  kontrolom.
+stages.0.brief: Konfiguracja admission pozostaje tylko do odczytu; odzyskiwanie mieści się w dostarczonym
+  adapterze.
+hints.0.text: Fail-closed odróżnia nieosiągalny webhook od obiektu odrzuconego. Dostarczony URL callbacku
+  wskazuje wycofaną ścieżkę, więc admission fail-closed blokuje ConfigMap trasy przed dotarciem do obciążenia.
+hints.1.text: |-
+  Konfiguracja jest tylko do odczytu; żądanie naprawy nie może zmienić zakresu namespace, CA ani serwera.
+
+  Sprawdź dostarczone dane i bieżące obserwacje:
+
+  ```sh
+  name="dq-webhook-${DQ_NAMESPACE#dq-}"
+    kubectl get validatingwebhookconfiguration "$name" -o yaml
+    kubectl get namespace "$DQ_NAMESPACE" -o yaml
+    kubectl get deployment board -o yaml
+    cat admission-target.json admission-ca.pem
+  ```
+hints.2.text: |-
+  Poproś o restore-path, napraw data.route, a następnie przetestuj oba wyniki przyjęcia. Zapisz `{"action":"restore-path"}` w `webhook-repair.json` i poczekaj na ograniczonego agenta; przywraca on tylko dostarczoną ścieżkę serwera.
+
+  Sprawdź wynik z `~/quest` na workstation:
+
+  - Bieżąca trasa jest dopuszczona bez zapisu zmiany; odbiorca otrzymuje `north-121`.
+
+    ```sh
+    kubectl get configmap route -o json |
+      jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' |
+      kubectl apply --dry-run=server -f -
+    kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+    ```
+
+  - Próba jest odrzucana z `Station route must be north-121` i nie zmienia zapisanego obiektu (dry-run).
+
+    ```sh
+    kubectl get configmap route -o json |
+      jq '.data.route="closed" | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' |
+      kubectl apply --dry-run=server -f -
+    ```
 phrases.0: Rozróżniłem błąd transportu webhook od odmowy policy.
 phrases.1: Zachowałem walidację fail-closed i zakres namespace.
 phrases.2: Przetestowałem zarówno przyjęte, jak i odrzucone żądania API.
@@ -40,11 +65,12 @@ diagnostics.count: webhook configuration webhooks length musi być równe 1.
 diagnostics.name: webhook name musi być równe route.training.devops-quests.local.
 diagnostics.failure_policy: webhook failurePolicy musi być równe Fail.
 diagnostics.timeout: webhook timeoutSeconds musi być równe 2.
-diagnostics.url: webhook clientConfig.url musi być równy `https://dq-webhook-<bay>:8443/validate` dla tej zatoki.
-diagnostics.ca: webhook caBundle musi być poprawnym base64 i odpowiadać niepustemu admission-ca.pem po usunięciu
-  białych znaków na brzegach.
-diagnostics.namespace: Etykieta instalacji zatoki musi być niepusta, a webhook namespaceSelector musi dokładnie
-  odpowiadać jej etykietom instalacji i uruchomienia.
+diagnostics.url: webhook clientConfig.url musi być równy `https://dq-webhook-<bay>:8443/validate` dla
+  tej zatoki.
+diagnostics.ca: webhook caBundle musi być poprawnym base64 i odpowiadać niepustemu admission-ca.pem po
+  usunięciu białych znaków na brzegach.
+diagnostics.namespace: Etykieta instalacji zatoki musi być niepusta, a webhook namespaceSelector musi
+  dokładnie odpowiadać jej etykietom instalacji i uruchomienia.
 diagnostics.route: configmap/route data.route musi być równe north-121.
 diagnostics.ready: deployment/board readyReplicas musi być równe 1.
 diagnostics.http: Żądanie do board:8080 musi zwrócić north-121.
@@ -52,11 +78,12 @@ diagnostics.valid: Przygotowanie danych route i jego serwerowy dry-run muszą si
 diagnostics.invalid_input: Przygotowanie danych dry-run dla route closed musi się powieść.
 diagnostics.denial: Serwerowy dry-run musi odrzucić route closed.
 diagnostics.denial_text: Odmowa musi zawierać Station route must be north-121.
-stages.0.objectives.0.text: Webhook walidacyjny ograniczony do piaskownicy ufa swojemu prywatnemu CA i ma jeden
-  callback `route.training.devops-quests.local`, zasadę awarii `Fail` i limit czasu `2` sekundy.
-stages.0.objectives.1.text: ConfigMap `route` zawiera trasę `north-121`, a jego serwerowa próba admission kończy
-  się powodzeniem (dry-run).
-stages.0.objectives.2.text: Próba serwerowa z trasą `closed` jest odrzucana z `Station route must be north-121`
-  (dry-run).
+stages.0.objectives.0.text: Callback admission ograniczony do bay zachowuje dostarczoną tożsamość, prywatne
+  CA, granicę namespace i kontrakt limitu czasu z blokowaniem przy awarii oraz dociera do zamierzonego
+  prywatnego endpointu.
+stages.0.objectives.1.text: Istniejąca konfiguracja trasy zawiera `north-121`, a jej próbne admission
+  po stronie serwera kończy się powodzeniem.
+stages.0.objectives.2.text: Próbne admission zamkniętej trasy po stronie serwera zostaje odrzucone z błędem
+  walidacji trasy z prywatnego webhooka.
 stages.0.objectives.3.text: Deployment `board` ma jedną gotową replikę, a `http://board:8080` zwraca `north-121`
   do Deployment `client`.
