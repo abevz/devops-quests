@@ -1,13 +1,20 @@
 set -euo pipefail
 cd ~/quest
 failed=0
-if ! (
+set +e
+(
+set -e
 grep -Fx 'route must equal north' diagnosis.txt
-); then failed=1; fi
-if ! (
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
 kubectl rollout status deployment/route-worker --timeout=3s
-); then failed=1; fi
-if ! (
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
 test "$(kubectl exec deploy/route-worker -- printenv ROUTE)" = north
-); then failed=1; fi
+)
+[ $? -eq 0 ] || failed=1
 exit "$failed"

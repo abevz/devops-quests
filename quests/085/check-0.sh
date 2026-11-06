@@ -1,3 +1,20 @@
 set -euo pipefail
 cd ~/quest
-kubectl get pdb relay -o json | jq -e '.status.currentHealthy>=2 and .status.disruptionsAllowed>=1 and .spec.minAvailable==1' >/dev/null
+failed=0
+set +e
+(
+set -e
+kubectl get pdb relay -o json | jq -e '.spec.minAvailable==1' >/dev/null
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+kubectl get pdb relay -o json | jq -e '.status.currentHealthy>=2' >/dev/null
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+kubectl get pdb relay -o json | jq -e '.status.disruptionsAllowed>=1' >/dev/null
+)
+[ $? -eq 0 ] || failed=1
+exit "$failed"
