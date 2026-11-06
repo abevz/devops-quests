@@ -1,29 +1,67 @@
 title: Пределы check mode
-brief: 'Playbook описывает north-74, но три цели ещё отдают прежний релиз. Сначала
-  выполните ansible-playbook --check --diff rollout.yml > check.log. Обратите внимание:
-  command и handlers без поддержки check mode пропускаются; прогноз изменения не доказывает
-  reload. Затем выполните реальный playbook с выводом в apply.log и проверьте файлы,
-  права и HTTP каждой цели. Не удаляйте задачу чтения cat /run/quest-service.pid.
+brief: |-
+  Флот по-прежнему обслуживает предыдущий выпуск. Предварительный просмотр и проверенное развёртывание должны иметь отдельные свидетельства.
 
+  Работайте на workstation в `~/quest` с файлами `inventory.ini`, `ansible.cfg`, `rollout.yml`.
 
-  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `inventory.ini`,
-  `ansible.cfg`, `rollout.yml`, `check.log`, `apply.log`.
+  **Требования:**
+  - Настроенные доставка и инспекция сервиса:
+    - Область: `app1`, `app2`, `app3`.
+    - Инспекция сервиса только читает `/run/quest-service.pid` на каждом хосте, не сообщает об изменениях и не запускается принудительно при предварительном просмотре.
+    - Доставка обновляет живой баннер.
+  - Свидетельства на workstation:
+    - Непустой файл: `~/quest/check.log`.
+    - Непустой файл: `~/quest/apply.log`.
+  - Запись предварительного просмотра на workstation:
+    - Путь: `~/quest/check.log`.
+    - `app1`, `app2`, `app3`: `changed>0`, `skipped>0`, `failed=0`.
+  - Файл на каждом управляемом хосте (`app1`, `app2`, `app3`):
+    - Путь: `/srv/site/message`.
+    - Содержимое: `north-74`.
+    - Режим доступа: `0644`.
+  - Живой сервис на каждом управляемом хосте (`app1`, `app2`, `app3`):
+    - HTTP: `8080`, `/`.
+    - Ответ: `north-74`.
 
+  **Самопроверка перед Check & finish:**
+  - `cat ~/quest/check.log ~/quest/apply.log` — Обе записи непусты; `check.log` содержит прогнозируемые изменения, пропущенные задачи и `failed=0` для всех трёх хостов.
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat /srv/site/message; ls -l /srv/site/message'` — Каждый хост показывает `north-74` и `-rw-r--r--`.
+  - `for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Показывает `north-74` от `app1`, `app2`, `app3`.
 
-  В песочнице нет интернета и внешнего DNS. Используйте выданные файлы, предварительно
-  загруженные образы и приватные сервисы. Менять можно только эту песочницу.
-
-
-  Цели первого этапа: Check report показывает прогноз изменений и пропуски command;
-  реальный запуск доставляет north-74 при mode 0644, три HTTP endpoints согласованы.'
+  Предварительный просмотр прогнозирует изменения; он не доказывает, что произошла перезагрузка живого сервиса.
 debrief: За прогнозом изменения последовал проверенный реальный деплой.
-stages.0.brief: 'Результат проверки: Check report показывает прогноз изменений и пропуски
-  command; реальный запуск доставляет north-74 при mode 0644, три HTTP endpoints согласованы.'
-stages.0.objectives.0.text: Check report показывает прогноз изменений и пропуски command;
-  реальный запуск доставляет north-74 при mode 0644, три HTTP endpoints согласованы.
+stages.0.brief: Свидетельства предварительного просмотра и живое развёртывание должны соответствовать своим отдельным
+  требованиям к результату.
+stages.0.objectives.0.text: 'Доставка во флот сохраняет инспекцию сервиса только для чтения: она не сообщает об
+  изменениях и не запускается принудительно при предварительном просмотре; после доставки живой баннер обновляется.'
+stages.0.objectives.1.text: 'Непустые свидетельства на workstation: `check.log`, `apply.log`.'
+stages.0.objectives.2.text: Файл `check.log` на workstation сообщает о прогнозируемых изменениях, пропущенных задачах
+  и `failed=0` для `app1`, `app2`, `app3`.
+stages.0.objectives.3.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/message` содержит
+  `north-74`.
+stages.0.objectives.4.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) путь `/srv/site/message` имеет
+  режим `0644`.
+stages.0.objectives.5.text: HTTP на порту `8080` возвращает `north-74` на каждом управляемом хосте (`app1`, `app2`,
+  `app3`).
 hints.0.text: Check mode — прогноз, а не альтернативный деплой.
 hints.1.text: Изучите пропущенные command tasks в recap.
-hints.2.text: После изучения diff выполните реальный playbook и проверьте каждый endpoint.
+hints.2.text: После изучения diff выполните реальный playbook и проверьте каждый endpoint. Сначала сохраните `ansible-playbook
+  --check --diff rollout.yml > check.log`, затем настоящий запуск через `ansible-playbook rollout.yml > apply.log`.
+  Сохраните задачу только для чтения `cat /run/quest-service.pid`; задачи command без поддержки check mode пропускаются
+  при предварительном просмотре.
 phrases.0: Я определил ограничения check mode для command и handlers.
 phrases.1: Я изучил diff до выполнения изменений.
 phrases.2: Я проверил управляемые файлы и фактический HTTP-ответ.
+diagnostics.check_log: Файл `~/quest/check.log` на workstation должен быть непустым.
+diagnostics.apply_log: Файл `~/quest/apply.log` на workstation должен быть непустым.
+diagnostics.preview_recaps: Файл `check.log` на workstation сообщает о прогнозируемых изменениях, пропущенных задачах
+  и `failed=0` для `app1`, `app2`, `app3`.
+diagnostics.content_1: 'app1, `/srv/site/message`: содержимое `north-74`.'
+diagnostics.content_2: 'app2, `/srv/site/message`: содержимое `north-74`.'
+diagnostics.content_3: 'app3, `/srv/site/message`: содержимое `north-74`.'
+diagnostics.mode_1: 'app1, `/srv/site/message`: режим доступа `644`.'
+diagnostics.mode_2: 'app2, `/srv/site/message`: режим доступа `644`.'
+diagnostics.mode_3: 'app3, `/srv/site/message`: режим доступа `644`.'
+diagnostics.http_1: 'Хост app1: HTTP `/` на порту `8080` возвращает `north-74`.'
+diagnostics.http_2: 'Хост app2: HTTP `/` на порту `8080` возвращает `north-74`.'
+diagnostics.http_3: 'Хост app3: HTTP `/` на порту `8080` возвращает `north-74`.'

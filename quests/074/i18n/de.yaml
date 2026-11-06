@@ -1,31 +1,65 @@
 title: Überprüfen Sie die Modusgrenzen
-brief: 'playbook beschreibt north-74, während alle drei Ziele weiterhin die vorherige Version bedienen.
-  Führen Sie zuerst ansible-playbook --check --diff rollout.yml > check.log aus. Beachten Sie, dass command-Aufgaben
-  und handlers ohne Prüfmodus-Unterstützung übersprungen werden: Dies sagt eine Änderung voraus, beweist
-  jedoch nicht, dass ein reload aufgetreten ist. Führen Sie dann den echten playbook in apply.log aus
-  und überprüfen Sie Dateien, Berechtigungen und HTTP auf jedem Ziel. Entfernen Sie nicht die schreibgeschützte
-  Aufgabe cat /run/quest-service.pid.
+brief: |-
+  Die laufende Flotte liefert noch die vorherige Version aus. Vorschau und überprüfte Bereitstellung benötigen getrennte Nachweise.
 
+  Arbeite auf der Workstation in `~/quest` mit `inventory.ini`, `ansible.cfg`, `rollout.yml`.
 
-  Questdateien in `~/quest` (einige erscheinen in späteren Stadien): `inventory.ini`, `ansible.cfg`, `rollout.yml`,
-  `check.log`, `apply.log`.
+  **Anforderungen:**
+  - Konfigurierte Auslieferung und Dienstinspektion:
+    - Umfang: `app1`, `app2`, `app3`.
+    - Die schreibgeschützte Dienstinspektion liest auf jedem Host `/run/quest-service.pid`, meldet keine Änderungen und wird in der Vorschau nicht erzwungen.
+    - Die Auslieferung aktualisiert das aktive Banner.
+  - Nachweise auf der Workstation:
+    - Nicht leere Datei: `~/quest/check.log`.
+    - Nicht leere Datei: `~/quest/apply.log`.
+  - Vorschauprotokoll auf der Workstation:
+    - Pfad: `~/quest/check.log`.
+    - `app1`, `app2`, `app3`: `changed>0`, `skipped>0`, `failed=0`.
+  - Datei auf jedem verwalteten Host (`app1`, `app2`, `app3`):
+    - Pfad: `/srv/site/message`.
+    - Inhalt: `north-74`.
+    - Zugriffsmodus: `0644`.
+  - Aktiver Dienst auf jedem verwalteten Host (`app1`, `app2`, `app3`):
+    - HTTP: `8080`, `/`.
+    - Antwort: `north-74`.
 
+  **Selbstprüfung vor Check & finish:**
+  - `cat ~/quest/check.log ~/quest/apply.log` — Beide Protokolle sind nicht leer; `check.log` enthält vorhergesagte Änderungen, übersprungene Aufgaben und `failed=0` für alle drei Hosts.
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat /srv/site/message; ls -l /srv/site/message'` — Jeder Host zeigt `north-74` und `-rw-r--r--`.
+  - `for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Zeigt `north-74` von `app1`, `app2`, `app3`.
 
-  Der Schacht verfügt über kein Internet oder externes DNS. Verwenden Sie nur bereitgestellte Dateien,
-  vorinstallierte Bilder und private Dienste. Ändern Sie nur diese Bucht.
-
-
-  Erste Erfolgskriterien: Der Check report sagt Änderungen und übersprungene Befehle voraus; Der reale
-  Lauf liefert north-74 im Modus 0644 und alle drei HTTP endpoints stimmen überein.'
+  Eine Vorschau sagt Änderungen voraus; sie beweist nicht, dass ein aktiver Dienst neu geladen wurde.
 debrief: Auf eine vorhergesagte Änderung folgte ein verifizierter realer Einsatz.
-stages.0.brief: 'Erfolgskriterien: Der Check report sagt Änderungen und übersprungene Befehle voraus;
-  Der reale Lauf liefert north-74 im Modus 0644 und alle drei HTTP endpoints stimmen überein.'
-stages.0.objectives.0.text: Der Check report sagt Änderungen und übersprungene Befehle voraus; Der reale
-  Lauf liefert north-74 im Modus 0644 und alle drei HTTP endpoints stimmen überein.
+stages.0.brief: Vorschaunachweis und laufende Bereitstellung müssen ihre getrennten Ergebnisanforderungen erfüllen.
+stages.0.objectives.0.text: Die Flottenauslieferung behält eine schreibgeschützte Dienstinspektion bei, die keine
+  Änderungen meldet und in der Vorschau nicht erzwungen wird; nach der Auslieferung wird das aktive Banner aktualisiert.
+stages.0.objectives.1.text: 'Nicht leere Nachweise auf der Workstation: `check.log`, `apply.log`.'
+stages.0.objectives.2.text: Die Workstation-Datei `check.log` meldet vorhergesagte Änderungen, übersprungene Aufgaben
+  und `failed=0` für `app1`, `app2`, `app3`.
+stages.0.objectives.3.text: Auf jedem verwalteten Host (`app1`, `app2`, `app3`) enthält `/srv/site/message` den
+  Inhalt `north-74`.
+stages.0.objectives.4.text: Auf jedem verwalteten Host (`app1`, `app2`, `app3`) hat `/srv/site/message` den Modus
+  `0644`.
+stages.0.objectives.5.text: HTTP auf Port `8080` liefert auf jedem verwalteten Host (`app1`, `app2`, `app3`) `north-74`.
 hints.0.text: Der Prüfmodus ist eine Vorhersage, keine alternative Bereitstellung.
 hints.1.text: Überprüfen Sie das übersprungene command tasks im recap.
-hints.2.text: Führen Sie den echten playbook aus, nachdem Sie den diff überprüft haben, und testen Sie
-  dann jeden Live-endpoint.
+hints.2.text: Führen Sie den echten playbook aus, nachdem Sie den diff überprüft haben, und testen Sie dann jeden
+  Live-endpoint. Speichere zuerst `ansible-playbook --check --diff rollout.yml > check.log`, danach den echten Lauf
+  mit `ansible-playbook rollout.yml > apply.log`. Behalte die schreibgeschützte Aufgabe `cat /run/quest-service.pid`
+  bei; command-Aufgaben ohne Check-Mode-Unterstützung werden in der Vorschau übersprungen.
 phrases.0: Ich habe Lücken im Prüfmodus in den Aufgaben command und handlers identifiziert.
 phrases.1: Ich habe den diff überprüft, bevor ich Änderungen vorgenommen habe.
 phrases.2: Ich habe die verwalteten Dateien und das tatsächliche HTTP-Verhalten überprüft.
+diagnostics.check_log: Die Workstation-Datei `~/quest/check.log` muss nicht leer sein.
+diagnostics.apply_log: Die Workstation-Datei `~/quest/apply.log` muss nicht leer sein.
+diagnostics.preview_recaps: Die Workstation-Datei `check.log` meldet vorhergesagte Änderungen, übersprungene Aufgaben
+  und `failed=0` für `app1`, `app2`, `app3`.
+diagnostics.content_1: 'app1, `/srv/site/message`: inhalt `north-74`.'
+diagnostics.content_2: 'app2, `/srv/site/message`: inhalt `north-74`.'
+diagnostics.content_3: 'app3, `/srv/site/message`: inhalt `north-74`.'
+diagnostics.mode_1: 'app1, `/srv/site/message`: zugriffsmodus `644`.'
+diagnostics.mode_2: 'app2, `/srv/site/message`: zugriffsmodus `644`.'
+diagnostics.mode_3: 'app3, `/srv/site/message`: zugriffsmodus `644`.'
+diagnostics.http_1: 'Host app1: HTTP `/` auf Port `8080` liefert `north-74`.'
+diagnostics.http_2: 'Host app2: HTTP `/` auf Port `8080` liefert `north-74`.'
+diagnostics.http_3: 'Host app3: HTTP `/` auf Port `8080` liefert `north-74`.'

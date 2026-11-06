@@ -1,5 +1,9 @@
 set -euo pipefail
 cd ~/quest
+failed=0
+set +e
+(
+set -e
 python3 - <<'CHECK_MODE_TASK'
 import yaml
 p=yaml.safe_load(open('rollout.yml'))[0];assert p['hosts']=='fleet'
@@ -9,10 +13,154 @@ assert t[1]['changed_when'] is False and 'check_mode' not in t[1]
 assert t[0]['ansible.builtin.copy']=={'dest':'/srv/site/message','content':'north-74\n','mode':'0644'}
 assert t[0]['notify']=='Reload banner'
 CHECK_MODE_TASK
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
 test -s check.log
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Workstation ~/quest/check.log is nonempty : ✗ [DQ:check_log]'
+dq_group_failed=1
+fi
+(
+set -e
 test -s apply.log
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Workstation ~/quest/apply.log is nonempty : ✗ [DQ:apply_log]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
 test "$(grep -Ec '^app[123][[:space:]]+:.*changed=[1-9].*failed=0.*skipped=[1-9]' check.log)" = 3
-ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'set -eu; test "$(cat /srv/site/message)" = north-74; test "$(stat -c %a /srv/site/message)" = 644'
-ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'set -eu; test "$(cat /srv/site/message)" = north-74; test "$(stat -c %a /srv/site/message)" = 644'
-ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'set -eu; test "$(cat /srv/site/message)" = north-74; test "$(stat -c %a /srv/site/message)" = 644'
-for i in 1 2 3; do test "$(curl -fsS --max-time 3 http://app$i-${DQ_NAMESPACE#dq-}:8080)" = north-74; done
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Workstation ~/quest/check.log reports predicted changes, skipped tasks and failed=0 for all three hosts : ✗ [DQ:preview_recaps]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-74'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app1 /srv/site/message: content = north-74 : ✗ [DQ:content_1]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-74'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app2 /srv/site/message: content = north-74 : ✗ [DQ:content_2]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-74'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app3 /srv/site/message: content = north-74 : ✗ [DQ:content_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/message)" = 644'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app1 /srv/site/message: mode = 644 : ✗ [DQ:mode_1]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/message)" = 644'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app2 /srv/site/message: mode = 644 : ✗ [DQ:mode_2]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/message)" = 644'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app3 /srv/site/message: mode = 644 : ✗ [DQ:mode_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
+test "$(curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8080)" = north-74
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app1 HTTP / on port 8080 = north-74 : ✗ [DQ:http_1]'
+dq_group_failed=1
+fi
+(
+set -e
+test "$(curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8080)" = north-74
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app2 HTTP / on port 8080 = north-74 : ✗ [DQ:http_2]'
+dq_group_failed=1
+fi
+(
+set -e
+test "$(curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8080)" = north-74
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'Host app3 HTTP / on port 8080 = north-74 : ✗ [DQ:http_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || failed=1
+exit "$failed"
