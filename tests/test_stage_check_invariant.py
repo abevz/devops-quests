@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import subprocess
+
 import pytest
 import yaml
 
@@ -26,8 +28,36 @@ def test_stage_script_matches_objectives(path, index, stage):
             expected = PRELUDE + expected
         expected = expected.rstrip("\n") + "\n"
     else:
-        expected = PRELUDE + "failed=0\n"
+        expected = PRELUDE + "failed=0\nset +e\n"
         for check in checks:
-            expected += "if ! (\n" + check + "\n); then failed=1; fi\n"
+            expected += "(\nset -e\n" + check + "\n)\n[ $? -eq 0 ] || failed=1\n"
         expected += 'exit "$failed"\n'
     assert (path.parent / f"check-{index}.sh").read_text() == expected
+
+
+@pytest.mark.parametrize("path,index,stage", [
+    item for item in STAGES if len(item[2]["objectives"]) > 1
+], ids=lambda item: str(item) if isinstance(item, int) else None)
+def test_aggregate_catches_intermediate_failure_and_checks_later_goals(
+    path, index, stage, tmp_path
+):
+    script = (path.parent / f"check-{index}.sh").read_text()
+    # Substitute the real objective blocks in place; keep the shipped control flow.
+    # Longest first prevents one goal's check from matching a prefix in another.
+    replacements = []
+    for goal, objective in enumerate(stage["objectives"]):
+        marker = f"__DQ_TEST_OBJECTIVE_{goal}__"
+        replacements.append((objective["check"], marker, goal))
+    for check, marker, _ in sorted(replacements, key=lambda item: len(item[0]), reverse=True):
+        assert script.count("\n" + check + "\n") == 1
+        script = script.replace("\n" + check + "\n", "\n" + marker + "\n")
+    script = script.replace("cd ~/quest", f"cd {tmp_path}")
+    for _, marker, goal in replacements:
+        body = "false\nprintf unreachable\n" if goal == 0 else f"printf '{goal}\n' >> visited\n"
+        script = script.replace(marker, body)
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert result.returncode == 1
+    assert "unreachable" not in result.stdout
+    assert (tmp_path / "visited").read_text().splitlines() == [
+        str(goal) for goal in range(1, len(stage["objectives"]))
+    ]
