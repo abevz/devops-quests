@@ -7,47 +7,59 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: 'test "$(cat fleet.txt)" = "$(printf ''app1
-
+    check: |-
+      test "$(cat fleet.txt)" = "$(printf 'app1
       app2
-
-      app3'')"
-
-      test "$(stat -c %a fleet.txt)" = 644
-
-      ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" ''set -eu; test ! -e /srv/site/fleet.txt''
-
-      ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" ''set -eu; test ! -e /srv/site/fleet.txt''
-
-      ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" ''set -eu; test ! -e /srv/site/fleet.txt''
-
-      python3 - <<''DQ_DELEGATION''
-
+      app3')"
+  - text: stages.0.objectives.1.text
+    check: test "$(stat -c %a fleet.txt)" = 644
+  - text: stages.0.objectives.2.text
+    check: |-
+      dq_group_failed=0
+      set +e
+      (
+      set -e
+      ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'set -eu; test ! -e /srv/site/fleet.txt'
+      )
+      dq_condition_rc=$?
+      if [ "$dq_condition_rc" -ne 0 ]; then
+      printf '%s\n' 'No /srv/site/fleet.txt is present on app1 : ✗ [DQ:absent_1]'
+      dq_group_failed=1
+      fi
+      (
+      set -e
+      ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'set -eu; test ! -e /srv/site/fleet.txt'
+      )
+      dq_condition_rc=$?
+      if [ "$dq_condition_rc" -ne 0 ]; then
+      printf '%s\n' 'No /srv/site/fleet.txt is present on app2 : ✗ [DQ:absent_2]'
+      dq_group_failed=1
+      fi
+      (
+      set -e
+      ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'set -eu; test ! -e /srv/site/fleet.txt'
+      )
+      dq_condition_rc=$?
+      if [ "$dq_condition_rc" -ne 0 ]; then
+      printf '%s\n' 'No /srv/site/fleet.txt is present on app3 : ✗ [DQ:absent_3]'
+      dq_group_failed=1
+      fi
+      set -e
+      test "$dq_group_failed" -eq 0
+  - text: stages.0.objectives.3.text
+    check: |-
+      python3 - <<'DQ_DELEGATION'
       from pathlib import Path
-
       import jinja2, yaml
-
-      plays=yaml.safe_load(Path(''rollout.yml'').read_text())
-
-      copies=[task for play in plays for task in play.get(''tasks'',[]) if ''ansible.builtin.copy'' in
-      task]
-
-      assert len(copies)==1, ''Repair the single supplied copy task''
-
+      plays=yaml.safe_load(Path('rollout.yml').read_text())
+      copies=[task for play in plays for task in play.get('tasks',[]) if 'ansible.builtin.copy' in task]
+      assert len(copies)==1, 'Repair the single supplied copy task'
       task=copies[0]
-
-      assert task.get(''delegate_to'')==''localhost'' and task.get(''run_once'') is True, ''Delegate one
-      writer to localhost''
-
-      content=task[''ansible.builtin.copy''][''content'']
-
-      rendered=jinja2.Environment().from_string(content).render(groups={''fleet'':[''probe-b'',''probe-a'']},
-      inventory_hostname=''probe-a'')
-
-      assert rendered.splitlines()==[''probe-a'',''probe-b''], ''Derive the report from sorted fleet inventory
-      membership''
-
-      DQ_DELEGATION'
+      assert task.get('delegate_to')=='localhost' and task.get('run_once') is True, 'Delegate one writer to localhost'
+      content=task['ansible.builtin.copy']['content']
+      rendered=jinja2.Environment().from_string(content).render(groups={'fleet':['probe-b','probe-a']}, inventory_hostname='probe-a')
+      assert rendered.splitlines()==['probe-a','probe-b'], 'Derive the report from sorted fleet inventory membership'
+      DQ_DELEGATION
 hints:
 - text: hints.0.text
   guide: ansible-11

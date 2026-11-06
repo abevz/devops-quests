@@ -1,8 +1,163 @@
 set -euo pipefail
 cd ~/quest
-ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-ready && test "$(stat -c %a /srv/site/message)" = 644'
-ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-ready && test "$(stat -c %a /srv/site/message)" = 644'
-ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-ready && test "$(stat -c %a /srv/site/message)" = 644'
+failed=0
+set +e
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-ready'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app1, /srv/site/message contains north-ready : ✗ [DQ:content_1]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-ready'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app2, /srv/site/message contains north-ready : ✗ [DQ:content_2]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-ready'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app3, /srv/site/message contains north-ready : ✗ [DQ:content_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/message)" = 644'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app1, /srv/site/message has mode 0644 : ✗ [DQ:mode_1]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/message)" = 644'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app2, /srv/site/message has mode 0644 : ✗ [DQ:mode_2]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/message)" = 644'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app3, /srv/site/message has mode 0644 : ✗ [DQ:mode_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-ready'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app1, /srv/site/message contains north-ready : ✗ [DQ:content_1]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-ready'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app2, /srv/site/message contains north-ready : ✗ [DQ:content_2]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = north-ready'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app3, /srv/site/message contains north-ready : ✗ [DQ:content_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+dq_group_failed=0
+set +e
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/message)" = 644'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app1, /srv/site/message has mode 0644 : ✗ [DQ:mode_1]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/message)" = 644'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app2, /srv/site/message has mode 0644 : ✗ [DQ:mode_2]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/message)" = 644'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app3, /srv/site/message has mode 0644 : ✗ [DQ:mode_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+set +e
+(
+set -e
 ansible-playbook rollout.yml >/tmp/idempotence-first.log
 ansible-playbook rollout.yml >/tmp/idempotence-second.log
 test "$(grep -Ec '^app[123] .*changed=0 .*failed=0' /tmp/idempotence-second.log)" = 3
+)
+dq_action_rc=$?
+set -e
+if [ "$dq_action_rc" -ne 0 ]; then
+if ! grep -Eq '^app1 .*changed=0 .*failed=0' /tmp/idempotence-second.log 2>/dev/null; then
+printf '%s\n' 'Workstation /tmp/idempotence-second.log: app1 must report changed=0 and failed=0. ✗ [DQ:recap_1]'
+fi
+if ! grep -Eq '^app2 .*changed=0 .*failed=0' /tmp/idempotence-second.log 2>/dev/null; then
+printf '%s\n' 'Workstation /tmp/idempotence-second.log: app2 must report changed=0 and failed=0. ✗ [DQ:recap_2]'
+fi
+if ! grep -Eq '^app3 .*changed=0 .*failed=0' /tmp/idempotence-second.log 2>/dev/null; then
+printf '%s\n' 'Workstation /tmp/idempotence-second.log: app3 must report changed=0 and failed=0. ✗ [DQ:recap_3]'
+fi
+printf '%s\n' 'The workstation repeat-run check of rollout.yml or /tmp/idempotence-second.log failed : ✗ [DQ:repeat_run]'
+exit 1
+fi
+)
+[ $? -eq 0 ] || failed=1
+exit "$failed"

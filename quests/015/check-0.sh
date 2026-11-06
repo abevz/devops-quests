@@ -1,5 +1,87 @@
 set -euo pipefail
 cd ~/quest
-ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'for route in north south east; do test -d "/srv/routes/$route"; test "$(stat -c %a "/srv/routes/$route")" = 750; done'
-ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'for route in north south east; do test -d "/srv/routes/$route"; test "$(stat -c %a "/srv/routes/$route")" = 750; done'
-ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'for route in north south east; do test -d "/srv/routes/$route"; test "$(stat -c %a "/srv/routes/$route")" = 750; done'
+dq_group_failed=0
+set +e
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'set -eu; test -d /srv/routes/north; test "$(stat -c %a /srv/routes/north)" = 750'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app1, /srv/routes/north is a directory with mode 0750 : ✗ [DQ:directory_north_1]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'set -eu; test -d /srv/routes/south; test "$(stat -c %a /srv/routes/south)" = 750'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app1, /srv/routes/south is a directory with mode 0750 : ✗ [DQ:directory_south_1]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'set -eu; test -d /srv/routes/east; test "$(stat -c %a /srv/routes/east)" = 750'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app1, /srv/routes/east is a directory with mode 0750 : ✗ [DQ:directory_east_1]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'set -eu; test -d /srv/routes/north; test "$(stat -c %a /srv/routes/north)" = 750'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app2, /srv/routes/north is a directory with mode 0750 : ✗ [DQ:directory_north_2]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'set -eu; test -d /srv/routes/south; test "$(stat -c %a /srv/routes/south)" = 750'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app2, /srv/routes/south is a directory with mode 0750 : ✗ [DQ:directory_south_2]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'set -eu; test -d /srv/routes/east; test "$(stat -c %a /srv/routes/east)" = 750'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app2, /srv/routes/east is a directory with mode 0750 : ✗ [DQ:directory_east_2]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'set -eu; test -d /srv/routes/north; test "$(stat -c %a /srv/routes/north)" = 750'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app3, /srv/routes/north is a directory with mode 0750 : ✗ [DQ:directory_north_3]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'set -eu; test -d /srv/routes/south; test "$(stat -c %a /srv/routes/south)" = 750'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app3, /srv/routes/south is a directory with mode 0750 : ✗ [DQ:directory_south_3]'
+dq_group_failed=1
+fi
+(
+set -e
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'set -eu; test -d /srv/routes/east; test "$(stat -c %a /srv/routes/east)" = 750'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'On app3, /srv/routes/east is a directory with mode 0750 : ✗ [DQ:directory_east_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
