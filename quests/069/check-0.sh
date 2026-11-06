@@ -4,6 +4,10 @@ failed=0
 set +e
 (
 set -e
+dq_result_failed=0
+set +e
+(
+set -e
 python3 - <<'SECRET'
 import yaml
 p=yaml.safe_load(open('rollout.yml'))[0];assert p['hosts']=='fleet'
@@ -12,7 +16,7 @@ assert t['ansible.builtin.copy']['mode']=='0600'
 assert t['ansible.builtin.copy']['dest']=='/srv/site/station-token'
 SECRET
 )
-[ $? -eq 0 ] || failed=1
+[ $? -eq 0 ] || dq_result_failed=1
 (
 set -e
 dq_group_failed=0
@@ -29,7 +33,7 @@ fi
 set -e
 test "$dq_group_failed" -eq 0
 )
-[ $? -eq 0 ] || failed=1
+[ $? -eq 0 ] || dq_result_failed=1
 (
 set -e
 dq_group_failed=0
@@ -46,6 +50,10 @@ dq_group_failed=1
 fi
 set -e
 test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || dq_result_failed=1
+set -e
+test "$dq_result_failed" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (

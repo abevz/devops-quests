@@ -34,6 +34,10 @@ VERIFY
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_result_failed=0
+set +e
+(
+set -e
 python3 - <<'VERIFY'
 from pathlib import Path
 import yaml
@@ -43,7 +47,7 @@ assert t[2]['ansible.builtin.unarchive']=={'src':'recovery.tar','dest':'/srv/sit
 assert t[2]['notify']=='Reload station'
 VERIFY
 )
-[ $? -eq 0 ] || failed=1
+[ $? -eq 0 ] || dq_result_failed=1
 (
 set -e
 python3 - <<'VERIFY'
@@ -53,7 +57,7 @@ p=yaml.safe_load(Path('rollout.yml').read_text())[0]
 assert p['serial']==1
 VERIFY
 )
-[ $? -eq 0 ] || failed=1
+[ $? -eq 0 ] || dq_result_failed=1
 (
 set -e
 dq_group_failed=0
@@ -88,7 +92,7 @@ fi
 set -e
 test "$dq_group_failed" -eq 0
 )
-[ $? -eq 0 ] || failed=1
+[ $? -eq 0 ] || dq_result_failed=1
 (
 set -e
 dq_group_failed=0
@@ -123,7 +127,7 @@ fi
 set -e
 test "$dq_group_failed" -eq 0
 )
-[ $? -eq 0 ] || failed=1
+[ $? -eq 0 ] || dq_result_failed=1
 (
 set -e
 dq_group_failed=0
@@ -157,6 +161,10 @@ dq_group_failed=1
 fi
 set -e
 test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || dq_result_failed=1
+set -e
+test "$dq_result_failed" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (

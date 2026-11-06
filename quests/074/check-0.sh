@@ -4,19 +4,6 @@ failed=0
 set +e
 (
 set -e
-python3 - <<'CHECK_MODE_TASK'
-import yaml
-p=yaml.safe_load(open('rollout.yml'))[0];assert p['hosts']=='fleet'
-t=p['tasks'];assert len(t)==2
-assert t[1]['ansible.builtin.command']=='cat /run/quest-service.pid'
-assert t[1]['changed_when'] is False and 'check_mode' not in t[1]
-assert t[0]['ansible.builtin.copy']=={'dest':'/srv/site/message','content':'north-74\n','mode':'0644'}
-assert t[0]['notify']=='Reload banner'
-CHECK_MODE_TASK
-)
-[ $? -eq 0 ] || failed=1
-(
-set -e
 dq_group_failed=0
 set +e
 (
@@ -43,6 +30,23 @@ test "$dq_group_failed" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_result_failed=0
+set +e
+(
+set -e
+python3 - <<'CHECK_MODE_TASK'
+import yaml
+p=yaml.safe_load(open('rollout.yml'))[0];assert p['hosts']=='fleet'
+t=p['tasks'];assert len(t)==2
+assert t[1]['ansible.builtin.command']=='cat /run/quest-service.pid'
+assert t[1]['changed_when'] is False and 'check_mode' not in t[1]
+assert t[0]['ansible.builtin.copy']=={'dest':'/srv/site/message','content':'north-74\n','mode':'0644'}
+assert t[0]['notify']=='Reload banner'
+CHECK_MODE_TASK
+)
+[ $? -eq 0 ] || dq_result_failed=1
+(
+set -e
 dq_group_failed=0
 set +e
 (
@@ -56,6 +60,10 @@ dq_group_failed=1
 fi
 set -e
 test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || dq_result_failed=1
+set -e
+test "$dq_result_failed" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
