@@ -1,38 +1,45 @@
 title: RBAC
-brief: |
+brief: |-
   El consumidor de configuración no puede leer su ruta.
 
-  Trabaja en la workstation en `~/quest` con `account.yaml`, `role.yaml`, `binding.yaml`, `identity.yaml`, `route.yaml`, `restricted.yaml`.
+  Trabaja en la workstation en `~/quest` con los archivos suministrados:
+  - `account.yaml`, `role.yaml`, `binding.yaml`, `identity.yaml`, `route.yaml`, `restricted.yaml`.
 
   **Requisitos:**
-  - Role `route-reader` tiene exactamente una regla solo con estos campos:
-    - `apiGroups`: `[""]`.
-    - `resources`: `["configmaps"]`.
-    - `resourceNames`: `["route"]`.
-    - `verbs`: `["get"]`.
-  - Acceso con el token montado dentro del Pod `app=identity`:
-    - Token: `/var/run/secrets/kubernetes.io/serviceaccount/token`.
-    - Se permite obtener ConfigMap `route`; su clave `route` contiene `north`.
-    - Se prohíbe obtener ConfigMap `restricted`.
-    - Se prohíbe listar Secrets.
 
-  **Verifica antes de Check & finish:**
-  - `kubectl get role route-reader -o json` — muestra exactamente la única regla indicada en los requisitos.
-  - `identity_token=$(kubectl exec deployment/identity -- cat /var/run/secrets/kubernetes.io/serviceaccount/token)` y `kubectl --token="$identity_token" get configmap route -o jsonpath='{.data.route}'` — imprime `north` con el token leído dentro del Pod; el token en sí no se imprime.
-  - `kubectl --token="$identity_token" get configmap restricted` y `kubectl --token="$identity_token" get secrets` — ambos fallan con `Forbidden` usando el mismo token del Pod.
+  - El Role suministrado del namespace concede solo lectura por nombre de la configuración de ruta existente.
+  - Dentro del Pod `app=identity`, el token montado en `/var/run/secrets/kubernetes.io/serviceaccount/token`:
+    - Lee el valor de ruta existente `north`.
+    - No puede obtener la configuración protegida separada de `restricted.yaml` en la workstation.
+    - No puede listar Secrets.
+
+  Las pruebas negativas cubren las solicitudes indicadas; no son una auditoría de autorización de todo el clúster.
 debrief: La carga de trabajo real identity aprobó una acción permitida y falló dos acciones prohibidas.
-stages.0.brief: |
-  El consumidor debe mantener su límite de acceso restringido.
-stages.0.objectives.0.text: El Role `route-reader` permite solo `get` sobre ConfigMap `route`.
-stages.0.objectives.1.text: El token montado del Pod identity permite obtener ConfigMap `route`, cuya
-  clave `route` contiene `north`.
-stages.0.objectives.2.text: El token montado del Pod `app=identity` no permite obtener ConfigMap `restricted`.
+stages.0.brief: Evalúa el acceso usando la identidad montada del consumidor.
+stages.0.objectives.0.text: El Role suministrado del namespace concede solo lectura por nombre de la configuración
+  de ruta existente.
+stages.0.objectives.1.text: El token montado del Pod `app=identity` lee el valor de ruta existente `north`.
+stages.0.objectives.2.text: El token montado del Pod `app=identity` no puede obtener la configuración
+  protegida separada.
 stages.0.objectives.3.text: El token montado del Pod `app=identity` no permite listar Secrets.
 hints.0.text: Utilice el reader identity, no el player identity.
-hints.1.text: |
+hints.1.text: |-
   resourceNames limita el acceso con nombre. La Role nombra una configuración obsoleta.
-hints.2.text: |
+
+  Inspecciona los datos suministrados y las observaciones activas:
+
+  ```sh
+  kubectl get role,rolebinding -o yaml
+  kubectl get configmap -o yaml
+  ```
+hints.2.text: |-
   Conserve core API group, configmaps/get y un nombre de recurso. No se necesita una Role de ámbito de clúster.
+
+  Verifica el resultado desde `~/quest` en la workstation:
+
+  - `kubectl get role route-reader -o json` — muestra una regla de core API que concede solo `configmaps` / `get` para el único nombre de recurso `route`, sin campos adicionales.
+  - `identity_token=$(kubectl exec deployment/identity -- cat /var/run/secrets/kubernetes.io/serviceaccount/token)` y `kubectl --token="$identity_token" get configmap route -o jsonpath='{.data.route}'` — imprime `north` con el token leído dentro del Pod; el token en sí no se imprime.
+  - `kubectl --token="$identity_token" get configmap restricted` y `kubectl --token="$identity_token" get secrets` — ambos fallan con `Forbidden` usando el mismo token del Pod.
 phrases.0: Solo otorgué la lectura requerida con el nombre ConfigMap.
 phrases.1: Verifiqué las operaciones denegadas y la solicitud permitida.
 phrases.2: Mantuve la función service account dentro de su namespace.
