@@ -44,3 +44,29 @@ def test_014_objectives_do_not_reveal_log_answers(language):
     assert "route must equal north" not in objectives
     assert "ROUTE=north" not in objectives
     assert "diagnosis.txt" in texts["stages.0.objectives.0.text"]
+
+
+@pytest.mark.parametrize("language", ["en", "ru", "de", "es", "pl"])
+def test_045_objective_names_required_volume_contract(language):
+    texts = yaml.safe_load(
+        (ROOT / f"quests/045/i18n/{language}.yaml").read_text()
+    )
+    # Required result identifiers must stay explicit even if absent from brief.
+    objective = texts["stages.0.objectives.1.text"]
+    for identifier in ["reader", "route-data", "data", "/data"]:
+        assert f"`{identifier}`" in objective, (language, identifier)
+
+
+@pytest.mark.parametrize("language", ["en", "ru", "de", "es", "pl"])
+@pytest.mark.parametrize("quest,objective,requirement", [
+    (14, 2, "`ROUTE`"),
+    (17, 2, "`Ready=False`"),
+    (45, 0, "Bound"),
+])
+def test_pilot_objectives_name_exact_result_requirements(
+    language, quest, objective, requirement
+):
+    texts = yaml.safe_load(
+        (ROOT / f"quests/{quest:03}/i18n/{language}.yaml").read_text()
+    )
+    assert requirement in texts[f"stages.0.objectives.{objective}.text"]
