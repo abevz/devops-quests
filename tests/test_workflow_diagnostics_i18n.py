@@ -33,7 +33,15 @@ def test_missing_resources_report_localized_conditions(
         binary.write_text("#!/bin/sh\nexit 1\n")
         binary.chmod(0o755)
     source = (ROOT / f"quests/{number:03}/check-{stage}.sh").read_text()
-    assert source == catalog.quests[number]["stages"][stage]["objectives"][0]["check"]
+    checks = [goal["check"] for goal in catalog.quests[number]["stages"][stage]["objectives"]]
+    if len(checks) == 1:
+        assert source == checks[0]
+    else:
+        expected = "set -euo pipefail\ncd ~/quest\nfailed=0\nset +e\n"
+        for check in checks:
+            expected += "(\nset -e\n" + check + "\n)\n[ $? -eq 0 ] || failed=1\n"
+        expected += 'exit "$failed"\n'
+        assert source == expected
     source = source.replace("/run/dq/facts/0", str(tmp_path / "missing-facts"))
     env = {
         **os.environ,

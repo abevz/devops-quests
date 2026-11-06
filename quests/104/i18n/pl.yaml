@@ -1,22 +1,33 @@
 title: Planowanie CronJob
-brief: CronJob tworzy Joby według harmonogramu. W `~/quest` przeczytaj `cronjob.json`; napraw istniejący CronJob `route-audit`
-  w prywatnym klastrze. Ustaw `suspend` na false i `concurrencyPolicy` na `Forbid`. Zachowaj `schedule` jako `* * * * *`,
-  `timeZone` jako `Etc/UTC`, `startingDeadlineSeconds` jako 20 oraz `successfulJobsHistoryLimit` i `failedJobsHistoryLimit`
-  jako 1. Deadline ogranicza opóźniony start, a limity historii liczbę zachowanych Jobów. Na przykład popraw oba pola poleceniem
-  `kubectl patch cronjob route-audit --type=merge -p '{"spec":{"suspend":false,"concurrencyPolicy":"Forbid"}}'`. Poczekaj
-  na rzeczywiste uruchomienie z harmonogramu. Najnowszy `status.lastScheduleTime` musi odpowiadać adnotacji `batch.kubernetes.io/cronjob-scheduled-timestamp`
-  pomyślnego Joba należącego do CronJob; jego logi muszą zawierać `north-104`. Job utworzony ręcznie nie dowodzi działania
-  harmonogramu. Nowa minuta może przesunąć ostatni czas przed zakończeniem Joba; poczekaj i sprawdź ponownie. Pracuj tylko
-  w tej zatoce.
-debrief: Planowanie zostało zweryfikowane poprzez faktycznie ukończone wykonanie należące do kontrolera, a nie poprzez jego
-  ręczny substytut.
-stages.0.brief: Ustawienia CronJob odpowiadają opisowi, a jego najnowszy zaplanowany Job kończy się pomyślnie z `north-104`
-  w logach.
-stages.0.objectives.0.text: Ustawienia CronJob odpowiadają opisowi, a jego najnowszy zaplanowany Job kończy się pomyślnie
-  z `north-104` w logach.
+brief: "Zaplanowany audyt nie daje wymaganego wyniku. Przywróć rzeczywiste wykonanie według harmonogramu i dowody\
+  \ jego zakończenia.\n\nPracuj w `~/quest` na workstation. Dostarczone pliki: `cronjob.json`.\n\n**Wymagania:**\n\
+  - CronJob `route-audit` nie jest wstrzymany.\n- CronJob `route-audit`:\n  - harmonogram `* * * * *`.\n- CronJob\
+  \ `route-audit`:\n  - strefa czasowa `Etc/UTC`.\n- CronJob `route-audit`:\n  - zasada współbieżności `Forbid`.\n\
+  - CronJob `route-audit`:\n  - termin opóźnionego startu w sekundach `20`.\n- CronJob `route-audit`:\n  - zachowane\
+  \ udane Joby `1`.\n- CronJob `route-audit`:\n  - zachowane nieudane Joby `1`.\n- Ostatni zaplanowany czas CronJob\
+  \ `route-audit` odpowiada zaplanowanemu znacznikowi czasu kontrolowanego przez niego Joba.\n- Ten ostatni zaplanowany\
+  \ Job kończy się raz powodzeniem, a jego logi zawierają dokładnie `north-104`.\n\n**Sprawdź samodzielnie przed\
+  \ Check & finish:**\nWykonuj te polecenia obserwacyjne w `~/quest` na workstation; `kubectl exec` obserwuje kontener\
+  \ wskazanego obciążenia.\n- `kubectl get cronjob route-audit -o yaml` — Ustawienia, tożsamość i status odpowiadają\
+  \ wymaganiom.\n- `kubectl get jobs -o json` — Ostatni zaplanowany Job należy do kontrolera, a jego znacznik czasu\
+  \ odpowiada ostatniemu zaplanowanemu czasowi CronJob.\n- Logi wybranego zaplanowanego Joba zawierają dokładnie\
+  \ `north-104`.\n\n  ```sh\n  cron=$(kubectl get cronjob route-audit -o json)\n  uid=$(jq -r .metadata.uid <<<\"\
+  $cron\")\n  at=$(jq -r .status.lastScheduleTime <<<\"$cron\")\n  job=$(kubectl get jobs -o json | jq -r --arg\
+  \ uid \"$uid\" --arg at \"$at\" '.items[] | select(any(.metadata.ownerReferences[]?; .uid==$uid and .controller==true))\
+  \ | select(.metadata.annotations[\"batch.kubernetes.io/cronjob-scheduled-timestamp\"]==$at) | .metadata.name'\
+  \ | head -1)\n  kubectl logs \"job/$job\"\n  ```\n\nRęcznie utworzony Job nie dowodzi działania harmonogramu;\
+  \ nowa minuta może zmienić ostatni czas przed zakończeniem Joba, więc sprawdź ponownie po zakończeniu.\n"
+debrief: Planowanie zostało zweryfikowane poprzez faktycznie ukończone wykonanie należące do kontrolera, a nie poprzez
+  jego ręczny substytut.
+stages.0.brief: 'Ostatnie wykonanie zaplanowane przez kontroler ma zakończyć się wymaganym wynikiem logów.
+
+  '
 hints.0.text: Zawieszony CronJob zachowuje swoją definicję, ale nie rozpoczyna żadnych nowych zaplanowanych zadań.
 hints.1.text: Forbid zapobiega nakładaniu się tego CronJob na jego własne aktywne zadania.
-hints.2.text: Cofnij zawieszenie, wybierz Forbid i poczekaj, aż kontroler Job zostanie utworzony z scheduled timestamp.
+hints.2.text: 'Wyłącz wstrzymanie, wybierz Forbid i poczekaj na Job kontrolera z zaplanowanym znacznikiem czasu.
+  Przykład poprawki: `kubectl patch cronjob route-audit --type=merge -p ''{"spec":{"suspend":false,"concurrencyPolicy":"Forbid"}}''`.
+
+  '
 phrases.0: Odróżniłem Job od jego kontrolera planowania.
 phrases.1: Skonfigurowałem wyraźną strefę czasową i zasady nakładania się.
 phrases.2: Zweryfikowałem rzeczywisty zaplanowany bieg i jego ukończenie.
@@ -30,7 +41,8 @@ diagnostics.last_time: cronjob/route-audit lastScheduleTime musi być niepuste.
 diagnostics.owned: Job musi mieć kontrolującego właściciela CronJob z niepustym UID route-audit.
 diagnostics.scheduled: Job należący do CronJob musi mieć znacznik zaplanowania równy niepustemu lastScheduleTime.
 diagnostics.succeeded: Job dla lastScheduleTime musi mieć succeeded=1 i niepustą nazwę.
-diagnostics.logs: Job zakończony powodzeniem dla lastScheduleTime musi mieć niepustą nazwę, a jego logi muszą być równe north-104.
+diagnostics.logs: Job zakończony powodzeniem dla lastScheduleTime musi mieć niepustą nazwę, a jego logi muszą być
+  równe north-104.
 diagnostics.field_suspend: cronjob/route-audit suspend musi być równe false.
 diagnostics.field_schedule: cronjob/route-audit schedule musi być równe * * * * *.
 diagnostics.field_timezone: cronjob/route-audit timeZone musi być równe Etc/UTC.
@@ -38,3 +50,14 @@ diagnostics.field_concurrencypolicy: cronjob/route-audit concurrencyPolicy musi 
 diagnostics.field_startingdeadlineseconds: cronjob/route-audit startingDeadlineSeconds musi być równe 20.
 diagnostics.field_successfuljobshistorylimit: cronjob/route-audit successfulJobsHistoryLimit musi być równe 1.
 diagnostics.field_failedjobshistorylimit: cronjob/route-audit failedJobsHistoryLimit musi być równe 1.
+stages.0.objectives.0.text: CronJob `route-audit` nie jest wstrzymany.
+stages.0.objectives.1.text: 'CronJob `route-audit`: harmonogram `* * * * *`.'
+stages.0.objectives.2.text: 'CronJob `route-audit`: strefa czasowa `Etc/UTC`.'
+stages.0.objectives.3.text: 'CronJob `route-audit`: zasada współbieżności `Forbid`.'
+stages.0.objectives.4.text: 'CronJob `route-audit`: termin opóźnionego startu w sekundach `20`.'
+stages.0.objectives.5.text: 'CronJob `route-audit`: zachowane udane Joby `1`.'
+stages.0.objectives.6.text: 'CronJob `route-audit`: zachowane nieudane Joby `1`.'
+stages.0.objectives.7.text: Ostatni zaplanowany czas CronJob `route-audit` odpowiada zaplanowanemu znacznikowi czasu
+  kontrolowanego przez niego Joba.
+stages.0.objectives.8.text: Ten ostatni zaplanowany Job kończy się raz powodzeniem, a jego logi zawierają dokładnie
+  `north-104`.

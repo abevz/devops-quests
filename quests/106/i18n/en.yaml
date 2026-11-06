@@ -1,19 +1,33 @@
 title: Service types and exposure
-brief: 'Work in `~/quest`; inspect `board.json`, `client.json`, `internal.json`, `headless.json`, `nodeport.json` and `service-contracts.json`.
-  Three Services expose the same board through ClusterIP, headless DNS and NodePort. Repair each selector to exactly `app:
-  board`; keep each Service UID, type, cluster IPs and ordered ports equal to the recorded `service-contracts.json`. The internal
-  Service is a non-headless ClusterIP, the headless Service has `clusterIP: None`, and the NodePort is at least 30000.
-
-
-  From the client, each Service name on port 8080 and the private kind node address plus NodePort must return `north-106`;
-  derive the private node address from the supplied kubeconfig. A headless A answer must contain the complete board Pod IP.
-  DNS and endpoint reconciliation can take time, so wait and retry. The checks observe current values, not a history of which
-  fields changed. No VM port or external load balancer is involved.'
+brief: "Three access paths are not providing the agreed route. Restore the Services while preserving their recorded\
+  \ contracts.\n\nWork in `~/quest` on the workstation. Supplied files: `board.json`, `client.json`, `internal.json`,\
+  \ `headless.json`, `nodeport.json`, `service-contracts.json`.\n\n**Requirements:**\n- Service `board-internal`\
+  \ keeps its `ClusterIP` exposure, original UID, IPs and ordered ports recorded in `/run/dq/facts/0/service-contracts.json`\
+  \ on the workstation.\n- Service `board-internal`:\n  - only Pod selector `app=board`.\n- From `deployment/client`,\
+  \ HTTP `http://board-internal:8080` returns `north-106`.\n- Service `board-headless` keeps its `headless` exposure,\
+  \ original UID, IPs and ordered ports recorded in `/run/dq/facts/0/service-contracts.json` on the workstation.\n\
+  - Service `board-headless`:\n  - only Pod selector `app=board`.\n- From `deployment/client`, HTTP `http://board-headless:8080`\
+  \ returns `north-106`.\n- Service `board-node` keeps its `NodePort` exposure, original UID, IPs and ordered ports\
+  \ recorded in `/run/dq/facts/0/service-contracts.json` on the workstation.\n- Service `board-node`:\n  - only\
+  \ Pod selector `app=board`.\n- From `deployment/client`, HTTP `http://board-node:8080` returns `north-106`.\n\
+  - The queried trio of required Services and its recorded contract each contain `3` entries.\n- Service `board-node`\
+  \ has a NodePort of at least `30000`.\n- From Deployment `client`, the private node address and NodePort return\
+  \ `north-106` over HTTP.\n- From Deployment `client`, the `board-headless` A answer includes the complete Pod\
+  \ IP.\n\n**Verify yourself before Check & finish:**\nRun these observation commands from `~/quest` on the workstation;\
+  \ `kubectl exec` observes the named workload container.\n- `kubectl exec deployment/client -- sh -c 'for name\
+  \ in board-internal board-headless board-node; do wget -qO- -T 3 \"http://$name:8080\"; done'` — Each Service-name\
+  \ request returns `north-106`.\n- The private NodePort returns `north-106`; the headless DNS answer contains the\
+  \ complete Pod IP.\n\n  ```sh\n  node=$(kubectl config view --minify -o json | jq -r '.clusters[0].cluster.server\
+  \ | sub(\"^https://\";\"\") | split(\":\")[0]')\n  port=$(kubectl get service board-node -o jsonpath='{.spec.ports[0].nodePort}')\n\
+  \  kubectl exec deployment/client -- wget -qO- -T 3 \"http://$node:$port\"\n  kubectl exec deployment/client --\
+  \ nslookup -type=A \"board-headless.$DQ_NAMESPACE.svc.cluster.local.\"\n  kubectl get pods -l app=board -o wide\n\
+  \  ```\n- Settings, identity and status match Requirements.\n\n  ```sh\n  kubectl get service board-internal board-headless\
+  \ board-node -o yaml\n  cat /run/dq/facts/0/service-contracts.json\n  ```\n\nChecks observe current values rather\
+  \ than edit history; no VM port or external load balancer is involved.\n"
 debrief: The same application was reached through three real Service mechanisms without external infrastructure.
-stages.0.brief: The three Service contracts, selectors, name and private-node responses, and headless DNS answer match the
-  brief.
-stages.0.objectives.0.text: The three Service contracts, selectors, name and private-node responses, and headless DNS answer
-  match the brief.
+stages.0.brief: 'All three private Service access paths must return the required route.
+
+  '
 hints.0.text: A Service type changes exposure, not which Pods match a selector.
 hints.1.text: Headless DNS returns endpoint addresses instead of a virtual Service IP.
 hints.2.text: Correct all selectors, then test both service-name and node-address paths.
@@ -37,36 +51,53 @@ diagnostics.node_selector: board-node selector must equal app:board.
 diagnostics.node_port: board-node nodePort must be at least 30000.
 diagnostics.node_http: The private node NodePort request must return north-106.
 diagnostics.headless_dns: The board-headless DNS answer must contain the board Pod IP.
-diagnostics.contract_board_internal_uid: Exactly one board-internal record must appear in both the live Services and service-contracts.json,
-  with matching uid.
-diagnostics.contract_board_internal_type: Exactly one board-internal record must appear in both the live Services and service-contracts.json,
-  with matching type.
-diagnostics.contract_board_internal_clusterip: Exactly one board-internal record must appear in both the live Services and
-  service-contracts.json, with matching clusterIP.
-diagnostics.contract_board_internal_clusterips: Exactly one board-internal record must appear in both the live Services and
-  service-contracts.json, with matching clusterIPs.
-diagnostics.contract_board_internal_ports: Exactly one board-internal record must appear in both the live Services and service-contracts.json,
-  with matching ports.
+diagnostics.contract_board_internal_uid: Exactly one board-internal record must appear in both the live Services
+  and service-contracts.json, with matching uid.
+diagnostics.contract_board_internal_type: Exactly one board-internal record must appear in both the live Services
+  and service-contracts.json, with matching type.
+diagnostics.contract_board_internal_clusterip: Exactly one board-internal record must appear in both the live Services
+  and service-contracts.json, with matching clusterIP.
+diagnostics.contract_board_internal_clusterips: Exactly one board-internal record must appear in both the live Services
+  and service-contracts.json, with matching clusterIPs.
+diagnostics.contract_board_internal_ports: Exactly one board-internal record must appear in both the live Services
+  and service-contracts.json, with matching ports.
 diagnostics.http_board_internal: The request to board-internal:8080 must return north-106.
-diagnostics.contract_board_headless_uid: Exactly one board-headless record must appear in both the live Services and service-contracts.json,
-  with matching uid.
-diagnostics.contract_board_headless_type: Exactly one board-headless record must appear in both the live Services and service-contracts.json,
-  with matching type.
-diagnostics.contract_board_headless_clusterip: Exactly one board-headless record must appear in both the live Services and
-  service-contracts.json, with matching clusterIP.
-diagnostics.contract_board_headless_clusterips: Exactly one board-headless record must appear in both the live Services and
-  service-contracts.json, with matching clusterIPs.
-diagnostics.contract_board_headless_ports: Exactly one board-headless record must appear in both the live Services and service-contracts.json,
-  with matching ports.
+diagnostics.contract_board_headless_uid: Exactly one board-headless record must appear in both the live Services
+  and service-contracts.json, with matching uid.
+diagnostics.contract_board_headless_type: Exactly one board-headless record must appear in both the live Services
+  and service-contracts.json, with matching type.
+diagnostics.contract_board_headless_clusterip: Exactly one board-headless record must appear in both the live Services
+  and service-contracts.json, with matching clusterIP.
+diagnostics.contract_board_headless_clusterips: Exactly one board-headless record must appear in both the live Services
+  and service-contracts.json, with matching clusterIPs.
+diagnostics.contract_board_headless_ports: Exactly one board-headless record must appear in both the live Services
+  and service-contracts.json, with matching ports.
 diagnostics.http_board_headless: The request to board-headless:8080 must return north-106.
 diagnostics.contract_board_node_uid: Exactly one board-node record must appear in both the live Services and service-contracts.json,
   with matching uid.
 diagnostics.contract_board_node_type: Exactly one board-node record must appear in both the live Services and service-contracts.json,
   with matching type.
-diagnostics.contract_board_node_clusterip: Exactly one board-node record must appear in both the live Services and service-contracts.json,
-  with matching clusterIP.
-diagnostics.contract_board_node_clusterips: Exactly one board-node record must appear in both the live Services and service-contracts.json,
-  with matching clusterIPs.
+diagnostics.contract_board_node_clusterip: Exactly one board-node record must appear in both the live Services and
+  service-contracts.json, with matching clusterIP.
+diagnostics.contract_board_node_clusterips: Exactly one board-node record must appear in both the live Services
+  and service-contracts.json, with matching clusterIPs.
 diagnostics.contract_board_node_ports: Exactly one board-node record must appear in both the live Services and service-contracts.json,
   with matching ports.
 diagnostics.http_board_node: The request to board-node:8080 must return north-106.
+stages.0.objectives.0.text: Service `board-internal` keeps its `ClusterIP` exposure, original UID, IPs and ordered
+  ports recorded in `/run/dq/facts/0/service-contracts.json` on the workstation.
+stages.0.objectives.1.text: 'Service `board-internal`: only Pod selector `app=board`.'
+stages.0.objectives.2.text: From `deployment/client`, HTTP `http://board-internal:8080` returns `north-106`.
+stages.0.objectives.3.text: Service `board-headless` keeps its `headless` exposure, original UID, IPs and ordered
+  ports recorded in `/run/dq/facts/0/service-contracts.json` on the workstation.
+stages.0.objectives.4.text: 'Service `board-headless`: only Pod selector `app=board`.'
+stages.0.objectives.5.text: From `deployment/client`, HTTP `http://board-headless:8080` returns `north-106`.
+stages.0.objectives.6.text: Service `board-node` keeps its `NodePort` exposure, original UID, IPs and ordered ports
+  recorded in `/run/dq/facts/0/service-contracts.json` on the workstation.
+stages.0.objectives.7.text: 'Service `board-node`: only Pod selector `app=board`.'
+stages.0.objectives.8.text: From `deployment/client`, HTTP `http://board-node:8080` returns `north-106`.
+stages.0.objectives.9.text: The queried trio of required Services and its recorded contract each contain `3` entries.
+stages.0.objectives.10.text: Service `board-node` has a NodePort of at least `30000`.
+stages.0.objectives.11.text: From Deployment `client`, the private node address and NodePort return `north-106`
+  over HTTP.
+stages.0.objectives.12.text: From Deployment `client`, the `board-headless` A answer includes the complete Pod IP.

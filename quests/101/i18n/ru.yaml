@@ -1,28 +1,35 @@
 title: Init-контейнеры и native sidecars
-brief: 'Работайте в `~/quest` с `route.json`, `board.json` и `service.json`. Обычный init-контейнер читает несуществующий
-  вход и блокирует запуск. Исправьте `prepare` и сохраните нативный sidecar. Используйте только офлайн-песочницу.
-
-
-  Изучите `board.json`: в нём указаны точные команды init по порядку, startup probe watcher и порядок томов; сохраните входной
-  том ConfigMap, общий emptyDir, стандартный режим `0644` (`defaultMode: 420` в JSON) и отсутствие дополнительных томов. В
-  одном Pod, не отмеченном на удаление, с меткой `app=board` `prepare` должен завершиться с 0, `watcher` должен быть запущен
-  и работать, а обычный контейнер должен быть готов. Файл watcher `/shared/heartbeat` должен быть непустым, а `board:8080/route`
-  должен возвращать `north-101`. Дождитесь rollout и изучите состояние Pod; проверки наблюдают текущие настройки, но не доказывают,
-  что изменено только одно поле.
-
-
-  Установите команду первого init-контейнера ровно в `["sh", "-c", "cp /input/route /shared/route"]`. Команда startup probe
-  второго init-контейнера должна быть `["test", "-s", "/shared/heartbeat"]` с `periodSeconds: 1` и `failureThreshold: 10`.
-
-
-  Проверка heartbeat использует Pod, выбранный `kubectl exec deployment/board`; она не устанавливает, что это тот же Pod,
-  который прошёл проверку состояния.'
+brief: "Запуск приложения не завершается. Предоставленные инициализация, нативный sidecar и приложение должны работать\
+  \ совместно.\n\nРаботайте в `~/quest` на workstation. Предоставленные файлы: `route.json`, `board.json`, `service.json`.\n\
+  \n**Требования:**\n- Init-контейнер `prepare` делает маршрут из предоставленного ConfigMap доступным в `/shared/route`\
+  \ внутри Pod.\n- Контейнер `watcher`:\n  - политика перезапуска нативного sidecar `Always`.\n- Нативный sidecar\
+  \ `watcher` имеет проверку запуска, требующую непустой `/shared/heartbeat` внутри контейнера, каждые `1` секунду\
+  \ с порогом неудач `10`.\n- Deployment `board` сохраняет только исходные тома в указанном порядке:\n  - `input`\
+  \ из ConfigMap `route`, режим `0644`, затем общий том emptyDir `shared`.\n- Один Pod с меткой `app=board`, не\
+  \ завершающийся, имеет `prepare`, завершённый с кодом `0`, запущенный и работающий `watcher` и готовый обычный\
+  \ контейнер.\n- Внутри контейнера `watcher`, выбранного из Deployment `board`, `/shared/heartbeat` существует\
+  \ и непуст.\n- Из `deployment/board` HTTP `http://board:8080/route` возвращает `north-101`.\n\n**Проверьте самостоятельно\
+  \ перед Check & finish:**\nВыполняйте эти команды наблюдения из `~/quest` на workstation; `kubectl exec` наблюдает\
+  \ контейнер указанной нагрузки.\n- Настройки, идентичность и статус соответствуют требованиям.\n\n  ```sh\n  kubectl\
+  \ get deployment board -o yaml\n  kubectl get pods -l app=board -o json\n  ```\n- `kubectl exec deployment/board\
+  \ -c watcher -- wc -c /shared/heartbeat` — Файл heartbeat внутри `watcher` имеет положительное число байтов.\n\
+  - `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080/route` — Потребитель получает `north-101`.\n\
+  \nПроверка наблюдает текущие настройки, а не историю изменения одного поля; не доказано, что Pod heartbeat, выбранный\
+  \ из Deployment, совпадает с Pod проверки статуса.\n"
 debrief: Проверки наблюдали настройки init, состояния Pod, heartbeat и HTTP-ответ.
-stages.0.brief: Настройки init, состояния Pod, heartbeat watcher и HTTP-ответ board соответствуют описанию.
-stages.0.objectives.0.text: Настройки init, состояния Pod, heartbeat watcher и HTTP-ответ board соответствуют описанию.
-hints.0.text: Ошибка обычного init блокирует дальнейшую подготовку и запуск приложения.
+stages.0.brief: 'Инициализация и нативный sidecar должны обеспечивать готовность приложения и требуемый маршрут.
+
+  '
+hints.0.text: 'Сбой обычного init блокирует следующую инициализацию и запуск приложения. Его исходный путь указывает
+  несуществующий входной файл.
+
+  '
 hints.1.text: Native sidecars — перезапускаемые init containers; обычные init должны завершиться.
-hints.2.text: Исправьте путь источника, не перенося watcher в список обычных containers.
+hints.2.text: 'Исправьте исходный путь, не перенося watcher в список обычных контейнеров. Команда prepare — sh -c
+  с cp /input/route /shared/route. Команда запуска watcher — test -s /shared/heartbeat, с periodSeconds 1 и failureThreshold
+  10. Сохраните prepare первым, а watcher вторым в списке init-контейнеров.
+
+  '
 phrases.0: Я диагностировал запуск по статусу init container.
 phrases.1: Я разделил разовую подготовку и native sidecar.
 phrases.2: Я проверил HTTP-ответ board.
@@ -44,3 +51,15 @@ diagnostics.ready: У Pod board, не находящегося в процесс
 diagnostics.same: Один Pod board, не находящийся в процессе удаления, должен выполнять все три условия контейнеров.
 diagnostics.http: board:8080/route должен совпадать с north-101.
 diagnostics.heartbeat: Файл watcher /shared/heartbeat должен существовать и быть непустым.
+stages.0.objectives.0.text: Init-контейнер `prepare` делает маршрут из предоставленного ConfigMap доступным в `/shared/route`
+  внутри Pod.
+stages.0.objectives.1.text: 'Контейнер `watcher`: политика перезапуска нативного sidecar `Always`.'
+stages.0.objectives.2.text: Нативный sidecar `watcher` имеет проверку запуска, требующую непустой `/shared/heartbeat`
+  внутри контейнера, каждые `1` секунду с порогом неудач `10`.
+stages.0.objectives.3.text: 'Deployment `board` сохраняет только исходные тома в указанном порядке: `input` из ConfigMap
+  `route`, режим `0644`, затем общий том emptyDir `shared`.'
+stages.0.objectives.4.text: Один Pod с меткой `app=board`, не завершающийся, имеет `prepare`, завершённый с кодом
+  `0`, запущенный и работающий `watcher` и готовый обычный контейнер.
+stages.0.objectives.5.text: Внутри контейнера `watcher`, выбранного из Deployment `board`, `/shared/heartbeat` существует
+  и непуст.
+stages.0.objectives.6.text: Из `deployment/board` HTTP `http://board:8080/route` возвращает `north-101`.
