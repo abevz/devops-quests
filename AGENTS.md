@@ -35,7 +35,10 @@ outside Git. Verify actual entrypoints and fixture layouts before changing produ
 Before pushing, run the fast local checks: `ruff check .`, `python scripts/validate_i18n.py`,
 `npm test` and `.venv/bin/python -m pytest -q <tests for the touched areas>`. The full
 `pytest -q` suite runs in CI on every pull request and is the merge gate; run it locally only
-for cross-cutting changes or to reproduce a CI failure. Excerpt provenance, code-block parity
+for cross-cutting changes or to reproduce a CI failure. For quest edits, "tests for the touched
+areas" means every test that mentions a changed quest by number, bare or zero-padded
+(`grep -rlE '\b0*(72|101|129)\b' tests/` for 072, 101, 129), plus `test_i18n.py`,
+`test_quest_presentation.py`, `test_stage_check_invariant.py` and `test_*_locale.py`. Excerpt provenance, code-block parity
 and diagram tests are required (they run in the full suite). Run the real-sandbox integration
 matrix only when checks, setup scripts or solutions change, and only for affected levels;
 text-only changes need none. Native Linux amd64 is the qualified target; do not invent portability claims.
