@@ -16,17 +16,37 @@ test "$(stat -c %a fleet.txt)" = 644
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_group_failed=0
+set +e
+(
+set -e
 ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'set -eu; test ! -e /srv/site/fleet.txt'
 )
-[ $? -eq 0 ] || failed=1
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'No /srv/site/fleet.txt is present on app1 : ✗ [DQ:absent_1]'
+dq_group_failed=1
+fi
 (
 set -e
 ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'set -eu; test ! -e /srv/site/fleet.txt'
 )
-[ $? -eq 0 ] || failed=1
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'No /srv/site/fleet.txt is present on app2 : ✗ [DQ:absent_2]'
+dq_group_failed=1
+fi
 (
 set -e
 ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'set -eu; test ! -e /srv/site/fleet.txt'
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+printf '%s\n' 'No /srv/site/fleet.txt is present on app3 : ✗ [DQ:absent_3]'
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
