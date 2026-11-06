@@ -1,30 +1,134 @@
 title: Wiederherstellung der Lieferung
-brief: 'Arbeite in `~/quest` mit `platform.env`, `registry-ca.crt`, `private-release.json`, `baseline-commit`, `application.json`,
-  `release-commit`, `repository/manifests/board.json`, `repository/manifests/service.json` und `registry-pull.json`. Argo
-  CD vergleicht eine Git-Revision asynchron mit laufenden Ressourcen. Setze zuerst Application `board` auf Repository `GIT_URL`,
-  Pfad `manifests`, Ziel `main`, `selfHeal: true` und warte auf `Synced` bei `baseline-commit`. Das laufende Deployment muss
-  genau `imagePullSecrets: [{name: registry-pull}]` und `imagePullPolicy: Always` des ersten Containers behalten.
-
-
-  Committe und pushe dann einen Nachfahren des Baseline-Commits nach privatem `origin/main`; schreibe seinen Hash nach `release-commit`.
-  Das erste Image im Commit und im laufenden Deployment muss dem eingefrorenen Image aus `private-release.json` entsprechen
-  und `Always` nutzen; das committete Manifest muss genau `registry-pull` behalten. Die Application muss bei `release-commit`
-  `Synced` und `Healthy` sein, mit `selfHeal` und `prune` true. Warte auf den Board-Rollout und HTTP `north-80` von `board:8080`;
-  die imageID eines nicht terminierenden bereiten Pods muss den eingefrorenen Digest enthalten, und authentifizierter Zugriff
-  mit `registry-ca.crt` und `platform.env` muss diesen Digest abrufen. Die Prüfung beweist nicht, dass das laufende Pull-Secret
-  unverändert blieb. Schütze Zugangsdaten und arbeite nur in der Offline-Umgebung.'
-debrief: Die Wiederherstellung schloss sich der private Git-Absicht, dem registry identity und dem tatsächlichen workload-Verhalten
-  ohne einen Nur-Live-Patch an.
-stages.0.brief: Application-Quelle, Baseline-Sync, Self-Heal und laufende Pull-Einstellungen entsprechen der Beschreibung.
-stages.0.objectives.0.text: Application-Quelle, Baseline-Sync, Self-Heal und laufende Pull-Einstellungen entsprechen der Beschreibung.
-stages.1.brief: Nachfahren-Revision, Application-Status, geprüfte Git- und Live-Image-Felder, Registry-Zugriff und Board-Antwort
-  entsprechen der Beschreibung.
-stages.1.objectives.0.text: Nachfahren-Revision, Application-Status, geprüfte Git- und Live-Image-Felder, Registry-Zugriff
-  und Board-Antwort entsprechen der Beschreibung.
+brief: "Das private Release erreicht die Verbraucher noch nicht zuverlässig. Abgleich und laufendes Artefakt müssen\
+  \ übereinstimmen.\n\nArbeiten Sie in `~/quest` auf der Workstation. Eingaben je Phase:\n- Phase 1: `platform.env`,\
+  \ `application.yaml`, `private-release.json`, `registry-pull.yaml`, `registry-ca.crt`, `repository/manifests/board.yaml`,\
+  \ `repository/manifests/service.yaml`.\n- Phase 2: `release-commit`.\n\n**Anforderungen:**\n\n- Phase 1:\n  -\
+  \ Application `board` meldet `Synced` bei der vorgesehenen veröffentlichten Revision. Sie korrigiert Drift automatisch.\n\
+  \  - Deployment `board` prüft sein Image bei jedem Start mit ausschließlich den bestehenden privaten Registry-Zugangsdaten.\n\
+  - Phase 2:\n  - Application `board` meldet `Synced` und `Healthy` bei der veröffentlichten Release-Revision. Sie\
+  \ korrigiert Drift automatisch und entfernt Ressourcen, die im gewünschten Release nicht mehr vorhanden sind.\n\
+  \  - Das entfernte `main` entspricht `release-commit`, unterscheidet sich vom ursprünglichen Commit und bewahrt\
+  \ ihn als Vorgänger.\n  - Das veröffentlichte Workload-Manifest nutzt das mitgelieferte eingefrorene Image und\
+  \ bewahrt die Vorgaben für Start-Pull und privaten Registry-Zugriff.\n  - Das laufende `board`-Image entspricht\
+  \ dem mitgelieferten eingefrorenen Release und wird bei jedem Start geprüft.\n  - Deployment `board` schließt\
+  \ seinen Rollout ab.\n  - Ein bereiter Container in einem nicht terminierenden Anwendungs-Pod verwendet den mitgelieferten\
+  \ eingefrorenen Image-Digest.\n  - Authentifizierter Zugriff auf die private Registry liefert den mitgelieferten\
+  \ eingefrorenen Release-Digest.\n  - Von Deployment `board` liefert `http://board:8080` den Wert `north-80`.\n\
+  \nDie Prüfung belegt nicht, dass das Live-Pull-Secret unverändert blieb; aktuelle Revision, Digest des bereiten\
+  \ Containers und authentifizierter Registry-Zugriff sind getrennte Beobachtungen."
+debrief: Die Wiederherstellung schloss sich der private Git-Absicht, dem registry identity und dem tatsächlichen
+  workload-Verhalten ohne einen Nur-Live-Patch an.
+stages.0.brief: Bewahren Sie die mitgelieferte Release-Identität und Pull-Zugangsdaten.
+stages.1.brief: Das veröffentlichte Nachfolge-Release muss einen bereiten Verbraucher erreichen.
 hints.0.text: Korrigieren Sie den Quellenabgleich, bevor Sie den Bildabruf diagnostizieren.
-hints.1.text: Ein Git-Commit kann Synced sein, während sein Image tag nicht existiert.
-hints.2.text: Übernehmen Sie das bereitgestellte immutable digest, bewahren Sie pull credentials auf und überprüfen Sie sowohl
-  Git als auch das laufende imageID.
+hints.1.text: 'Ein Git-Commit kann Synced sein, während sein Image tag nicht existiert.
+
+
+  Prüfen Sie mitgelieferte Definitionen, Ressourcenbeschreibungen und Ereignisse der jeweiligen Phase.
+
+
+  ```sh
+
+  git -C repository log --all --oneline
+
+  kubectl describe application board
+
+  kubectl describe deployment board
+
+  kubectl describe pod -l app=board
+
+  ```
+
+
+  Phase 1/2: Prüfen Sie diese Ressourcendefinitionen für diese Phase.
+
+
+  ```sh
+
+  kubectl get application board -o yaml
+
+  kubectl get deployment board -o yaml
+
+  kubectl get pods -l app=board -o yaml
+
+  ```
+
+
+  Phase 2: Prüfen Sie diese Ressourcendefinitionen für diese Phase.
+
+
+  ```sh
+
+  git -C repository show origin/main:manifests/board.yaml
+
+  ```'
+hints.2.text: 'Übernehmen Sie das bereitgestellte immutable digest, bewahren Sie pull credentials auf und überprüfen
+  Sie sowohl Git als auch das laufende imageID. Veröffentlichen Sie einen Nachfolge-Commit nach `origin/main` und
+  halten Sie seinen Hash in `release-commit` fest.
+
+
+  Prüfen Sie die reparierte Phase und vergleichen Sie das beobachtete Ergebnis.
+
+
+  Phase 1/2: Der Controller meldet `Synced` bei der erwarteten Revision; in der letzten Phase meldet er auch `Healthy`
+  und der Workload ist bereit.
+
+
+  ```sh
+
+  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
+  printf ''\n''
+
+  kubectl get deployment board
+
+  ```
+
+
+  Phase 2: Der veröffentlichte Hash entspricht dem aufgezeichneten Release; die Abstammungsprüfung endet, sofern
+  vorhanden, mit Code `0`.
+
+
+  ```sh
+
+  source platform.env
+
+  cat release-commit
+
+  git -C repository ls-remote origin refs/heads/main
+
+  git -C repository merge-base --is-ancestor "$(cat baseline-commit)" origin/main
+
+  ```
+
+
+  Phase 2: Die Anwendung liefert `north-80`; der authentifizierte Abruf des aufgezeichneten Registry-Digests liefert
+  HTTP `200`.
+
+
+  ```sh
+
+  source platform.env
+
+  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
+
+  printf ''\n''
+
+  image=$(jq -r .image private-release.json)
+
+  curl -fsS --max-time 4 --config <(printf ''user = "%s:%s"\n'' "$REGISTRY_USER" "$REGISTRY_PASSWORD") --cacert
+  registry-ca.crt -H ''Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json''
+  -o /dev/null -w ''%{http_code}\n'' "https://$REGISTRY/v2/parcel/manifests/${image##*@}"
+
+  ```
+
+
+  Erwartete Beobachtungen für die gesamte Phase:
+
+  - Phase 1/2: Angezeigter Abgleich, Workload-Konfiguration und Beobachtungen des laufenden Images erfüllen die
+  Anforderungen dieser Phase.
+
+  - Phase 2: Der entfernte Hash entspricht `release-commit`, das Manifest erfüllt die Anforderungen und die Abstammungsprüfung
+  endet mit Code `0` bei unterschiedlichem Release-Hash.'
 phrases.0: Ich habe den Quellpfadfehler beim private-Bildabruf isoliert.
 phrases.1: Ich habe die immutable-Version in Git und bei runtime angeheftet und überprüft.
 phrases.2: Ich habe die Authentifizierung und den automatischen Abgleich während der Wiederherstellung beibehalten.
@@ -59,6 +163,24 @@ diagnostics.git_policy: imagePullPolicy von board in Git muss Always sein.
 diagnostics.git_secrets: imagePullSecrets von board in Git muss [registry-pull] entsprechen.
 diagnostics.live_image: deployment/board containers[0].image muss private-release.json image entsprechen.
 diagnostics.live_policy: deployment/board imagePullPolicy muss Always entsprechen.
-diagnostics.image_id: Ein nicht zur Löschung markierter Board-Pod muss einen bereiten Container haben, dessen imageID den
-  festgelegten Digest enthält.
+diagnostics.image_id: Ein nicht zur Löschung markierter Board-Pod muss einen bereiten Container haben, dessen imageID
+  den festgelegten Digest enthält.
 diagnostics.registry: Die authentifizierte Registry muss den festgelegten Digest ausliefern.
+stages.0.objectives.0.text: Application `board` meldet `Synced` bei der vorgesehenen veröffentlichten Revision.
+  Sie korrigiert Drift automatisch.
+stages.0.objectives.1.text: Deployment `board` prüft sein Image bei jedem Start mit ausschließlich den bestehenden
+  privaten Registry-Zugangsdaten.
+stages.1.objectives.0.text: Application `board` meldet `Synced` und `Healthy` bei der veröffentlichten Release-Revision.
+  Sie korrigiert Drift automatisch und entfernt Ressourcen, die im gewünschten Release nicht mehr vorhanden sind.
+stages.1.objectives.1.text: Das entfernte `main` entspricht `release-commit`, unterscheidet sich vom ursprünglichen
+  Commit und bewahrt ihn als Vorgänger.
+stages.1.objectives.2.text: Das veröffentlichte Workload-Manifest nutzt das mitgelieferte eingefrorene Image und
+  bewahrt die Vorgaben für Start-Pull und privaten Registry-Zugriff.
+stages.1.objectives.3.text: Das laufende `board`-Image entspricht dem mitgelieferten eingefrorenen Release und wird
+  bei jedem Start geprüft.
+stages.1.objectives.4.text: Deployment `board` schließt seinen Rollout ab.
+stages.1.objectives.5.text: Ein bereiter Container in einem nicht terminierenden Anwendungs-Pod verwendet den mitgelieferten
+  eingefrorenen Image-Digest.
+stages.1.objectives.6.text: Authentifizierter Zugriff auf die private Registry liefert den mitgelieferten eingefrorenen
+  Release-Digest.
+stages.1.objectives.7.text: Von Deployment `board` liefert `http://board:8080` den Wert `north-80`.

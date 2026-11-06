@@ -1,45 +1,134 @@
 title: Entrega de secretos
-brief: 'Tanto una versión privada Git como su runtime secret respaldado por Vault están bloqueados. Primero
-  restaure la ruta de origen Application a manifests y demuestre que la confirmación registrada es Synced;
-  permanecerá insalubre hasta la etapa dos. Luego repare el juego reader policy solo para dispatch, ejecute
-  explícitamente sync-secret.sh y verifique el HTTP board que consume secretos. El asistente es un sincronizador
-  bajo demanda, no un operador en segundo plano; ningún Vault token podrá ingresar al workload.
+brief: "La versión registrada en Git y su servicio consumidor de secretos aún no están disponibles juntos.\n\nTrabaja\
+  \ en `~/quest` en la estación de trabajo. Entradas por etapa:\n- Etapa 1: `platform.env`, `application.yaml`,\
+  \ `repository/manifests/board.yaml`, `repository/manifests/service.yaml`.\n- Etapa 2: `reader.hcl`, `reader-policy.json`,\
+  \ `sync-secret.sh`.\n\n**Requisitos:**\n\n- Etapa 1:\n  - La Application `board` informa `Synced` en la revisión\
+  \ publicada prevista.\n  - El Deployment `board` obtiene su valor de runtime solo mediante la referencia Secret\
+  \ suministrada, nunca como valor incrustado.\n- Etapa 2:\n  - La Application `board` informa `Synced` y `Healthy`\
+  \ en la revisión de la versión publicada.\n  - El Deployment `board` completa su rollout.\n  - El Deployment `board`\
+  \ obtiene su valor de runtime solo mediante la referencia Secret suministrada, nunca como valor incrustado.\n\
+  \  - El Secret de la carga contiene el valor del registro Vault previsto.\n  - El token de acceso Vault tiene\
+  \ acceso de solo lectura al registro de entrega previsto; se deniegan un registro ajeno separado y la gestión\
+  \ de mounts.\n  - Desde el Deployment `board`, `http://board:8080` devuelve `north-70`.\n\nLa comprobación observa\
+  \ la revisión registrada, la referencia Secret seleccionada y tres rutas de capacidades del lector; no demuestra\
+  \ sincronización en segundo plano ni permisos en todas las demás rutas Vault."
+debrief: La entrega de GitOps y la entrega de runtime secret se recuperaron como etapas separadas con un resultado
+  verificado compartido.
+stages.0.brief: La versión registrada debe reconciliarse antes de evaluar su runtime.
+stages.1.brief: El servicio reconciliado debe consumir el secreto previsto con acceso acotado del lector.
+hints.0.text: La reconciliación del origen y la entrega del secreto de runtime son límites distintos. Una revisión
+  registrada por sí sola no demuestra que su consumidor pueda iniciar.
+hints.1.text: 'Restaure la sincronización de Git antes de diagnosticar el runtime Secret faltante. El directorio
+  de origen de la Application es `manifests`; sincroniza la revisión registrada antes de esperar un runtime sano.
 
 
-  Archivos de búsqueda en `~/quest` (algunos aparecen en etapas posteriores): `platform.env`, `reader.hcl`,
-  `reader-policy.json`, `sync-secret.sh`, `application.json`, `repository/manifests/board.json`, `repository/manifests/service.json`,
-  `release-commit`.
+  Utilice la ruta KV v2 data y otorgue solo lectura a dispatch.
 
 
-  La bahía no tiene Internet ni DNS externo. Utilice únicamente archivos proporcionados, imágenes precargadas
-  y servicios privados. Cambie sólo esta bahía.
+  Inspecciona las definiciones suministradas, descripciones de recursos y eventos de la etapa correspondiente.
 
 
-  Criterios de éxito iniciales: El Git revision registrado es Synced de manifests y el Deployment solo
-  solicita route-secret/value..'
-debrief: La entrega de GitOps y la entrega de runtime secret se recuperaron como etapas separadas con
-  un resultado verificado compartido.
-stages.0.brief: 'Criterios de éxito: El Git revision registrado es Synced de manifests y el Deployment
-  solo solicita route-secret/value..'
-stages.0.objectives.0.text: El Git revision registrado es Synced de manifests y el Deployment solicita
-  solo route-secret/value.
-stages.1.brief: 'Criterios de éxito: el reader con privilegios mínimos ofrece el Secret; Argo es Healthy
-  y el board real devuelve north-70 sin tokens workload Vault.'
-stages.1.objectives.0.text: El reader con menos privilegios ofrece el Secret; Argo es Healthy y el board
-  real devuelve north-70 sin tokens workload Vault.
-hints.0.text: Restaure la sincronización de Git antes de diagnosticar el runtime Secret faltante.
-hints.1.text: Utilice la ruta KV v2 data y otorgue solo lectura a dispatch.
-hints.2.text: Ejecute el sincronizador suministrado explícitamente, luego verifique capabilities, referencia
-  Secret, health y HTTP.
+  ```sh
+
+  cat application.yaml
+
+  cat reader.hcl
+
+  kubectl describe application board
+
+  kubectl describe deployment board
+
+  kubectl describe pod -l app=board
+
+  ```
+
+
+  Etapa 1/2: Inspecciona estas definiciones de recursos para esta etapa.
+
+
+  ```sh
+
+  kubectl get application board -o yaml
+
+  kubectl get deployment board -o yaml
+
+  kubectl get pods -l app=board -o yaml
+
+  ```'
+hints.2.text: 'Ejecute el sincronizador suministrado explícitamente, luego verifique capabilities, referencia Secret,
+  health y HTTP. El sincronizador se ejecuta bajo demanda, no en segundo plano; mantén los tokens Vault fuera de
+  la carga.
+
+
+  Verifica la etapa reparada y compara el resultado observado.
+
+
+  Etapa 1/2: El controlador informa `Synced` en la revisión esperada; en la etapa final también informa `Healthy`
+  y la carga está lista.
+
+
+  ```sh
+
+  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
+  printf ''\n''
+
+  kubectl get deployment board
+
+  ```
+
+
+  Etapa 2: El valor del Secret imprime `north-secret`; el consumidor de la aplicación recibe `north-70`.
+
+
+  ```sh
+
+  kubectl get secret route-secret -o jsonpath=''{.data.value}'' | base64 -d
+
+  printf ''\n''
+
+  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  Etapa 2: La consulta de capacidades devuelve `read` para `secret/data/dispatch` y `deny` para `secret/data/unrelated`
+  y `sys/mounts`; no cambia ninguna política.
+
+
+  ```sh
+
+  source platform.env
+
+  curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") -H ''Content-Type: application/json'' --request
+  POST --data ''{"paths":["secret/data/dispatch","secret/data/unrelated","sys/mounts"]}'' "$VAULT_ADDR/v1/sys/capabilities-self"
+
+  ```
+
+
+  Observaciones esperadas para la etapa completa:
+
+  - Etapa 1/2: La reconciliación, configuración de carga y observaciones de la imagen en ejecución mostradas cumplen
+  los requisitos de esta etapa.'
 phrases.0: Separé la conciliación Git de la entrega runtime secret.
 phrases.1: Mantuve el Vault credentials fuera del workload.
 phrases.2: Verifiqué el privilegio mínimo y el endpoint que consume secretos.
 questions.0.points.0: manifests y runtime Secret tienen rutas de entrega independientes.
 questions.0.points.1: Una referencia Secret no crea el valor referenciado.
 questions.0.points.2: Inspeccione la autorización events, provider y el sincronizador explícito.
-questions.0.prompt: ¿Por qué la sincronización de Git puede tener éxito mientras un Pod que consume secretos
-  permanece bloqueado?
+questions.0.prompt: ¿Por qué la sincronización de Git puede tener éxito mientras un Pod que consume secretos permanece
+  bloqueado?
 questions.1.points.0: Entregue solo el valor que necesita la aplicación.
 questions.1.points.1: Mantenga la autoridad provider dentro del alcance y fuera de workload environment.
 questions.1.points.2: Verifique el acceso denegado y la lectura prevista.
 questions.1.prompt: ¿La aplicación debe recibir un Vault administrativo token?
+stages.0.objectives.0.text: La Application `board` informa `Synced` en la revisión publicada prevista.
+stages.0.objectives.1.text: El Deployment `board` obtiene su valor de runtime solo mediante la referencia Secret
+  suministrada, nunca como valor incrustado.
+stages.1.objectives.0.text: La Application `board` informa `Synced` y `Healthy` en la revisión de la versión publicada.
+stages.1.objectives.1.text: El Deployment `board` completa su rollout.
+stages.1.objectives.2.text: El Deployment `board` obtiene su valor de runtime solo mediante la referencia Secret
+  suministrada, nunca como valor incrustado.
+stages.1.objectives.3.text: El Secret de la carga contiene el valor del registro Vault previsto.
+stages.1.objectives.4.text: El token de acceso Vault tiene acceso de solo lectura al registro de entrega previsto;
+  se deniegan un registro ajeno separado y la gestión de mounts.
+stages.1.objectives.5.text: Desde el Deployment `board`, `http://board:8080` devuelve `north-70`.

@@ -1,33 +1,141 @@
 title: Полное восстановление платформы
-brief: Приватная цепочка доставки связывает Gitea, реестр, Argo CD, Vault и board в Kubernetes. Работайте только в `~/quest`
-  и этой офлайн-песочнице. Изучите `platform.env`, `application.json`, `repository/manifests/board.json`, `baseline-commit`,
-  `release-commit`, `private-release.json`, `reader.hcl` и `sync-secret.sh`. Application Argo описывает источник манифестов
-  и сообщает состояние согласования; политика Vault управляет доступом к секретам. Сначала исправьте согласование, затем учётные
-  данные для запуска. Проверки наблюдают выбранную конфигурацию, значения и два пути Vault; они не доказывают всю историю
-  Git или отказ для всех остальных путей Vault.
-debrief: Проверки подтвердили выбранные результаты Git, Argo, board и Vault; они не доказывают полный охват политики или неизменность
-  истории.
-stages.0.brief: 'Исправьте Application `board`: URL репозитория должен равняться `GIT_URL` из `platform.env`, путь — `manifests`,
-  ревизия — `main`, а автоматические `selfHeal` и `prune` должны быть true. Дождитесь статуса синхронизации `Synced` на зафиксированном
-  `baseline-commit`. Связанная подсказка описывает обновление Application.'
-stages.0.objectives.0.text: Источник Application, автоматика и синхронизация базовой ревизии соответствуют описанию.
-stages.1.brief: 'Получите `origin/main` в `repository`; он должен совпадать с `release-commit`. Сохраните в Application `board`
-  тот же URL, путь, ревизию и автоматику; теперь требуется `Synced` и `Healthy` на `release-commit`. Дождитесь rollout board
-  и проверьте ответ `north-100` от `board:8080`. Первый контейнер board должен использовать образ из `/run/dq/facts/0/private-release.json`,
-  `imagePullPolicy: Always`, ровно `imagePullSecrets: [{name: registry-pull}]` и ровно одну запись окружения: `ROUTE_SECRET`
-  из Secret `route-secret`, ключ `value`. imageID готового контейнера board должен содержать digest этого образа. Значение
-  Secret и значение токена Vault в `secret/data/dispatch` должны быть `north-secret`; доступ токена к `secret/data/other`
-  должен вернуть HTTP 403. Манифест Git в `origin/main:manifests/board.json` должен сохранить первый зафиксированный образ
-  и имя Secret `route-secret` в первой записи окружения. Используйте `reader.hcl` и `sync-secret.sh`, затем перезапустите
-  board. Два проверенных пути Vault не доказывают полного соблюдения минимальных привилегий.'
-stages.1.objectives.0.text: Ревизия выпуска, состояние Application, конфигурация и ответ board, выбранные поля Git и результаты
-  Vault соответствуют описанию.
-hints.0.text: 'Этап 1: проверьте application.json — Argo CD смотрит в устаревший путь Git вместо source.path=manifests на
-  ревизии main с включёнными self-heal и prune.'
-hints.1.text: 'Этап 2: статус Synced не означает готовность Pod — отсутствует pull Secret приватного registry, а policy в
-  reader.hcl указывает на неверный KV-путь в Vault.'
-hints.2.text: Восстановите pull Secret из private-release.json, ограничьте reader.hcl чтением dispatch, выполните sync-secret.sh
-  и проверьте работающий digest образа и HTTP-ответ.
+brief: "Приватная цепочка доставки ещё не обслуживает требуемый релиз. Опубликованная ревизия, работающий артефакт\
+  \ и доступ к секрету должны согласоваться.\n\nРаботайте в `~/quest` на рабочей станции. Входные файлы по этапам:\n\
+  - Этап 1: `platform.env`, `application.yaml`, `repository/manifests/board.yaml`, `repository/manifests/service.yaml`,\
+  \ `release-commit`, `private-release.json`.\n- Этап 2: `reader.hcl`, `sync-secret.sh`.\n\n**Требования:**\n\n\
+  - Этап 1:\n  - Application `board` сообщает `Synced` для требуемой опубликованной ревизии. Оно автоматически устраняет\
+  \ дрейф и удаляет ресурсы, которых больше нет в желаемом релизе.\n- Этап 2:\n  - Удалённая `main` равна ревизии\
+  \ из `release-commit`.\n  - Опубликованная нагрузка использует поставленный зафиксированный образ и получает секрет\
+  \ runtime через требуемую ссылку на Secret.\n  - Application `board` сообщает `Synced` и `Healthy` для опубликованной\
+  \ ревизии релиза. Оно автоматически устраняет дрейф и удаляет ресурсы, которых больше нет в желаемом релизе.\n\
+  \  - Deployment `board` использует поставленный зафиксированный образ, сохраняет исходные требования загрузки\
+  \ и получает секрет runtime без встроенного значения.\n  - Secret нагрузки содержит значение требуемой записи\
+  \ Vault.\n  - Токен доступа Vault возвращает требуемый секрет доставки и запрещает доступ к посторонней записи\
+  \ данных.\n  - Deployment `board` завершает развёртывание с готовым контейнером приложения, работающим с дайджестом\
+  \ поставленного зафиксированного образа.\n  - Из Deployment `board` адрес `http://board:8080` возвращает `north-100`.\n\
+  \nПроверка наблюдает выбранную конфигурацию, значения и два пути Vault; она не может доказать всю историю Git\
+  \ или запрет всех остальных путей Vault."
+debrief: Проверки подтвердили выбранные результаты Git, Argo, board и Vault; они не доказывают полный охват политики
+  или неизменность истории.
+stages.0.brief: Сохраните исходную ревизию при восстановлении согласования.
+stages.1.brief: Опубликованный релиз должен согласоваться на границах доставки и runtime.
+hints.0.text: Согласованный источник и здоровый runtime — разные результаты. Сравните границу доставки с границей
+  потребителя.
+hints.1.text: 'Этап 1: проверьте application.yaml — Argo CD смотрит в устаревший путь Git вместо source.path=manifests
+  на ревизии main с включёнными self-heal и prune.
+
+
+  Этап 2: статус Synced не означает готовность Pod — отсутствует pull Secret приватного registry, а policy в reader.hcl
+  указывает на неверный KV-путь в Vault.
+
+
+  Изучите поставленные определения, описания ресурсов и события соответствующего этапа.
+
+
+  ```sh
+
+  git -C repository log --all --oneline
+
+  cat reader.hcl
+
+  kubectl describe application board
+
+  kubectl describe deployment board
+
+  kubectl describe pod -l app=board
+
+  ```
+
+
+  Этап 1/2: Изучите определения этих ресурсов для данного этапа.
+
+
+  ```sh
+
+  kubectl get application board -o yaml
+
+  kubectl get deployment board -o yaml
+
+  kubectl get pods -l app=board -o yaml
+
+  ```
+
+
+  Этап 2: Изучите определения этих ресурсов для данного этапа.
+
+
+  ```sh
+
+  git -C repository show origin/main:manifests/board.yaml
+
+  ```'
+hints.2.text: 'Восстановите pull Secret из private-release.json, ограничьте reader.hcl чтением dispatch, выполните
+  sync-secret.sh и проверьте работающий digest образа и HTTP-ответ.
+
+
+  Проверьте исправленный этап и сравните наблюдаемый результат.
+
+
+  Этап 1/2: Контроллер сообщает `Synced` для ожидаемой ревизии; на последнем этапе также сообщает `Healthy`, нагрузка
+  готова.
+
+
+  ```sh
+
+  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
+  printf ''\n''
+
+  kubectl get deployment board
+
+  ```
+
+
+  Этап 2: Опубликованный хеш совпадает с записанным релизом; проверка предка, если она есть, завершается с кодом
+  `0`.
+
+
+  ```sh
+
+  source platform.env
+
+  cat release-commit
+
+  git -C repository ls-remote origin refs/heads/main
+
+  ```
+
+
+  Этап 2: Secret и разрешённая запись Vault содержат `north-secret`, HTTP возвращает `north-100`, другой путь Vault
+  возвращает HTTP `403`.
+
+
+  ```sh
+
+  source platform.env
+
+  kubectl get secret route-secret -o jsonpath=''{.data.value}'' | base64 -d
+
+  printf ''\n''
+
+  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
+
+  printf ''\n''
+
+  curl -fsS --max-time 3 -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
+
+  curl -sS --max-time 3 -o /dev/null -w ''%{http_code}\n'' -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN")
+  "$VAULT_ADDR/v1/secret/data/other"
+
+  ```
+
+
+  Ожидаемые наблюдения для этапа целиком:
+
+  - Этап 1/2: Показанные согласование, конфигурация нагрузки и наблюдения работающего образа соответствуют требованиям
+  этого этапа.
+
+  - Этап 2: Удалённый хеш равен `release-commit`; Git-манифест содержит поставленный зафиксированный образ и ссылку
+  на Secret `route-secret`.'
 phrases.0: Я отделил сбои на каждой границе доставки.
 phrases.1: Я сохранил immutable identity образа и согласование Git.
 phrases.2: Я проверил минимальные права к секретам и реальную работу сервиса всей цепочки.
@@ -62,3 +170,18 @@ diagnostics.reader: Токен reader Vault должен прочитать nort
 diagnostics.denied: Запрос Vault reader к secret/data/other должен вернуть HTTP 403.
 diagnostics.git_image: Первый образ board в манифесте Git должен совпадать с образом из private-release.json.
 diagnostics.git_env: Первая переменная окружения в манифесте Git должна ссылаться на Secret route-secret.
+stages.0.objectives.0.text: Application `board` сообщает `Synced` для требуемой опубликованной ревизии. Оно автоматически
+  устраняет дрейф и удаляет ресурсы, которых больше нет в желаемом релизе.
+stages.1.objectives.0.text: Удалённая `main` равна ревизии из `release-commit`.
+stages.1.objectives.1.text: Опубликованная нагрузка использует поставленный зафиксированный образ и получает секрет
+  runtime через требуемую ссылку на Secret.
+stages.1.objectives.2.text: Application `board` сообщает `Synced` и `Healthy` для опубликованной ревизии релиза.
+  Оно автоматически устраняет дрейф и удаляет ресурсы, которых больше нет в желаемом релизе.
+stages.1.objectives.3.text: Deployment `board` использует поставленный зафиксированный образ, сохраняет исходные
+  требования загрузки и получает секрет runtime без встроенного значения.
+stages.1.objectives.4.text: Secret нагрузки содержит значение требуемой записи Vault.
+stages.1.objectives.5.text: Токен доступа Vault возвращает требуемый секрет доставки и запрещает доступ к посторонней
+  записи данных.
+stages.1.objectives.6.text: Deployment `board` завершает развёртывание с готовым контейнером приложения, работающим
+  с дайджестом поставленного зафиксированного образа.
+stages.1.objectives.7.text: Из Deployment `board` адрес `http://board:8080` возвращает `north-100`.

@@ -2,12 +2,12 @@ set -euo pipefail
 cd ~/quest
 source platform.env
 python3 - <<'PIN'
-import json
+import json,yaml
 from pathlib import Path
-p=Path('repository/manifests/board.json');d=json.loads(p.read_text());d['spec']['template']['spec']['containers'][0]['image']=json.loads(Path('/run/dq/facts/0/private-release.json').read_text())['image'];p.write_text(json.dumps(d,indent=2))
+p=Path('repository/manifests/board.yaml');d=yaml.safe_load(p.read_text());d['spec']['template']['spec']['containers'][0]['image']=json.loads(Path('/run/dq/facts/0/private-release.json').read_text())['image'];p.write_text(yaml.safe_dump(d,sort_keys=False))
 PIN
 cd repository
-git add manifests/board.json
+git add manifests/board.yaml
 git commit -m 'Pin recovered private board release'
 git push origin main
 git rev-parse HEAD > ../release-commit

@@ -1,28 +1,132 @@
 title: Восстановление доставки
-brief: 'Работайте в `~/quest` с `platform.env`, `registry-ca.crt`, `private-release.json`, `baseline-commit`, `application.json`,
-  `release-commit`, `repository/manifests/board.json`, `repository/manifests/service.json` и `registry-pull.json`. Argo CD
-  асинхронно сравнивает ревизию Git с работающими ресурсами. Сначала настройте Application `board` на репозиторий `GIT_URL`,
-  путь `manifests`, цель `main`, `selfHeal: true` и дождитесь `Synced` на `baseline-commit`. Работающий Deployment должен
-  сохранить ровно `imagePullSecrets: [{name: registry-pull}]` и `imagePullPolicy: Always` первого контейнера.
-
-
-  Затем создайте и отправьте потомка baseline в приватный `origin/main`; запишите его хеш в `release-commit`. Первый образ
-  в коммите и работающем Deployment должен совпадать с зафиксированным образом из `private-release.json` и использовать `Always`;
-  манифест в коммите должен сохранить ровно `registry-pull`. Application должна быть `Synced` и `Healthy` на `release-commit`,
-  с `selfHeal` и `prune` true. Дождитесь rollout board и HTTP `north-80` от `board:8080`; imageID незавершающегося готового
-  Pod должен содержать зафиксированный digest, а аутентифицированный доступ с `registry-ca.crt` и `platform.env` должен получить
-  этот digest. Проверка не доказывает неизменность работающего pull Secret. Берегите учётные данные и работайте только в офлайн-песочнице.'
-debrief: Восстановление согласовало private Git, identity registry и реальное поведение workload без исправления только live-состояния.
-stages.0.brief: Источник Application, базовая синхронизация, self-heal и текущие настройки загрузки соответствуют описанию.
-stages.0.objectives.0.text: Источник Application, базовая синхронизация, self-heal и текущие настройки загрузки соответствуют
-  описанию.
-stages.1.brief: Дочерняя ревизия, статус Application, проверенные поля образов Git и работающего Deployment, доступ к реестру
-  и ответ board соответствуют описанию.
-stages.1.objectives.0.text: Дочерняя ревизия, статус Application, проверенные поля образов Git и работающего Deployment, доступ
-  к реестру и ответ board соответствуют описанию.
+brief: "Приватный релиз не доставляется потребителям надёжно. Согласование и работающий артефакт должны совпадать.\n\
+  \nРаботайте в `~/quest` на рабочей станции. Входные файлы по этапам:\n- Этап 1: `platform.env`, `application.yaml`,\
+  \ `private-release.json`, `registry-pull.yaml`, `registry-ca.crt`, `repository/manifests/board.yaml`, `repository/manifests/service.yaml`.\n\
+  - Этап 2: `release-commit`.\n\n**Требования:**\n\n- Этап 1:\n  - Application `board` сообщает `Synced` для требуемой\
+  \ опубликованной ревизии. Оно автоматически устраняет дрейф.\n  - Deployment `board` всегда проверяет образ при\
+  \ запуске, используя только существующие учётные данные приватного registry.\n- Этап 2:\n  - Application `board`\
+  \ сообщает `Synced` и `Healthy` для опубликованной ревизии релиза. Оно автоматически устраняет дрейф и удаляет\
+  \ ресурсы, которых больше нет в желаемом релизе.\n  - Удалённая `main` равна `release-commit`, отличается от исходного\
+  \ коммита и сохраняет его как предка.\n  - Опубликованный манифест нагрузки использует поставленный зафиксированный\
+  \ образ и сохраняет требования проверки образа при запуске и доступа к приватному registry.\n  - Работающий образ\
+  \ `board` совпадает с поставленным зафиксированным релизом и проверяется при каждом запуске.\n  - Deployment `board`\
+  \ завершает развёртывание.\n  - Готовый контейнер незавершающегося Pod приложения работает с дайджестом поставленного\
+  \ зафиксированного образа.\n  - Аутентифицированный доступ к приватному registry возвращает дайджест поставленного\
+  \ зафиксированного релиза.\n  - Из Deployment `board` адрес `http://board:8080` возвращает `north-80`.\n\nПроверка\
+  \ не доказывает, что live pull Secret не менялся; текущая ревизия, дайджест готового контейнера и аутентифицированный\
+  \ доступ к registry — отдельные наблюдения."
+debrief: Восстановление согласовало private Git, identity registry и реальное поведение workload без исправления
+  только live-состояния.
+stages.0.brief: Сохраните поставленные идентификатор релиза и учётные данные загрузки.
+stages.1.brief: Опубликованный релиз-потомок должен дойти до готового потребителя.
 hints.0.text: Исправьте сверку source до анализа получения image.
-hints.1.text: Git commit может быть Synced с несуществующим image tag.
-hints.2.text: Закоммитьте выданный immutable digest, сохраните pull credentials, проверьте Git и работающий imageID.
+hints.1.text: 'Git commit может быть Synced с несуществующим image tag.
+
+
+  Изучите поставленные определения, описания ресурсов и события соответствующего этапа.
+
+
+  ```sh
+
+  git -C repository log --all --oneline
+
+  kubectl describe application board
+
+  kubectl describe deployment board
+
+  kubectl describe pod -l app=board
+
+  ```
+
+
+  Этап 1/2: Изучите определения этих ресурсов для данного этапа.
+
+
+  ```sh
+
+  kubectl get application board -o yaml
+
+  kubectl get deployment board -o yaml
+
+  kubectl get pods -l app=board -o yaml
+
+  ```
+
+
+  Этап 2: Изучите определения этих ресурсов для данного этапа.
+
+
+  ```sh
+
+  git -C repository show origin/main:manifests/board.yaml
+
+  ```'
+hints.2.text: 'Закоммитьте выданный immutable digest, сохраните pull credentials, проверьте Git и работающий imageID.
+  Опубликуйте коммит-потомок в `origin/main` и запишите его хеш в `release-commit`.
+
+
+  Проверьте исправленный этап и сравните наблюдаемый результат.
+
+
+  Этап 1/2: Контроллер сообщает `Synced` для ожидаемой ревизии; на последнем этапе также сообщает `Healthy`, нагрузка
+  готова.
+
+
+  ```sh
+
+  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
+  printf ''\n''
+
+  kubectl get deployment board
+
+  ```
+
+
+  Этап 2: Опубликованный хеш совпадает с записанным релизом; проверка предка, если она есть, завершается с кодом
+  `0`.
+
+
+  ```sh
+
+  source platform.env
+
+  cat release-commit
+
+  git -C repository ls-remote origin refs/heads/main
+
+  git -C repository merge-base --is-ancestor "$(cat baseline-commit)" origin/main
+
+  ```
+
+
+  Этап 2: Приложение возвращает `north-80`; аутентифицированное получение записанного дайджеста из registry возвращает
+  HTTP `200`.
+
+
+  ```sh
+
+  source platform.env
+
+  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
+
+  printf ''\n''
+
+  image=$(jq -r .image private-release.json)
+
+  curl -fsS --max-time 4 --config <(printf ''user = "%s:%s"\n'' "$REGISTRY_USER" "$REGISTRY_PASSWORD") --cacert
+  registry-ca.crt -H ''Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json''
+  -o /dev/null -w ''%{http_code}\n'' "https://$REGISTRY/v2/parcel/manifests/${image##*@}"
+
+  ```
+
+
+  Ожидаемые наблюдения для этапа целиком:
+
+  - Этап 1/2: Показанные согласование, конфигурация нагрузки и наблюдения работающего образа соответствуют требованиям
+  этого этапа.
+
+  - Этап 2: Удалённый хеш равен `release-commit`, манифест соответствует требованиям; ancestry завершается с кодом
+  `0`, хеш релиза отличается от исходного.'
 phrases.0: Я отделил ошибку пути source от получения private image.
 phrases.1: Я закрепил и проверил immutable release в Git и runtime.
 phrases.2: При восстановлении я сохранил аутентификацию и автоматическую сверку.
@@ -57,6 +161,24 @@ diagnostics.git_policy: imagePullPolicy board в Git должен быть Alway
 diagnostics.git_secrets: imagePullSecrets board в Git должен совпадать с [registry-pull].
 diagnostics.live_image: deployment/board containers[0].image должен совпадать с private-release.json image.
 diagnostics.live_policy: deployment/board imagePullPolicy должен совпадать с Always.
-diagnostics.image_id: У Pod board, не отмеченного для удаления, должен быть готовый контейнер, чей imageID содержит зафиксированный
-  digest.
+diagnostics.image_id: У Pod board, не отмеченного для удаления, должен быть готовый контейнер, чей imageID содержит
+  зафиксированный digest.
 diagnostics.registry: Реестр с аутентификацией должен отдавать зафиксированный digest.
+stages.0.objectives.0.text: Application `board` сообщает `Synced` для требуемой опубликованной ревизии. Оно автоматически
+  устраняет дрейф.
+stages.0.objectives.1.text: Deployment `board` всегда проверяет образ при запуске, используя только существующие
+  учётные данные приватного registry.
+stages.1.objectives.0.text: Application `board` сообщает `Synced` и `Healthy` для опубликованной ревизии релиза.
+  Оно автоматически устраняет дрейф и удаляет ресурсы, которых больше нет в желаемом релизе.
+stages.1.objectives.1.text: Удалённая `main` равна `release-commit`, отличается от исходного коммита и сохраняет
+  его как предка.
+stages.1.objectives.2.text: Опубликованный манифест нагрузки использует поставленный зафиксированный образ и сохраняет
+  требования проверки образа при запуске и доступа к приватному registry.
+stages.1.objectives.3.text: Работающий образ `board` совпадает с поставленным зафиксированным релизом и проверяется
+  при каждом запуске.
+stages.1.objectives.4.text: Deployment `board` завершает развёртывание.
+stages.1.objectives.5.text: Готовый контейнер незавершающегося Pod приложения работает с дайджестом поставленного
+  зафиксированного образа.
+stages.1.objectives.6.text: Аутентифицированный доступ к приватному registry возвращает дайджест поставленного зафиксированного
+  релиза.
+stages.1.objectives.7.text: Из Deployment `board` адрес `http://board:8080` возвращает `north-80`.

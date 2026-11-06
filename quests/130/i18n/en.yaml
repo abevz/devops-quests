@@ -1,43 +1,84 @@
 title: Interview incident simulation
-brief: 'Recover the station board service across two incident stages. In stage one, the board Deployment fails to scale under
-  load even though the HPA (target 50% CPU, range 1–2 replicas) and metrics API are active; restore real CPU-driven scaling
-  within the required container CPU budget (request 100m, limit 200m). In stage two, traffic through the private Gateway (preserve
-  the GatewayClass and host north.station.internal) fails to reach board:8080; restore routing and ingress isolation so only
-  the Gateway controller pods (app: gateway in the frozen controller namespace) can reach board on port 8080 while direct
-  client access and other hosts remain denied. No node, global DNS or public listener changes are needed.
+brief: "The service board is not meeting its scaling and private-entrypoint requirements. Recover the observable\
+  \ service outcome across both incident stages.\n\nWork in `~/quest` on the workstation. Inputs by stage:\n- Stage\
+  \ 1: `board.yaml`, `service.yaml`, `client.yaml`, `hpa.yaml`.\n- Stage 2: `gateway.yaml`, `route.yaml`, `ingress-policy.yaml`,\
+  \ `gateway-target.json`.\n\n**Requirements:**\n\n- Stage 1:\n  - Deployment `board` has `2` ready replicas without\
+  \ increasing the supplied CPU ceiling.\n  - HPA `board` retains the supplied scaling policy and reports `2` current\
+  \ and desired replicas under resource pressure above its configured target.\n- Stage 2:\n  - Deployment `board`\
+  \ has `2` ready replicas without increasing the supplied CPU ceiling.\n  - HPA `board` retains the supplied scaling\
+  \ policy and reports `2` current and desired replicas under resource pressure above its configured target.\n \
+  \ - Gateway `station` uses the supplied private class and reports `Accepted=True`.\n  - HTTPRoute `board` reports\
+  \ `ResolvedRefs=True` for a parent.\n  - The application’s ingress policy permits TCP `8080` only from the supplied\
+  \ private Gateway controller.\n  - From Deployment `client`, the supplied Gateway URL returns `north-130` for\
+  \ Host `north.station.internal`; direct `http://board:8080` and Host `closed.station.internal` requests fail.\n\
+  \nThe checks do not establish that target or current utilization is CPU, or prove the cause of scaling; failed\
+  \ traffic can have other causes, and status conditions may be stale or belong to another parent."
+debrief: The incident was resolved with real scaling, route status and traffic tests while preserving an explicit
+  isolation boundary.
+stages.0.brief: The board must meet the supplied scaling budget under observed load.
+stages.1.brief: Keep scaling within budget while restoring isolated private entry.
+hints.0.text: Resource pressure, a scaling decision and ready replicas are different observations. A controller
+  needs measurements it can interpret.
+hints.1.text: 'Stage 2: inspect route.yaml and ingress-policy.yaml — HTTPRoute points to the wrong backend port
+  instead of Service port 8080, and NetworkPolicy uses an obsolete source pod label.
 
 
-  Quest files in `~/quest` (some appear in later stages): `board.json`, `service.json`, `client.json`, `hpa.json`, `gateway.json`,
-  `route.json`, `ingress-policy.json`, `gateway-target.json`.
+  Inspect the supplied definitions, resource descriptions and events for the relevant stage.
 
 
-  The bay has no Internet or external DNS. Use only supplied files, preloaded images and private services. Change only this
-  bay.
+  ```sh
+
+  kubectl describe deployment board
+
+  kubectl describe hpa board
+
+  kubectl describe gateway station
+
+  kubectl describe httproute board
+
+  ```
 
 
-  In both stages the checks require board first-container CPU request `100m`, limit `200m`, two ready replicas, HPA minimum
-  1 and maximum 2, first target utilization 50, current and desired replicas 2 and some current resource utilization above
-  50. The checks do not verify that either the first target or the current metric is CPU; current state does not prove the
-  cause of scaling. In stage two the Gateway class must match `gateway-target.json` and have Accepted=True; the first HTTPRoute
-  backend port must be 8080 and some parent must have ResolvedRefs=True. The `board-ingress` spec must match the one-rule
-  structure of supplied `ingress-policy.json`, with only the frozen controller namespace and `app: gateway` peer on TCP 8080.
-  A request through the frozen URL with Host `north.station.internal` must return `north-130`; direct `board:8080` and Host
-  `closed.station.internal` requests must fail. These failed requests can have causes other than the policy or host rule;
-  status conditions may be stale or for another parent.'
-debrief: The incident was resolved with real scaling, route status and traffic tests while preserving an explicit isolation
-  boundary.
-stages.0.brief: The board CPU budget, ready replicas and HPA settings and current status match the brief.
-stages.0.objectives.0.text: The board CPU budget, ready replicas and HPA settings and current status match the brief.
-stages.1.brief: The HPA conditions still match, and the Gateway, route, exact ingress policy and three traffic probes match
-  the brief.
-stages.1.objectives.0.text: The HPA conditions still match, and the Gateway, route, exact ingress policy and three traffic
-  probes match the brief.
-hints.0.text: 'Stage 1: HPA percentage utilization requires a non-zero CPU request on the container; inspect board.json and
-  set CPU request 100m and limit 200m without changing the HPA spec.'
-hints.1.text: 'Stage 2: inspect route.json and ingress-policy.json — HTTPRoute points to the wrong backend port instead of
-  Service port 8080, and NetworkPolicy uses an obsolete source pod label.'
-hints.2.text: 'Set the HTTPRoute backend port to 8080, allow ingress to board:8080 only from podSelector app: gateway in the
-  controller namespace, and verify both allowed Gateway traffic and blocked direct access.'
+  Stage 1/2: Inspect these resource definitions for this stage.
+
+
+  ```sh
+
+  kubectl get deployment board -o yaml
+
+  kubectl get hpa board -o yaml
+
+  ```
+
+
+  Stage 2: Inspect these resource definitions for this stage.
+
+
+  ```sh
+
+  cat gateway-target.json
+
+  kubectl get gateway station -o yaml
+
+  kubectl get httproute board -o yaml
+
+  kubectl get networkpolicy board-ingress -o yaml
+
+  ```'
+hints.2.text: "Stage 1: HPA percentage utilization requires a non-zero CPU request on the container; inspect board.yaml\
+  \ and set CPU request 100m and limit 200m without changing the HPA spec.\n\nSet the HTTPRoute backend port to\
+  \ 8080, allow ingress to board:8080 only from podSelector app: gateway in the controller namespace, and verify\
+  \ both allowed Gateway traffic and blocked direct access.\n\nVerify the repaired stage and compare the observed\
+  \ result.\n\nStage 1/2: The Deployment shows `2` ready replicas; the HPA reports `2` replicas and current resource\
+  \ utilization above its configured target.\n\n```sh\nkubectl get deployment board\nkubectl get hpa board\n```\n\
+  \nStage 2: The intended Gateway Host returns `north-130`; direct and unrelated-Host requests fail.\n\n```sh\n\
+  url=$(jq -r .url gateway-target.json)\nkubectl exec deployment/client -- wget -qO- -T 3 --header='Host: north.station.internal'\
+  \ \"$url\"\nfor target in direct unrelated; do\n  if [ \"$target\" = direct ]; then\n    if kubectl exec deployment/client\
+  \ -- wget -qO- -T 2 http://board:8080 >/dev/null 2>&1; then exit 1; fi\n  else\n    if kubectl exec deployment/client\
+  \ -- wget -qO- -T 2 --header='Host: closed.station.internal' \"$url\" >/dev/null 2>&1; then exit 1; fi\n  fi\n\
+  \  printf '%s rejected\\n' \"$target\"\ndone\n```\n\nExpected observations for the complete stage:\n- Stage 1/2:\
+  \ The CPU budget, ready replicas, HPA range, target and observed utilization match Requirements.\n- Stage 2: The\
+  \ supplied class, accepted Gateway, resolved route and bounded ingress policy match Requirements."
 phrases.0: I isolated metrics, routing and policy failures.
 phrases.1: I verified real scale-up within a bounded budget.
 phrases.2: I proved the intended path and denied bypass paths.
@@ -64,3 +105,15 @@ diagnostics.policy: The board-ingress spec must match the exact policy in the br
 diagnostics.gateway_http: The gateway request with Host north.station.internal must return north-130.
 diagnostics.direct_denied: The direct request to board:8080 must fail.
 diagnostics.wrong_host: The gateway request with Host closed.station.internal must fail.
+stages.0.objectives.0.text: Deployment `board` has `2` ready replicas without increasing the supplied CPU ceiling.
+stages.0.objectives.1.text: HPA `board` retains the supplied scaling policy and reports `2` current and desired
+  replicas under resource pressure above its configured target.
+stages.1.objectives.0.text: Deployment `board` has `2` ready replicas without increasing the supplied CPU ceiling.
+stages.1.objectives.1.text: HPA `board` retains the supplied scaling policy and reports `2` current and desired
+  replicas under resource pressure above its configured target.
+stages.1.objectives.2.text: Gateway `station` uses the supplied private class and reports `Accepted=True`.
+stages.1.objectives.3.text: HTTPRoute `board` reports `ResolvedRefs=True` for a parent.
+stages.1.objectives.4.text: The application’s ingress policy permits TCP `8080` only from the supplied private Gateway
+  controller.
+stages.1.objectives.5.text: From Deployment `client`, the supplied Gateway URL returns `north-130` for Host `north.station.internal`;
+  direct `http://board:8080` and Host `closed.station.internal` requests fail.

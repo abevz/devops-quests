@@ -1,35 +1,41 @@
 title: Disaster recovery
-brief: 'You joined SignalRail operations. Recover a managed marker, the fleet and a failed service. Work in ~/quest. Keep
-  all changes inside this training bay.
-
-
-  Quest files in `~/quest` (some are introduced in later stages): `inventory.ini`, `ansible.cfg`, `main.tf`, `rollout.yml`,
-  `deployment.json`.
-
-
-  The bay has no Internet or external DNS. Use only its supplied files, preloaded images and private services. All changes
-  must stay inside this bay.
-
-
-  Initial success criteria: The managed release marker is correct.'
-stages.0.brief: 'Read `main.tf` in `~/quest`: it declares the offline local provider and `local_file.release`. Initialize
-  and apply the marker. Verify that `tofu state list` contains `local_file.release`, `release.txt` contains `release-90`,
-  and `tofu plan -input=false -detailed-exitcode -no-color` exits 0 (no changes). The linked guide introduces OpenTofu state.
-  Work only inside the bay.'
-stages.0.objectives.0.text: The release state address and file match, and the plan exits 0.
-stages.1.brief: Read `inventory.ini`, `ansible.cfg` and `rollout.yml` in `~/quest`. Ansible sends tasks over SSH to each private
-  fleet host. Deliver `release-90` to `/srv/site/message` with mode `0644` on app1, app2 and app3. Use the supplied handler
-  with `dq-service reload` so the service rereads the file; run `ansible-playbook rollout.yml`. Verify each host's HTTP response
-  on port 8080 is `release-90`. The checks inspect the files, modes and responses; they do not prove which commands were used.
-  The message file must contain exactly this text, optionally followed by one newline.
-stages.1.objectives.0.text: All three fleet files, modes and HTTP responses match `release-90`.
-stages.2.brief: Repair the Kubernetes consumer using `deployment.json`. Set `RELEASE` to `release-90` on `deployment/relay`
-  and wait for its rollout. The check reads the running process environment and rollout status; it does not test what the
-  consumer serves.
-stages.2.objectives.0.text: The relay rollout completes and its running process has `RELEASE=release-90`.
+brief: "The managed marker, fleet banners and service do not yet present a consistent release.\n\nWork in `~/quest`\
+  \ on the workstation. Inputs by stage:\n- Stage 1: `main.tf`.\n- Stage 2: `inventory.ini`, `ansible.cfg`, `rollout.yml`.\n\
+  - Stage 3: `deployment.yaml`.\n\n**Requirements:**\n\n- Stage 1:\n  - OpenTofu records the managed release artifact\
+  \ in state.\n  - On the workstation, `~/quest/release.txt` contains `release-90`.\n  - OpenTofu plans no changes\
+  \ and exits `0`.\n- Stage 2:\n  - On every managed host (`app1`, `app2`, `app3`), `/srv/site/message` contains\
+  \ `release-90` with mode `0644`.\n  - HTTP on port `8080` returns `release-90` from every managed host (`app1`,\
+  \ `app2`, `app3`).\n- Stage 3:\n  - Deployment `relay` completes its rollout and its running process is configured\
+  \ for `release-90`.\n\nThe check observes the marker, fleet file and HTTP results, and running consumer state;\
+  \ it does not prove the recovery commands used."
+stages.0.brief: The managed marker must be stable.
+stages.1.brief: The fleet must serve the recovered release consistently.
+stages.2.brief: The running consumer must agree with the recovered release.
 hints.0.text: Recover one layer at a time and verify each live result.
-hints.1.text: The marker, fleet banners and reader environment must name the same release.
-hints.2.text: Apply the marker, reload the correctly configured fleet, then repair the Kubernetes reader and wait for readiness.
+hints.1.text: 'The marker, fleet banners and reader environment must name the same release.
+
+
+  Inspect the supplied definitions, resource descriptions and events for the relevant stage.
+
+
+  ```sh
+
+  cat main.tf
+
+  cat rollout.yml
+
+  kubectl describe deployment relay
+
+  ```'
+hints.2.text: "Apply the marker, reload the correctly configured fleet, then repair the Kubernetes reader and wait\
+  \ for readiness.\n\nVerify the repaired stage and compare the observed result.\n\nStage 1: State includes `local_file.release`,\
+  \ the workstation file shows `release-90`, and the plan exits `0` without changes.\n\n```sh\ntofu state list\n\
+  cat release.txt\nprintf \"\\n\"\ntofu plan -input=false -detailed-exitcode -no-color\n```\n\nStage 2: Each managed\
+  \ host shows `release-90`, file mode `644`, and HTTP `release-90` on port `8080`.\n\n```sh\nfor n in 1 2 3; do\n\
+  \  host=\"app${n}-${DQ_NAMESPACE#dq-}\"\n  printf \"%s: \" \"$host\"\n  ssh -n -o BatchMode=yes -p 2222 \"root@$host\"\
+  \ 'cat /srv/site/message; stat -c %a /srv/site/message'\n  curl -fsS --max-time 3 \"http://$host:8080\"\n  printf\
+  \ \"\\n\"\ndone\n```\n\nStage 3: The rollout is complete and the running process prints `release-90`.\n\n```sh\n\
+  kubectl rollout status deployment/relay --timeout=3s\nkubectl exec deployment/relay -- printenv RELEASE\n```"
 debrief: The checks verified the managed marker, the fleet files and responses, and the relay rollout and environment.
 phrases.0: I checked the running state before making a change.
 phrases.1: I found the cause and changed one thing at a time.
@@ -48,3 +54,10 @@ diagnostics.http_2: app2 on port 8080 must return release-90.
 diagnostics.content_3: app3 /srv/site/message must contain exactly release-90, optionally followed by one newline.
 diagnostics.mode_3: app3 /srv/site/message mode must be 644.
 diagnostics.http_3: app3 on port 8080 must return release-90.
+stages.0.objectives.0.text: OpenTofu records the managed release artifact in state.
+stages.0.objectives.1.text: On the workstation, `~/quest/release.txt` contains `release-90`.
+stages.0.objectives.2.text: OpenTofu plans no changes and exits `0`.
+stages.1.objectives.0.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/message` contains `release-90`
+  with mode `0644`.
+stages.1.objectives.1.text: HTTP on port `8080` returns `release-90` from every managed host (`app1`, `app2`, `app3`).
+stages.2.objectives.0.text: Deployment `relay` completes its rollout and its running process is configured for `release-90`.

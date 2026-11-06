@@ -1,34 +1,42 @@
 title: Восстановление после аварии
-brief: 'Вы в команде эксплуатации SignalRail. Восстановите маркер, fleet и сервис. Работайте в ~/quest. Все изменения — только
-  в этой песочнице.
-
-
-  Файлы квеста в `~/quest` (часть появляется на следующих этапах): `inventory.ini`, `ansible.cfg`, `main.tf`, `rollout.yml`,
-  `deployment.json`.
-
-
-  В песочнице нет интернета и внешнего DNS. Используйте только выданные файлы, предварительно загруженные образы и приватные
-  сервисы. Все изменения — только в этой песочнице.
-
-
-  Цели первого этапа: Управляемый маркер корректен.'
-stages.0.brief: 'Изучите `main.tf` в `~/quest`: в нём объявлены офлайн-провайдер local и `local_file.release`. Инициализируйте
-  и примените маркер. Проверьте, что `tofu state list` содержит `local_file.release`, `release.txt` содержит `release-90`,
-  а `tofu plan -input=false -detailed-exitcode -no-color` завершается с кодом 0 (изменений нет). Руководство знакомит с состоянием
-  OpenTofu. Работайте только в песочнице.'
-stages.0.objectives.0.text: Адрес состояния и файл выпуска совпадают, план завершается с кодом 0.
-stages.1.brief: Изучите `inventory.ini`, `ansible.cfg` и `rollout.yml` в `~/quest`. Ansible отправляет задачи по SSH каждому
-  узлу приватного парка. Запишите `release-90` в `/srv/site/message` с режимом `0644` на app1, app2 и app3. Используйте готовый
-  обработчик с `dq-service reload`, чтобы сервис перечитал файл; выполните `ansible-playbook rollout.yml`. Проверьте, что
-  HTTP-ответ каждого узла на порту 8080 равен `release-90`. Проверки наблюдают файлы, режимы и ответы, но не доказывают, какие
-  команды применялись. Файл сообщения должен содержать точно этот текст, после которого допускается один символ новой строки.
-stages.1.objectives.0.text: Файлы, режимы и HTTP-ответы всех трёх узлов соответствуют `release-90`.
-stages.2.brief: Исправьте читатель Kubernetes с помощью `deployment.json`. Установите `RELEASE` в `release-90` на `deployment/relay`
-  и дождитесь rollout. Проверка читает окружение работающего процесса и состояние rollout, но не проверяет, что отдаёт читатель.
-stages.2.objectives.0.text: Rollout relay завершён, а работающий процесс имеет `RELEASE=release-90`.
+brief: "Управляемый маркер, баннеры парка хостов и сервис ещё не показывают согласованный релиз.\n\nРаботайте в\
+  \ `~/quest` на рабочей станции. Входные файлы по этапам:\n- Этап 1: `main.tf`.\n- Этап 2: `inventory.ini`, `ansible.cfg`,\
+  \ `rollout.yml`.\n- Этап 3: `deployment.yaml`.\n\n**Требования:**\n\n- Этап 1:\n  - OpenTofu учитывает управляемый\
+  \ артефакт релиза в state.\n  - На workstation файл `~/quest/release.txt` содержит `release-90`.\n  - План OpenTofu\
+  \ не содержит изменений и завершается с кодом `0`.\n- Этап 2:\n  - На каждом управляемом хосте (`app1`, `app2`,\
+  \ `app3`) файл `/srv/site/message` содержит `release-90` и имеет режим `0644`.\n  - HTTP на порту `8080` возвращает\
+  \ `release-90` с каждого управляемого хоста (`app1`, `app2`, `app3`).\n- Этап 3:\n  - Deployment `relay` завершает\
+  \ развёртывание, его работающий процесс настроен на `release-90`.\n\nПроверка наблюдает маркер, файлы и HTTP-результаты\
+  \ парка хостов и состояние работающего потребителя; она не доказывает использованные команды восстановления."
+stages.0.brief: Управляемый маркер должен быть стабилен.
+stages.1.brief: Парк хостов должен согласованно обслуживать восстановленный релиз.
+stages.2.brief: Работающий потребитель должен соответствовать восстановленному релизу.
 hints.0.text: Восстанавливайте по одному слою и проверяйте фактический результат.
-hints.1.text: Маркер, banner fleet и окружение reader должны указывать один релиз.
-hints.2.text: Примените маркер, обновите корректно настроенный fleet, затем исправьте Kubernetes reader и дождитесь readiness.
+hints.1.text: 'Маркер, banner fleet и окружение reader должны указывать один релиз.
+
+
+  Изучите поставленные определения, описания ресурсов и события соответствующего этапа.
+
+
+  ```sh
+
+  cat main.tf
+
+  cat rollout.yml
+
+  kubectl describe deployment relay
+
+  ```'
+hints.2.text: "Примените маркер, обновите корректно настроенный fleet, затем исправьте Kubernetes reader и дождитесь\
+  \ readiness.\n\nПроверьте исправленный этап и сравните наблюдаемый результат.\n\nЭтап 1: State включает `local_file.release`,\
+  \ файл workstation показывает `release-90`, план завершается с кодом `0` без изменений.\n\n```sh\ntofu state list\n\
+  cat release.txt\nprintf \"\\n\"\ntofu plan -input=false -detailed-exitcode -no-color\n```\n\nЭтап 2: Каждый управляемый\
+  \ хост показывает `release-90`, режим файла `644` и HTTP `release-90` на порту `8080`.\n\n```sh\nfor n in 1 2\
+  \ 3; do\n  host=\"app${n}-${DQ_NAMESPACE#dq-}\"\n  printf \"%s: \" \"$host\"\n  ssh -n -o BatchMode=yes -p 2222\
+  \ \"root@$host\" 'cat /srv/site/message; stat -c %a /srv/site/message'\n  curl -fsS --max-time 3 \"http://$host:8080\"\
+  \n  printf \"\\n\"\ndone\n```\n\nЭтап 3: Развёртывание завершено, работающий процесс выводит `release-90`.\n\n\
+  ```sh\nkubectl rollout status deployment/relay --timeout=3s\nkubectl exec deployment/relay -- printenv RELEASE\n\
+  ```"
 debrief: Проверки подтвердили управляемый маркер, файлы и ответы парка, а также rollout и окружение relay.
 phrases.0: Я проверил фактическое состояние до изменения.
 phrases.1: Я нашёл причину и менял по одному параметру.
@@ -38,12 +46,23 @@ diagnostics.file: release.txt должен совпадать с release-90.
 diagnostics.plan: План OpenTofu должен завершиться с кодом 0.
 diagnostics.rollout: Выкатка Deployment relay должна завершиться.
 diagnostics.relay: RELEASE Deployment relay должен быть release-90.
-diagnostics.content_1: На app1 /srv/site/message должен содержать точно release-90, допускается один символ новой строки.
+diagnostics.content_1: На app1 /srv/site/message должен содержать точно release-90, допускается один символ новой
+  строки.
 diagnostics.mode_1: На app1 права /srv/site/message должны быть 644.
 diagnostics.http_1: app1 на порту 8080 должен вернуть release-90.
-diagnostics.content_2: На app2 /srv/site/message должен содержать точно release-90, допускается один символ новой строки.
+diagnostics.content_2: На app2 /srv/site/message должен содержать точно release-90, допускается один символ новой
+  строки.
 diagnostics.mode_2: На app2 права /srv/site/message должны быть 644.
 diagnostics.http_2: app2 на порту 8080 должен вернуть release-90.
-diagnostics.content_3: На app3 /srv/site/message должен содержать точно release-90, допускается один символ новой строки.
+diagnostics.content_3: На app3 /srv/site/message должен содержать точно release-90, допускается один символ новой
+  строки.
 diagnostics.mode_3: На app3 права /srv/site/message должны быть 644.
 diagnostics.http_3: app3 на порту 8080 должен вернуть release-90.
+stages.0.objectives.0.text: OpenTofu учитывает управляемый артефакт релиза в state.
+stages.0.objectives.1.text: На workstation файл `~/quest/release.txt` содержит `release-90`.
+stages.0.objectives.2.text: План OpenTofu не содержит изменений и завершается с кодом `0`.
+stages.1.objectives.0.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/message` содержит
+  `release-90` и имеет режим `0644`.
+stages.1.objectives.1.text: HTTP на порту `8080` возвращает `release-90` с каждого управляемого хоста (`app1`, `app2`,
+  `app3`).
+stages.2.objectives.0.text: Deployment `relay` завершает развёртывание, его работающий процесс настроен на `release-90`.

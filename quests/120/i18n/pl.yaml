@@ -1,28 +1,88 @@
 title: Stanowe odzyskiwanie trasy
-brief: 'Pracuj w `~/quest`; przeczytaj `shelf.json`, `service.json`, `client.json`, `egress.json` i `original-pvc-uid`. Magazyn
-  shelf istnieje, ale selektor usługi headless i egress klienta są błędne. Zachowaj pierwotny PVC. Połączony przewodnik przedstawia
-  diagnostykę sieci Kubernetes.
-
-
-  Ustaw usługę `shelf` jako headless (`clusterIP: None`) z selektorem `app: shelf`. Skonfiguruj `client-egress` z `podSelector`
-  wybierającym dokładnie `app: client` i tylko `Egress`; użyj `matchLabels` albo równoważnego wyrażenia `In` z jedną wartością:
-  dopuść UDP i TCP 53 do jednego odbiorcy łączącego etykietę przestrzeni nazw `kubernetes.io/metadata.name: kube-system` i
-  etykietę poda `k8s-app: kube-dns` oraz TCP 8080 do poda z etykietą `app: shelf` w tej samej przestrzeni nazw. Te dokładne
-  selektory wskazują dostarczone cele; reguły i porty można przestawiać lub dzielić. Inne polityki wybierające klienta nie
-  mogą rozszerzać egress.
-
-
-  Sprawdź, czy UID PVC `ledger-shelf-0` odpowiada `/run/dq/facts/0/original-pvc-uid`, DNS klienta rozwiązuje `shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local.`,
-  a HTTP klienta do `shelf-0.shelf:8080` zwraca `ledger-120`. Kontrole obserwują tożsamość, konfigurację polityk i bieżącą
-  łączność, nie całą historię magazynu. Pracuj tylko w zatoce offline.'
+brief: "Dane shelf muszą pozostać dostępne dla klienta przy ograniczonej polityce sieciowej. Wykrywanie i łączność\
+  \ nie działają jeszcze w pełni.\n\nPracuj w `~/quest` na stacji roboczej. Dane wejściowe według etapu:\n- Etap\
+  \ 1: `shelf.yaml`, `service.yaml`, `client.yaml`, `egress.yaml`.\n\n**Wymagania:**\n\n- Etap 1:\n  - Istniejący\
+  \ data claim zachowuje tożsamość i nie jest tworzony ponownie.\n  - Istniejąca usługa danych zapewnia stabilne\
+  \ wykrywanie Podów.\n  - Ruch wychodzący obciążenia wysyłającego żądania ogranicza się do DNS i istniejącej usługi\
+  \ danych przez TCP `8080`; żadna inna polityka go nie rozszerza.\n  - Z Deployment `client` rozwiązuje się stabilna\
+  \ nazwa DNS istniejącego Poda przechowującego dane.\n  - Z Deployment `client` istniejący Pod przechowujący dane\
+  \ udostępnia `ledger-120` na porcie `8080`.\n\nSprawdzenie obserwuje tożsamość claim, konfigurację polityk i bieżącą\
+  \ łączność, a nie całą historię przechowywania."
 debrief: Trwałość, discovery i dostęp do sieci zostały zweryfikowane niezależnie przed przejściem pełnej ścieżki.
-stages.0.brief: Pierwotny UID PVC, usługa headless, ograniczona polityka egress, DNS instancji i odpowiedź ledger odpowiadają
-  opisowi.
-stages.0.objectives.0.text: Pierwotny UID PVC, usługa headless, ograniczona polityka egress, DNS instancji i odpowiedź ledger
-  odpowiadają opisowi.
+stages.0.brief: Zachowaj pierwotny data claim podczas przywracania ograniczonego dostępu klienta.
 hints.0.text: Sprawdź stabilną pamięć masową oddzielnie od discovery i egress.
-hints.1.text: Headless DNS zależy od dopasowania gotowego endpoints.
-hints.2.text: Napraw selector, następnie zezwól na DNS i tylko port shelf Pod.
+hints.1.text: 'Headless DNS zależy od dopasowania gotowego endpoints.
+
+
+  Sprawdź dostarczone definicje, opisy zasobów i zdarzenia odpowiedniego etapu.
+
+
+  ```sh
+
+  kubectl get pvc
+
+  kubectl describe deployment client
+
+  kubectl describe service shelf
+
+  kubectl get networkpolicies -o yaml
+
+  ```
+
+
+  Etap 1: Sprawdź te definicje zasobów dla tego etapu.
+
+
+  ```sh
+
+  kubectl get pvc ledger-shelf-0 -o yaml
+
+  kubectl get service shelf -o yaml
+
+  kubectl get networkpolicies -o yaml
+
+  ```'
+hints.2.text: 'Napraw selector, następnie zezwól na DNS i tylko port shelf Pod.
+
+
+  Sprawdź naprawiony etap i porównaj obserwowany wynik.
+
+
+  Etap 1: Bieżący UID claim odpowiada pierwotnie zapisanemu UID.
+
+
+  ```sh
+
+  cat original-pvc-uid
+
+  kubectl get pvc ledger-shelf-0 -o jsonpath=''{.metadata.uid}''; printf ''\n''
+
+  ```
+
+
+  Etap 1: Klient rozwiązuje pełną nazwę DNS Poda shelf.
+
+
+  ```sh
+
+  kubectl exec deployment/client -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."
+
+  ```
+
+
+  Etap 1: Klient otrzymuje `ledger-120`.
+
+
+  ```sh
+
+  kubectl exec deployment/client -- wget -qO- -T 3 http://shelf-0.shelf:8080
+
+  ```
+
+
+  Oczekiwane obserwacje dla całego etapu:
+
+  - Etap 1: UID claim jest niezmieniony, Service `shelf` jest headless, a polityki zapewniają tylko wymagany egress.'
 phrases.0: Zachowałem stateful claim podczas odzyskiwania sieci.
 phrases.1: Sprawdziłem liczbę porządkową DNS od izolowanego client.
 phrases.2: Przywróciłem tylko wymagane przepływy zależności.
@@ -42,7 +102,8 @@ diagnostics.named: Musi istnieć dokładnie jedna NetworkPolicy o nazwie client-
 diagnostics.selector: PodSelector client-egress musi odpowiadać dokładnie app:client.
 diagnostics.types: policyTypes client-egress musi zawierać tylko Egress.
 diagnostics.egress: Peers i porty client-egress muszą używać ograniczonej formy opisanej w treści.
-diagnostics.unexpected: client-egress nie może mieć nieoczekiwanego ruchu; oryginalny komunikat podaje cel, protokół i port.
+diagnostics.unexpected: client-egress nie może mieć nieoczekiwanego ruchu; oryginalny komunikat podaje cel, protokół
+  i port.
 diagnostics.other_egress: Inna NetworkPolicy wybierająca klienta (client) nie może zezwalać na dodatkowy ruch wychodzący;
   jej nazwę podaje oryginalny komunikat.
 diagnostics.other_invalid: Inna NetworkPolicy ma niepoprawny selector lub egress; jej nazwę podaje oryginalny komunikat.
@@ -50,3 +111,11 @@ diagnostics.invalid_input: NetworkPolicy i etykiety Podów client muszą być cz
 diagnostics.missing_dns_udp_53: client-egress musi zezwalać na dns UDP 53.
 diagnostics.missing_dns_tcp_53: client-egress musi zezwalać na dns TCP 53.
 diagnostics.missing_shelf_tcp_8080: client-egress musi zezwalać na shelf TCP 8080.
+stages.0.objectives.0.text: Istniejący data claim zachowuje tożsamość i nie jest tworzony ponownie.
+stages.0.objectives.1.text: Istniejąca usługa danych zapewnia stabilne wykrywanie Podów.
+stages.0.objectives.2.text: Ruch wychodzący obciążenia wysyłającego żądania ogranicza się do DNS i istniejącej usługi
+  danych przez TCP `8080`; żadna inna polityka go nie rozszerza.
+stages.0.objectives.3.text: Z Deployment `client` rozwiązuje się stabilna nazwa DNS istniejącego Poda przechowującego
+  dane.
+stages.0.objectives.4.text: Z Deployment `client` istniejący Pod przechowujący dane udostępnia `ledger-120` na porcie
+  `8080`.

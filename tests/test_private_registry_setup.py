@@ -8,6 +8,7 @@ import stat
 import subprocess
 
 import pytest
+import yaml
 
 from devops_quests.catalog import ROOT
 
@@ -39,7 +40,7 @@ def test_registry_secret_is_private_and_no_password_in_arguments(tmp_path, exist
         )
         + "\n"
     )
-    target = quest / "registry-pull.json"
+    target = quest / "registry-pull.yaml"
     sentinel = tmp_path / "sentinel"
     sentinel.write_text("leave unchanged")
     if existing == "symlink":
@@ -66,9 +67,9 @@ def test_registry_secret_is_private_and_no_password_in_arguments(tmp_path, exist
     assert sentinel.read_text() == "leave unchanged"
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
     args = json.loads(capture.read_text())
-    assert args == ["apply", "-f", "registry-pull.json"]
+    assert args == ["apply", "-f", "registry-pull.yaml"]
     assert secret not in result.stdout + result.stderr + " ".join(args)
-    document = json.loads(target.read_text())
+    document = yaml.safe_load(target.read_text())
     assert document["type"] == "kubernetes.io/dockerconfigjson"
     config = json.loads(base64.b64decode(document["data"][".dockerconfigjson"]))
     auth = config["auths"][environment_values["REGISTRY"]]
@@ -83,7 +84,7 @@ def test_registry_secret_temporary_file_is_removed_when_replace_fails(tmp_path):
     home = tmp_path / "home"
     quest = home / "quest"
     quest.mkdir(parents=True)
-    target = quest / "registry-pull.json"
+    target = quest / "registry-pull.yaml"
     target.write_text("previous")
     (quest / "platform.env").write_text(
         "export REGISTRY=registry-example REGISTRY_USER=demo REGISTRY_PASSWORD=synthetic PRIVATE_IMAGE=example\n"

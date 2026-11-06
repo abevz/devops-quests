@@ -1,33 +1,142 @@
 title: Recuperación completa de la plataforma
-brief: La cadena privada de entrega conecta Gitea, un registro, Argo CD, Vault y un board en Kubernetes. Trabaja solo en `~/quest`
-  y en esta bahía sin conexión. Lee `platform.env`, `application.json`, `repository/manifests/board.json`, `baseline-commit`,
-  `release-commit`, `private-release.json`, `reader.hcl` y `sync-secret.sh`. Una Application de Argo describe el origen de
-  los manifiestos y comunica la reconciliación; una política de Vault controla el acceso a secretos. Primero repara la reconciliación
-  y luego las credenciales de ejecución. Las comprobaciones observan configuración seleccionada, valores y dos rutas de Vault;
-  no demuestran toda la historia de Git ni la denegación de todas las demás rutas de Vault.
-debrief: Las comprobaciones verificaron resultados seleccionados de Git, Argo, board y Vault; no establecen todo el alcance
-  de la política ni una historia intacta.
-stages.0.brief: 'Repara la Application `board`: la URL del repo debe ser `GIT_URL` de `platform.env`, la ruta `manifests`,
-  la revisión `main` y `selfHeal` y `prune` automáticos deben ser true. Espera el estado `Synced` en el `baseline-commit`
-  congelado. La pista enlazada describe cómo actualizar la Application.'
-stages.0.objectives.0.text: El origen, la automatización y la sincronización base de la Application coinciden con la descripción.
-stages.1.brief: 'Obtén `origin/main` en `repository`; debe ser igual a `release-commit`. Mantén en la Application `board`
-  la misma URL, ruta, revisión y automatización, ahora `Synced` y `Healthy` en `release-commit`. Espera el rollout de board
-  y comprueba que `board:8080` devuelve `north-100`. El primer contenedor board debe usar la imagen de `/run/dq/facts/0/private-release.json`,
-  `imagePullPolicy: Always`, exactamente `imagePullSecrets: [{name: registry-pull}]` y una sola entrada de entorno: `ROUTE_SECRET`
-  del Secret `route-secret`, clave `value`. El imageID de un contenedor board listo debe contener el digest de esa imagen.
-  El valor del Secret y el valor del token de Vault en `secret/data/dispatch` deben ser `north-secret`; el acceso del token
-  a `secret/data/other` debe devolver HTTP 403. El manifiesto Git en `origin/main:manifests/board.json` debe conservar la
-  primera imagen congelada y el nombre de Secret `route-secret` de la primera entrada de entorno. Usa `reader.hcl` y `sync-secret.sh`,
-  y reinicia board. Las dos rutas de Vault comprobadas no demuestran privilegio mínimo completo.'
-stages.1.objectives.0.text: La revisión de entrega, salud de Application, configuración y respuesta de board, campos Git seleccionados
-  y resultados de Vault coinciden con la descripción.
-hints.0.text: 'Etapa 1: inspect application.json — Argo CD apunta a una ruta retired Git en lugar de source.path=manifests
-  en la revisión main con self-heal y prune automatizados.'
-hints.1.text: 'Etapa 2: un Synced Application aún no está en buen estado porque falta el registry pull Secret privado y reader.hcl
-  apunta al Vault incorrecto Ruta KV.'
-hints.2.text: Restaure el registro pull Secret desde private-release.json, alcance reader.hcl a dispatch de solo lectura,
-  ejecute sync-secret.sh y verifique la imagen en ejecución digest y Respuesta HTTP.
+brief: "La cadena de entrega privada aún no sirve la versión prevista. La revisión publicada, el artefacto en ejecución\
+  \ y el acceso al secreto deben coincidir.\n\nTrabaja en `~/quest` en la estación de trabajo. Entradas por etapa:\n\
+  - Etapa 1: `platform.env`, `application.yaml`, `repository/manifests/board.yaml`, `repository/manifests/service.yaml`,\
+  \ `release-commit`, `private-release.json`.\n- Etapa 2: `reader.hcl`, `sync-secret.sh`.\n\n**Requisitos:**\n\n\
+  - Etapa 1:\n  - La Application `board` informa `Synced` en la revisión publicada prevista. Restaura automáticamente\
+  \ las desviaciones y elimina los recursos que ya no están en la versión deseada.\n- Etapa 2:\n  - El `main` remoto\
+  \ coincide con la revisión registrada en `release-commit`.\n  - La carga publicada usa la imagen congelada suministrada\
+  \ y obtiene su secreto de runtime mediante la referencia Secret prevista.\n  - La Application `board` informa\
+  \ `Synced` y `Healthy` en la revisión de la versión publicada. Restaura automáticamente las desviaciones y elimina\
+  \ los recursos que ya no están en la versión deseada.\n  - El Deployment `board` usa la imagen congelada suministrada,\
+  \ conserva sus requisitos originales de descarga y obtiene su secreto de runtime sin incrustar el valor.\n  -\
+  \ El Secret de la carga contiene el valor del registro Vault previsto.\n  - El token de acceso Vault devuelve\
+  \ el secreto de entrega previsto y deniega un registro de datos ajeno.\n  - El Deployment `board` completa su\
+  \ rollout con un contenedor listo de la aplicación que ejecuta el digest de la imagen congelada suministrada.\n\
+  \  - Desde el Deployment `board`, `http://board:8080` devuelve `north-100`.\n\nLa comprobación observa configuración\
+  \ seleccionada, valores y dos rutas Vault; no demuestra todo el historial Git ni que todas las demás rutas Vault\
+  \ estén denegadas."
+debrief: Las comprobaciones verificaron resultados seleccionados de Git, Argo, board y Vault; no establecen todo
+  el alcance de la política ni una historia intacta.
+stages.0.brief: Conserva la revisión original al recuperar la reconciliación.
+stages.1.brief: La versión publicada debe coincidir entre los límites de entrega y runtime.
+hints.0.text: Un origen reconciliado y un runtime sano son resultados distintos. Compara el límite de entrega con
+  el del consumidor.
+hints.1.text: 'Etapa 1: inspect application.yaml — Argo CD apunta a una ruta retired Git en lugar de source.path=manifests
+  en la revisión main con self-heal y prune automatizados.
+
+
+  Etapa 2: un Synced Application aún no está en buen estado porque falta el registry pull Secret privado y reader.hcl
+  apunta al Vault incorrecto Ruta KV.
+
+
+  Inspecciona las definiciones suministradas, descripciones de recursos y eventos de la etapa correspondiente.
+
+
+  ```sh
+
+  git -C repository log --all --oneline
+
+  cat reader.hcl
+
+  kubectl describe application board
+
+  kubectl describe deployment board
+
+  kubectl describe pod -l app=board
+
+  ```
+
+
+  Etapa 1/2: Inspecciona estas definiciones de recursos para esta etapa.
+
+
+  ```sh
+
+  kubectl get application board -o yaml
+
+  kubectl get deployment board -o yaml
+
+  kubectl get pods -l app=board -o yaml
+
+  ```
+
+
+  Etapa 2: Inspecciona estas definiciones de recursos para esta etapa.
+
+
+  ```sh
+
+  git -C repository show origin/main:manifests/board.yaml
+
+  ```'
+hints.2.text: 'Restaure el registro pull Secret desde private-release.json, alcance reader.hcl a dispatch de solo
+  lectura, ejecute sync-secret.sh y verifique la imagen en ejecución digest y Respuesta HTTP.
+
+
+  Verifica la etapa reparada y compara el resultado observado.
+
+
+  Etapa 1/2: El controlador informa `Synced` en la revisión esperada; en la etapa final también informa `Healthy`
+  y la carga está lista.
+
+
+  ```sh
+
+  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
+  printf ''\n''
+
+  kubectl get deployment board
+
+  ```
+
+
+  Etapa 2: El hash publicado coincide con la versión registrada; la comprobación de ascendencia, cuando existe,
+  termina con código `0`.
+
+
+  ```sh
+
+  source platform.env
+
+  cat release-commit
+
+  git -C repository ls-remote origin refs/heads/main
+
+  ```
+
+
+  Etapa 2: El Secret y el registro Vault permitido contienen `north-secret`, HTTP devuelve `north-100` y la otra
+  ruta Vault devuelve HTTP `403`.
+
+
+  ```sh
+
+  source platform.env
+
+  kubectl get secret route-secret -o jsonpath=''{.data.value}'' | base64 -d
+
+  printf ''\n''
+
+  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
+
+  printf ''\n''
+
+  curl -fsS --max-time 3 -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
+
+  curl -sS --max-time 3 -o /dev/null -w ''%{http_code}\n'' -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN")
+  "$VAULT_ADDR/v1/secret/data/other"
+
+  ```
+
+
+  Observaciones esperadas para la etapa completa:
+
+  - Etapa 1/2: La reconciliación, configuración de carga y observaciones de la imagen en ejecución mostradas cumplen
+  los requisitos de esta etapa.
+
+  - Etapa 2: El hash remoto coincide con `release-commit`; el manifiesto Git contiene la imagen congelada suministrada
+  y la referencia al Secret `route-secret`.'
 phrases.0: Aislé fallas en cada límite de entrega.
 phrases.1: Conservé la imagen immutable, la reconciliación identity y Git.
 phrases.2: Verifiqué el acceso secreto con privilegios mínimos y un servicio real de extremo a extremo.
@@ -55,10 +164,26 @@ diagnostics.image: private-release.json image no debe estar vacío.
 diagnostics.board_image: deployment/board containers[0].image debe ser igual a private-release.json image.
 diagnostics.board_policy: deployment/board containers[0].imagePullPolicy debe ser igual a Always.
 diagnostics.board_secret: deployment/board imagePullSecrets debe ser igual a [registry-pull].
-diagnostics.board_env: El env del primer contenedor board debe contener solo ROUTE_SECRET de route-secret, clave value.
+diagnostics.board_env: El env del primer contenedor board debe contener solo ROUTE_SECRET de route-secret, clave
+  value.
 diagnostics.secret: El valor descodificado de route-secret debe ser north-secret.
 diagnostics.image_id: Un Pod board debe tener un contenedor listo cuyo imageID contenga el digest fijado.
 diagnostics.reader: El token lector (reader) de Vault debe leer north-secret de secret/data/dispatch.
 diagnostics.denied: La petición de Vault reader a secret/data/other debe devolver HTTP 403.
 diagnostics.git_image: La primera imagen board del manifiesto Git debe coincidir con la imagen de private-release.json.
 diagnostics.git_env: La primera entrada de entorno del manifiesto Git debe referenciar el Secret route-secret.
+stages.0.objectives.0.text: La Application `board` informa `Synced` en la revisión publicada prevista. Restaura
+  automáticamente las desviaciones y elimina los recursos que ya no están en la versión deseada.
+stages.1.objectives.0.text: El `main` remoto coincide con la revisión registrada en `release-commit`.
+stages.1.objectives.1.text: La carga publicada usa la imagen congelada suministrada y obtiene su secreto de runtime
+  mediante la referencia Secret prevista.
+stages.1.objectives.2.text: La Application `board` informa `Synced` y `Healthy` en la revisión de la versión publicada.
+  Restaura automáticamente las desviaciones y elimina los recursos que ya no están en la versión deseada.
+stages.1.objectives.3.text: El Deployment `board` usa la imagen congelada suministrada, conserva sus requisitos
+  originales de descarga y obtiene su secreto de runtime sin incrustar el valor.
+stages.1.objectives.4.text: El Secret de la carga contiene el valor del registro Vault previsto.
+stages.1.objectives.5.text: El token de acceso Vault devuelve el secreto de entrega previsto y deniega un registro
+  de datos ajeno.
+stages.1.objectives.6.text: El Deployment `board` completa su rollout con un contenedor listo de la aplicación que
+  ejecuta el digest de la imagen congelada suministrada.
+stages.1.objectives.7.text: Desde el Deployment `board`, `http://board:8080` devuelve `north-100`.

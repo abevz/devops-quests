@@ -1,44 +1,130 @@
 title: Dostawa tajemnic
-brief: 'Zarówno prywatna wersja Git, jak i jej runtime secret oparta na Vault są zablokowane. Najpierw
-  przywróć ścieżkę źródłową Application do manifests i udowodnij, że zarejestrowany commit to Synced;
-  pozostanie niezdrowy aż do drugiego etapu. Następnie napraw grę reader policy tylko dla dispatch, jawnie
-  uruchom sync-secret.sh i zweryfikuj zużywający sekret HTTP board. Pomocnik jest synchronizatorem na
-  żądanie, a nie operatorem działającym w tle; żaden Vault token nie może wejść do workload.
+brief: "Wydanie zapisane w Git i usługa korzystająca z sekretu nie są jeszcze dostępne razem.\n\nPracuj w `~/quest`\
+  \ na stacji roboczej. Dane wejściowe według etapu:\n- Etap 1: `platform.env`, `application.yaml`, `repository/manifests/board.yaml`,\
+  \ `repository/manifests/service.yaml`.\n- Etap 2: `reader.hcl`, `reader-policy.json`, `sync-secret.sh`.\n\n**Wymagania:**\n\
+  \n- Etap 1:\n  - Application `board` zgłasza `Synced` dla właściwej opublikowanej rewizji.\n  - Deployment `board`\
+  \ pobiera wartość runtime tylko przez dostarczone odwołanie Secret, nigdy jako osadzoną wartość.\n- Etap 2:\n\
+  \  - Application `board` zgłasza `Synced` i `Healthy` dla opublikowanej rewizji wydania.\n  - Deployment `board`\
+  \ kończy rollout.\n  - Deployment `board` pobiera wartość runtime tylko przez dostarczone odwołanie Secret, nigdy\
+  \ jako osadzoną wartość.\n  - Secret obciążenia zawiera wartość właściwego wpisu Vault.\n  - Token dostępu Vault\
+  \ ma dostęp tylko do odczytu właściwego wpisu dostarczania; osobny obcy wpis i zarządzanie mount są zabronione.\n\
+  \  - Z Deployment `board` adres `http://board:8080` zwraca `north-70`.\n\nSprawdzenie obserwuje zapisaną rewizję,\
+  \ wybrane odwołanie Secret i trzy ścieżki capabilities czytelnika; nie dowodzi synchronizacji w tle ani uprawnień\
+  \ do wszystkich pozostałych ścieżek Vault."
+debrief: Dostawę GitOps i dostawę runtime secret odzyskano jako oddzielne etapy, których wynik był wspólny i zweryfikowany.
+stages.0.brief: Zapisane wydanie musi zostać uzgodnione przed oceną runtime.
+stages.1.brief: Uzgodniona usługa musi korzystać z właściwego sekretu przy ograniczonym dostępie czytelnika.
+hints.0.text: Uzgodnienie źródła i dostarczenie sekretu runtime to osobne granice. Sama zapisana rewizja nie dowodzi,
+  że jej odbiorca może się uruchomić.
+hints.1.text: 'Przywróć synchronizację Git przed zdiagnozowaniem brakującego runtime Secret. Katalog źródłowy Application
+  to `manifests`; uzgodnij zapisaną rewizję, zanim oczekujesz zdrowego runtime.
 
 
-  Pliki zadań w `~/quest` (niektóre pojawiają się w późniejszych etapach): `platform.env`, `reader.hcl`,
-  `reader-policy.json`, `sync-secret.sh`, `application.json`, `repository/manifests/board.json`, `repository/manifests/service.json`,
-  `release-commit`.
+  Użyj ścieżki danych KV v2 i nadaj read tylko dispatch.
 
 
-  W zatoce nie ma Internetu ani zewnętrznego DNS. Korzystaj wyłącznie z dostarczonych plików, wstępnie
-  załadowanych obrazów i usług prywatnych. Zmień tylko tę zatokę.
+  Sprawdź dostarczone definicje, opisy zasobów i zdarzenia odpowiedniego etapu.
 
 
-  Początkowe kryteria sukcesu: zarejestrowana wersja Git to Synced z manifests, a Deployment żąda tylko
-  route-secret/value.'
-debrief: Dostawę GitOps i dostawę runtime secret odzyskano jako oddzielne etapy, których wynik był wspólny
-  i zweryfikowany.
-stages.0.brief: 'Kryteria sukcesu: Zarejestrowana wersja Git ma stan Synced z manifests, a Deployment
-  żąda tylko route-secret/value.'
-stages.0.objectives.0.text: Nagrana wersja Git ma stan Synced z manifests, a Deployment żąda tylko route-secret/value.
-stages.1.brief: 'Kryteria sukcesu: reader o najniższych uprawnieniach dostarcza Secret; Argo ma stan Healthy,
-  a prawdziwy board zwraca north-70 bez tokenów Vault workload.'
-stages.1.objectives.0.text: reader o najniższych uprawnieniach zapewnia Secret; Argo ma stan Healthy,
-  a prawdziwy board zwraca north-70 bez tokenów Vault workload.
-hints.0.text: Przywróć synchronizację Git przed zdiagnozowaniem brakującego runtime Secret.
-hints.1.text: Użyj ścieżki danych KV v2 i nadaj read tylko dispatch.
-hints.2.text: Uruchom jawnie dostarczony synchronizator, a następnie sprawdź capabilities, Secret, health
-  i HTTP.
+  ```sh
+
+  cat application.yaml
+
+  cat reader.hcl
+
+  kubectl describe application board
+
+  kubectl describe deployment board
+
+  kubectl describe pod -l app=board
+
+  ```
+
+
+  Etap 1/2: Sprawdź te definicje zasobów dla tego etapu.
+
+
+  ```sh
+
+  kubectl get application board -o yaml
+
+  kubectl get deployment board -o yaml
+
+  kubectl get pods -l app=board -o yaml
+
+  ```'
+hints.2.text: 'Uruchom jawnie dostarczony synchronizator, a następnie sprawdź capabilities, Secret, health i HTTP.
+  Synchronizator działa na żądanie, nie w tle; nie umieszczaj tokenów Vault w obciążeniu.
+
+
+  Sprawdź naprawiony etap i porównaj obserwowany wynik.
+
+
+  Etap 1/2: Kontroler zgłasza `Synced` dla oczekiwanej rewizji; w ostatnim etapie zgłasza też `Healthy`, a obciążenie
+  jest gotowe.
+
+
+  ```sh
+
+  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
+  printf ''\n''
+
+  kubectl get deployment board
+
+  ```
+
+
+  Etap 2: Wartość Secret wypisuje `north-secret`; odbiorca aplikacji otrzymuje `north-70`.
+
+
+  ```sh
+
+  kubectl get secret route-secret -o jsonpath=''{.data.value}'' | base64 -d
+
+  printf ''\n''
+
+  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  Etap 2: Zapytanie o capabilities zwraca `read` dla `secret/data/dispatch` i `deny` dla `secret/data/unrelated`
+  oraz `sys/mounts`; nie zmienia polityki.
+
+
+  ```sh
+
+  source platform.env
+
+  curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") -H ''Content-Type: application/json'' --request
+  POST --data ''{"paths":["secret/data/dispatch","secret/data/unrelated","sys/mounts"]}'' "$VAULT_ADDR/v1/sys/capabilities-self"
+
+  ```
+
+
+  Oczekiwane obserwacje dla całego etapu:
+
+  - Etap 1/2: Wyświetlone uzgodnienie, konfiguracja obciążenia i obserwacje działającego obrazu spełniają wymagania
+  tego etapu.'
 phrases.0: Oddzieliłem uzgodnienie Git od dostawy runtime secret.
 phrases.1: Trzymałem dane uwierzytelniające Vault poza workload.
 phrases.2: Sprawdziłem najniższe uprawnienia i endpoint zużywający secret.
 questions.0.points.0: Manifesty i runtime Secret mają oddzielne ścieżki dostawy.
 questions.0.points.1: Odniesienie Secret nie tworzy wartości odniesienia.
 questions.0.points.2: Sprawdź autoryzację events, provider i jawny synchronizator.
-questions.0.prompt: Dlaczego synchronizacja Git może się powieść, podczas gdy Pod zużywający secret pozostaje
-  zablokowany?
+questions.0.prompt: Dlaczego synchronizacja Git może się powieść, podczas gdy Pod zużywający secret pozostaje zablokowany?
 questions.1.points.0: Dostarczaj tylko taką wartość, jakiej potrzebuje aplikacja.
 questions.1.points.1: Utrzymuj zakres uprawnień provider i poza workload environment.
 questions.1.points.2: Sprawdź odmowę dostępu oraz zamierzony read.
 questions.1.prompt: Czy aplikacja powinna otrzymać token administracyjny Vault?
+stages.0.objectives.0.text: Application `board` zgłasza `Synced` dla właściwej opublikowanej rewizji.
+stages.0.objectives.1.text: Deployment `board` pobiera wartość runtime tylko przez dostarczone odwołanie Secret,
+  nigdy jako osadzoną wartość.
+stages.1.objectives.0.text: Application `board` zgłasza `Synced` i `Healthy` dla opublikowanej rewizji wydania.
+stages.1.objectives.1.text: Deployment `board` kończy rollout.
+stages.1.objectives.2.text: Deployment `board` pobiera wartość runtime tylko przez dostarczone odwołanie Secret,
+  nigdy jako osadzoną wartość.
+stages.1.objectives.3.text: Secret obciążenia zawiera wartość właściwego wpisu Vault.
+stages.1.objectives.4.text: Token dostępu Vault ma dostęp tylko do odczytu właściwego wpisu dostarczania; osobny
+  obcy wpis i zarządzanie mount są zabronione.
+stages.1.objectives.5.text: Z Deployment `board` adres `http://board:8080` zwraca `north-70`.
