@@ -21,6 +21,9 @@ CRITERIA = re.compile(r"(?mi)^\s*(?:Initial success criteria|Success criteria)\s
 # Their brief is being restored in the K2 briefs batch; remove ids as they migrate.
 GOAL_RESTORE_PENDING = {51, 57, 62, 67, 77, 82, 85, 88, 94}
 # Machine notation that belongs to checks, not to learner-facing objectives.
+# Quests migrated before presentation v2 (2026-11-06) still carry the brief's Verify block;
+# remove ids as each batch moves those commands into hints 2/3 (dq-57).
+LEGACY_VERIFY = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29, 31, 32, 33, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44, 46, 47, 48, 49, 51, 52, 53, 54, 55, 56, 57, 58, 59, 61, 62, 63, 64, 65, 66, 67, 68, 69, 71, 72, 74, 76, 77, 79, 81, 82, 84, 85, 86, 87, 88, 89, 92, 94, 96, 98, 101, 102, 103, 104, 105, 106, 107, 108, 109, 111, 112, 113, 114, 115, 116, 117, 118, 119, 121, 124, 125, 126, 127, 128, 129})
 MACHINE = re.compile(
     r"\[\s*\{|\{\s*\"|\.spec\.|\.status\.|\.metadata\.|containers\[\d+\]|env\[\d+\]|\bjq\b"
 )
@@ -58,8 +61,11 @@ def test_migrated_brief_structure(number, language):
     values = load(number, language)
     brief = values["brief"]
     if language == "en":
-        assert REQUIREMENTS in brief and VERIFY in brief
-        assert brief.index(REQUIREMENTS) < brief.index(VERIFY)
+        assert REQUIREMENTS in brief
+        if number in LEGACY_VERIFY:
+            assert VERIFY in brief and brief.index(REQUIREMENTS) < brief.index(VERIFY)
+        else:
+            assert VERIFY not in brief, "self-verification belongs in hints 2/3 (principle 4)"
         requirements = brief.split(REQUIREMENTS, 1)[1].split(VERIFY, 1)[0]
         # Requirements describe the result for a person; exact objects belong to checks (045).
         assert not MACHINE.search(requirements), "Requirements use check notation"
@@ -91,6 +97,8 @@ def test_objectives_are_human_readable(number):
 
 @pytest.mark.parametrize("number", MIGRATED, ids=[f"{n:03}" for n in MIGRATED])
 def test_self_verification_does_not_repeat_hints(number):
+    if number not in LEGACY_VERIFY:
+        return
     values = load(number)
     text = hints(values)
     for command in verify_commands(values["brief"]):
@@ -128,3 +136,15 @@ def test_objectives_are_not_over_split(number):
         per_host = [re.sub(r"\bapp\d+\b", "appN", text) for text in texts]
         repeated = {text for text in per_host if per_host.count(text) > 1}
         assert not repeated, f"stage {index} repeats one objective per host: {sorted(repeated)}"
+
+
+@pytest.mark.parametrize("number", MIGRATED, ids=[f"{n:03}" for n in MIGRATED])
+def test_hint_ladder_ends_with_verification(number):
+    # Principle 4 v2: without a Verify block, hint 3 carries the verification commands.
+    if number in LEGACY_VERIFY:
+        return
+    quest = yaml.safe_load((ROOT / "quests" / f"{number:03}" / "quest.yaml").read_text())
+    values = load(number)
+    assert len(quest["hints"]) >= 3, "hints form a ladder of at least three steps"
+    third = values[quest["hints"][2]["text"]]
+    assert re.search(r"`[^`]+ [^`]+`", third), "hint 3 must give a verification command"
