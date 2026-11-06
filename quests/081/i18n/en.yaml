@@ -1,35 +1,45 @@
 title: Cross-system delivery
-brief: 'You joined SignalRail operations. Publish a release marker, configure the fleet and deploy its reader. Work in ~/quest.
-  Keep all changes inside this training bay.
+brief: |
+  The release is not consistently available across its consumers.
 
+  Work on the workstation in `~/quest` with `main.tf`, `inventory.ini`, `ansible.cfg`, `rollout.yml`, `deployment.yaml`.
 
-  Quest files in `~/quest` (some are introduced in later stages): `inventory.ini`, `ansible.cfg`, `main.tf`, `rollout.yml`,
-  `deployment.json`.
+  **Requirements:**
+  - Stage 1:
+    - OpenTofu state:
+      - Required addresses: `local_file.release`.
+    - Files on the workstation:
+      - `~/quest/release.txt`: `release-81`.
+    - Infrastructure convergence:
+      - No pending infrastructure changes; detailed-plan exit code `0`.
+  - Stage 2:
+    - File on every managed host (`app1`, `app2`, `app3`):
+      - Path: `/srv/site/message`.
+      - Content: `release-81`.
+      - Exact text, optionally followed by one newline.
+      - Access mode: `0644`.
+    - HTTP on every managed host (`app1`, `app2`, `app3`):
+      - Port and endpoint: `8080`, `/`.
+      - Response: `release-81`.
+  - Stage 3:
+    - Consumer in the bay namespace:
+      - Deployment: `relay`.
+      - Rollout complete.
+      - Inside its running container: `RELEASE` has value `release-81`.
 
+  **Verify yourself before Check & finish:**
+  - `tofu show -no-color; cat release.txt; tofu plan -input=false -detailed-exitcode -no-color` — Stage 1: state contains `local_file.release`, the file reads `release-81`, and planning exits `0`.
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat -A /srv/site/message; ls -l /srv/site/message'; for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Stage 2: Every host shows `release-81` with at most one end-of-line marker, file mode `-rw-r--r--`, and the HTTP response `release-81`.
+  - `kubectl rollout status deployment/relay --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/relay -- printenv RELEASE` — Stage 3: rollout completes and the process prints `release-81`.
 
-  The bay has no Internet or external DNS. Use only its supplied files, preloaded images and private services. All changes
-  must stay inside this bay.
-
-
-  Initial success criteria: The managed release marker is correct.'
-stages.0.brief: 'Read `main.tf` in `~/quest`: it declares the offline local provider and `local_file.release`. Initialize
-  and apply the marker. Verify `tofu state list` contains `local_file.release`, `release.txt` contains `release-81`, and `tofu
-  plan -input=false -detailed-exitcode -no-color` exits 0 (no changes). The linked guide introduces OpenTofu state. Work only
-  inside the bay.'
-stages.0.objectives.0.text: The release state address and file match, and the plan exits 0.
-stages.1.brief: Read `inventory.ini`, `ansible.cfg` and `rollout.yml` in `~/quest`. Ansible sends tasks over SSH to each private
-  fleet host. Deliver `release-81` to `/srv/site/message` with mode `0644` on app1, app2 and app3. Use the supplied handler
-  with `dq-service reload` so the service rereads the file; run `ansible-playbook rollout.yml`. Verify each host's HTTP response
-  on port 8080 is `release-81`. The checks inspect the files, modes and responses; they do not prove which commands were used.
-  The message file must contain exactly this text, optionally followed by one newline.
-stages.1.objectives.0.text: All three fleet files, modes and HTTP responses match `release-81`.
-stages.2.brief: Repair the Kubernetes consumer using `deployment.json`. Set `RELEASE` to `release-81` on `deployment/relay`
-  and wait for its rollout. The check reads the running process environment and rollout status; it does not test what the
-  consumer serves.
-stages.2.objectives.0.text: The relay rollout completes and its running process has `RELEASE=release-81`.
+  Fleet checks observe file values, modes and HTTP, not the commands used; the final consumer check reads rollout status and process environment, not served content.
+stages.0.brief: The workstation release marker must meet its contract.
+stages.1.brief: Every fleet consumer must receive the required release.
+stages.2.brief: The Kubernetes consumer must run with the required release.
 hints.0.text: Follow the release from state through the fleet to the pod.
 hints.1.text: Each stage has its own live check; changing a later system cannot satisfy an earlier stage.
-hints.2.text: Apply the marker, deliver and reload the fleet, then repair the reader environment.
+hints.2.text: Initialize and apply the marker from main.tf. Run ansible-playbook rollout.yml with its dq-service
+  reload handler to deliver and reload the fleet. Repair deployment.yaml and update the RELEASE environment of deployment/relay.
 debrief: The checks verified the managed marker, the fleet files and responses, and the relay rollout and environment.
 phrases.0: I checked the running state before making a change.
 phrases.1: I found the cause and changed one thing at a time.
@@ -48,3 +58,11 @@ diagnostics.http_2: app2 on port 8080 must return release-81.
 diagnostics.content_3: app3 /srv/site/message must contain exactly release-81, optionally followed by one newline.
 diagnostics.mode_3: app3 /srv/site/message mode must be 644.
 diagnostics.http_3: app3 on port 8080 must return release-81.
+stages.0.objectives.0.text: OpenTofu state includes `local_file.release`.
+stages.0.objectives.1.text: On the workstation, `release.txt` contains `release-81`.
+stages.0.objectives.2.text: OpenTofu reports no pending infrastructure changes.
+stages.1.objectives.0.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/message` contains exactly
+  `release-81`, optionally followed by one newline, with mode `0644`.
+stages.1.objectives.1.text: HTTP on port `8080` returns `release-81` on every managed host (`app1`, `app2`, `app3`).
+stages.2.objectives.0.text: Deployment `relay` completes its rollout in the bay namespace.
+stages.2.objectives.1.text: The running `relay` container has `RELEASE` with value `release-81`.

@@ -1,35 +1,46 @@
 title: Dostawa międzysystemowa
-brief: 'Dołączyłeś do operacji SignalRail. Opublikuj znacznik wydania, skonfiguruj fleet i wdróż reader. Pracuj w ~/quest.
-  Wszystkie zmiany przechowuj w tej komorze szkoleniowej.
+brief: |
+  Wydanie nie jest spójnie dostępne dla wszystkich odbiorców.
 
+  Pracuj na workstation w `~/quest` z plikami `main.tf`, `inventory.ini`, `ansible.cfg`, `rollout.yml`, `deployment.yaml`.
 
-  Pliki zadań w `~/quest` (niektóre zostały wprowadzone w późniejszych etapach): `inventory.ini`, `ansible.cfg`, `main.tf`,
-  `rollout.yml`, `deployment.json`.
+  **Wymagania:**
+  - Etap 1:
+    - Stan OpenTofu:
+      - Wymagane adresy: `local_file.release`.
+    - Pliki na workstation:
+      - `~/quest/release.txt`: `release-81`.
+    - Zbieżność infrastruktury:
+      - Brak oczekujących zmian infrastruktury; kod zakończenia szczegółowego planu `0`.
+  - Etap 2:
+    - Plik na każdym zarządzanym hoście (`app1`, `app2`, `app3`):
+      - Ścieżka: `/srv/site/message`.
+      - Treść: `release-81`.
+      - Dokładny tekst, opcjonalnie z jednym końcowym znakiem nowego wiersza.
+      - Tryb dostępu: `0644`.
+    - HTTP na każdym zarządzanym hoście (`app1`, `app2`, `app3`):
+      - Port i ścieżka: `8080`, `/`.
+      - Odpowiedź: `release-81`.
+  - Etap 3:
+    - Odbiorca w przestrzeni nazw zatoki:
+      - Deployment: `relay`.
+      - Rollout zakończony.
+      - W działającym kontenerze: `RELEASE` ma wartość `release-81`.
 
+  **Sprawdź przed Check & finish:**
+  - `tofu show -no-color; cat release.txt; tofu plan -input=false -detailed-exitcode -no-color` — Etap 1: stan zawiera `local_file.release`, plik pokazuje `release-81`, a plan kończy się kodem `0`.
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat -A /srv/site/message; ls -l /srv/site/message'; for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Etap 2: Każdy host pokazuje `release-81` z najwyżej jednym znacznikiem końca wiersza, tryb pliku `-rw-r--r--` i odpowiedź HTTP `release-81`.
+  - `kubectl rollout status deployment/relay --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/relay -- printenv RELEASE` — Etap 3: rollout się kończy, a proces wypisuje `release-81`.
 
-  W zatoce nie ma Internetu ani zewnętrznego DNS. Korzystaj wyłącznie z dostarczonych plików, wstępnie załadowanych obrazów
-  i usług prywatnych. Wszystkie zmiany muszą pozostać w tej zatoce.
-
-
-  Początkowe kryteria sukcesu: znacznik zarządzanej wersji jest poprawny.'
-stages.0.brief: 'Przeczytaj `main.tf` w `~/quest`: deklaruje lokalny provider offline i `local_file.release`. Zainicjuj i
-  zastosuj znacznik. Sprawdź, czy `tofu state list` zawiera `local_file.release`, `release.txt` zawiera `release-81`, a `tofu
-  plan -input=false -detailed-exitcode -no-color` kończy się kodem 0 (brak zmian). Połączony przewodnik wprowadza stan OpenTofu.
-  Pracuj tylko w zatoce.'
-stages.0.objectives.0.text: Adres stanu i plik wydania są zgodne, a plan kończy się kodem 0.
-stages.1.brief: 'Przeczytaj `inventory.ini`, `ansible.cfg` i `rollout.yml` w `~/quest`. Ansible wysyła zadania przez SSH do
-  każdego hosta prywatnej floty. Dostarcz `release-81` do `/srv/site/message` z trybem `0644` na app1, app2 i app3. Użyj dostarczonego
-  handlera z `dq-service reload`, aby usługa ponownie odczytała plik; uruchom `ansible-playbook rollout.yml`. Sprawdź odpowiedź
-  HTTP każdego hosta na porcie 8080: ma wynosić `release-81`. Kontrole sprawdzają pliki, tryby i odpowiedzi; nie dowodzą użytych
-  poleceń. Plik wiadomości musi zawierać dokładnie ten tekst, po którym może wystąpić jeden znak nowej linii.'
-stages.1.objectives.0.text: Pliki, tryby i odpowiedzi HTTP wszystkich trzech hostów floty odpowiadają `release-81`.
-stages.2.brief: Napraw czytnik Kubernetes, korzystając z `deployment.json`. Ustaw `RELEASE` na `release-81` w `deployment/relay`
-  i poczekaj na rollout. Kontrola odczytuje środowisko działającego procesu i stan rolloutu; nie sprawdza treści serwowanej
-  przez czytnik.
-stages.2.objectives.0.text: Rollout relay kończy się, a jego działający proces ma `RELEASE=release-81`.
+  Sprawdzenia floty obserwują wartości plików, tryby i HTTP, a nie użyte polecenia; końcowe sprawdzenie odbiorcy odczytuje status rollout i środowisko procesu, a nie udostępnianą treść.
+stages.0.brief: Znacznik wydania na workstation musi spełniać kontrakt.
+stages.1.brief: Każdy odbiorca floty musi otrzymać wymagane wydanie.
+stages.2.brief: Odbiorca Kubernetes musi działać z wymaganym wydaniem.
 hints.0.text: Śledź wydanie od state przez fleet do pod.
-hints.1.text: Każdy stopień ma swój własny live check; zmiana późniejszego systemu nie może zaspokoić wcześniejszego etapu.
-hints.2.text: Zastosuj znacznik, dostarcz i reload fleet, a następnie napraw środowisko reader.
+hints.1.text: Każdy stopień ma swój własny live check; zmiana późniejszego systemu nie może zaspokoić wcześniejszego
+  etapu.
+hints.2.text: Zainicjalizuj i zastosuj znacznik z main.tf. Uruchom ansible-playbook rollout.yml z handlerem dq-service
+  reload, aby dostarczyć i przeładować flotę. Napraw deployment.yaml i zaktualizuj środowisko RELEASE w deployment/relay.
 debrief: Kontrole sprawdziły zarządzany znacznik, pliki i odpowiedzi floty oraz rollout i środowisko relay.
 phrases.0: Przed dokonaniem zmiany sprawdziłem stan działania.
 phrases.1: Znalazłem przyczynę i zmieniałem jedną rzecz na raz.
@@ -39,15 +50,24 @@ diagnostics.file: release.txt musi być równy release-81.
 diagnostics.plan: Plan OpenTofu musi zakończyć się kodem 0.
 diagnostics.rollout: Wdrożenie Deployment relay musi się zakończyć.
 diagnostics.relay: RELEASE Deployment relay musi wynosić release-81.
-diagnostics.content_1: Na hoście app1 /srv/site/message musi zawierać dokładnie release-81, opcjonalnie z jednym znakiem nowej
-  linii.
+diagnostics.content_1: Na hoście app1 /srv/site/message musi zawierać dokładnie release-81, opcjonalnie z jednym
+  znakiem nowej linii.
 diagnostics.mode_1: Na hoście app1 uprawnienia /srv/site/message muszą wynosić 644.
 diagnostics.http_1: Host app1 na porcie 8080 musi zwrócić release-81.
-diagnostics.content_2: Na hoście app2 /srv/site/message musi zawierać dokładnie release-81, opcjonalnie z jednym znakiem nowej
-  linii.
+diagnostics.content_2: Na hoście app2 /srv/site/message musi zawierać dokładnie release-81, opcjonalnie z jednym
+  znakiem nowej linii.
 diagnostics.mode_2: Na hoście app2 uprawnienia /srv/site/message muszą wynosić 644.
 diagnostics.http_2: Host app2 na porcie 8080 musi zwrócić release-81.
-diagnostics.content_3: Na hoście app3 /srv/site/message musi zawierać dokładnie release-81, opcjonalnie z jednym znakiem nowej
-  linii.
+diagnostics.content_3: Na hoście app3 /srv/site/message musi zawierać dokładnie release-81, opcjonalnie z jednym
+  znakiem nowej linii.
 diagnostics.mode_3: Na hoście app3 uprawnienia /srv/site/message muszą wynosić 644.
 diagnostics.http_3: Host app3 na porcie 8080 musi zwrócić release-81.
+stages.0.objectives.0.text: Stan OpenTofu zawiera `local_file.release`.
+stages.0.objectives.1.text: Na workstation `release.txt` zawiera `release-81`.
+stages.0.objectives.2.text: OpenTofu nie zgłasza oczekujących zmian infrastruktury.
+stages.1.objectives.0.text: Na każdym zarządzanym hoście (`app1`, `app2`, `app3`) plik `/srv/site/message` zawiera
+  dokładnie `release-81`, opcjonalnie z jednym końcowym znakiem nowego wiersza, i ma tryb `0644`.
+stages.1.objectives.1.text: HTTP na porcie `8080` zwraca `release-81` na każdym zarządzanym hoście (`app1`, `app2`,
+  `app3`).
+stages.2.objectives.0.text: Deployment `relay` kończy rollout w przestrzeni nazw zatoki.
+stages.2.objectives.1.text: Działający kontener `relay` ma `RELEASE` o wartości `release-81`.

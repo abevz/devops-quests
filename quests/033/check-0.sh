@@ -1,10 +1,28 @@
 set -euo pipefail
 cd ~/quest
 failed=0
+set +e
+(
+set -e
+failed=0
 if ! test "$(cat east.txt 2>/dev/null)" = open; then
   printf '%s\n' 'east.txt = open: ✗ [DQ:condition_0]'
   failed=1
 fi
+if ! test "$(cat north.txt 2>/dev/null)" = open; then
+  printf '%s\n' 'north.txt = open: ✗ [DQ:condition_8]'
+  failed=1
+fi
+if ! test "$(cat south.txt 2>/dev/null)" = held; then
+  printf '%s\n' 'south.txt = held: ✗ [DQ:condition_9]'
+  failed=1
+fi
+exit "$failed"
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+failed=0
 if ! tofu output -json routes > current-ids.json 2>/dev/null; then
   printf '%s\n' 'tofu output -json routes: ✗ [DQ:condition_1]'
   failed=1
@@ -25,20 +43,27 @@ if ! jq -e 'length==3' current-ids.json >/dev/null 2>&1; then
   printf '%s\n' 'routes length = 3: ✗ [DQ:condition_5]'
   failed=1
 fi
+exit "$failed"
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+failed=0
 if ! tofu state list 2>/dev/null | grep -Fx 'local_file.route["east"]' >/dev/null; then
   printf '%s\n' 'tofu state list ∋ local_file.route["east"]: ✗ [DQ:condition_6]'
   failed=1
 fi
+exit "$failed"
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+failed=0
 if ! tofu plan -input=false -detailed-exitcode -no-color >/dev/null 2>&1; then
   printf '%s\n' 'tofu plan -input=false -detailed-exitcode -no-color → 0: ✗ [DQ:condition_7]'
   failed=1
 fi
-if ! test "$(cat north.txt 2>/dev/null)" = open; then
-  printf '%s\n' 'north.txt = open: ✗ [DQ:condition_8]'
-  failed=1
-fi
-if ! test "$(cat south.txt 2>/dev/null)" = held; then
-  printf '%s\n' 'south.txt = held: ✗ [DQ:condition_9]'
-  failed=1
-fi
+exit "$failed"
+)
+[ $? -eq 0 ] || failed=1
 exit "$failed"

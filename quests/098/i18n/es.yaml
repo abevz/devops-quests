@@ -1,29 +1,52 @@
 title: Contratos cruzados
-brief: 'Trabaja en `~/quest`. `main.tf` llama a `modules/station/main.tf`: su archivo gestionado `managed-route.txt` contiene
-  `north-98`, pero su salida está obsoleta. El estado de OpenTofu conserva un ID de recurso; mantén el ID de `original-id`.
-  Haz que la salida route del módulo referencie `local_file.contract.content`, aplica y escribe la salida en `contract.json`
-  con `tofu output -json contract > contract.json`. Tanto la salida como el archivo deben ser exactamente `{ "route": "north-98"
-  }`, y el plan final con detailed-exitcode debe terminar con 0. El plan debe referenciar `local_file.contract.content` en
-  la salida route del módulo.
+brief: |
+  Los consumidores no coinciden con el contrato de ruta requerido.
 
+  Trabaja en la workstation en `~/quest` con `main.tf`, `modules/station/main.tf`, `rollout.yml`, `inventory.ini`, `ansible.cfg`, `route.yaml`, `board.yaml`.
 
-  Usa `rollout.yml`, `inventory.ini` y `ansible.cfg` para la flota SSH privada: app1, app2 y app3 deben tener `/srv/site/message`
-  igual a `north-98` con modo `0644`, y cada servicio HTTP en el puerto 8080 debe devolver `north-98`. El handler suministrado
-  ejecuta `dq-service reload`; usa `ansible-playbook rollout.yml -e @contract.json`. Establece los datos del ConfigMap `route`
-  exactamente en `{ "route": "north-98" }`. De `board.json`, conserva una réplica y exactamente una entrada de entorno del
-  primer contenedor: `ROUTE` del ConfigMap `route`, clave `route`. Reinicia el Deployment para actualizar su entorno y comprueba
-  que `board:8080` devuelve `north-98`. Las comprobaciones observan estos valores y la referencia de salida, no si se revisó
-  el plan ni cómo se abasteció a cada consumidor. Usa solo la bahía sin conexión. El archivo de mensaje debe contener exactamente
-  este texto, opcionalmente seguido de un salto de línea.'
-debrief: Las comprobaciones observaron valores coincidentes del productor, la flota y board, el ID conservado y la referencia
-  de salida del módulo.
-stages.0.brief: El ID original, la referencia y valores de salida, el plan vacío, los archivos y respuestas de la flota y
-  la configuración y respuesta de board coinciden con la descripción.
-stages.0.objectives.0.text: El ID original, la referencia y valores de salida, el plan vacío, los archivos y respuestas de
-  la flota y la configuración y respuesta de board coinciden con la descripción.
+  **Requisitos:**
+  - Salidas raíz:
+    - Nombre de salida: `managed_id`.
+    - Comprobante correspondiente en la workstation: `/run/dq/facts/0/original-id`.
+  - Archivos en la workstation:
+    - `~/quest/managed-route.txt`: `north-98`.
+  - Salidas raíz:
+    - La salida `contract` tiene `route` con el valor `north-98`.
+  - Archivos en la workstation:
+    - Ruta: `~/quest/contract.json`.
+    - Campo `route`: `north-98`.
+  - Convergencia de infraestructura:
+    - Sin cambios de infraestructura pendientes; código de salida del plan detallado `0`.
+  - Archivo en cada host administrado (`app1`, `app2`, `app3`):
+    - Ruta: `/srv/site/message`.
+    - Contenido: `north-98`.
+    - Texto exacto, opcionalmente seguido de un salto de línea.
+    - Modo de acceso: `0644`.
+  - HTTP en cada host administrado (`app1`, `app2`, `app3`):
+    - Puerto y ruta: `8080`, `/`.
+    - Respuesta: `north-98`.
+  - Datos de ruta en el namespace de la bahía:
+    - ConfigMap: `route`.
+    - `route`: `north-98`.
+  - Consumidor en el namespace de la bahía:
+    - Deployment: `board`.
+    - Réplicas: `1`.
+    - Su contenedor expone `ROUTE` con el valor `north-98`.
+    - Desde dentro del contenedor `board`, HTTP `http://board:8080` devuelve `north-98`.
+
+  **Verifica antes de Check & finish:**
+  - `cat managed-route.txt; tofu output -raw managed_id; printf '\n'; cat /run/dq/facts/0/original-id; tofu output -json contract; cat contract.json; tofu plan -input=false -detailed-exitcode -no-color` — El productor y ambos contratos muestran `north-98`, el ID coincide con su comprobante y el plan termina con `0`.
+  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat -A /srv/site/message; ls -l /srv/site/message'; for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Cada host muestra `north-98` con como máximo un marcador de fin de línea, modo de archivo `-rw-r--r--` y respuesta HTTP `north-98`.
+  - `kubectl get configmap route -o jsonpath='{.data.route}'; printf '\n'; kubectl get deployment board -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas; kubectl exec --pod-running-timeout=5s deployment/board -- printenv ROUTE; kubectl exec --pod-running-timeout=5s deployment/board -- wget -qO- -T 3 http://board:8080` — El ConfigMap `route`, el `ROUTE` activo y la respuesta HTTP de `board` muestran `north-98`; el Deployment `board` tiene el número deseado de réplicas `1`.
+
+  La comprobación observa los valores actuales y las restricciones conservadas de referencia de salida, no si se revisó un plan ni cómo se suministraron los consumidores.
+debrief: Las comprobaciones observaron valores coincidentes del productor, la flota y board, el ID conservado y
+  la referencia de salida del módulo.
+stages.0.brief: El productor y cada consumidor deben cumplir el contrato de ruta.
 hints.0.text: 'Comience por el productor: una producción obsoleta puede hacer que muchos consumidores sanos se equivoquen
   sistemáticamente.'
-hints.1.text: Obtenga el resultado del archivo administrado y luego regenere un contrato.
+hints.1.text: Deriva la salida raíz directamente de local_file.contract.content y regenera contract.json con tofu
+  output -json contract.
 hints.2.text: Utilice el contrato tanto para Ansible como para ConfigMap; Los pods basados ​​en env necesitan reiniciarse.
 phrases.0: Rastreé a los consumidores inconsistentes hasta una producción obsoleta del productor.
 phrases.1: Propagué un contrato entre la configuración y runtime.
@@ -38,15 +61,23 @@ diagnostics.configmap: Los datos del ConfigMap route deben ser {route:north-98}.
 diagnostics.replicas: Las réplicas del Deployment board deben ser 1.
 diagnostics.board_env: El env del primer contenedor board debe contener solo ROUTE del ConfigMap route, clave route.
 diagnostics.board_http: La petición a board:8080 debe devolver north-98.
-diagnostics.content_1: En app1, /srv/site/message debe contener exactamente north-98, opcionalmente seguido de un salto de
-  línea.
+diagnostics.content_1: En app1, /srv/site/message debe contener exactamente north-98, opcionalmente seguido de un
+  salto de línea.
 diagnostics.mode_1: En app1, el modo de /srv/site/message debe ser 644.
 diagnostics.http_1: app1 en el puerto 8080 debe devolver north-98.
-diagnostics.content_2: En app2, /srv/site/message debe contener exactamente north-98, opcionalmente seguido de un salto de
-  línea.
+diagnostics.content_2: En app2, /srv/site/message debe contener exactamente north-98, opcionalmente seguido de un
+  salto de línea.
 diagnostics.mode_2: En app2, el modo de /srv/site/message debe ser 644.
 diagnostics.http_2: app2 en el puerto 8080 debe devolver north-98.
-diagnostics.content_3: En app3, /srv/site/message debe contener exactamente north-98, opcionalmente seguido de un salto de
-  línea.
+diagnostics.content_3: En app3, /srv/site/message debe contener exactamente north-98, opcionalmente seguido de un
+  salto de línea.
 diagnostics.mode_3: En app3, el modo de /srv/site/message debe ser 644.
 diagnostics.http_3: app3 en el puerto 8080 debe devolver north-98.
+stages.0.objectives.0.text: La salida `managed_id` coincide con `/run/dq/facts/0/original-id` en la workstation.
+stages.0.objectives.1.text: El archivo productor y los contratos de la workstation, los servicios HTTP de la flota,
+  el ConfigMap `route` y la respuesta de `board` informan `north-98`.
+stages.0.objectives.2.text: En cada host administrado (`app1`, `app2`, `app3`), `/srv/site/message` contiene exactamente
+  `north-98`, opcionalmente seguido de un salto de línea, con modo `0644`.
+stages.0.objectives.3.text: OpenTofu no informa cambios de infraestructura pendientes.
+stages.0.objectives.4.text: El Deployment `board` tiene una réplica y su contenedor expone `ROUTE` con el valor
+  `north-98`.
