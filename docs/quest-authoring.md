@@ -91,6 +91,61 @@ outbound telemetry. Do not claim metrics exist until their collection is impleme
 - **Bad:** Rewrite 003 because one anecdote suggests a problem, or record raw shell
   output and credentials to estimate which condition failed.
 
+## Quest presentation
+
+This is the agreed format for every quest brief and objective. It applies at all
+difficulty levels until measurements (principle 7) justify fading detail (principle 3).
+`tests/test_quest_presentation.py` enforces the mechanical rules; the rest is review.
+Reference quests: 011 (where artifacts live), 014 (evidence the learner must find),
+059 (technique kept out of the brief), 005 (property instead of a single value).
+
+**The rule:** the brief states exactly *what* the result must be, never *how* to reach it
+or *what is broken*.
+
+**Brief (`brief`)**, in this order:
+
+1. One or two sentences of context: the symptom, not the cause.
+2. Entry point: the directory and only the files the learner needs. Setup leftovers are
+   removed in setup, not listed.
+3. `**Requirements:**` — a bulleted list with exact parameters as nested bullets.
+   - Every file or path says *where* it must exist: inside which container or Pod, on which
+     managed host, on the workstation, or in the Docker daemon.
+   - Every value an objective names appears in the requirements as the same token
+     (write `north`, not "the northbound route").
+   - If the whole quest reduces to one value, state the property instead of the value,
+     provided only that value satisfies it (005: "every user can read it, only its owner
+     can write it, it is not executable" instead of `0644`).
+   - Never state what the learner must discover (a log line, a diagnostic value) or the
+     technique (`moved`, `import`, `rollout restart`, a Helm key to change, a trap's
+     workaround). Those belong in hints.
+4. `**Verify yourself before Check & finish:**` — two or three read-only commands with the
+   expected result, showing the outcome as its consumer sees it. They never change state and
+   never repeat a hint (principle 4).
+5. One line under that block for check boundaries ("the check observes current state; it
+   does not prove history"). Do not delete such caveats; move them here.
+
+Do not repeat the Bay facts paragraph ("no Internet or external DNS") or keep
+"Initial success criteria" / "Success criteria" lines: requirements and objectives replace
+them. Text removed from a brief because it explains *how* moves to `hints.N.text` when no
+hint says it yet; hint guide links stay unchanged.
+
+**Stage brief (`stages.N.brief`):** one non-empty line with the stage goal or constraint,
+without a technique and without repeating the brief.
+
+**Objectives (`stages.N.objectives`):** one objective per independently checked condition,
+each with its own check (a condition that is one thing for the learner stays one objective).
+Write them for a person: no jsonpath, JSON, array positions, ready YAML/HCL or commands. Name
+the exact names and values of the result; never the solution or the diagnosis (082: "The fix
+is applied through Helm release `board` values, not by editing the Deployment", not "uses
+`port` value `8080`"). Split objectives only in the same change that migrates the brief, or
+the brief loses its goal. Multi-objective `check-N.sh` scripts follow the aggregate template
+enforced by `tests/test_stage_check_invariant.py`. Add `[DQ:...]` diagnostics only where an
+objective name cannot say what is missing.
+
+**Rigid checks:** when a check compares one exact representation and an equivalent correct
+solution would fail, do not bend the objective text to the check; list it under
+"Rigid checks" in the PR for a check fix.
+
 ## Before opening a quest PR
 
 - Cite the relevant principle numbers and identify the learner-facing change.
@@ -98,6 +153,7 @@ outbound telemetry. Do not claim metrics exist until their collection is impleme
   ensure it remains discoverable at the quest's difficulty.
 - Review the hint ladder, destinations or snippets, self-verification commands, and
   each failure's cause and exact guide paragraph against the same quest example.
+- Follow "Quest presentation" and run `tests/test_quest_presentation.py`.
 - Translate every new or changed English learner-facing text into pl, es, de, and ru;
   check meaning and technical literals, then run `scripts/validate_i18n.py`.
 - Run the required repository checks and, for changed levels, the affected matrix on
