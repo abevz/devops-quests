@@ -103,3 +103,25 @@ def test_split_objectives_come_with_a_migrated_brief(number):
     quest = yaml.safe_load((ROOT / "quests" / f"{number:03}" / "quest.yaml").read_text())
     counts = [len(stage["objectives"]) for stage in quest["stages"]]
     assert max(counts) == 1, "migrate the brief in the same change that splits objectives"
+
+
+MAX_OBJECTIVES_PER_STAGE = 8  # more means one learner condition was split per field/host/item
+
+
+def stage_objective_texts(number):
+    quest = yaml.safe_load((ROOT / "quests" / f"{number:03}" / "quest.yaml").read_text())
+    values = load(number)
+    return [[values[goal["text"]] for goal in stage["objectives"]] for stage in quest["stages"]]
+
+
+@pytest.mark.parametrize("number", QUESTS, ids=[f"{n:03}" for n in QUESTS])
+def test_objectives_are_not_over_split(number):
+    # docs/quest-authoring.md: one learner condition is one objective; group fields of
+    # one object and state fleet properties once for every managed host.
+    for index, texts in enumerate(stage_objective_texts(number)):
+        assert len(texts) <= MAX_OBJECTIVES_PER_STAGE, (
+            f"stage {index} has {len(texts)} objectives; group related conditions"
+        )
+        per_host = [re.sub(r"\bapp\d+\b", "appN", text) for text in texts]
+        repeated = {text for text in per_host if per_host.count(text) > 1}
+        assert not repeated, f"stage {index} repeats one objective per host: {sorted(repeated)}"
