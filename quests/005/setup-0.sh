@@ -13,6 +13,7 @@ cat > prepare.yml <<'DQ_ASSET'
       mode: '0600'
 DQ_ASSET
 ansible-playbook prepare.yml
+rm -- prepare.yml
 cat > rollout.yml <<'DQ_ASSET'
 - name: SignalRail rollout
   hosts: fleet
