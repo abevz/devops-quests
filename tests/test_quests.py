@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import secrets
 import subprocess
 import threading
@@ -117,6 +118,16 @@ def test_quest(number):
                     "stderr": result.stderr,
                 }
             )
+            if number == 5:
+                runtime.exec(run, "cd ~/quest\ntest ! -e prepare.yml && test -s rollout.yml")
+                brief = catalog.text(5, "brief")["en"]
+                consumer_commands = re.findall(r"^- `(.*)` —", brief, re.MULTILINE)
+                assert len(consumer_commands) == 2
+                denied = runtime.exec(
+                    run, "cd ~/quest\n" + consumer_commands[0], check=False, timeout=60
+                )
+                assert denied.returncode != 0, "Private setup must reject the non-owner read"
+                log.append({"preparation_playbook_removed": True, "non_owner_read_before": "DENIED"})
             check = catalog.script(number, stage, "check")
             if number == 66:
                 # The old oracle accepted a fabricated missing digest without
@@ -227,6 +238,23 @@ def test_quest(number):
             assert after.returncode == 0, after.stderr + "\n" + after.stdout
             assert not any(goals()), "Production objective checks did not pass"
             log[-1]["after"] = "PASS"
+            if number == 5:
+                identities = runtime.exec(
+                    run,
+                    "cd ~/quest\nansible fleet -i inventory.ini -m ansible.builtin.command "
+                    "-a 'runuser -u nobody -- id -u'",
+                    timeout=60,
+                )
+                uids = [int(line) for line in identities.stdout.splitlines() if line.isdigit()]
+                assert len(uids) == 3 and all(uid != 0 for uid in uids)
+                observations = []
+                for command in consumer_commands:
+                    observed = runtime.exec(run, "cd ~/quest\n" + command, timeout=60)
+                    for host in ("app1", "app2", "app3"):
+                        assert f"{host} |" in observed.stdout
+                    observations.append({"command": command, "stdout": observed.stdout})
+                assert observations[0]["stdout"].splitlines().count("north-ready") == 3
+                log.append({"non_owner_uids": uids, "consumer_observations_after": observations})
         if number == 27:
             # Kubelet verifies credentials even for Never after a private pull.
             # The ordinary preloaded fixture must retain a distinct identity.
