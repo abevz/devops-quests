@@ -1,24 +1,39 @@
 title: Wydajność
-brief: 'Jedna replika board obsługuje HTTP, ale marnuje swój budżet CPU 50m na przypadkowej pętli aktywnego
-  oczekiwania działającej w tle. Sprawdź /sys/fs/cgroup/cpu.stat do measure.sh i polecenie Deployment.
-  Usuń tylko busy loop, zachowując jedną replikę, zawartość HTTP oraz dokładne żądania i limity CPU/pamięci.
-  Zamrożona próbka początkowa rejestruje co najmniej dziesięć faktycznie throttled periods. Próbnik odczytuje
-  oba liczniki w ramach jednego exec; własną pracę, a health probes może nadal wydać trochę CPU quota.
-  Ostatnia dwusekundowa próbka musi zawierać maksymalnie pięć nowych throttled periods. To jest diagnostyka
-  CPU-throttling, a nie ogólny test porównawczy opóźnień; dodanie replik lub podniesienie limitów ukrywa
-  przyczynę.
+brief: |
+  Obciążenie HTTP wykazuje dławienie CPU nawet w spokojnym przedziale. Przywróć wymagane działanie usługi w istniejącym budżecie zasobów.
 
+  Pracuj w `~/quest` na workstation. Dostarczone pliki wejściowe: `board.json`, `service.json`, `measure.sh`.
 
-  Pliki zadań w `~/quest` (niektóre pojawiają się w późniejszych etapach): `board.json`, `service.json`,
-  `measure.sh`, `initial-throttled`.
+  **Wymagania:**
+  - Wewnątrz kontenera `worker` Deployment `board` żądanie HTTP do `http://board:8080` zwraca `north-94`.
+  - Zamrożony początkowy pomiar na workstation zawiera co najmniej dziesięć okresów dławienia:
+    - `/run/dq/facts/0/initial-throttled`
+  - Deployment `board` zachowuje dokładnie jedną replikę i jest ona gotowa.
+  - W Deployment `board` kontener `worker` zachowuje następujące ustawienia zasobów:
+    - Żądanie CPU: `50m`
+    - Limit CPU: `50m`
+    - Żądanie pamięci: `8Mi`
+    - Limit pamięci: `32Mi`
+  - Jego polecenie nadal udostępnia `north-94` bez aktywnej pętli w tle.
+  - W `~/quest` na workstation dwusekundowy pomiar `bash measure.sh` wykazuje najwyżej pięć nowych okresów dławienia.
 
+  **Sprawdź samodzielnie przed Check & finish:**
+  Wykonaj te polecenia obserwacyjne w `~/quest` na workstation.
+  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080` — Odbiorca usługi otrzymuje `north-94`.
+  - `kubectl get deployment board -o yaml` — Gotowa jest dokładnie jedna replika; ustawienia zasobów odpowiadają wymaganiom, a polecenie usługi nie zawiera aktywnej pętli w tle.
+  - Zamrożona początkowa liczba wynosi co najmniej `10`; nowa liczba z dwóch sekund wynosi najwyżej `5`.
 
-  W zatoce nie ma Internetu ani zewnętrznego DNS. Korzystaj wyłącznie z dostarczonych plików, wstępnie
-  załadowanych obrazów i usług prywatnych. Zmień tylko tę zatokę.'
+    ```sh
+    cat /run/dq/facts/0/initial-throttled
+    bash measure.sh
+    ```
+
+  To mierzy dławienie CPU, a nie ogólne opóźnienia; skrypt pomiarowy i sondy stanu mogą nadal zużywać limit CPU.
 debrief: Usunięcie zmarnowanej pracy zmniejszyło throttling w ramach pierwotnego budżetu zasobów. Próbnik
   i health checks zużywają również quota; ten ograniczony pomiar uczenia nie jest opóźnieniem produkcyjnym
   SLO.
-stages.0.brief: Zmień tylko tę zatokę.
+stages.0.brief: |
+  Zachowaj jedną gotową replikę i oryginalny budżet zasobów, ograniczając zmierzone dławienie.
 stages.0.objectives.0.text: Zapisana próbka początkowa zawiera co najmniej dziesięć okresów throttlingu.
 stages.0.objectives.1.text: Deployment `board` zachowuje dokładnie jedną replikę.
 stages.0.objectives.2.text: Kontener board zachowuje żądanie i limit CPU `50m`, żądanie pamięci `8Mi`
@@ -30,7 +45,8 @@ stages.0.objectives.5.text: Dwusekundowa próbka `bash measure.sh` pokazuje najw
 stages.0.objectives.6.text: HTTP z Deployment `board` do `http://board:8080` zwraca `north-94`.
 hints.0.text: CPU limits może ograniczyć wykonalną pracę, nawet jeśli węzeł ma zapasowe CPU.
 hints.1.text: Oddziel użyteczną pracę związaną z obsługą od przypadkowego procesu w tle.
-hints.2.text: Usuń pętlę i porównaj nowy interwał cpu.stat bez zmiany replik i limitów.
+hints.2.text: |
+  Sprawdź polecenie Deployment i /sys/fs/cgroup/cpu.stat wewnątrz kontenera worker Deployment board. Usuń tylko przypadkową aktywną pętlę w tle bez zmiany replik ani limitów; porównaj nowy przedział cpu.stat. Dostarczony measure.sh odczytuje oba liczniki w jednym exec, aby oddzielne procesy pomiarowe nie zużywały dodatkowego limitu między odczytami.
 phrases.0: Zmierzyłem CPU throttling przed zmianą wydajności.
 phrases.1: Zamiast skalować objaw, usunąłem niepotrzebną pracę.
 phrases.2: Zachowałem zasób limits i zweryfikowałem przydatne zachowanie HTTP.
