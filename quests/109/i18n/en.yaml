@@ -1,25 +1,82 @@
 title: Security context and Pod Security
-brief: "The board endpoint is unavailable. Restore the isolated workload without weakening the bay security policy.\n\
-  \nWork in `~/quest` on the workstation. Supplied files: `board.yaml`, `service.yaml`.\n\n**Requirements:**\n\n\
-  - The bay namespace keeps Pod Security enforcement `restricted`.\n- Deployment `board` has exactly one `worker`\
-  \ container and one ready replica.\n- The `board` Pod has no host access, runs as non-root UID `1000` with seccomp\
-  \ `RuntimeDefault`, and all containers forbid privilege escalation, drop `ALL` capabilities, add none and have\
-  \ read-only root filesystems; only volume `scratch`, an emptyDir at `/tmp`, is writable and usable.\n  - No host\
-  \ networking, host PID/IPC or hostPath; all regular and init containers are non-privileged, cannot escalate, and\
-  \ use absent or `RuntimeDefault` container seccomp. Other mounts are read-only; extra dropped capabilities and\
-  \ equivalent safe security fields are accepted.\n- From Deployment `board`, `http://board:8080` returns `north-109`.\n\
-  \n**Verify yourself before Check & finish:** Run these observation commands from `~/quest` on the workstation.\n\
-  \n- Settings, identity and status match Requirements.\n\n  ```sh\n  kubectl get namespace \"$DQ_NAMESPACE\" -o\
-  \ yaml\n  kubectl get deployment board -o yaml\n  ```\n\n- `kubectl exec deployment/board -- sh -c 'id -u; cat\
-  \ /proc/mounts; test -w /tmp'` — The live UID is `1000`, the root mount is read-only, and `/tmp` is writable inside\
-  \ `worker`.\n\n- `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080` — The board consumer receives\
-  \ `north-109`.\n\nChecks observe current settings, not the history of namespace changes."
-debrief: The workload security settings, live mount, UID, scratch behavior and service response matched the checks.
+brief: 'The board endpoint is unavailable. Restore the isolated workload without weakening the bay security
+  policy.
+
+
+  Work in `~/quest` on the workstation. Supplied files: `board.yaml`, `service.yaml`.
+
+
+  **Requirements:**
+
+  - The bay namespace keeps Pod Security enforcement `restricted`.
+
+  - Deployment `board` has exactly one `worker` container and one ready replica.
+
+  - The Pod has no host networking, host process or IPC access, or host filesystem volumes. Every regular and
+  init container runs without elevated privileges, cannot gain privileges, has no retained or added Linux capabilities,
+  and has a read-only root filesystem. The Pod runs as non-root with the default syscall filter; containers
+  cannot override it with another filter. Only the supplied temporary storage inside the Pod at `/tmp` is writable;
+  other mounts are read-only.
+
+  - From Deployment `board`, `http://board:8080` returns `north-109`.
+
+
+  Checks observe current settings, not the history of namespace changes.
+
+  '
+debrief: The workload security settings, live mount, UID, scratch behavior and service response matched the
+  checks.
 stages.0.brief: The isolated board workload must be ready and usable.
-hints.0.text: An admission rejection happens before a container can crash or produce application logs. The supplied
-  privileged board container is rejected by restricted Pod Security; inspect ReplicaSet events.
-hints.1.text: Non-root identity, privilege controls and read-only filesystems solve different problems.
-hints.2.text: Drop privileges, keep the root filesystem read-only and give the app only its /tmp emptyDir.
+hints.0.text: Admission and runtime health are separate stages of workload recovery.
+hints.1.text: 'An admission rejection happens before a container can crash or produce application logs. The
+  supplied privileged board container is rejected by restricted Pod Security; inspect ReplicaSet events.
+
+
+  Non-root identity, privilege controls and read-only filesystems solve different problems.
+
+
+  Inspect the supplied definitions, current resources and events.
+
+
+  ```sh
+
+  cat board.yaml
+
+  kubectl describe replicasets
+
+  kubectl get deployment board -o yaml
+
+  kubectl get namespace "$DQ_NAMESPACE" -o yaml
+
+  ```'
+hints.2.text: 'Drop privileges, keep the root filesystem read-only and give the app only its /tmp emptyDir.
+
+
+  Verify the observed result:
+
+
+  ```sh
+
+  kubectl get deployment board
+
+  kubectl exec deployment/board -- sh -c ''id -u; cat /proc/mounts; test -w /tmp''
+
+  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  Expect one ready replica, live UID 1000, a read-only root mount, writable /tmp and HTTP response north-109.
+
+
+  Supplied constraints and details: The `board` Pod has no host access, runs as non-root UID `1000` with seccomp
+  `RuntimeDefault`, and all containers forbid privilege escalation, drop `ALL` capabilities, add none and have
+  read-only root filesystems; only volume `scratch`, an emptyDir at `/tmp`, is writable and usable.
+
+
+  These restrictions cover all regular and init containers: no host network/PID/IPC or hostPath, no privilege
+  escalation or added capabilities, drop ALL; container seccomp is absent or RuntimeDefault, other mounts are
+  read-only, and additional safe fields and dropped capabilities are accepted.'
 phrases.0: I diagnosed an admission failure before debugging application startup.
 phrases.1: I kept the workload non-root and removed unnecessary privileges.
 phrases.2: I verified read-only root storage and scoped scratch writes.
@@ -48,14 +105,17 @@ diagnostics.host_hostnetwork: deployment/board hostNetwork must not be enabled.
 diagnostics.host_hostpid: deployment/board hostPID must not be enabled.
 diagnostics.host_hostipc: deployment/board hostIPC must not be enabled.
 diagnostics.security_privileged: No container may be privileged.
-diagnostics.security_allowprivilegeescalation: container securityContext allowPrivilegeEscalation must equal false.
+diagnostics.security_allowprivilegeescalation: container securityContext allowPrivilegeEscalation must equal
+  false.
 diagnostics.security_readonlyrootfilesystem: container securityContext readOnlyRootFilesystem must equal true.
 diagnostics.security_drop: Every container must drop capability ALL.
 diagnostics.security_add: container securityContext add must equal [].
 diagnostics.security_seccomp: Container seccompProfile.type must be RuntimeDefault or absent.
 stages.0.objectives.0.text: The bay namespace keeps Pod Security enforcement `restricted`.
 stages.0.objectives.1.text: Deployment `board` has exactly one `worker` container and one ready replica.
-stages.0.objectives.2.text: The `board` Pod has no host access, runs as non-root UID `1000` with seccomp `RuntimeDefault`,
-  and all containers forbid privilege escalation, drop `ALL` capabilities, add none and have read-only root filesystems;
-  only volume `scratch`, an emptyDir at `/tmp`, is writable and usable.
+stages.0.objectives.2.text: The Pod has no host networking, host process or IPC access, or host filesystem
+  volumes. Every regular and init container runs without elevated privileges, cannot gain privileges, has no
+  retained or added Linux capabilities, and has a read-only root filesystem. The Pod runs as non-root with
+  the default syscall filter; containers cannot override it with another filter. Only the supplied temporary
+  storage inside the Pod at `/tmp` is writable; other mounts are read-only.
 stages.0.objectives.3.text: From Deployment `board`, `http://board:8080` returns `north-109`.

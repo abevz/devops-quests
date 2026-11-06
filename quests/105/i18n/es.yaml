@@ -1,30 +1,79 @@
 title: Configuración CoreDNS
-brief: "La ruta no es accesible por su nombre DNS privado. Recupera una resolución privada coherente y la respuesta\
-  \ HTTP requerida.\n\nTrabaja en `~/quest` en la workstation. Archivos suministrados: `dns-config.yaml`, `dns.yaml`,\
-  \ `dns-service.yaml`, `client.yaml`, `expected-dns-address`.\n\n**Requisitos:**\n- El resolver privado `station-dns`\
-  \ ejecuta CoreDNS con `/etc/station/Corefile` dentro de su contenedor DNS, sirve el registro requerido `north.station.internal`\
-  \ y expone solo TCP/UDP `53` hacia `1053`.\n  - El contrato DNS Corefile tiene listener `1053`, `errors`, un bloque\
-  \ `hosts` para la dirección esperada protegida y TTL `1`, sin directivas adicionales.\n- El Deployment `client`\
-  \ usa política DNS `None` y solo la IP del Service `station-dns` como resolver.\n- La consulta DNS desde el Deployment\
-  \ `client` para `north.station.internal` incluye la dirección completa de `/run/dq/facts/0/expected-dns-address`\
-  \ en la workstation.\n- Desde `deployment/client`, HTTP `http://north.station.internal:8080` devuelve `north-105`.\n\
-  \n**Verifica antes de Check & finish:**\nEjecuta estos comandos de observación desde `~/quest` en la workstation;\
-  \ `kubectl exec` observa el contenedor de la carga indicada.\n- La respuesta contiene la dirección esperada completa.\n\
-  \n  ```sh\n  kubectl exec deployment/client -- nslookup north.station.internal\n  cat /run/dq/facts/0/expected-dns-address\n\
-  \  ```\n- `kubectl exec deployment/client -- wget -qO- -T 3 http://north.station.internal:8080` — El consumidor\
-  \ recibe `north-105`.\n- Los ajustes, la identidad y el estado coinciden con Requisitos.\n\n  ```sh\n  kubectl\
-  \ get deployment station-dns client -o yaml\n  kubectl get service station-dns -o yaml\n  kubectl get configmap\
-  \ station-dns -o yaml\n  ```\n\nSe observan configuración y respuestas actuales, no qué objetos se cambiaron antes.\n"
+brief: 'La ruta no es accesible por su nombre DNS privado. Recupera una resolución privada coherente y la respuesta
+  HTTP requerida.
+
+
+  Trabaja en `~/quest` en la workstation. Archivos suministrados: `dns-config.yaml`, `dns.yaml`, `dns-service.yaml`,
+  `client.yaml`.
+
+
+  **Requisitos:**
+
+  - El resolvedor privado existente sirve `north.station.internal` con su runtime CoreDNS y exposición DNS
+  suministrados.
+
+  - El Deployment `client` usa únicamente el resolvedor DNS privado existente.
+
+  - Desde el Deployment `client`, `north.station.internal` se resuelve a la dirección completa del Service
+  privado de aplicación previsto.
+
+  - Desde `deployment/client`, HTTP `http://north.station.internal:8080` devuelve `north-105`.
+
+
+  Se observan configuración y respuestas actuales, no qué objetos se cambiaron antes.
+
+  '
 debrief: Las comprobaciones observaron la configuración DNS privada y el tráfico por nombre.
-stages.0.brief: 'El DNS privado y la respuesta de la aplicación deben coincidir con el contrato de dirección suministrado.
-
-  '
+stages.0.brief: El DNS privado y la respuesta de la aplicación deben coincidir con el contrato de dirección
+  suministrado.
 hints.0.text: El tráfico directo exitoso de IP no prueba que DNS funcione.
-hints.1.text: Este client utiliza el DNS Service privado en lugar del clúster predeterminado.
-hints.2.text: 'Corrige el registro hosts con la IP de Service congelada y recarga solo el clon privado. Tras actualizar
-  su ConfigMap, reinicia solo deployment/station-dns y espera el rollout; la propagación DNS puede tardar.
+hints.1.text: 'Este client utiliza el DNS Service privado en lugar del clúster predeterminado.
 
-  '
+
+  Inspecciona las definiciones suministradas, los recursos actuales y los eventos.
+
+
+  ```sh
+
+  cat dns-config.yaml
+
+  kubectl get deployment station-dns client -o yaml
+
+  kubectl get service station-dns -o yaml
+
+  kubectl get configmap station-dns -o yaml
+
+  ```'
+hints.2.text: 'Corrige el registro hosts con la IP de Service congelada y recarga solo el clon privado. Tras
+  actualizar su ConfigMap, reinicia solo deployment/station-dns y espera el rollout; la propagación DNS puede
+  tardar.
+
+
+  Verifica el resultado observado:
+
+
+  ```sh
+
+  kubectl exec deployment/client -- nslookup north.station.internal
+
+  kubectl exec deployment/client -- wget -qO- -T 3 http://north.station.internal:8080
+
+  ```
+
+
+  Se esperan la dirección completa del Service privado de aplicación en la respuesta DNS y la respuesta HTTP
+  north-105.
+
+
+  Restricciones y detalles suministrados: El resolver privado `station-dns` ejecuta CoreDNS con `/etc/station/Corefile`
+  dentro de su contenedor DNS, sirve el registro requerido `north.station.internal` y expone solo TCP/UDP `53`
+  hacia `1053`. El Deployment `client` usa política DNS `None` y solo la IP del Service `station-dns` como
+  resolver. La consulta DNS desde el Deployment `client` para `north.station.internal` incluye la dirección
+  completa de `/run/dq/facts/0/expected-dns-address` en la workstation.
+
+
+  El contrato Corefile es un listener en 1053, errors y un bloque hosts con la dirección esperada protegida,
+  north.station.internal y ttl 1, sin más directivas.'
 phrases.0: Separé la resolución de nombres de la accesibilidad del transporte.
 phrases.1: Inspeccioné el client DNS policy antes de cambiar un resolver.
 phrases.2: Verifiqué lookup y el tráfico de la aplicación a través del mismo nombre de host.
@@ -36,16 +85,15 @@ questions.1.points.1: Las variables de entorno y subPath mounts tienen un compor
 questions.1.prompt: ¿El cambio de un ConfigMap proyectado recarga automáticamente todas las aplicaciones?
 diagnostics.command: station-dns command debe ser igual a /coredns -conf /etc/station/Corefile.
 diagnostics.ports: station-dns ports debe ser igual a TCP/UDP 53 → 1053.
-diagnostics.core: Corefile de station-dns debe coincidir con la estructura, dirección, puerto y TTL requeridos tras
-  normalizar espacios.
+diagnostics.core: Corefile de station-dns debe coincidir con la estructura, dirección, puerto y TTL requeridos
+  tras normalizar espacios.
 diagnostics.dns_policy: deployment/client dnsPolicy debe ser igual a None.
 diagnostics.nameserver: deployment/client nameservers debe ser igual a [station-dns Service IP].
 diagnostics.answer: La respuesta DNS de north.station.internal debe contener expected-dns-address.
 diagnostics.http: La petición a north.station.internal:8080 debe devolver north-105.
-stages.0.objectives.0.text: El resolver privado `station-dns` ejecuta CoreDNS con `/etc/station/Corefile` dentro
-  de su contenedor DNS, sirve el registro requerido `north.station.internal` y expone solo TCP/UDP `53` hacia `1053`.
-stages.0.objectives.1.text: El Deployment `client` usa política DNS `None` y solo la IP del Service `station-dns`
-  como resolver.
-stages.0.objectives.2.text: La consulta DNS desde el Deployment `client` para `north.station.internal` incluye la
-  dirección completa de `/run/dq/facts/0/expected-dns-address` en la workstation.
+stages.0.objectives.0.text: El resolvedor privado existente sirve `north.station.internal` con su runtime CoreDNS
+  y exposición DNS suministrados.
+stages.0.objectives.1.text: El Deployment `client` usa únicamente el resolvedor DNS privado existente.
+stages.0.objectives.2.text: Desde el Deployment `client`, `north.station.internal` se resuelve a la dirección
+  completa del Service privado de aplicación previsto.
 stages.0.objectives.3.text: Desde `deployment/client`, HTTP `http://north.station.internal:8080` devuelve `north-105`.

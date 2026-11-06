@@ -1,69 +1,113 @@
 title: PDB maintenance
-brief: |
-  The service needs a safe voluntary maintenance window while remaining available. Retain the supplied 10-second preStop hook so termination remains observable.
+brief: 'The service needs a voluntary maintenance window while remaining available. Preserve the supplied termination
+  observation window.
 
-  Work in `~/quest` on the workstation. Supplied inputs: `board.yaml`, `service.yaml`, `client.yaml`, `pdb.yaml`, `evict-one.sh`, `original-pod-uids.json`.
+
+  Work in `~/quest` on the workstation. Supplied inputs: `board.yaml`, `service.yaml`, `client.yaml`, `pdb.yaml`,
+  `evict-one.sh`.
+
+
+  The request file is in `~/quest` on the workstation.
+
 
   **Requirements:**
-  - Inside container `worker` of Deployment `client`, HTTP to `http://board:8080` returns `north-77`.
-  - PDB `board-budget` protects Pods labelled `app=board` and requires at least one healthy Pod.
+
+  - The existing disruption budget protects the application Pods and requires at least one healthy Pod.
+
   - Deployment `board` has exactly two replicas, both ready.
-  - PDB `board-budget` reports:
-    - Healthy: `2`
-    - Required healthy: `1`
-    - Allowed disruptions: `1`
-  - In `~/quest` on the workstation, `eviction.json` records an Eviction API request for an original Pod in this bay:
-    - API: `policy/v1`
-    - Kind: `Eviction`
-    - Namespace: `$DQ_NAMESPACE`
-    - UID precondition: original Pod UID
-  - The selected Pod is gone and exactly one original Pod remains. The original UID list is protected on the workstation:
-    - `/run/dq/facts/0/original-pod-uids.json`
-  - The server confirms eviction of that selected original Pod through the Eviction API; its read-only receipt is on the workstation:
-    - `/run/dq/observations/evictions.json`
+
+  - The application disruption budget reports two healthy Pods, a healthy minimum of one, and one allowed disruption.
+
+  - HTTP from Deployment `client` to `http://board:8080` returns `north-77`.
+
+  - `eviction.json` records an Eviction API request for an original board Pod in this bay, guarded by that
+  Pod''s UID.
+
+  - The board Pod selected for eviction is gone, and exactly one original board Pod remains.
+
+  - The server confirms that the original Pod selected in `eviction.json` was evicted through the Eviction
+  API.
+
   - Your bay account cannot patch Pod status.
 
-  **Verify yourself before Check & finish:**
-  Run these observation commands from `~/quest` on the workstation.
-  - `kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://board:8080` — The service consumer receives `north-77`.
-  - The selector and healthy/disruption counts match Requirements, both replicas are ready, and the authorization answer is `no`.
 
-    ```sh
-    kubectl get pdb board-budget -o yaml
-    kubectl get deployment board
-    kubectl auth can-i patch pods --subresource=status
-    ```
-  - The request names this bay and an original Pod UID as its precondition. That UID is absent from current Pods and present in the server receipt; exactly one original Pod remains.
+  A PDB governs voluntary eviction; it does not prevent node loss, direct Pod deletion or a Deployment rollout,
+  and an edited request file does not prove server-observed eviction.
 
-    ```sh
-    cat eviction.json
-    cat /run/dq/facts/0/original-pod-uids.json
-    kubectl get pods -l app=board -o json
-    cat /run/dq/observations/evictions.json
-    ```
-
-  A PDB governs voluntary eviction; it does not prevent node loss, direct Pod deletion or a Deployment rollout, and an edited request file does not prove server-observed eviction.
-debrief: Maintenance now has an explicit healthy minimum, verified by a real eviction
-  and service probes.
-stages.0.brief: |
-  Complete observable voluntary maintenance and restore both healthy replicas.
-stages.0.objectives.0.text: PDB `board-budget` protects Pods labelled `app=board` and requires at least
+  '
+debrief: Maintenance now has an explicit healthy minimum, verified by a real eviction and service probes.
+stages.0.brief: Complete observable voluntary maintenance and restore both healthy replicas.
+stages.0.objectives.0.text: The existing disruption budget protects the application Pods and requires at least
   one healthy Pod.
 stages.0.objectives.1.text: Deployment `board` has exactly two replicas, both ready.
-stages.0.objectives.2.text: PDB `board-budget` reports two healthy Pods, a healthy minimum of one, and
-  one allowed disruption.
+stages.0.objectives.2.text: The application disruption budget reports two healthy Pods, a healthy minimum of
+  one, and one allowed disruption.
 stages.0.objectives.3.text: HTTP from Deployment `client` to `http://board:8080` returns `north-77`.
-stages.0.objectives.4.text: '`eviction.json` records an Eviction API request for an original board Pod
-  in this bay, guarded by that Pod''s UID.'
-stages.0.objectives.5.text: The board Pod selected for eviction is gone, and exactly one original board
-  Pod remains.
-stages.0.objectives.6.text: The server confirms that the original Pod selected in `eviction.json` was
-  evicted through the Eviction API.
+stages.0.objectives.4.text: '`eviction.json` records an Eviction API request for an original board Pod in this
+  bay, guarded by that Pod''s UID.'
+stages.0.objectives.5.text: The board Pod selected for eviction is gone, and exactly one original board Pod
+  remains.
+stages.0.objectives.6.text: The server confirms that the original Pod selected in `eviction.json` was evicted
+  through the Eviction API.
 stages.0.objectives.7.text: Your bay account cannot patch Pod status.
-hints.0.text: A two-of-two budget leaves no voluntary maintenance room.
-hints.1.text: Keep the selector and replicas fixed; change only the healthy minimum.
-hints.2.text: |
-  Wait for disruptionsAllowed=1, then bash evict-one.sh submits a UID-guarded Eviction API request and probes HTTP during replacement. Verify recovery. The backend observes DisruptionTarget with reason EvictionByEvictionAPI during termination; direct deletion or an edited JSON file cannot create this receipt. The supplied 10-second preStop hook keeps termination observable during the 2.5-second poll; retain it.
+hints.0.text: A disruption budget balances voluntary maintenance with application availability.
+hints.1.text: 'A two-of-two budget leaves no voluntary maintenance room.
+
+
+  Keep the selector and replicas fixed; change only the healthy minimum.
+
+
+  Inspect the supplied definitions, current resources and events.
+
+
+  ```sh
+
+  cat pdb.yaml
+
+  kubectl get pdb board-budget -o yaml
+
+  kubectl describe deployment board
+
+  cat eviction.json
+
+  kubectl get pods -l app=board -o yaml
+
+  cat /run/dq/observations/evictions.json
+
+  ```'
+hints.2.text: 'Wait for disruptionsAllowed=1, then bash evict-one.sh submits a UID-guarded Eviction API request
+  and probes HTTP during replacement. Verify recovery. The backend observes DisruptionTarget with reason EvictionByEvictionAPI
+  during termination; direct deletion or an edited JSON file cannot create this receipt. The supplied 10-second
+  preStop hook keeps termination observable during the 2.5-second poll; retain it.
+
+
+  Verify the observed result:
+
+
+  ```sh
+
+  kubectl get deployment board
+
+  kubectl get pdb board-budget
+
+  kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://board:8080
+
+  kubectl auth can-i patch pods --subresource=status
+
+  ```
+
+
+  Expect two ready replicas, two healthy Pods, a healthy minimum of one and one allowed disruption; HTTP returns
+  north-77 and the authorization answer is no. The selected original Pod is absent, exactly one original remains,
+  and the server receipt confirms eviction of the selected UID.
+
+
+  Supplied constraints and details: PDB `board-budget` protects Pods labelled `app=board` and requires at least
+  one healthy Pod. PDB `board-budget` reports two healthy Pods, a healthy minimum of one, and one allowed disruption.
+
+
+  In ~/quest on the workstation, eviction.json must name a policy/v1 Eviction in $DQ_NAMESPACE with an original
+  Pod UID precondition. Retain the supplied 10-second preStop hook; it allows the server to observe termination.'
 phrases.0: I aligned the disruption budget with available replica capacity.
 phrases.1: I used the Eviction API instead of direct deletion.
 phrases.2: I distinguished voluntary maintenance protection from failure recovery.

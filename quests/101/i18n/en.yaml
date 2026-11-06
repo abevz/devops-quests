@@ -1,38 +1,92 @@
 title: Init containers and native sidecars
-brief: "Application startup does not finish. The supplied initialization, native sidecar and application must operate\
-  \ together.\n\nWork in `~/quest` on the workstation. Supplied files: `route.yaml`, `board.yaml`, `service.yaml`.\n\
-  \n**Requirements:**\n- Init container `prepare` makes the route from the supplied ConfigMap available at `/shared/route`\
-  \ inside the Pod.\n- Native sidecar `watcher` uses restart policy `Always` and a startup check requiring a nonempty\
-  \ `/shared/heartbeat` inside its container, every `1` second with failure threshold `10`.\n- Deployment `board`\
-  \ keeps only the supplied ordered volumes: `input` from ConfigMap `route`, mode `0644`, then shared emptyDir volume\
-  \ `shared`.\n- One Pod labelled `app=board`, not terminating, has `prepare` completed with exit code `0`, `watcher`\
-  \ started and running, and a ready regular container.\n- Inside container `watcher` selected from Deployment `board`,\
-  \ `/shared/heartbeat` exists and is nonempty.\n- From `deployment/board`, HTTP `http://board:8080/route` returns\
-  \ `north-101`.\n\n**Verify yourself before Check & finish:**\nRun these observation commands from `~/quest` on\
-  \ the workstation; `kubectl exec` observes the named workload container.\n- Settings, identity and status match\
-  \ Requirements.\n\n  ```sh\n  kubectl get deployment board -o yaml\n  kubectl get pods -l app=board -o json\n\
-  \  ```\n- `kubectl exec deployment/board -c watcher -- wc -c /shared/heartbeat` — The heartbeat file inside `watcher`\
-  \ has a positive byte count.\n- `kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080/route` — The\
-  \ consumer receives `north-101`.\n\nChecks observe current settings, not a single-field edit history; the heartbeat\
-  \ Pod selected from the Deployment is not proven to be the same Pod as the status check.\n"
-debrief: The checks observed the init settings, Pod states, heartbeat and HTTP response.
-stages.0.brief: 'Initialization and the native sidecar must support a ready application and the required route.
+brief: 'Application startup does not finish. The supplied initialization, native sidecar and application must
+  operate together.
+
+
+  Work in `~/quest` on the workstation. Supplied files: `route.yaml`, `board.yaml`, `service.yaml`.
+
+
+  **Requirements:**
+
+  - Initialization makes the supplied route available to the application inside the Pod at `/shared/route`.
+
+  - The existing native sidecar stays restartable and starts successfully with its supplied heartbeat startup
+  check.
+
+  - Deployment `board` keeps only the supplied input and shared storage, with their original order and access
+  settings.
+
+  - A current application Pod is not terminating: initialization completed successfully, its native sidecar
+  is started and running, and its application container is ready.
+
+  - Inside container `watcher` selected from Deployment `board`, `/shared/heartbeat` exists and is nonempty.
+
+  - From `deployment/board`, HTTP `http://board:8080/route` returns `north-101`.
+
+
+  Checks observe current settings, not a single-field edit history; the heartbeat Pod selected from the Deployment
+  is not proven to be the same Pod as the status check.
 
   '
-hints.0.text: 'A failing ordinary init blocks later initialization and application startup. Its supplied source
+debrief: The checks observed the init settings, Pod states, heartbeat and HTTP response.
+stages.0.brief: Initialization and the native sidecar must support a ready application and the required route.
+hints.0.text: Application readiness depends on successful initialization and supporting containers.
+hints.1.text: 'A failing ordinary init blocks later initialization and application startup. Its supplied source
   path names a nonexistent input.
 
-  '
-hints.1.text: Native sidecars are restartable init containers; ordinary init containers must finish.
-hints.2.text: 'Correct the source path without moving watcher into the ordinary containers list. The prepare command
-  is sh -c with cp /input/route /shared/route. The watcher startup command is test -s /shared/heartbeat, with periodSeconds
-  1 and failureThreshold 10. Keep prepare first and watcher second in the init container list.
 
-  '
+  Native sidecars are restartable init containers; ordinary init containers must finish.
+
+
+  Inspect the supplied definitions, current resources and events.
+
+
+  ```sh
+
+  cat board.yaml
+
+  kubectl get deployment board -o yaml
+
+  kubectl get pods -l app=board -o yaml
+
+  kubectl describe pods -l app=board
+
+  ```'
+hints.2.text: 'Correct the source path without moving watcher into the ordinary containers list. The prepare
+  command is sh -c with cp /input/route /shared/route. The watcher startup command is test -s /shared/heartbeat,
+  with periodSeconds 1 and failureThreshold 10. Keep prepare first and watcher second in the init container
+  list.
+
+
+  Verify the observed result:
+
+
+  ```sh
+
+  kubectl get pods -l app=board
+
+  kubectl exec deployment/board -c watcher -- wc -c /shared/heartbeat
+
+  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080/route
+
+  ```
+
+
+  Expect successful initialization, a running and started native sidecar, a ready application container, a
+  positive heartbeat byte count and HTTP response north-101.
+
+
+  Supplied constraints and details: Init container `prepare` makes the route from the supplied ConfigMap available
+  at `/shared/route` inside the Pod. Native sidecar `watcher` uses restart policy `Always` and a startup check
+  requiring a nonempty `/shared/heartbeat` inside its container, every `1` second with failure threshold `10`.
+  Deployment `board` keeps only the supplied ordered volumes: `input` from ConfigMap `route`, mode `0644`,
+  then shared emptyDir volume `shared`. One Pod labelled `app=board`, not terminating, has `prepare` completed
+  with exit code `0`, `watcher` started and running, and a ready regular container.'
 phrases.0: I diagnosed startup through init container status.
 phrases.1: I separated one-time preparation from a native sidecar.
 phrases.2: I verified the board HTTP response.
-questions.0.points.0: Ordinary init must complete; a native sidecar is an init container with restartPolicy Always.
+questions.0.points.0: Ordinary init must complete; a native sidecar is an init container with restartPolicy
+  Always.
 questions.0.points.1: A sidecar startup probe can gate the next init step while the sidecar keeps running.
 questions.0.prompt: How does an ordinary init differ from a native sidecar?
 questions.1.points.0: No; it belongs to this Pod lifetime.
@@ -50,14 +104,14 @@ diagnostics.ready: A board Pod not marked for deletion must have a ready regular
 diagnostics.same: One board Pod not marked for deletion must satisfy all three container conditions.
 diagnostics.http: board:8080/route must equal north-101.
 diagnostics.heartbeat: Watcher /shared/heartbeat must exist and be nonempty.
-stages.0.objectives.0.text: Init container `prepare` makes the route from the supplied ConfigMap available at `/shared/route`
-  inside the Pod.
-stages.0.objectives.1.text: Native sidecar `watcher` uses restart policy `Always` and a startup check requiring
-  a nonempty `/shared/heartbeat` inside its container, every `1` second with failure threshold `10`.
-stages.0.objectives.2.text: 'Deployment `board` keeps only the supplied ordered volumes: `input` from ConfigMap
-  `route`, mode `0644`, then shared emptyDir volume `shared`.'
-stages.0.objectives.3.text: One Pod labelled `app=board`, not terminating, has `prepare` completed with exit code
-  `0`, `watcher` started and running, and a ready regular container.
-stages.0.objectives.4.text: Inside container `watcher` selected from Deployment `board`, `/shared/heartbeat` exists
-  and is nonempty.
+stages.0.objectives.0.text: Initialization makes the supplied route available to the application inside the
+  Pod at `/shared/route`.
+stages.0.objectives.1.text: The existing native sidecar stays restartable and starts successfully with its
+  supplied heartbeat startup check.
+stages.0.objectives.2.text: Deployment `board` keeps only the supplied input and shared storage, with their
+  original order and access settings.
+stages.0.objectives.3.text: 'A current application Pod is not terminating: initialization completed successfully,
+  its native sidecar is started and running, and its application container is ready.'
+stages.0.objectives.4.text: Inside container `watcher` selected from Deployment `board`, `/shared/heartbeat`
+  exists and is nonempty.
 stages.0.objectives.5.text: From `deployment/board`, HTTP `http://board:8080/route` returns `north-101`.
