@@ -1,33 +1,27 @@
 title: Service account token boundaries
-brief: 'A reader uses a projected, Pod-bound token with a ten-minute requested lifetime. Its audience points at a retired
-  service, so the Kubernetes API rejects it. Set audience https://kubernetes.default.svc.cluster.local, keeping automatic
-  mounting disabled and the named-route read-only Role. Use the mounted token for a real CA-verified API request; never print
-  or save the token. Prove route get succeeds while list ConfigMaps and Secrets is denied.
-
-
-  Quest files in `~/quest` (some appear in later stages): `reader-sa.json`, `role.json`, `binding.json`, `route.json`, `reader.json`,
-  `api-ca.pem`, `api-endpoint`.
-
-
-  The bay has no Internet or external DNS. Use only supplied files, preloaded images and private services. Change only this
-  bay.
-
-
-  Initial success criteria: The projected token has the API audience and 600-second request; actual named get succeeds and
-  broad lists return 403.
-
-
-  The first projected token source must be exactly `path: token`, `expirationSeconds: 600` and `audience: https://kubernetes.default.svc.cluster.local`,
-  with automatic mounting disabled. Role `reader` must contain exactly one core-API rule: `get` on `configmaps`, `resourceNames:
-  [route]`. The CA-verified reader request for `configmaps/route` must return 200 and `.data.route: north-114`; requests for
-  the ConfigMap list, Secret list and named ConfigMap `offlimits` must each return 403. These checks cover the specified requests
-  and live Role, not every possible permission or your command history.'
+brief: "The reader cannot access its required API data. Restore narrowly scoped access without exposing its credential.\n\
+  \nWork in `~/quest` on the workstation. Supplied files: `reader-sa.json`, `role.json`, `binding.json`, `route.json`,\
+  \ `reader.json`, `api-ca.pem`, `api-endpoint`.\n\n**Requirements:**\n\n- Deployment `reader` disables automatic\
+  \ token mounting and projects an API-audience token at `/credential/token` inside its container, requesting a\
+  \ lifetime of `600` seconds.\n  - The token file belongs inside the reader container; its projected relative path\
+  \ is `token`. Keep the credential private.\n- Role `reader` allows only `get` on the core-API ConfigMap `route`.\n\
+  - Using the mounted reader token and CA verification, GET of ConfigMap `route` returns HTTP `200` with route `north-114`.\n\
+  - The same reader credential receives HTTP `403` for listing ConfigMaps, listing Secrets and getting ConfigMap\
+  \ `offlimits`.\n\n**Verify yourself before Check & finish:** Run these observation commands from `~/quest` on\
+  \ the workstation.\n\n- Settings, identity and status match Requirements.\n\n  ```sh\n  kubectl get deployment\
+  \ reader -o yaml\n  kubectl get role reader -o yaml\n  ```\n\n- The named route returns `north-114` and HTTP `200`;\
+  \ the other three requests return HTTP `403`. Do not print or save the token.\n\n  ```sh\n  api=$(cat api-endpoint)\n\
+  \  token=$(kubectl exec deployment/reader -- cat /credential/token)\n  for path in configmaps/route configmaps\
+  \ secrets configmaps/offlimits; do\n    printf 'header = \"Authorization: Bearer %s\"\\n' \"$token\" |\n     \
+  \ curl --config - --cacert api-ca.pem -sS -w '\\nHTTP %{http_code}\\n' \\\n      \"$api/api/v1/namespaces/$DQ_NAMESPACE/$path\"\
+  \n  done\n  unset token\n  ```\n\nChecks cover these requests and the live Role, not every possible permission\
+  \ or command history."
 debrief: Short-lived projected credentials and least-privilege authorization solve different parts of API access.
-stages.0.brief: The projected token, exact reader Role and CA-verified allowed and denied requests match the brief.
-stages.0.objectives.0.text: The projected token, exact reader Role and CA-verified allowed and denied requests match the brief.
+stages.0.brief: The reader must read the named route while broader requests remain forbidden.
 hints.0.text: Authentication checks audience before RBAC authorization.
 hints.1.text: The projected volume requests a token for one intended recipient.
-hints.2.text: Repair only the audience, wait for replacement, and use the supplied CA for HTTPS.
+hints.2.text: Repair only the audience, wait for replacement, and use the supplied CA for HTTPS. The supplied audience
+  refers to a retired service. The API audience is `https://kubernetes.default.svc.cluster.local`.
 phrases.0: I checked the token audience without exposing credentials.
 phrases.1: I used CA-verified HTTPS for the real API request.
 phrases.2: I tested permitted and denied operations.
@@ -46,3 +40,10 @@ diagnostics.value: configmaps/route data.route must equal north-114.
 diagnostics.denied_configmaps: reader GET configmaps must return HTTP 403.
 diagnostics.denied_secrets: reader GET secrets must return HTTP 403.
 diagnostics.denied_configmaps_offlimits: reader GET configmaps/offlimits must return HTTP 403.
+stages.0.objectives.0.text: Deployment `reader` disables automatic token mounting and projects an API-audience token
+  at `/credential/token` inside its container, requesting a lifetime of `600` seconds.
+stages.0.objectives.1.text: Role `reader` allows only `get` on the core-API ConfigMap `route`.
+stages.0.objectives.2.text: Using the mounted reader token and CA verification, GET of ConfigMap `route` returns
+  HTTP `200` with route `north-114`.
+stages.0.objectives.3.text: The same reader credential receives HTTP `403` for listing ConfigMaps, listing Secrets
+  and getting ConfigMap `offlimits`.

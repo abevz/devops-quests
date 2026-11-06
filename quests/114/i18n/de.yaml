@@ -1,37 +1,29 @@
 title: Service account Tokengrenzen
-brief: 'Reader verwendet ein projiziertes, an den Pod gebundenes Token mit einer angeforderten Lebensdauer von zehn Minuten.
-  Sein Empfänger (audience) verweist auf einen stillgelegten Dienst, daher lehnt die Kubernetes-API es ab. Setze den Empfänger
-  auf https://kubernetes.default.svc.cluster.local, lasse das automatische Mounten deaktiviert und behalte die Role für den
-  Lesezugriff auf das benannte route-Objekt. Nutze das gemountete Token für eine echte CA-verifizierte API-Anfrage; gib es
-  niemals aus und speichere es nicht. Prüfe, dass get auf route gelingt, während list von ConfigMaps und Secrets verweigert
-  wird.
-
-
-  Bereitgestellte Dateien in `~/quest`: `reader-sa.json`, `role.json`, `binding.json`, `route.json`, `reader.json`, `api-ca.pem`,
-  `api-endpoint`.
-
-
-  Die Umgebung hat kein Internet oder externes DNS. Nutze nur bereitgestellte Dateien, vorgeladene Images und private Dienste.
-  Ändere nur diese Umgebung.
-
-
-  Erste Erfolgskriterien: Das projizierte Token hat den API-Empfänger und eine angeforderte Lebensdauer von 600 Sekunden;
-  der benannte Abruf gelingt und breite Listen liefern 403.
-
-
-  Die erste projizierte Tokenquelle muss genau `path: token`, `expirationSeconds: 600` und `audience: https://kubernetes.default.svc.cluster.local`
-  enthalten; automatisches Mounten bleibt aus. Role `reader` muss genau eine Core-API-Regel enthalten: `get` auf `configmaps`,
-  `resourceNames: [route]`. Die CA-verifizierte Reader-Anfrage an `configmaps/route` muss 200 und `.data.route: north-114`
-  liefern; Anfragen für ConfigMap-Liste, Secret-Liste und die benannte ConfigMap `offlimits` müssen jeweils 403 liefern. Die
-  Prüfungen decken diese Anfragen und die aktuelle Role ab, nicht alle möglichen Berechtigungen oder den Befehlsverlauf.'
-debrief: Das kurzlebige projected credentials und die Least-Privilege-Autorisierung lösen verschiedene Teile des API-Zugriffs.
-stages.0.brief: Projiziertes Token, genaue Reader-Role sowie erlaubte und abgelehnte CA-verifizierte Anfragen entsprechen
-  der Beschreibung.
-stages.0.objectives.0.text: Projiziertes Token, genaue Reader-Role sowie erlaubte und abgelehnte CA-verifizierte Anfragen
-  entsprechen der Beschreibung.
+brief: "Der Reader kann seine benötigten API-Daten nicht lesen. Stellen Sie eng begrenzten Zugriff her, ohne die\
+  \ Zugangsdaten offenzulegen.\n\nArbeiten Sie in `~/quest` auf der Workstation. Bereitgestellte Dateien: `reader-sa.json`,\
+  \ `role.json`, `binding.json`, `route.json`, `reader.json`, `api-ca.pem`, `api-endpoint`.\n\n**Requirements:**\n\
+  \n- Deployment `reader` deaktiviert automatisches Token-Mounting und projiziert ein Token für die API-Audience\
+  \ unter `/credential/token` im Container mit angeforderter Laufzeit `600` Sekunden.\n  - Die Token-Datei gehört\
+  \ in den Reader-Container; ihr relativer Projektionspfad ist `token`. Zugangsdaten geheim halten.\n- Role `reader`\
+  \ erlaubt nur `get` auf ConfigMap `route` der Core-API.\n- Mit dem gemounteten Reader-Token und CA-Prüfung liefert\
+  \ GET von ConfigMap `route` HTTP `200` mit Route `north-114`.\n- Dieselbe Reader-Berechtigung erhält HTTP `403`\
+  \ beim Auflisten von ConfigMaps und Secrets sowie beim Lesen von ConfigMap `offlimits`.\n\n**Verify yourself before\
+  \ Check & finish:** Führen Sie diese Beobachtungsbefehle aus `~/quest` auf der Workstation aus.\n\n- Einstellungen,\
+  \ Identität und Status entsprechen den Anforderungen.\n\n  ```sh\n  kubectl get deployment reader -o yaml\n  kubectl\
+  \ get role reader -o yaml\n  ```\n\n- Die benannte Route liefert `north-114` und HTTP `200`; die anderen drei\
+  \ Anfragen liefern HTTP `403`. Token nicht ausgeben oder speichern.\n\n  ```sh\n  api=$(cat api-endpoint)\n  token=$(kubectl\
+  \ exec deployment/reader -- cat /credential/token)\n  for path in configmaps/route configmaps secrets configmaps/offlimits;\
+  \ do\n    printf 'header = \"Authorization: Bearer %s\"\\n' \"$token\" |\n      curl --config - --cacert api-ca.pem\
+  \ -sS -w '\\nHTTP %{http_code}\\n' \\\n      \"$api/api/v1/namespaces/$DQ_NAMESPACE/$path\"\n  done\n  unset token\n\
+  \  ```\n\nDie Prüfungen betreffen diese Anfragen und die aktuelle Role, nicht alle möglichen Berechtigungen oder\
+  \ den Befehlsverlauf."
+debrief: Das kurzlebige projected credentials und die Least-Privilege-Autorisierung lösen verschiedene Teile des
+  API-Zugriffs.
+stages.0.brief: Der Reader muss die benannte Route lesen können, während weitergehende Anfragen verboten bleiben.
 hints.0.text: Die Authentifizierung prüft audience vor der RBAC-Autorisierung.
 hints.1.text: Das projizierte Volume fordert ein Token für einen bestimmten Empfänger an.
-hints.2.text: Reparieren Sie nur audience, warten Sie auf den Austausch und verwenden Sie das mitgelieferte CA für HTTPS.
+hints.2.text: Reparieren Sie nur audience, warten Sie auf den Austausch und verwenden Sie das mitgelieferte CA für
+  HTTPS. Die bereitgestellte Audience verweist auf einen stillgelegten Dienst. Die API-Audience ist `https://kubernetes.default.svc.cluster.local`.
 phrases.0: Ich habe das Token audience überprüft, ohne credentials offenzulegen.
 phrases.1: Für die echte API-Anfrage habe ich CA-verifiziertes HTTPS verwendet.
 phrases.2: Ich habe erlaubte und verweigerte Operationen getestet.
@@ -42,11 +34,18 @@ questions.1.points.0: Sie unterstützen Ablauf, audience- und Pod-Bindung.
 questions.1.points.1: Kubelet dreht den projizierten Token; Anwendungen müssen es neu laden.
 questions.1.prompt: Warum sollte man projected tokens dem älteren token Secrets vorziehen?
 diagnostics.automount: reader automountServiceAccountToken muss false entsprechen.
-diagnostics.projection: reader projected token muss path token, audience https://kubernetes.default.svc.cluster.local, expirationSeconds
-  600 entsprechen.
+diagnostics.projection: reader projected token muss path token, audience https://kubernetes.default.svc.cluster.local,
+  expirationSeconds 600 entsprechen.
 diagnostics.role: role/reader rules muss get configmaps resourceNames [route] entsprechen.
 diagnostics.allowed: reader GET configmaps/route muss HTTP 200 entsprechen.
 diagnostics.value: configmaps/route data.route muss north-114 entsprechen.
 diagnostics.denied_configmaps: reader GET configmaps muss HTTP 403 liefern.
 diagnostics.denied_secrets: reader GET secrets muss HTTP 403 liefern.
 diagnostics.denied_configmaps_offlimits: reader GET configmaps/offlimits muss HTTP 403 liefern.
+stages.0.objectives.0.text: Deployment `reader` deaktiviert automatisches Token-Mounting und projiziert ein Token
+  für die API-Audience unter `/credential/token` im Container mit angeforderter Laufzeit `600` Sekunden.
+stages.0.objectives.1.text: Role `reader` erlaubt nur `get` auf ConfigMap `route` der Core-API.
+stages.0.objectives.2.text: Mit dem gemounteten Reader-Token und CA-Prüfung liefert GET von ConfigMap `route` HTTP
+  `200` mit Route `north-114`.
+stages.0.objectives.3.text: Dieselbe Reader-Berechtigung erhält HTTP `403` beim Auflisten von ConfigMaps und Secrets
+  sowie beim Lesen von ConfigMap `offlimits`.

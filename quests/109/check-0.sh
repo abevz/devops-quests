@@ -1,11 +1,27 @@
 set -euo pipefail
 cd ~/quest
 failed=0
+set +e
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
 board=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
 if ! timeout 2s kubectl get namespace "$DQ_NAMESPACE" -o json 2>/dev/null | jq -e '.metadata.labels["pod-security.kubernetes.io/enforce"]=="restricted"' >/dev/null 2>&1; then
   printf '%s\n' 'namespace pod-security.kubernetes.io/enforce = restricted: ✗ [DQ:namespace]'
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
+board=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
 if ! jq -e '.spec.replicas==1' <<<"$board" >/dev/null 2>&1; then
   printf '%s\n' 'deployment/board replicas = 1: ✗ [DQ:replicas]'
   failed=1
@@ -18,6 +34,16 @@ if ! jq -e '.spec.template.spec.containers | length==1 and .[0].name=="worker"' 
   printf '%s\n' 'deployment/board containers = [worker]: ✗ [DQ:containers]'
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
+board=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
 for field in hostNetwork hostPID hostIPC; do
   if ! jq -e --arg field "$field" '.spec.template.spec[$field] != true' <<<"$board" >/dev/null 2>&1; then
     printf '%s\n' "deployment/board $field != true: ✗ [DQ:host_${field,,}]"
@@ -78,8 +104,22 @@ if ! timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -- sh -c 
   printf '%s\n' 'deployment/board /tmp write/read: ✗ [DQ:tmp]'
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set -euo pipefail
+cd ~/quest
+failed=0
+board=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
 if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = north-109; then
   printf '%s\n' 'board:8080 = north-109: ✗ [DQ:http]'
   failed=1
 fi
+exit "$failed"
+
+)
+[ $? -eq 0 ] || failed=1
 exit "$failed"

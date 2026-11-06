@@ -1,34 +1,27 @@
 title: Границы токенов service account
-brief: 'Reader использует проецируемый токен, привязанный к Pod, с запрошенным сроком жизни десять минут. Его получатель (audience)
-  указывает на выведенный из эксплуатации сервис, поэтому Kubernetes API отклоняет токен. Установите получателя https://kubernetes.default.svc.cluster.local,
-  оставьте автоматическое монтирование отключённым и сохраните Role только для чтения именованного route. Используйте смонтированный
-  токен для настоящего запроса к API с проверкой CA; никогда не выводите и не сохраняйте токен. Проверьте, что get route успешен,
-  а list ConfigMap и Secret запрещён.
-
-
-  Выданные файлы в `~/quest`: `reader-sa.json`, `role.json`, `binding.json`, `route.json`, `reader.json`, `api-ca.pem`, `api-endpoint`.
-
-
-  В песочнице нет интернета и внешнего DNS. Используйте только выданные файлы, загруженные образы и приватные сервисы. Меняйте
-  только эту песочницу.
-
-
-  Начальные критерии: проецируемый токен имеет получателя API и запрошенный срок 600 секунд; чтение именованного объекта успешно,
-  широкие списки возвращают 403.
-
-
-  Первый источник проецируемого токена должен содержать ровно `path: token`, `expirationSeconds: 600` и `audience: https://kubernetes.default.svc.cluster.local`,
-  автоматическое монтирование отключено. Role `reader` должна содержать ровно одно правило core API: `get` для `configmaps`,
-  `resourceNames: [route]`. Проверенный по CA запрос reader к `configmaps/route` должен вернуть 200 и `.data.route: north-114`;
-  запросы списков ConfigMap и Secret и именованной ConfigMap `offlimits` должны каждый вернуть 403. Проверки охватывают указанные
-  запросы и текущую Role, но не все возможные права или историю команд.'
+brief: "Reader не может получить нужные данные API. Восстановите строго ограниченный доступ без раскрытия учётных\
+  \ данных.\n\nРаботайте в `~/quest` на рабочей станции. Предоставлены файлы: `reader-sa.json`, `role.json`, `binding.json`,\
+  \ `route.json`, `reader.json`, `api-ca.pem`, `api-endpoint`.\n\n**Requirements:**\n\n- Deployment `reader` отключает\
+  \ автоматическое монтирование токена и проецирует токен для аудитории API в `/credential/token` внутри контейнера\
+  \ с запрошенным сроком `600` секунд.\n  - Файл токена находится внутри контейнера reader; относительный путь проекции\
+  \ — `token`. Храните учётные данные в тайне.\n- Role `reader` разрешает только `get` для ConfigMap `route` основного\
+  \ API.\n- С монтированным токеном reader и проверкой CA запрос GET ConfigMap `route` возвращает HTTP `200` с маршрутом\
+  \ `north-114`.\n- Те же учётные данные reader получают HTTP `403` при получении списков ConfigMap и Secret и чтении\
+  \ ConfigMap `offlimits`.\n\n**Verify yourself before Check & finish:** Выполните эти команды наблюдения из `~/quest`\
+  \ на рабочей станции.\n\n- Настройки, идентичность и состояние соответствуют требованиям.\n\n  ```sh\n  kubectl\
+  \ get deployment reader -o yaml\n  kubectl get role reader -o yaml\n  ```\n\n- Указанный маршрут возвращает `north-114`\
+  \ и HTTP `200`; остальные три запроса возвращают HTTP `403`. Не выводите и не сохраняйте токен.\n\n  ```sh\n \
+  \ api=$(cat api-endpoint)\n  token=$(kubectl exec deployment/reader -- cat /credential/token)\n  for path in configmaps/route\
+  \ configmaps secrets configmaps/offlimits; do\n    printf 'header = \"Authorization: Bearer %s\"\\n' \"$token\"\
+  \ |\n      curl --config - --cacert api-ca.pem -sS -w '\\nHTTP %{http_code}\\n' \\\n      \"$api/api/v1/namespaces/$DQ_NAMESPACE/$path\"\
+  \n  done\n  unset token\n  ```\n\nПроверки охватывают эти запросы и текущую Role, а не все возможные права или\
+  \ историю команд."
 debrief: Краткоживущие projected credentials и минимальная авторизация решают разные части доступа к API.
-stages.0.brief: Проецируемый токен, точная Role reader и разрешённые и отклонённые запросы с проверкой CA соответствуют описанию.
-stages.0.objectives.0.text: Проецируемый токен, точная Role reader и разрешённые и отклонённые запросы с проверкой CA соответствуют
-  описанию.
+stages.0.brief: Reader должен читать указанный маршрут, а более широкие запросы должны оставаться запрещёнными.
 hints.0.text: Аутентификация проверяет audience до авторизации RBAC.
 hints.1.text: Projected volume запрашивает токен для определённого получателя.
-hints.2.text: Исправьте только audience, дождитесь замены и используйте выданный CA для HTTPS.
+hints.2.text: Исправьте только audience, дождитесь замены и используйте выданный CA для HTTPS. Предоставленная аудитория
+  указывает на выведенный сервис. Аудитория API — `https://kubernetes.default.svc.cluster.local`.
 phrases.0: Я проверил audience без раскрытия credentials.
 phrases.1: Я использовал HTTPS с проверкой CA для реального API-запроса.
 phrases.2: Я проверил разрешённые и запрещённые операции.
@@ -47,3 +40,10 @@ diagnostics.value: configmaps/route data.route должен совпадать �
 diagnostics.denied_configmaps: reader GET configmaps должен вернуть HTTP 403.
 diagnostics.denied_secrets: reader GET secrets должен вернуть HTTP 403.
 diagnostics.denied_configmaps_offlimits: reader GET configmaps/offlimits должен вернуть HTTP 403.
+stages.0.objectives.0.text: Deployment `reader` отключает автоматическое монтирование токена и проецирует токен
+  для аудитории API в `/credential/token` внутри контейнера с запрошенным сроком `600` секунд.
+stages.0.objectives.1.text: Role `reader` разрешает только `get` для ConfigMap `route` основного API.
+stages.0.objectives.2.text: С монтированным токеном reader и проверкой CA запрос GET ConfigMap `route` возвращает
+  HTTP `200` с маршрутом `north-114`.
+stages.0.objectives.3.text: Те же учётные данные reader получают HTTP `403` при получении списков ConfigMap и Secret
+  и чтении ConfigMap `offlimits`.
