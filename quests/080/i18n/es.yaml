@@ -62,72 +62,41 @@ hints.1.text: 'Una confirmación Git puede ser Synced mientras su imagen tag no 
   git -C repository show origin/main:manifests/board.yaml
 
   ```'
-hints.2.text: 'Confirme el immutable digest suministrado, conserve el pull credentials y verifique tanto el Git
-  como el imageID en ejecución. Publica un commit descendiente en `origin/main` y registra su hash en `release-commit`.
-
+hints.2.text: |-
+  Confirme el immutable digest suministrado, conserve el pull credentials y verifique tanto el Git como el imageID en ejecución. Publica un commit descendiente en `origin/main` y registra su hash en `release-commit`.
 
   Verifica la etapa reparada y compara el resultado observado.
 
-
-  Etapa 1/2: El controlador informa `Synced` en la revisión esperada; en la etapa final también informa `Healthy`
-  y la carga está lista.
-
+  Etapa 1/2: El controlador informa `Synced` en la revisión esperada; en la etapa final también informa `Healthy` y la carga está lista.
 
   ```sh
-
-  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
-  printf ''\n''
-
+  kubectl get application board -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}'; printf '\n'
   kubectl get deployment board
-
   ```
 
-
-  Etapa 2: El hash publicado coincide con la versión registrada; la comprobación de ascendencia, cuando existe,
-  termina con código `0`.
-
+  Etapa 2: El hash publicado coincide con la versión registrada; la comprobación de ascendencia, cuando existe, termina con código `0`.
 
   ```sh
-
   source platform.env
-
   cat release-commit
-
   git -C repository ls-remote origin refs/heads/main
-
   git -C repository merge-base --is-ancestor "$(cat baseline-commit)" origin/main
-
   ```
 
-
-  Etapa 2: La aplicación devuelve `north-80`; la obtención autenticada del digest registrado del registry devuelve
-  HTTP `200`.
-
+  Etapa 2: La aplicación devuelve `north-80`; la obtención autenticada del digest registrado del registry devuelve HTTP `200`.
 
   ```sh
-
   source platform.env
-
-  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
-
-  printf ''\n''
-
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  printf '\n'
   image=$(jq -r .image private-release.json)
-
-  curl -fsS --max-time 4 --config <(printf ''user = "%s:%s"\n'' "$REGISTRY_USER" "$REGISTRY_PASSWORD") --cacert
-  registry-ca.crt -H ''Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json''
-  -o /dev/null -w ''%{http_code}\n'' "https://$REGISTRY/v2/parcel/manifests/${image##*@}"
-
+  curl -fsS --max-time 4 --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") --cacert registry-ca.crt -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' -o /dev/null -w '%{http_code}\n' "https://$REGISTRY/v2/parcel/manifests/${image##*@}"
   ```
-
 
   Observaciones esperadas para la etapa completa:
+  - Etapa 1/2: La reconciliación, configuración de carga y observaciones de la imagen en ejecución mostradas cumplen los requisitos de esta etapa.
+  - Etapa 2: El hash remoto coincide con `release-commit`, el manifiesto cumple los requisitos y la comprobación de ascendencia termina con código `0` con un hash de versión diferente.
 
-  - Etapa 1/2: La reconciliación, configuración de carga y observaciones de la imagen en ejecución mostradas cumplen
-  los requisitos de esta etapa.
-
-  - Etapa 2: El hash remoto coincide con `release-commit`, el manifiesto cumple los requisitos y la comprobación
-  de ascendencia termina con código `0` con un hash de versión diferente.'
 phrases.0: Aislé el error en la ruta de origen de la recuperación de imágenes private.
 phrases.1: Fijé y verifiqué la versión immutable en Git y en runtime.
 phrases.2: Mantuve intactas la autenticación y la conciliación automática durante la recuperación.
@@ -140,7 +109,9 @@ questions.1.points.1: Mantenga la confirmación recuperada procedente del histor
 questions.1.points.2: Verifique el revision, health observado y el endpoint real juntos.
 questions.1.prompt: ¿Cómo se conserva una recuperación después de GitOps self-heal?
 diagnostics.repo: application/board repoURL debe ser igual a GIT_URL.
-diagnostics.path: application/board source.path debe ser igual a manifests.
+diagnostics.path: |-
+  El directorio de origen debe apuntar a manifests dentro del repositorio.
+
 diagnostics.target: application/board targetRevision debe ser igual a main.
 diagnostics.synced: application/board sync.status debe ser igual a Synced.
 diagnostics.revision_exists: La revisión Git esperada debe existir y no estar vacía.
@@ -148,7 +119,9 @@ diagnostics.revision: La revisión sincronizada de application/board debe ser ig
 diagnostics.selfheal: application/board selfHeal debe ser igual a true.
 diagnostics.health: application/board health.status debe ser igual a Healthy.
 diagnostics.prune: application/board prune debe ser igual a true.
-diagnostics.secrets: deployment/board imagePullSecrets debe ser igual a [registry-pull].
+diagnostics.secrets: |-
+  worker debe usar solo las credenciales existentes registry-pull, incluidas las referencias efectivas de los Pods.
+
 diagnostics.policy: deployment/board imagePullPolicy debe ser igual a Always.
 diagnostics.rollout: El despliegue de deployment/board debe completarse.
 diagnostics.http: La petición a board:8080 debe devolver north-80.
@@ -157,13 +130,20 @@ diagnostics.fetch: git fetch origin main debe tener éxito.
 diagnostics.origin: origin/main debe ser igual a release-commit.
 diagnostics.changed: release-commit debe ser distinto de baseline-commit.
 diagnostics.ancestor: baseline-commit debe ser antecesor de origin/main.
-diagnostics.git_image: La primera imagen board en Git debe coincidir con la imagen de private-release.json.
+diagnostics.git_image: |-
+  La imagen del worker identificado por nombre debe coincidir con private-release.json.
+
 diagnostics.git_policy: imagePullPolicy de board en Git debe ser Always.
-diagnostics.git_secrets: imagePullSecrets de board en Git debe ser [registry-pull].
-diagnostics.live_image: deployment/board containers[0].image debe ser igual a private-release.json image.
+diagnostics.git_secrets: |-
+  worker debe usar solo las credenciales existentes registry-pull, incluidas las referencias efectivas de los Pods.
+
+diagnostics.live_image: |-
+  La imagen del worker identificado por nombre debe coincidir con private-release.json.
+
 diagnostics.live_policy: deployment/board imagePullPolicy debe ser igual a Always.
-diagnostics.image_id: Un Pod board no marcado para eliminación debe tener un contenedor listo cuyo imageID contenga
-  el digest fijado.
+diagnostics.image_id: |-
+  Un Pod actual de este Deployment debe tener un worker listo y en ejecución con el digest congelado exacto.
+
 diagnostics.registry: El registro autenticado debe servir el digest fijado.
 stages.0.objectives.0.text: La Application `board` informa `Synced` en la revisión publicada prevista. Restaura
   automáticamente las desviaciones.

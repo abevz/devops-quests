@@ -7,39 +7,98 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: "set -euo pipefail\ncd ~/quest\nfailed=0\nif ! tofu state list 2>/dev/null | grep -Fx local_file.release\
-      \ >/dev/null; then\n  printf '%s\\n' 'tofu state list ∋ local_file.release: ✗ [DQ:state]'\n  failed=1\nfi\n\
-      exit \"$failed\"\n"
+    check: |-
+      set -euo pipefail
+      cd ~/quest
+      python3 -I - <<'DQ_BOSS'
+      import json, os, re, subprocess, sys
+      from pathlib import Path
+      from decimal import Decimal
+
+      def require(good, marker):
+          if not good:raise AssertionError(marker)
+
+      try:
+          document=json.loads(subprocess.check_output(['tofu','show','-json'],stderr=subprocess.DEVNULL,timeout=5))
+          pending=[document['values']['root_module']];found=False
+          while pending:
+              module=pending.pop();pending.extend(module.get('child_modules',[]))
+              for resource in module.get('resources',[]):
+                  value=resource.get('values',{});filename=value.get('filename')
+                  if resource.get('mode')=='managed' and resource.get('type')=='local_file' and isinstance(filename,str):
+                      try:found=found or Path(filename).samefile('release.txt')
+                      except OSError:pass
+          require(found,'state')
+
+      except Exception as error:
+          marker = str(error) if isinstance(error,AssertionError) and re.fullmatch(r'[a-z0-9_]+',str(error)) else 'state'
+          print('Required result is missing: ✗ [DQ:'+marker+']')
+          sys.exit(1)
+      DQ_BOSS
   - text: stages.0.objectives.1.text
-    check: "set -euo pipefail\ncd ~/quest\nfailed=0\nif ! test \"$(cat release.txt 2>/dev/null)\" = release-90;\
-      \ then\n  printf '%s\\n' 'release.txt = release-90: ✗ [DQ:file]'\n  failed=1\nfi\nexit \"$failed\"\n"
+    check: |-
+      set -euo pipefail
+      cd ~/quest
+      failed=0
+      if ! test "$(cat release.txt 2>/dev/null)" = release-90; then
+        printf '%s\n' 'release.txt = release-90: ✗ [DQ:file]'
+        failed=1
+      fi
+      exit "$failed"
   - text: stages.0.objectives.2.text
-    check: "set -euo pipefail\ncd ~/quest\nfailed=0\nif ! tofu plan -input=false -detailed-exitcode -no-color >/dev/null\
-      \ 2>&1; then\n  printf '%s\\n' 'tofu plan -input=false -detailed-exitcode -no-color → 0: ✗ [DQ:plan]'\n  failed=1\n\
-      fi\nexit \"$failed\"\n"
+    check: |-
+      set -euo pipefail
+      cd ~/quest
+      failed=0
+      if ! tofu plan -input=false -detailed-exitcode -no-color >/dev/null 2>&1; then
+        printf '%s\n' 'tofu plan -input=false -detailed-exitcode -no-color → 0: ✗ [DQ:plan]'
+        failed=1
+      fi
+      exit "$failed"
 - brief: stages.1.brief
   objectives:
   - text: stages.1.objectives.0.text
-    check: "set -euo pipefail\ncd ~/quest\nfailed=0\nfor n in 1 2 3; do\n  host=\"app${n}-${DQ_NAMESPACE#dq-}\"\n\
-      \  result=$(timeout 4s ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 \"root@$host\" 'actual=$(sha256sum\
-      \ /srv/site/message 2>/dev/null | cut -d \" \" -f 1); if test \"$actual\" = 2c26e5e7347924bc4a8bab2268a1ee392c9ad6dffd932f8c400703df102f851c\
-      \ || test \"$actual\" = 5915cb21bb1ee7653775dad5a2dbfc324c46bb047d227b6e8f2e486c0961bf9d; then printf \"content-ok\\\
-      n\"; fi; if test \"$(stat -c %a /srv/site/message 2>/dev/null)\" = 644; then printf \"mode-ok\\n\"; fi' 2>/dev/null\
-      \ || true)\n  if ! grep -Fxq content-ok <<<\"$result\"; then\n    printf '%s\\n' \"$host /srv/site/message\
-      \ = release-90: ✗ [DQ:content_$n]\"; failed=1\n  fi\n  if ! grep -Fxq mode-ok <<<\"$result\"; then\n    printf\
-      \ '%s\\n' \"$host /srv/site/message mode = 644: ✗ [DQ:mode_$n]\"; failed=1\n  fi\ndone\nexit \"$failed\"\n"
+    check: |-
+      set -euo pipefail
+      cd ~/quest
+      failed=0
+      for n in 1 2 3; do
+        host="app${n}-${DQ_NAMESPACE#dq-}"
+        result=$(timeout 4s ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host" 'actual=$(sha256sum /srv/site/message 2>/dev/null | cut -d " " -f 1); if test "$actual" = 2c26e5e7347924bc4a8bab2268a1ee392c9ad6dffd932f8c400703df102f851c || test "$actual" = 5915cb21bb1ee7653775dad5a2dbfc324c46bb047d227b6e8f2e486c0961bf9d; then printf "content-ok\n"; fi; if test "$(stat -c %a /srv/site/message 2>/dev/null)" = 644; then printf "mode-ok\n"; fi' 2>/dev/null || true)
+        if ! grep -Fxq content-ok <<<"$result"; then
+          printf '%s\n' "$host /srv/site/message = release-90: ✗ [DQ:content_$n]"; failed=1
+        fi
+        if ! grep -Fxq mode-ok <<<"$result"; then
+          printf '%s\n' "$host /srv/site/message mode = 644: ✗ [DQ:mode_$n]"; failed=1
+        fi
+      done
+      exit "$failed"
   - text: stages.1.objectives.1.text
-    check: "set -euo pipefail\ncd ~/quest\nfailed=0\nfor n in 1 2 3; do\n  host=\"app${n}-${DQ_NAMESPACE#dq-}\"\n\
-      \  if ! test \"$(curl -fsS --max-time 3 \"http://$host:8080\" 2>/dev/null)\" = release-90; then\n    printf\
-      \ '%s\\n' \"$host:8080 = release-90: ✗ [DQ:http_$n]\"; failed=1\n  fi\ndone\nexit \"$failed\"\n"
+    check: |-
+      set -euo pipefail
+      cd ~/quest
+      failed=0
+      for n in 1 2 3; do
+        host="app${n}-${DQ_NAMESPACE#dq-}"
+        if ! test "$(curl -fsS --max-time 3 "http://$host:8080" 2>/dev/null)" = release-90; then
+          printf '%s\n' "$host:8080 = release-90: ✗ [DQ:http_$n]"; failed=1
+        fi
+      done
+      exit "$failed"
 - brief: stages.2.brief
   objectives:
   - text: stages.2.objectives.0.text
-    check: "set -euo pipefail\ncd ~/quest\nfailed=0\nif ! kubectl rollout status deployment/relay --timeout=3s >/dev/null\
-      \ 2>&1; then\n  printf '%s\\n' 'deployment/relay rollout complete: ✗ [DQ:rollout]'; failed=1\nfi\nif ! test\
-      \ \"$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/relay -- printenv RELEASE 2>/dev/null)\"\
-      \ = release-90; then\n  printf '%s\\n' 'deployment/relay RELEASE = release-90: ✗ [DQ:relay]'; failed=1\nfi\n\
-      exit \"$failed\"\n"
+    check: |-
+      set -euo pipefail
+      cd ~/quest
+      failed=0
+      if ! kubectl rollout status deployment/relay --timeout=3s >/dev/null 2>&1; then
+        printf '%s\n' 'deployment/relay rollout complete: ✗ [DQ:rollout]'; failed=1
+      fi
+      if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/relay -c worker -- printenv RELEASE 2>/dev/null)" = release-90; then
+        printf '%s\n' 'deployment/relay RELEASE = release-90: ✗ [DQ:relay]'; failed=1
+      fi
+      exit "$failed"
 hints:
 - text: hints.0.text
   guide: terraform-3

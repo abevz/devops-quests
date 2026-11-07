@@ -17,12 +17,29 @@ stages:
 
       test -z "$(git -C repository status --porcelain)"'
   - text: stages.0.objectives.1.text
-    check: 'source platform.env
-
-      git -C repository fetch origin main >/dev/null 2>&1
-
-      git -C repository show origin/main:manifests/route.yaml | python3 -c ''import sys,yaml; assert yaml.safe_load(sys.stdin)["data"]["index.html"]=="north-50"''
-      >/dev/null'
+    check: |-
+      set -euo pipefail
+      cd ~/quest
+      source platform.env
+      if ! git -C repository fetch origin main >/dev/null 2>&1; then
+        printf '%s\n' 'Published release is unavailable: ✗ [DQ:published]'
+        exit 1
+      fi
+      manifest=$(git -C repository show origin/main:manifests/route.yaml 2>/dev/null || true)
+      python3 -I - /dev/fd/3 3<<<"$manifest" <<'DQ_PUBLISHED'
+      import sys
+      try:
+          import yaml
+          with open(sys.argv[1]) as stream:
+              document=yaml.safe_load(stream)
+          value=document.get('data',{}).get('index.html')
+          good=isinstance(value,str) and value.rstrip('\n')=='north-50'
+      except Exception:
+          good=False
+      if not good:
+          print('Published response content is incorrect: ✗ [DQ:published]')
+          raise SystemExit(1)
+      DQ_PUBLISHED
   - text: stages.0.objectives.2.text
     check: 'source platform.env
 
@@ -32,14 +49,10 @@ stages:
 - brief: stages.1.brief
   objectives:
   - text: stages.1.objectives.0.text
-    check: 'source platform.env
-
+    check: |-
+      source platform.env
       expected=$(git -C repository ls-remote origin refs/heads/main | cut -f1)
-
-      kubectl get application station -o json | jq -e --arg repo "$GIT_URL" --arg ns "$DQ_NAMESPACE" --arg rev "$expected"
-      ''.spec.project=="station" and .spec.source.repoURL==$repo and .spec.source.path=="manifests" and .spec.source.targetRevision=="main"
-      and .spec.destination.namespace==$ns and .spec.destination.server=="https://kubernetes.default.svc" and .status.sync.revision==$rev
-      and .status.sync.status=="Synced" and .status.health.status=="Healthy"'' >/dev/null'
+      kubectl get application station -o json | jq -e --arg repo "$GIT_URL" --arg ns "$DQ_NAMESPACE" --arg rev "$expected" '.spec.project=="station" and .spec.source.repoURL==$repo and (.spec.source.path | (startswith("/")|not) and ([splits("/") | select(.!="" and .!=".")]==["manifests"])) and .spec.source.targetRevision=="main" and .spec.destination.namespace==$ns and ((((((.spec.destination.server=="https://kubernetes.default.svc" and ((.spec.destination.name // "")=="" or .spec.destination.name=="in-cluster")) or ((.spec.destination.server // "")=="" and .spec.destination.name=="in-cluster")) and ((.spec.destination.name // "")=="" or .spec.destination.name=="in-cluster")) or ((.spec.destination.server // "")=="" and .spec.destination.name=="in-cluster")) and ((.spec.destination.name // "")=="" or .spec.destination.name=="in-cluster")) or ((.spec.destination.server // "")=="" and .spec.destination.name=="in-cluster")) and .status.sync.revision==$rev and .status.sync.status=="Synced" and .status.health.status=="Healthy"' >/dev/null
   - text: stages.1.objectives.1.text
     check: 'source platform.env
 
@@ -54,7 +67,8 @@ stages:
       kubectl get deployment board -o json | jq -e ''.metadata.annotations["argocd.argoproj.io/tracking-id"]|length>0''
       >/dev/null'
   - text: stages.1.objectives.3.text
-    check: test "$(kubectl exec deployment/board -- wget -qO- http://127.0.0.1:8080)" = north-50
+    check: |-
+      test "$(kubectl exec deployment/board -c worker -- wget -qO- http://127.0.0.1:8080)" = north-50
 hints:
 - text: hints.0.text
   guide: cicd-gitops-3

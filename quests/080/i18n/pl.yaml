@@ -61,71 +61,41 @@ hints.1.text: 'Git commit może być Synced, podczas gdy jego image tag nie istn
   git -C repository show origin/main:manifests/board.yaml
 
   ```'
-hints.2.text: 'Zatwierdź dostarczony immutable digest, zachowaj pull credentials i sprawdź zarówno Git, jak i działające
-  imageID. Opublikuj commit potomny w `origin/main` i zapisz jego hash w `release-commit`.
-
+hints.2.text: |-
+  Zatwierdź dostarczony immutable digest, zachowaj pull credentials i sprawdź zarówno Git, jak i działające imageID. Opublikuj commit potomny w `origin/main` i zapisz jego hash w `release-commit`.
 
   Sprawdź naprawiony etap i porównaj obserwowany wynik.
 
-
-  Etap 1/2: Kontroler zgłasza `Synced` dla oczekiwanej rewizji; w ostatnim etapie zgłasza też `Healthy`, a obciążenie
-  jest gotowe.
-
+  Etap 1/2: Kontroler zgłasza `Synced` dla oczekiwanej rewizji; w ostatnim etapie zgłasza też `Healthy`, a obciążenie jest gotowe.
 
   ```sh
-
-  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
-  printf ''\n''
-
+  kubectl get application board -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}'; printf '\n'
   kubectl get deployment board
-
   ```
 
-
-  Etap 2: Opublikowany hash odpowiada zapisanemu wydaniu; sprawdzenie pochodzenia, jeśli występuje, kończy się kodem
-  `0`.
-
+  Etap 2: Opublikowany hash odpowiada zapisanemu wydaniu; sprawdzenie pochodzenia, jeśli występuje, kończy się kodem `0`.
 
   ```sh
-
   source platform.env
-
   cat release-commit
-
   git -C repository ls-remote origin refs/heads/main
-
   git -C repository merge-base --is-ancestor "$(cat baseline-commit)" origin/main
-
   ```
-
 
   Etap 2: Aplikacja zwraca `north-80`; uwierzytelnione pobranie zapisanego digestu z registry zwraca HTTP `200`.
 
-
   ```sh
-
   source platform.env
-
-  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
-
-  printf ''\n''
-
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  printf '\n'
   image=$(jq -r .image private-release.json)
-
-  curl -fsS --max-time 4 --config <(printf ''user = "%s:%s"\n'' "$REGISTRY_USER" "$REGISTRY_PASSWORD") --cacert
-  registry-ca.crt -H ''Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json''
-  -o /dev/null -w ''%{http_code}\n'' "https://$REGISTRY/v2/parcel/manifests/${image##*@}"
-
+  curl -fsS --max-time 4 --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") --cacert registry-ca.crt -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' -o /dev/null -w '%{http_code}\n' "https://$REGISTRY/v2/parcel/manifests/${image##*@}"
   ```
 
-
   Oczekiwane obserwacje dla całego etapu:
+  - Etap 1/2: Wyświetlone uzgodnienie, konfiguracja obciążenia i obserwacje działającego obrazu spełniają wymagania tego etapu.
+  - Etap 2: Zdalny hash odpowiada `release-commit`, manifest spełnia wymagania, a sprawdzenie pochodzenia kończy się kodem `0` przy innym hashu wydania.
 
-  - Etap 1/2: Wyświetlone uzgodnienie, konfiguracja obciążenia i obserwacje działającego obrazu spełniają wymagania
-  tego etapu.
-
-  - Etap 2: Zdalny hash odpowiada `release-commit`, manifest spełnia wymagania, a sprawdzenie pochodzenia kończy
-  się kodem `0` przy innym hashu wydania.'
 phrases.0: Wyodrębniłem awarię ścieżki source z pobierania private image.
 phrases.1: Przypiąłem i zweryfikowałem immutable release w Git i runtime.
 phrases.2: Podczas odzyskiwania zachowałem nienaruszone uwierzytelnianie i automatyczne uzgadnianie.
@@ -138,7 +108,9 @@ questions.1.points.1: Zachowaj odzyskany commit ze znanej historii.
 questions.1.points.2: Sprawdź razem zaobserwowane revision, health i rzeczywiste endpoint.
 questions.1.prompt: Jak zachować odzyskiwanie po GitOps self-heal?
 diagnostics.repo: application/board repoURL musi być równe GIT_URL.
-diagnostics.path: application/board source.path musi być równe manifests.
+diagnostics.path: |-
+  Katalog źródłowy musi wskazywać manifests wewnątrz repozytorium.
+
 diagnostics.target: application/board targetRevision musi być równe main.
 diagnostics.synced: application/board sync.status musi być równe Synced.
 diagnostics.revision_exists: Oczekiwana rewizja Git musi istnieć i być niepusta.
@@ -146,7 +118,9 @@ diagnostics.revision: Rewizja synchronizacji application/board musi być równa 
 diagnostics.selfheal: application/board selfHeal musi być równe true.
 diagnostics.health: application/board health.status musi być równe Healthy.
 diagnostics.prune: application/board prune musi być równe true.
-diagnostics.secrets: deployment/board imagePullSecrets musi być równe [registry-pull].
+diagnostics.secrets: |-
+  worker musi używać wyłącznie istniejących danych registry-pull, również w efektywnych odwołaniach Poda.
+
 diagnostics.policy: deployment/board imagePullPolicy musi być równe Always.
 diagnostics.rollout: Wdrożenie deployment/board musi się zakończyć.
 diagnostics.http: Żądanie do board:8080 musi zwrócić north-80.
@@ -155,13 +129,20 @@ diagnostics.fetch: git fetch origin main musi się powieść.
 diagnostics.origin: origin/main musi być równe release-commit.
 diagnostics.changed: release-commit musi różnić się od baseline-commit.
 diagnostics.ancestor: baseline-commit musi być przodkiem origin/main.
-diagnostics.git_image: Pierwszy obraz board w Git musi odpowiadać obrazowi z private-release.json.
+diagnostics.git_image: |-
+  Obraz nazwanego worker musi odpowiadać private-release.json.
+
 diagnostics.git_policy: imagePullPolicy board w Git musi wynosić Always.
-diagnostics.git_secrets: imagePullSecrets board w Git musi wynosić [registry-pull].
-diagnostics.live_image: deployment/board containers[0].image musi być równe private-release.json image.
+diagnostics.git_secrets: |-
+  worker musi używać wyłącznie istniejących danych registry-pull, również w efektywnych odwołaniach Poda.
+
+diagnostics.live_image: |-
+  Obraz nazwanego worker musi odpowiadać private-release.json.
+
 diagnostics.live_policy: deployment/board imagePullPolicy musi być równe Always.
-diagnostics.image_id: Pod board nieoznaczony do usunięcia musi mieć gotowy kontener, którego imageID zawiera zamrożony
-  digest.
+diagnostics.image_id: |-
+  Bieżący Pod należący do Deploymentu musi mieć gotowy, działający worker z dokładnym zamrożonym digestem obrazu.
+
 diagnostics.registry: Uwierzytelniony rejestr musi udostępniać zamrożony digest.
 stages.0.objectives.0.text: Application `board` zgłasza `Synced` dla właściwej opublikowanej rewizji. Automatycznie
   usuwa dryf.

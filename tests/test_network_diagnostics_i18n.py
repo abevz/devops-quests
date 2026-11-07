@@ -19,10 +19,22 @@ def catalog():
 def run_policy(number, policies, *, empty_pods=False):
     target = "board" if number == 119 else "shelf"
     source = (ROOT / f"quests/{number:03}/check-0.sh").read_text()
-    program = source.split("<<'DQ_POLICY'\n", 1)[1].split("\nDQ_POLICY\n", 1)[0]
     pods = {
         "items": [] if empty_pods else [{"metadata": {"labels": {"app": "client"}}}]
     }
+    if number == 120:
+        # 120 observes the actual API directly; keep the fixture on that
+        # entrypoint instead of passing the former serialized argv envelope.
+        import yaml
+
+        check = yaml.safe_load((ROOT / "quests/120/quest.yaml").read_text())["stages"][0]["objectives"][2]["check"]
+        program = check.split("<<'DQ_BOSS'\n", 1)[1].split("\nDQ_BOSS", 1)[0]
+        observations = {"networkpolicies": {"items": policies}, "pods": pods,
+                        "pod": {"spec": {"containers": [{"ports": [{"name": "http", "containerPort": 8080}]}]}}}
+        fixture = "import subprocess,json\nobservations=" + repr(observations) + "\n"
+        fixture += "def observed(argv,**kwargs):\n return json.dumps(observations[argv[2]]).encode()\nsubprocess.check_output=observed\n"
+        return subprocess.run([sys.executable, "-I", "-"], input=fixture + "exec(" + repr(program) + ", {'__name__':'__main__'})\n", capture_output=True, text=True)
+    program = source.split("<<'DQ_POLICY'\n", 1)[1].split("\nDQ_POLICY\n", 1)[0]
     return subprocess.run(
         [
             sys.executable,

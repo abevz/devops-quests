@@ -67,73 +67,42 @@ hints.1.text: 'Etap 1: sprawdź application.yaml — Argo CD wskazuje na wycofan
   git -C repository show origin/main:manifests/board.yaml
 
   ```'
-hints.2.text: 'Przywróć rejestr pull Secret z private-release.json, zakres reader.hcl do dispatch tylko do odczytu,
-  uruchom sync-secret.sh i sprawdź odpowiedź działającego obrazu digest i HTTP.
-
+hints.2.text: |-
+  Przywróć rejestr pull Secret z private-release.json, zakres reader.hcl do dispatch tylko do odczytu, uruchom sync-secret.sh i sprawdź odpowiedź działającego obrazu digest i HTTP.
 
   Sprawdź naprawiony etap i porównaj obserwowany wynik.
 
-
-  Etap 1/2: Kontroler zgłasza `Synced` dla oczekiwanej rewizji; w ostatnim etapie zgłasza też `Healthy`, a obciążenie
-  jest gotowe.
-
+  Etap 1/2: Kontroler zgłasza `Synced` dla oczekiwanej rewizji; w ostatnim etapie zgłasza też `Healthy`, a obciążenie jest gotowe.
 
   ```sh
-
-  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
-  printf ''\n''
-
+  kubectl get application board -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}'; printf '\n'
   kubectl get deployment board
-
   ```
 
-
-  Etap 2: Opublikowany hash odpowiada zapisanemu wydaniu; sprawdzenie pochodzenia, jeśli występuje, kończy się kodem
-  `0`.
-
+  Etap 2: Opublikowany hash odpowiada zapisanemu wydaniu; sprawdzenie pochodzenia, jeśli występuje, kończy się kodem `0`.
 
   ```sh
-
   source platform.env
-
   cat release-commit
-
   git -C repository ls-remote origin refs/heads/main
-
   ```
 
-
-  Etap 2: Secret i dozwolony wpis Vault zawierają `north-secret`, HTTP zwraca `north-100`, a druga ścieżka Vault
-  zwraca HTTP `403`.
-
+  Etap 2: Secret i dozwolony wpis Vault zawierają `north-secret`, HTTP zwraca `north-100`, a druga ścieżka Vault zwraca HTTP `403`.
 
   ```sh
-
   source platform.env
-
-  kubectl get secret route-secret -o jsonpath=''{.data.value}'' | base64 -d
-
-  printf ''\n''
-
-  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
-
-  printf ''\n''
-
-  curl -fsS --max-time 3 -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
-
-  curl -sS --max-time 3 -o /dev/null -w ''%{http_code}\n'' -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN")
-  "$VAULT_ADDR/v1/secret/data/other"
-
+  kubectl get secret route-secret -o jsonpath='{.data.value}' | base64 -d
+  printf '\n'
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  printf '\n'
+  curl -fsS --max-time 3 -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
+  curl -sS --max-time 3 -o /dev/null -w '%{http_code}\n' -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/other"
   ```
-
 
   Oczekiwane obserwacje dla całego etapu:
+  - Etap 1/2: Wyświetlone uzgodnienie, konfiguracja obciążenia i obserwacje działającego obrazu spełniają wymagania tego etapu.
+  - Etap 2: Zdalny hash odpowiada `release-commit`; manifest Git zawiera dostarczony zamrożony obraz i odwołanie do Secret `route-secret`.
 
-  - Etap 1/2: Wyświetlone uzgodnienie, konfiguracja obciążenia i obserwacje działającego obrazu spełniają wymagania
-  tego etapu.
-
-  - Etap 2: Zdalny hash odpowiada `release-commit`; manifest Git zawiera dostarczony zamrożony obraz i odwołanie
-  do Secret `route-secret`.'
 phrases.0: Wyizolowałem awarie na każdej granicy dostawy.
 phrases.1: Zachowałem niezmienną tożsamość obrazu i uzgodnienie Git.
 phrases.2: Zweryfikowałem tajny dostęp o najniższych uprawnieniach i prawdziwą kompleksową obsługę.
@@ -145,7 +114,9 @@ questions.1.points.0: Popraw wersję źródła, uruchamiając digest i poświadc
 questions.1.points.1: Przydatne żądanie zostanie zrealizowane poprzez odzyskaną usługę.
 questions.1.prompt: Co sprawdza pełne odzyskiwanie poza ekologicznym kontrolerem?
 diagnostics.repo: application/board repoURL musi być równe GIT_URL.
-diagnostics.path: application/board source.path musi być równe manifests.
+diagnostics.path: |-
+  Katalog źródłowy musi wskazywać manifests wewnątrz repozytorium.
+
 diagnostics.target: application/board targetRevision musi być równe main.
 diagnostics.selfheal: application/board selfHeal musi być równe true.
 diagnostics.prune: application/board prune musi być równe true.
@@ -159,16 +130,28 @@ diagnostics.release_revision: application/board sync.revision musi być równe r
 diagnostics.rollout: Wdrożenie deployment/board musi się zakończyć.
 diagnostics.http: Żądanie do board:8080 musi zwrócić north-100.
 diagnostics.image: private-release.json image musi być niepuste.
-diagnostics.board_image: deployment/board containers[0].image musi być równe private-release.json image.
+diagnostics.board_image: |-
+  Obraz nazwanego worker musi odpowiadać private-release.json.
+
 diagnostics.board_policy: deployment/board containers[0].imagePullPolicy musi być równe Always.
-diagnostics.board_secret: deployment/board imagePullSecrets musi być równe [registry-pull].
-diagnostics.board_env: Env pierwszego kontenera board musi zawierać tylko ROUTE_SECRET z route-secret, klucz value.
+diagnostics.board_secret: |-
+  worker musi używać wyłącznie istniejących danych registry-pull, również w efektywnych odwołaniach Poda.
+
+diagnostics.board_env: |-
+  ROUTE_SECRET nazwanego worker musi wskazywać route-secret/value bez literału ani powtórzonej zmiennej.
+
 diagnostics.secret: Odkodowana wartość route-secret musi wynosić north-secret.
-diagnostics.image_id: Pod board musi mieć gotowy kontener, którego imageID zawiera zamrożony digest.
+diagnostics.image_id: |-
+  Bieżący Pod należący do Deploymentu musi mieć gotowy, działający worker z dokładnym zamrożonym digestem obrazu.
+
 diagnostics.reader: Token czytelnika (reader) Vault musi odczytać north-secret z secret/data/dispatch.
 diagnostics.denied: Żądanie Vault reader do secret/data/other musi zwrócić HTTP 403.
-diagnostics.git_image: Pierwszy obraz board w manifeście Git musi odpowiadać obrazowi z private-release.json.
-diagnostics.git_env: Pierwszy wpis środowiska w manifeście Git musi wskazywać Secret route-secret.
+diagnostics.git_image: |-
+  Obraz nazwanego worker musi odpowiadać private-release.json.
+
+diagnostics.git_env: |-
+  ROUTE_SECRET nazwanego worker musi wskazywać route-secret/value bez literału ani powtórzonej zmiennej.
+
 stages.0.objectives.0.text: Application `board` zgłasza `Synced` dla właściwej opublikowanej rewizji. Automatycznie
   usuwa dryf i zasoby, których nie ma już w pożądanym wydaniu.
 stages.1.objectives.0.text: Zdalna `main` odpowiada rewizji zapisanej w `release-commit`.

@@ -1,18 +1,26 @@
 title: Symulacja zdarzenia podczas rozmowy kwalifikacyjnej
-brief: "Board stacji nie spełnia wymagań skalowania i prywatnego punktu wejścia. Przywróć obserwowalny wynik usługi\
-  \ w obu etapach incydentu.\n\nPracuj w `~/quest` na stacji roboczej. Dane wejściowe według etapu:\n- Etap 1: `board.yaml`,\
-  \ `service.yaml`, `client.yaml`, `hpa.yaml`.\n- Etap 2: `gateway.yaml`, `route.yaml`, `ingress-policy.yaml`, `gateway-target.json`.\n\
-  \n**Wymagania:**\n\n- Etap 1:\n  - Deployment `board` ma `2` gotowe repliki bez zwiększania dostarczonego pułapu\
-  \ CPU.\n  - HPA `board` zachowuje dostarczoną politykę skalowania i zgłasza `2` bieżące oraz pożądane repliki\
-  \ przy obciążeniu zasobu powyżej skonfigurowanego celu.\n- Etap 2:\n  - Deployment `board` ma `2` gotowe repliki\
-  \ bez zwiększania dostarczonego pułapu CPU.\n  - HPA `board` zachowuje dostarczoną politykę skalowania i zgłasza\
-  \ `2` bieżące oraz pożądane repliki przy obciążeniu zasobu powyżej skonfigurowanego celu.\n  - Gateway `station`\
-  \ używa dostarczonej prywatnej klasy i zgłasza `Accepted=True`.\n  - HTTPRoute `board` zgłasza `ResolvedRefs=True`\
-  \ dla rodzica.\n  - Polityka ingress aplikacji zezwala na TCP `8080` tylko z dostarczonego prywatnego kontrolera\
-  \ Gateway.\n  - Z Deployment `client` dostarczony URL Gateway zwraca `north-130` dla Host `north.station.internal`;\
-  \ żądania bezpośrednie do `http://board:8080` i z Host `closed.station.internal` kończą się niepowodzeniem.\n\n\
-  Sprawdzenia nie ustalają, że docelowe lub bieżące wykorzystanie dotyczy CPU, ani nie dowodzą przyczyny skalowania;\
-  \ nieudany ruch może mieć inne przyczyny, a warunki statusu mogą być przestarzałe lub należeć do innego rodzica."
+brief: |-
+  Board stacji nie spełnia wymagań skalowania i prywatnego punktu wejścia. Przywróć obserwowalny wynik usługi w obu etapach incydentu.
+
+  Pracuj w `~/quest` na stacji roboczej. Dane wejściowe według etapu:
+  - Etap 1: `board.yaml`, `service.yaml`, `client.yaml`, `hpa.yaml`.
+  - Etap 2: `gateway.yaml`, `route.yaml`, `ingress-policy.yaml`, `gateway-target.json`.
+
+  **Wymagania:**
+
+  - Etap 1:
+    - Deployment `board` ma `2` gotowe repliki bez zwiększania dostarczonego pułapu CPU.
+    - HPA `board` zachowuje dostarczoną politykę skalowania i zgłasza `2` bieżące oraz pożądane repliki przy obciążeniu zasobu powyżej skonfigurowanego celu.
+  - Etap 2:
+    - Deployment `board` ma `2` gotowe repliki bez zwiększania dostarczonego pułapu CPU.
+    - HPA `board` zachowuje dostarczoną politykę skalowania i zgłasza `2` bieżące oraz pożądane repliki przy obciążeniu zasobu powyżej skonfigurowanego celu.
+    - Gateway `station` używa dostarczonej prywatnej klasy i zgłasza `Accepted=True`.
+    - HTTPRoute `board` zgłasza `ResolvedRefs=True` dla rodzica.
+    - Polityka ingress aplikacji zezwala na TCP `8080` tylko z dostarczonego prywatnego kontrolera Gateway.
+    - Z Deployment `client` dostarczony URL Gateway zwraca `north-130` dla Host `north.station.internal`; żądania bezpośrednie do `http://board:8080` i z Host `closed.station.internal` kończą się niepowodzeniem.
+
+  Kontrole obserwują zadeklarowane ustawienia skalowania i bieżące wykorzystanie CPU, a nie przyczynę wcześniejszego skalowania; błędy ruchu mogą mieć inne przyczyny, a statusy mogą być nieaktualne lub dotyczyć innego parent.
+
 debrief: Incydent został rozwiązany poprzez rzeczywiste skalowanie, trasę status i testy ruchu przy zachowaniu wyraźnej
   granicy izolacji.
 stages.0.brief: Board musi spełniać dostarczony budżet skalowania przy obserwowanym obciążeniu.
@@ -65,20 +73,39 @@ hints.1.text: 'Etap 2: sprawdź route.yaml i ingress-policy.yaml — HTTPRoute w
   kubectl get networkpolicy board-ingress -o yaml
 
   ```'
-hints.2.text: "Etap 1: Procentowe wykorzystanie HPA wymaga niezerowego CPU request na kontenerze; sprawdź board.yaml\
-  \ i ustaw CPU request 100m i limit 200m bez zmiany specyfikacji HPA.\n\nUstaw port zaplecza HTTPRoute na 8080,\
-  \ zezwól ingress na board:8080 tylko z podSelector app: gateway w kontrolerze namespace i sprawdź zarówno dozwolony\
-  \ ruch Gateway, jak i zablokowany bezpośredni dostęp.\n\nSprawdź naprawiony etap i porównaj obserwowany wynik.\n\
-  \nEtap 1/2: Deployment pokazuje `2` gotowe repliki; HPA zgłasza `2` repliki i bieżące wykorzystanie zasobu powyżej\
-  \ skonfigurowanego celu.\n\n```sh\nkubectl get deployment board\nkubectl get hpa board\n```\n\nEtap 2: Właściwy\
-  \ Host Gateway zwraca `north-130`; żądania bezpośrednie i z obcym Host kończą się niepowodzeniem.\n\n```sh\nurl=$(jq\
-  \ -r .url gateway-target.json)\nkubectl exec deployment/client -- wget -qO- -T 3 --header='Host: north.station.internal'\
-  \ \"$url\"\nfor target in direct unrelated; do\n  if [ \"$target\" = direct ]; then\n    if kubectl exec deployment/client\
-  \ -- wget -qO- -T 2 http://board:8080 >/dev/null 2>&1; then exit 1; fi\n  else\n    if kubectl exec deployment/client\
-  \ -- wget -qO- -T 2 --header='Host: closed.station.internal' \"$url\" >/dev/null 2>&1; then exit 1; fi\n  fi\n\
-  \  printf '%s rejected\\n' \"$target\"\ndone\n```\n\nOczekiwane obserwacje dla całego etapu:\n- Etap 1/2: Budżet\
-  \ CPU, gotowe repliki, zakres HPA, cel i obserwowane wykorzystanie spełniają wymagania.\n- Etap 2: Dostarczona\
-  \ klasa, zaakceptowany Gateway, rozwiązana trasa i ograniczona polityka ingress spełniają wymagania."
+hints.2.text: |-
+  Etap 1: Procentowe wykorzystanie HPA wymaga niezerowego CPU request na kontenerze; sprawdź board.yaml i ustaw CPU request 100m i limit 200m bez zmiany specyfikacji HPA.
+
+  Ustaw port zaplecza HTTPRoute na 8080, zezwól ingress na board:8080 tylko z podSelector app: gateway w kontrolerze namespace i sprawdź zarówno dozwolony ruch Gateway, jak i zablokowany bezpośredni dostęp.
+
+  Sprawdź naprawiony etap i porównaj obserwowany wynik.
+
+  Etap 1/2: Deployment pokazuje `2` gotowe repliki; HPA zgłasza `2` repliki i bieżące wykorzystanie zasobu powyżej skonfigurowanego celu.
+
+  ```sh
+  kubectl get deployment board
+  kubectl get hpa board
+  ```
+
+  Etap 2: Właściwy Host Gateway zwraca `north-130`; żądania bezpośrednie i z obcym Host kończą się niepowodzeniem.
+
+  ```sh
+  url=$(jq -r .url gateway-target.json)
+  kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header='Host: north.station.internal' "$url"
+  for target in direct unrelated; do
+    if [ "$target" = direct ]; then
+      if kubectl exec deployment/client -c worker -- wget -qO- -T 2 http://board:8080 >/dev/null 2>&1; then exit 1; fi
+    else
+      if kubectl exec deployment/client -c worker -- wget -qO- -T 2 --header='Host: closed.station.internal' "$url" >/dev/null 2>&1; then exit 1; fi
+    fi
+    printf '%s rejected\n' "$target"
+  done
+  ```
+
+  Oczekiwane obserwacje dla całego etapu:
+  - Etap 1/2: Budżet CPU, gotowe repliki, zakres HPA, cel i obserwowane wykorzystanie spełniają wymagania.
+  - Etap 2: Dostarczona klasa, zaakceptowany Gateway, rozwiązana trasa i ograniczona polityka ingress spełniają wymagania.
+
 phrases.0: Wyizolowałem metryki, routing i awarie policy.
 phrases.1: Sprawdziłem realne skalowanie w ramach ograniczonego budżetu.
 phrases.2: Udowodniłem zamierzoną ścieżkę i odmówiłem ścieżek obejściowych.
@@ -88,20 +115,31 @@ questions.0.prompt: Po co diagnozować każdą granicę przed zmianą wszystkieg
 questions.1.points.0: NIE; dozwolone i zabronione ścieżki wymagają oddzielnych testów.
 questions.1.points.1: Dopasowanie Network policy i trasy host wymusza różne granice.
 questions.1.prompt: Czy pomyślne żądanie Gateway dowodzi, że bezpośredni dostęp jest zablokowany?
-diagnostics.request: Żądanie CPU pierwszego kontenera board musi wynosić 100m.
-diagnostics.limit: Limit CPU pierwszego kontenera board musi wynosić 200m.
+diagnostics.request: |-
+  CPU request worker musi być dodatni i nie przekraczać jego skończonego CPU limit.
+
+diagnostics.limit: |-
+  CPU limit worker musi być dodatni i nie większy niż 200m.
+
 diagnostics.ready: Board musi mieć dwie gotowe repliki.
 diagnostics.minimum: HPA minReplicas musi wynosić 1.
 diagnostics.maximum: HPA maxReplicas musi wynosić 2.
-diagnostics.target: Pierwsza docelowa wartość wykorzystania HPA musi wynosić 50.
+diagnostics.target: |-
+  HPA musi skalować Deployment board i zachować cel wykorzystania CPU równy 50.
 diagnostics.current: HPA currentReplicas musi wynosić 2.
 diagnostics.desired: HPA desiredReplicas musi wynosić 2.
-diagnostics.metric: Bieżąca metryka zasobu HPA musi mieć wykorzystanie powyżej 50.
+diagnostics.metric: |-
+  Bieżące wykorzystanie CPU musi przekraczać dostarczony cel HPA.
+
 diagnostics.gateway_class: Klasa Gateway musi odpowiadać gateway-target.json.
 diagnostics.gateway_accepted: Gateway Accepted musi mieć wartość True.
-diagnostics.backend: Port pierwszego backendu HTTPRoute musi wynosić 8080.
+diagnostics.backend: |-
+  Trasa musi wskazywać zadeklarowany port dostarczonego Service board.
+
 diagnostics.resolved: Jakiś parent HTTPRoute musi mieć ResolvedRefs=True.
-diagnostics.policy: Specyfikacja board-ingress musi odpowiadać dokładnej polityce z opisu.
+diagnostics.policy: |-
+  Ingress aplikacji dopuszcza TCP 8080 tylko z dostarczonego namespace Gateway ORAZ jego Podów.
+
 diagnostics.gateway_http: Żądanie przez gateway z Host north.station.internal musi zwrócić north-130.
 diagnostics.direct_denied: Bezpośrednie żądanie do board:8080 musi się nie powieść.
 diagnostics.wrong_host: Żądanie przez gateway z Host closed.station.internal musi się nie powieść.

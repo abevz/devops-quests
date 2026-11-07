@@ -18,7 +18,6 @@ for n in 1 2 3; do
   fi
 done
 exit "$failed"
-
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -33,7 +32,6 @@ for n in 1 2 3; do
   fi
 done
 exit "$failed"
-
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
