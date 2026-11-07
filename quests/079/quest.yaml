@@ -14,124 +14,236 @@ stages:
       set +e
       (
       set -e
-      python3 - <<'DQ_FLEET'
-      import sys
+      python3 -I - <<'DQ_FLEET'
+      import shlex
       import yaml
 
-      errors = []
-      DIAGNOSTIC_IDS = {'rollout.yml hosts = fleet': 'hosts', 'rollout.yml play boundaries': 'play_keys', 'rollout.yml tasks = 3': 'tasks', 'rollout.yml task execution controls': 'controls', 'rollout.yml task keys': 'keys', 'rollout.yml task module': 'module', 'rollout.yml duplicate destination': 'duplicate', 'rollout.yml notify only banner': 'notify_scope', 'rollout.yml directory state': 'dir_state', 'rollout.yml directory arguments': 'dir_args', 'rollout.yml notify Reload banner': 'notify', 'rollout.yml directory before route': 'order', 'rollout.yml handler Reload banner': 'handler', 'rollout.yml handler dq-service reload': 'command', 'rollout.yml': 'invalid', 'rollout.yml /srv/site/config': 'path_dir', 'rollout.yml /srv/site/config module': 'path_module_dir', 'rollout.yml /srv/site/config mode': 'path_mode_dir', 'rollout.yml /srv/site/message': 'path_banner', 'rollout.yml /srv/site/message module': 'path_module_banner', 'rollout.yml /srv/site/message mode': 'path_mode_banner', 'rollout.yml /srv/site/message content': 'path_content_banner', 'rollout.yml /srv/site/message arguments': 'path_args_banner', 'rollout.yml /srv/site/config/route': 'path_route', 'rollout.yml /srv/site/config/route module': 'path_module_route', 'rollout.yml /srv/site/config/route mode': 'path_mode_route', 'rollout.yml /srv/site/config/route content': 'path_content_route', 'rollout.yml /srv/site/config/route arguments': 'path_args_route'}
+      MODULES = {'copy', 'file', 'stat', 'command', 'assert', 'unarchive', 'template', 'debug', 'fail', 'set_fact', 'meta'}
+      KEYWORDS = {'name', 'args', 'action', 'local_action', 'notify', 'listen', 'register', 'tags', 'vars', 'delegate_to', 'delegate_facts', 'run_once', 'no_log', 'become', 'become_user', 'environment', 'when', 'changed_when', 'failed_when', 'check_mode', 'ignore_errors', 'ignore_unreachable', 'until', 'retries', 'delay', 'loop', 'with_items', 'loop_control', 'throttle', 'timeout', 'connection', 'collections', 'any_errors_fatal', 'diff'}
 
-      def diagnostic(label):
-          short = label.removeprefix('rollout.yml ').replace('/srv/site/config/route', 'route').replace('/srv/site/message', 'banner').replace('/srv/site/config', 'config')
-          return short + ': ✗ [DQ:' + DIAGNOSTIC_IDS[label] + ']'
-
-      def expect(ok, label):
-          if not ok:
-              errors.append(diagnostic(label))
-
+      def boolean(value):
+          if isinstance(value, bool):
+              return value
+          if isinstance(value, str):
+              if value.lower() in ('true', 'yes', 'on', '1'): return True
+              if value.lower() in ('false', 'no', 'off', '0'): return False
+          if type(value) is int and value in (0, 1): return bool(value)
+          return None
 
       def mode(value):
-          if isinstance(value, bool):
-              return None
-          if isinstance(value, int):
-              return value
-          try:
-              return int(str(value), 8)
-          except (TypeError, ValueError):
-              return None
+          if isinstance(value, bool): return None
+          if isinstance(value, int): return value
+          try: return int(str(value), 8)
+          except (TypeError, ValueError): return None
 
+      def names(value):
+          if value is None: return []
+          if isinstance(value, str): return [part.strip() for part in value.split(',') if part.strip()]
+          assert isinstance(value, list) and all(isinstance(part, str) for part in value)
+          return value
+
+      def fleet(play):
+          hosts = play.get('hosts')
+          return hosts in ('fleet', ['fleet']) or (isinstance(hosts, list) and set(hosts) == {'app1', 'app2', 'app3'})
+
+      def builtin_module(value, collections=None):
+          assert isinstance(value,str)
+          if value in MODULES:
+              assert not collections or collections=='ansible.builtin' or (isinstance(collections,list) and all(item=='ansible.builtin' for item in collections)), 'A short alias must resolve to a builtin module'
+              return value
+          assert value.startswith('ansible.builtin.') and value.removeprefix('ansible.builtin.') in MODULES, 'Unknown collection modules cannot certify builtin effects'
+          return value.removeprefix('ansible.builtin.')
+
+      def action(task):
+          assert isinstance(task, dict)
+          direct = [key for key in task if key.rsplit('.', 1)[-1] in MODULES]
+          explicit = [key for key in ('action', 'local_action') if key in task]
+          assert len(direct) + len(explicit) == 1, 'Exactly one module action per task'
+          assert all(key in KEYWORDS or key in direct for key in task), 'Unknown task action'
+          if direct:
+              key = direct[0]; module = builtin_module(key,task.get('collections')); args = task[key]
+          else:
+              declaration = task[explicit[0]]
+              if isinstance(declaration, dict):
+                  args = dict(declaration); module = builtin_module(args.pop('module'),task.get('collections'))
+              else:
+                  parts = shlex.split(declaration); module = builtin_module(parts.pop(0),task.get('collections'))
+                  args = ' '.join(parts) if module == 'command' else dict(part.split('=', 1) for part in parts)
+          assert module in MODULES
+          if args is None: args = {}
+          if isinstance(args, str):
+              args = {'_raw_params': args} if module in ('command', 'meta') else dict(part.split('=', 1) for part in shlex.split(args))
+          assert isinstance(args, dict)
+          args = {**args, **task.get('args', {})}
+          return module, args
+
+      def tasks(items, inherited=None):
+          inherited = inherited or {}
+          for task in items or []:
+              assert isinstance(task, dict)
+              merged = {**inherited, **task}
+              merged['tags'] = names(inherited.get('tags')) + names(task.get('tags'))
+              merged['vars'] = {**inherited.get('vars', {}), **task.get('vars', {})}
+              if 'block' in task:
+                  context = {key: merged[key] for key in KEYWORDS if key in merged and key not in ('name', 'action', 'local_action', 'args')}
+                  yield from tasks(task['block'], context)
+                  yield from tasks(task.get('rescue', []), context)
+                  yield from tasks(task.get('always', []), context)
+              else:
+                  yield merged
+
+      def plays():
+          data = yaml.safe_load(open('rollout.yml'))
+          assert isinstance(data, list) and data and all(isinstance(play, dict) and fleet(play) for play in data)
+          return data
+
+      def flat(play):
+          context = {key: play[key] for key in ('no_log', 'check_mode', 'tags', 'vars', 'delegate_to', 'run_once', 'when', 'collections') if key in play}
+          return list(tasks(play.get('pre_tasks', []) + play.get('tasks', []) + play.get('post_tasks', []), context))
+
+      def command(args):
+          if 'argv' in args:
+              assert isinstance(args['argv'], list) and all(isinstance(part, str) for part in args['argv'])
+              return args['argv']
+          parts = shlex.split(args.get('_raw_params', args.get('cmd', '')))
+          if parts and parts[0] in ('/bin/cat','/usr/bin/cat','/usr/local/bin/dq-service'):
+              parts[0] = parts[0].rsplit('/',1)[-1]
+          if len(parts)>1 and parts[0]=='cat' and parts[1]=='--': parts.pop(1)
+          return parts
+
+      def unconditional(task):
+          assert not any(task.get(key) not in (None, [], True, 'true', 'True') for key in ('when',))
+          assert not any(key in task for key in ('loop', 'with_items', 'until', 'ignore_errors', 'ignore_unreachable', 'failed_when'))
+
+      def not_masked(task):
+          unconditional(task)
+          assert 'changed_when' not in task, 'Do not mask module change reporting'
+          assert 'check_mode' not in task or boolean(task['check_mode']) is False
+
+      def reload_handler(play, task, expected='dq-service'):
+          notified = names(task.get('notify'))
+          assert notified, 'The changed file must notify a reload'
+          handlers = list(tasks(play.get('handlers', []), {'collections':play.get('collections')}))
+          selected = [handler for handler in handlers if set(notified) & ({handler.get('name')} | set(names(handler.get('listen'))))]
+          assert selected and all(any(name in ({h.get('name')} | set(names(h.get('listen')))) for h in selected) for name in notified)
+          for handler in selected:
+              unconditional(handler)
+              module, args = action(handler)
+              assert module == 'command' and command(args) == [expected, 'reload']
+              assert set(args) <= {'argv', 'cmd', '_raw_params', 'expand_argument_vars', 'strip_empty_ends'}
+
+      import sys
+      DIAGNOSTIC_IDS = {'invalid': 'invalid', 'duplicate': 'duplicate', 'notify_scope': 'notify_scope', 'dir_state': 'dir_state', 'order': 'order', 'path_dir': 'path_dir', 'path_banner': 'path_banner', 'path_route': 'path_route', 'path_module_dir': 'path_module_dir', 'path_module_banner': 'path_module_banner', 'path_module_route': 'path_module_route', 'path_mode_dir': 'path_mode_dir', 'path_mode_banner': 'path_mode_banner', 'path_mode_route': 'path_mode_route'}
+
+      class ConditionFailure(AssertionError):pass
+
+      def require(ok,condition='invalid'):
+       if not ok:raise ConditionFailure(condition)
 
       try:
-          plays = yaml.safe_load(open('rollout.yml'))
-          if not isinstance(plays, list) or len(plays) != 1:
-              raise ValueError('play count')
-          play = plays[0]
-          expect(play.get('hosts') == 'fleet', 'rollout.yml hosts = fleet')
-          expect(set(play) <= {'name', 'hosts', 'gather_facts', 'handlers', 'tasks'}, 'rollout.yml play boundaries')
-          tasks = play.get('tasks', [])
-          expect(len(tasks) == 3, 'rollout.yml tasks = 3')
-          found = {}
-          for position, task in enumerate(tasks):
-              expect(not any(k in task for k in ('changed_when', 'check_mode', 'when')), 'rollout.yml task execution controls')
-              modules = [k for k in ('file', 'ansible.builtin.file', 'copy', 'ansible.builtin.copy') if k in task]
-              expect(set(task) <= {'name', 'notify', 'file', 'ansible.builtin.file', 'copy', 'ansible.builtin.copy'}, 'rollout.yml task keys')
-              if len(modules) != 1 or not isinstance(task[modules[0]], dict):
-                  errors.append(diagnostic('rollout.yml task module'))
-                  continue
-              key = modules[0].split('.')[-1]
-              args = task[modules[0]]
-              path = args.get('path') if key == 'file' else args.get('dest')
-              if path in found:
-                  errors.append(diagnostic('rollout.yml duplicate destination'))
-                  continue
-              if path != '/srv/site/message':
-                  expect('notify' not in task, 'rollout.yml notify only banner')
-              found[path] = (position, key, args, task)
-          for path, kind, expected_mode, content in [('/srv/site/config', 'file', 0o755, None), ('/srv/site/message', 'copy', 0o644, 'north-79\n'), ('/srv/site/config/route', 'copy', 0o644, 'route=north\n')]:
-              if path not in found:
-                  errors.append(diagnostic('rollout.yml ' + path))
-                  continue
-              _, actual_kind, args, task = found[path]
-              expect(actual_kind == kind, 'rollout.yml ' + path + ' module')
-              expect(mode(args.get('mode')) == expected_mode, 'rollout.yml ' + path + ' mode')
-              if kind == 'file':
-                  expect(args.get('state') == 'directory', 'rollout.yml directory state')
-                  expect(set(args) == {'path', 'state', 'mode'}, 'rollout.yml directory arguments')
-              else:
-                  expect(args.get('content') == content, 'rollout.yml ' + path + ' content')
-                  expect(set(args) == {'dest', 'content', 'mode'}, 'rollout.yml ' + path + ' arguments')
-              if path == '/srv/site/message':
-                  notify = task.get('notify')
-                  expect(notify == 'Reload banner' or notify == ['Reload banner'], 'rollout.yml notify Reload banner')
-          if '/srv/site/config' in found and '/srv/site/config/route' in found:
-              expect(found['/srv/site/config'][0] < found['/srv/site/config/route'][0], 'rollout.yml directory before route')
-          handlers = play.get('handlers', [])
-          expect(len(handlers) == 1 and handlers[0].get('name') == 'Reload banner', 'rollout.yml handler Reload banner')
-          if len(handlers) == 1:
-              handler = handlers[0]
-              command = handler.get('ansible.builtin.command', handler.get('command'))
-              expect(set(handler) <= {'name', 'command', 'ansible.builtin.command'} and sum(k in handler for k in ('command', 'ansible.builtin.command')) == 1 and command == 'dq-service reload', 'rollout.yml handler dq-service reload')
-      except (OSError, TypeError, ValueError, KeyError, AttributeError, yaml.YAMLError):
-          errors.append(diagnostic('rollout.yml'))
-      if errors:
-          print('\n'.join(dict.fromkeys(errors)))
-          sys.exit(1)
+       data=plays();require(len(data)==1)
+       play=data[0];require(not play.get('roles'))
+       found={}
+       for position,task in enumerate(flat(play)):
+        module,args=action(task)
+        if module in ('debug','stat'):unconditional(task);continue
+        not_masked(task);require(module in ('copy','file'))
+        path=args.get('path') if module=='file' else args.get('dest')
+        require(path in ('/srv/site/config','/srv/site/message','/srv/site/config/route'))
+        require(path not in found,'duplicate')
+        if path!='/srv/site/message':require(not names(task.get('notify')),'notify_scope')
+        found[path]=(position,module,args,task)
+       for path,kind,expected,content,slug in [('/srv/site/config','file',0o755,None,'dir'),('/srv/site/message','copy',0o644,'north-79','banner'),('/srv/site/config/route','copy',0o644,'route=north','route')]:
+        require(path in found,'path_'+slug)
+        _,module,args,task=found[path]
+        require(module==kind,'path_module_'+slug);require(mode(args.get('mode'))==expected,'path_mode_'+slug)
+        if kind=='file':require(args.get('state')=='directory','dir_state')
+        else:
+         require(isinstance(args.get('content'),str) and args['content'].rstrip('\n')==content)
+         require('src' not in args and boolean(args.get('force',True)) is True)
+        if path=='/srv/site/message':reload_handler(play,task)
+       require(found['/srv/site/config'][0]<found['/srv/site/config/route'][0],'order')
+      except (OSError,ValueError,TypeError,KeyError,AttributeError,AssertionError,yaml.YAMLError) as error:
+       marker=DIAGNOSTIC_IDS.get(str(error),'invalid') if isinstance(error,ConditionFailure) else 'invalid'
+       print('rollout.yml condition failed: ✗ [DQ:'+marker+']')
+       sys.exit(1)
       DQ_FLEET
       )
       [ $? -eq 0 ] || dq_result_failed=1
       (
       set -e
-      dq_group_failed=0
-      set +e
-      (
-      set -e
-      grep -Eq "^app1[[:space:]]+:.*changed=0.*unreachable=0.*failed=0" second.log
-      )
-      dq_condition_rc=$?
-      if [ "$dq_condition_rc" -ne 0 ]; then
-      printf '%s\n' 'app1 second recap : ✗ [DQ:recap_1]'
-      dq_group_failed=1
-      fi
-      (
-      set -e
-      grep -Eq "^app2[[:space:]]+:.*changed=0.*unreachable=0.*failed=0" second.log
-      )
-      dq_condition_rc=$?
-      if [ "$dq_condition_rc" -ne 0 ]; then
-      printf '%s\n' 'app2 second recap : ✗ [DQ:recap_2]'
-      dq_group_failed=1
-      fi
-      (
-      set -e
-      grep -Eq "^app3[[:space:]]+:.*changed=0.*unreachable=0.*failed=0" second.log
-      )
-      dq_condition_rc=$?
-      if [ "$dq_condition_rc" -ne 0 ]; then
-      printf '%s\n' 'app3 second recap : ✗ [DQ:recap_3]'
-      dq_group_failed=1
-      fi
-      set -e
-      test "$dq_group_failed" -eq 0
+      python3 -I - <<'DQ_RECAP'
+      import json
+      import re
+      from pathlib import Path
+
+
+      def count(value):
+          if isinstance(value, bool):
+              return None
+          if isinstance(value, int) and value >= 0:
+              return value
+          if isinstance(value, str) and re.fullmatch(r'[0-9]+', value):
+              return int(value)
+          return None
+
+
+      def recap(text):
+          # Read an actual recap, not task output which happens to mention a counter.
+          records = []
+          try:
+              records.append(json.loads(text))
+          except ValueError:
+              for line in text.splitlines():
+                  try:
+                      records.append(json.loads(line))
+                  except ValueError:
+                      pass
+          for record in reversed(records):
+              if not isinstance(record, dict):
+                  continue
+              stats = record.get('stats')
+              if record.get('event') == 'playbook_on_stats':
+                  event = record.get('event_data', {})
+                  if isinstance(event, dict):
+                      stats = {host: {key: values.get(host) for key, values in event.items()
+                                      if isinstance(values, dict)}
+                               for host in event.get('processed', {})}
+              if isinstance(stats, dict):
+                  return {host: {({'failures':'failed','dark':'unreachable'}.get(key,key)): count(value)
+                                 for key, value in values.items()}
+                          for host, values in stats.items() if isinstance(values, dict)}
+          rows = {}
+          body = text.rsplit('PLAY RECAP', 1)[-1]
+          for line in body.splitlines():
+              match = re.match(r'^([^\s:]+)\s*:\s*(.*)$', line)
+              if not match:
+                  continue
+              fields = re.findall(r'\b(ok|changed|unreachable|failed|skipped|rescued|ignored)\s*=\s*([0-9]+)(?=\s|$)', match[2])
+              if fields:
+                  # Duplicate rows cannot stand in for another managed host.
+                  if match[1] in rows or len({key for key, _ in fields}) != len(fields):
+                      return {}
+                  rows[match[1]] = {key: int(value) for key, value in fields}
+          return rows
+
+
+      def require_recaps(path, required, positive=(), prefix='recap'):
+          try: text = Path(path).read_text()
+          except OSError: text = ''
+          rows = recap(text)
+          failed = False
+          for number in (1, 2, 3):
+              row = rows.get('app' + str(number), {})
+              ok = all(row.get(key) == value for key, value in required.items())
+              ok = ok and all(isinstance(row.get(key), int) and row[key] > 0 for key in positive)
+              if not ok:
+                  print('app' + str(number) + ' recap does not satisfy the required counters: ✗ [DQ:' + prefix + '_' + str(number) + ']')
+                  failed = True
+          assert not failed, 'Every required managed host needs its own successful recap'
+
+      require_recaps('second.log', {'changed':0,'unreachable':0,'failed':0})
+      DQ_RECAP
       )
       [ $? -eq 0 ] || dq_result_failed=1
       set -e

@@ -34,14 +34,136 @@ dq_result_failed=0
 set +e
 (
 set -e
-python3 - <<'CHECK_MODE_TASK'
+python3 -I - <<'CHECK_MODE_TASK'
+import shlex
+import re
 import yaml
-p=yaml.safe_load(open('rollout.yml'))[0];assert p['hosts']=='fleet'
-t=p['tasks'];assert len(t)==2
-assert t[1]['ansible.builtin.command']=='cat /run/quest-service.pid'
-assert t[1]['changed_when'] is False and 'check_mode' not in t[1]
-assert t[0]['ansible.builtin.copy']=={'dest':'/srv/site/message','content':'north-74\n','mode':'0644'}
-assert t[0]['notify']=='Reload banner'
+
+MODULES = {'copy', 'file', 'stat', 'command', 'assert', 'unarchive', 'template', 'debug', 'fail', 'set_fact', 'meta'}
+KEYWORDS = {'name', 'args', 'action', 'local_action', 'notify', 'listen', 'register', 'tags', 'vars', 'delegate_to', 'delegate_facts', 'run_once', 'no_log', 'become', 'become_user', 'environment', 'when', 'changed_when', 'failed_when', 'check_mode', 'ignore_errors', 'ignore_unreachable', 'until', 'retries', 'delay', 'loop', 'with_items', 'loop_control', 'throttle', 'timeout', 'connection', 'collections', 'any_errors_fatal', 'diff'}
+
+def boolean(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        if value.lower() in ('true', 'yes', 'on', '1'): return True
+        if value.lower() in ('false', 'no', 'off', '0'): return False
+    if type(value) is int and value in (0, 1): return bool(value)
+    return None
+
+def mode(value):
+    if isinstance(value, bool): return None
+    if isinstance(value, int): return value
+    try: return int(str(value), 8)
+    except (TypeError, ValueError): return None
+
+def names(value):
+    if value is None: return []
+    if isinstance(value, str): return [part.strip() for part in value.split(',') if part.strip()]
+    assert isinstance(value, list) and all(isinstance(part, str) for part in value)
+    return value
+
+def fleet(play):
+    hosts = play.get('hosts')
+    return hosts in ('fleet', ['fleet']) or (isinstance(hosts, list) and set(hosts) == {'app1', 'app2', 'app3'})
+
+def builtin_module(value, collections=None):
+    assert isinstance(value,str)
+    if value in MODULES:
+        assert not collections or collections=='ansible.builtin' or (isinstance(collections,list) and all(item=='ansible.builtin' for item in collections)), 'A short alias must resolve to a builtin module'
+        return value
+    assert value.startswith('ansible.builtin.') and value.removeprefix('ansible.builtin.') in MODULES, 'Unknown collection modules cannot certify builtin effects'
+    return value.removeprefix('ansible.builtin.')
+
+def action(task):
+    assert isinstance(task, dict)
+    direct = [key for key in task if key.rsplit('.', 1)[-1] in MODULES]
+    explicit = [key for key in ('action', 'local_action') if key in task]
+    assert len(direct) + len(explicit) == 1, 'Exactly one module action per task'
+    assert all(key in KEYWORDS or key in direct for key in task), 'Unknown task action'
+    if direct:
+        key = direct[0]; module = builtin_module(key,task.get('collections')); args = task[key]
+    else:
+        declaration = task[explicit[0]]
+        if isinstance(declaration, dict):
+            args = dict(declaration); module = builtin_module(args.pop('module'),task.get('collections'))
+        else:
+            parts = shlex.split(declaration); module = builtin_module(parts.pop(0),task.get('collections'))
+            args = ' '.join(parts) if module == 'command' else dict(part.split('=', 1) for part in parts)
+    assert module in MODULES
+    if args is None: args = {}
+    if isinstance(args, str):
+        args = {'_raw_params': args} if module in ('command', 'meta') else dict(part.split('=', 1) for part in shlex.split(args))
+    assert isinstance(args, dict)
+    args = {**args, **task.get('args', {})}
+    return module, args
+
+def tasks(items, inherited=None):
+    inherited = inherited or {}
+    for task in items or []:
+        assert isinstance(task, dict)
+        merged = {**inherited, **task}
+        merged['tags'] = names(inherited.get('tags')) + names(task.get('tags'))
+        merged['vars'] = {**inherited.get('vars', {}), **task.get('vars', {})}
+        if 'block' in task:
+            context = {key: merged[key] for key in KEYWORDS if key in merged and key not in ('name', 'action', 'local_action', 'args')}
+            yield from tasks(task['block'], context)
+            yield from tasks(task.get('rescue', []), context)
+            yield from tasks(task.get('always', []), context)
+        else:
+            yield merged
+
+def plays():
+    data = yaml.safe_load(open('rollout.yml'))
+    assert isinstance(data, list) and data and all(isinstance(play, dict) and fleet(play) for play in data)
+    return data
+
+def flat(play):
+    context = {key: play[key] for key in ('no_log', 'check_mode', 'tags', 'vars', 'delegate_to', 'run_once', 'when', 'collections') if key in play}
+    return list(tasks(play.get('pre_tasks', []) + play.get('tasks', []) + play.get('post_tasks', []), context))
+
+def command(args):
+    if 'argv' in args:
+        assert isinstance(args['argv'], list) and all(isinstance(part, str) for part in args['argv'])
+        return args['argv']
+    parts = shlex.split(args.get('_raw_params', args.get('cmd', '')))
+    if parts and parts[0] in ('/bin/cat','/usr/bin/cat','/usr/local/bin/dq-service'):
+        parts[0] = parts[0].rsplit('/',1)[-1]
+    if len(parts)>1 and parts[0]=='cat' and parts[1]=='--': parts.pop(1)
+    return parts
+
+def unconditional(task):
+    assert not any(task.get(key) not in (None, [], True, 'true', 'True') for key in ('when',))
+    assert not any(key in task for key in ('loop', 'with_items', 'until', 'ignore_errors', 'ignore_unreachable', 'failed_when'))
+
+def reload_handler(play, task, expected='dq-service'):
+    notified = names(task.get('notify'))
+    assert notified, 'The changed file must notify a reload'
+    handlers = list(tasks(play.get('handlers', []), {'collections':play.get('collections')}))
+    selected = [handler for handler in handlers if set(notified) & ({handler.get('name')} | set(names(handler.get('listen'))))]
+    assert selected and all(any(name in ({h.get('name')} | set(names(h.get('listen')))) for h in selected) for name in notified)
+    for handler in selected:
+        unconditional(handler)
+        module, args = action(handler)
+        assert module == 'command' and command(args) == [expected, 'reload']
+        assert set(args) <= {'argv', 'cmd', '_raw_params', 'expand_argument_vars', 'strip_empty_ends'}
+
+foundcopy=False;foundprobe=False
+for play in plays():
+ for task in flat(play):
+  unconditional(task)
+  module,args=action(task)
+  if module=='copy' and args.get('dest')=='/srv/site/message':
+   assert args.get('content','').rstrip('\n')=='north-74' and mode(args.get('mode'))==0o644
+   reload_handler(play,task);foundcopy=True
+  elif module=='command' and command(args)==['cat','/run/quest-service.pid']:
+   assert boolean(task.get('changed_when')) is False
+   assert 'check_mode' not in task or (isinstance(task['check_mode'],str) and re.fullmatch(r'\s*{{\s*ansible_check_mode\s*}}\s*',task['check_mode'])), 'Preserve the normal check/apply behavior of the read-only PID task'
+   assert not any(key in args for key in ('creates','removes','chdir'))
+   foundprobe=True
+  else:
+   assert module in ('debug','stat'), 'Only read-only supporting actions are permitted'
+assert foundcopy and foundprobe
 CHECK_MODE_TASK
 )
 [ $? -eq 0 ] || dq_result_failed=1
@@ -51,7 +173,79 @@ dq_group_failed=0
 set +e
 (
 set -e
-test "$(grep -Ec '^app[123][[:space:]]+:.*changed=[1-9].*failed=0.*skipped=[1-9]' check.log)" = 3
+python3 -I - <<'DQ_RECAP'
+import json
+import re
+from pathlib import Path
+
+
+def count(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value >= 0:
+        return value
+    if isinstance(value, str) and re.fullmatch(r'[0-9]+', value):
+        return int(value)
+    return None
+
+
+def recap(text):
+    # Read an actual recap, not task output which happens to mention a counter.
+    records = []
+    try:
+        records.append(json.loads(text))
+    except ValueError:
+        for line in text.splitlines():
+            try:
+                records.append(json.loads(line))
+            except ValueError:
+                pass
+    for record in reversed(records):
+        if not isinstance(record, dict):
+            continue
+        stats = record.get('stats')
+        if record.get('event') == 'playbook_on_stats':
+            event = record.get('event_data', {})
+            if isinstance(event, dict):
+                stats = {host: {key: values.get(host) for key, values in event.items()
+                                if isinstance(values, dict)}
+                         for host in event.get('processed', {})}
+        if isinstance(stats, dict):
+            return {host: {({'failures':'failed','dark':'unreachable'}.get(key,key)): count(value)
+                           for key, value in values.items()}
+                    for host, values in stats.items() if isinstance(values, dict)}
+    rows = {}
+    body = text.rsplit('PLAY RECAP', 1)[-1]
+    for line in body.splitlines():
+        match = re.match(r'^([^\s:]+)\s*:\s*(.*)$', line)
+        if not match:
+            continue
+        fields = re.findall(r'\b(ok|changed|unreachable|failed|skipped|rescued|ignored)\s*=\s*([0-9]+)(?=\s|$)', match[2])
+        if fields:
+            # Duplicate rows cannot stand in for another managed host.
+            if match[1] in rows or len({key for key, _ in fields}) != len(fields):
+                return {}
+            rows[match[1]] = {key: int(value) for key, value in fields}
+    return rows
+
+
+def require_recaps(path, required, positive=(), prefix='recap'):
+    try: text = Path(path).read_text()
+    except OSError: text = ''
+    rows = recap(text)
+    failed = False
+    for number in (1, 2, 3):
+        row = rows.get('app' + str(number), {})
+        ok = all(row.get(key) == value for key, value in required.items())
+        ok = ok and all(isinstance(row.get(key), int) and row[key] > 0 for key in positive)
+        if not ok:
+            print('app' + str(number) + ' recap does not satisfy the required counters: ✗ [DQ:' + prefix + ']')
+            failed = True
+    assert not failed, 'Every required managed host needs its own successful recap'
+
+require_recaps('check.log', {'failed': 0}, positive=('changed','skipped'), prefix='preview_recaps')
+DQ_RECAP
+
 )
 dq_condition_rc=$?
 if [ "$dq_condition_rc" -ne 0 ]; then
