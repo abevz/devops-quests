@@ -7,51 +7,178 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: 'python3 - <<''DQ_SERIAL''
-
-      import yaml
-
-      plays=yaml.safe_load(open(''rollout.yml''))
-
-      assert plays and all(p.get(''serial'')==1 for p in plays), ''Keep serial: 1 for every maintenance play''
-
-      DQ_SERIAL'
-  - text: stages.0.objectives.1.text
-    check: 'set -euo pipefail
-
+    check: |-
+      set -euo pipefail
       cd ~/quest
+      python3 -I - <<'DQ_BOSS'
+      import json, os, re, subprocess, sys
+      from pathlib import Path
+      from decimal import Decimal
 
+      def require(good, marker):
+          if not good:raise AssertionError(marker)
+
+      try:
+          import yaml
+          from functools import lru_cache
+          @lru_cache(maxsize=1)
+          def inventory():return json.loads(subprocess.check_output(['ansible-inventory','--list'],text=True,timeout=3))
+          def members(name,seen=None):
+              seen=set() if seen is None else seen
+              if name in seen:return set()
+              seen.add(name);item=inventory().get(name,{})
+              result=set(item.get('hosts',[]))
+              for child in item.get('children',[]):result |= members(child,seen)
+              return result
+
+          def one_at_a_time(value, hosts):
+              batches=value if isinstance(value,list) else [value]
+              if not batches or value is None:return False
+              if all(type(v) is int and v==1 or isinstance(v,str) and v=='1' for v in batches):return True
+              # Resolve the actual supplied host pattern instead of assuming fleet size.
+              selected=subprocess.check_output(['ansible','all','--list-hosts'],text=True,timeout=3)
+              all_hosts=set(line.strip() for line in selected.splitlines()[1:] if line.strip())
+              if hosts in ('fleet',['fleet']):total=len(members('fleet'))
+              elif isinstance(hosts,list):total=len(set(hosts)&all_hosts)
+              elif isinstance(hosts,str) and hosts in all_hosts:total=1
+              else:return False
+              if total<1:return False
+              remaining=total;i=0
+              while remaining:
+                  item=batches[min(i,len(batches)-1)]
+                  if type(item) is int:number=item
+                  elif isinstance(item,str) and re.fullmatch(r'[0-9]+%',item):number=int(int(item[:-1])*total/100) or 1
+                  elif isinstance(item,str) and re.fullmatch(r'[0-9]+',item):number=int(item)
+                  else:return False
+                  actual=remaining if number<=0 else min(number,remaining)
+                  if actual!=1:return False
+                  remaining-=actual;i+=1
+              return True
+          plays=yaml.safe_load(Path('rollout.yml').read_text())
+          require(isinstance(plays,list) and bool(plays) and all(isinstance(p,dict) and one_at_a_time(p.get('serial'),p.get('hosts')) for p in plays),'serial')
+
+      except Exception as error:
+          marker = str(error) if isinstance(error,AssertionError) and re.fullmatch(r'[a-z0-9_]+',str(error)) else 'serial'
+          print('Required result is missing: ✗ [DQ:'+marker+']')
+          sys.exit(1)
+      DQ_BOSS
+  - text: stages.0.objectives.1.text
+    check: |-
+      set -euo pipefail
+      cd ~/quest
       failed=0
-
-      if ! ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" ''set -eu; test "$(cat /srv/site/maintenance.txt)"
-      = north-40''; then printf ''%s\n'' ''app1 /srv/site/maintenance.txt = north-40: ✗ [DQ:maintenance_1]'' >&2;
-      failed=1; fi
-
-      if ! ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" ''set -eu; test "$(cat /srv/site/maintenance.txt)"
-      = north-40''; then printf ''%s\n'' ''app2 /srv/site/maintenance.txt = north-40: ✗ [DQ:maintenance_2]'' >&2;
-      failed=1; fi
-
-      if ! ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" ''set -eu; test "$(cat /srv/site/maintenance.txt)"
-      = north-40''; then printf ''%s\n'' ''app3 /srv/site/maintenance.txt = north-40: ✗ [DQ:maintenance_3]'' >&2;
-      failed=1; fi
-
+      if ! ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'set -eu; test "$(cat /srv/site/maintenance.txt)" = north-40'; then printf '%s\n' 'app1 /srv/site/maintenance.txt = north-40: ✗ [DQ:maintenance_1]' >&2; failed=1; fi
+      if ! ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'set -eu; test "$(cat /srv/site/maintenance.txt)" = north-40'; then printf '%s\n' 'app2 /srv/site/maintenance.txt = north-40: ✗ [DQ:maintenance_2]' >&2; failed=1; fi
+      if ! ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'set -eu; test "$(cat /srv/site/maintenance.txt)" = north-40'; then printf '%s\n' 'app3 /srv/site/maintenance.txt = north-40: ✗ [DQ:maintenance_3]' >&2; failed=1; fi
       exit "$failed"
-
-      '
 - brief: stages.1.brief
   objectives:
   - text: stages.1.objectives.0.text
-    check: 'kubectl rollout status deployment/board --timeout=3s
+    check: |-
+      set -euo pipefail
+      cd ~/quest
+      kubectl rollout status deployment/board --timeout=3s
+      set -euo pipefail
+      cd ~/quest
+      python3 -I - <<'DQ_BOSS'
+      import json, os, re, subprocess, sys
+      from pathlib import Path
+      from decimal import Decimal
 
-      kubectl get deployment board -o json | jq -e ''.spec.replicas==2 and .spec.strategy.rollingUpdate.maxUnavailable==0
-      and .spec.strategy.rollingUpdate.maxSurge==1 and .status.availableReplicas==2'' >/dev/null'
+      def get(kind, name=None):
+          args=['kubectl','get',kind]+([name] if name else [])+['-o','json']
+          return json.loads(subprocess.check_output(args,stderr=subprocess.DEVNULL,timeout=3))
+
+      def scaled(value,count,up):
+          if type(value) is int:
+              if value<0:raise ValueError('budget')
+              return value
+          if not isinstance(value,str) or not re.fullmatch(r'[0-9]+%',value):raise ValueError('budget')
+          value=int(value[:-1])*count
+          return (value+99)//100 if up else value//100
+
+      def require(good, marker):
+          if not good:raise AssertionError(marker)
+
+      try:
+          d=get('deployment','board');s=d['spec'];rolling=s.get('strategy',{}).get('rollingUpdate',{})
+          require(s.get('replicas')==2 and d.get('status',{}).get('availableReplicas')==2,'available')
+          require(s.get('strategy',{}).get('type')=='RollingUpdate' and scaled(rolling.get('maxSurge','25%'),2,True)==1 and scaled(rolling.get('maxUnavailable','25%'),2,False)==0,'strategy')
+
+      except Exception as error:
+          marker = str(error) if isinstance(error,AssertionError) and re.fullmatch(r'[a-z0-9_]+',str(error)) else 'strategy'
+          print('Required result is missing: ✗ [DQ:'+marker+']')
+          sys.exit(1)
+      DQ_BOSS
   - text: stages.1.objectives.1.text
-    check: kubectl get service board -o json | jq -e '.spec.selector=={"app":"board"} and .spec.ports[0].port==8080
-      and .spec.ports[0].targetPort==8080' >/dev/null
+    check: |-
+      set -euo pipefail
+      cd ~/quest
+      python3 -I - <<'DQ_BOSS'
+      import json, os, re, subprocess, sys
+      from pathlib import Path
+      from decimal import Decimal
+
+      def get(kind, name=None):
+          args=['kubectl','get',kind]+([name] if name else [])+['-o','json']
+          return json.loads(subprocess.check_output(args,stderr=subprocess.DEVNULL,timeout=3))
+
+      def require(good, marker):
+          if not good:raise AssertionError(marker)
+
+      def port_number(containers, value, protocol='TCP'):
+          if type(value) is int:return value
+          if not isinstance(value,str) or not value:raise ValueError('named port')
+          found={p['containerPort'] for c in containers for p in c.get('ports',[]) if p.get('name')==value and p.get('protocol','TCP')==protocol}
+          if len(found)!=1:raise ValueError('named port')
+          return found.pop()
+
+      try:
+          service=get('service','board')['spec'];d=get('deployment','board');labels=d['spec']['template']['metadata']['labels']
+          selector=service.get('selector',{})
+          require(selector.get('app')=='board' and all(labels.get(k)==v for k,v in selector.items()),'service')
+          ports=[p for p in service.get('ports',[]) if p.get('port')==8080 and p.get('protocol','TCP')=='TCP']
+          require(len(ports)==1 and port_number(d['spec']['template']['spec']['containers'],ports[0].get('targetPort',8080))==8080,'service')
+
+      except Exception as error:
+          marker = str(error) if isinstance(error,AssertionError) and re.fullmatch(r'[a-z0-9_]+',str(error)) else 'service'
+          print('Required result is missing: ✗ [DQ:'+marker+']')
+          sys.exit(1)
+      DQ_BOSS
   - text: stages.1.objectives.2.text
-    check: "for pod in $(kubectl get pods -l app=board -o json | jq -r '.items[]|select(.metadata.deletionTimestamp==null\
-      \ and .status.phase==\"Running\")|.metadata.name' ); do\n test \"$(kubectl exec \"$pod\" -- wget -qO- http://board:8080)\"\
-      \ = north-40\ndone"
+    check: |-
+      set -euo pipefail
+      cd ~/quest
+      python3 -I - <<'DQ_BOSS'
+      import json, os, re, subprocess, sys
+      from pathlib import Path
+      from decimal import Decimal
+
+      def get(kind, name=None):
+          args=['kubectl','get',kind]+([name] if name else [])+['-o','json']
+          return json.loads(subprocess.check_output(args,stderr=subprocess.DEVNULL,timeout=3))
+
+      def require(good, marker):
+          if not good:raise AssertionError(marker)
+
+      def current_pods(deployment,replicasets,pods):
+          uid=deployment['metadata']['uid']
+          if not isinstance(uid,str) or not uid:raise ValueError('deployment identity')
+          owners={rs['metadata']['uid'] for rs in replicasets.get('items',[]) if any(ref.get('kind')=='Deployment' and ref.get('uid')==uid and ref.get('controller') is True for ref in rs.get('metadata',{}).get('ownerReferences',[]))}
+          return [pod for pod in pods.get('items',[]) if pod.get('metadata',{}).get('deletionTimestamp') is None and pod.get('status',{}).get('phase') not in ('Failed','Succeeded') and any(ref.get('kind')=='ReplicaSet' and ref.get('uid') in owners and ref.get('controller') is True for ref in pod.get('metadata',{}).get('ownerReferences',[]))]
+
+      try:
+          d=get('deployment','board');pods=current_pods(d,get('replicasets'),get('pods'));pods=[p for p in pods if p.get('status',{}).get('phase')=='Running']
+          require(bool(pods),'http')
+          for pod in pods:
+              value=subprocess.check_output(['kubectl','exec','--pod-running-timeout=2s',pod['metadata']['name'],'-c','worker','--','wget','-qO-','-T','3','http://board:8080'],stderr=subprocess.DEVNULL,timeout=4)
+              require(value.rstrip(b'\n')==b'north-40','http')
+
+      except Exception as error:
+          marker = str(error) if isinstance(error,AssertionError) and re.fullmatch(r'[a-z0-9_]+',str(error)) else 'http'
+          print('Required result is missing: ✗ [DQ:'+marker+']')
+          sys.exit(1)
+      DQ_BOSS
 hints:
 - text: hints.0.text
   guide: ansible-11

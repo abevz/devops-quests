@@ -40,16 +40,36 @@ hints.1.text: 'serial и strategy Deployment управляют разными �
   kubectl get service board -o yaml
 
   ```'
-hints.2.text: "Сохраните readiness и selectors при смене ответа.\n\nПроверьте соответствующий этап после исправления.\n\
-  \nЭтап 1: Предварительный прогон обрабатывает по одному хосту в партии, а каждый из `app1`, `app2`, `app3` показывает\
-  \ `north-40`.\n\n```sh\nansible-playbook rollout.yml --check\nfor n in 1 2 3; do\n  host=\"app${n}-${DQ_NAMESPACE#dq-}\"\
-  \n  printf \"%s: \" \"$host\"\n  ssh -n -o BatchMode=yes -p 2222 \"root@$host\" 'cat /srv/site/maintenance.txt'\n\
-  done\n```\n\nЭтап 2: Развёртывание завершается с `2` доступными репликами; запросы потребителей выводят `north-40`.\n\
-  \n```sh\nkubectl get deployment board\nkubectl rollout status deployment/board --timeout=3s\nfor pod in $(kubectl\
-  \ get pods -l app=board -o json | jq -r '.items[]|select(.metadata.deletionTimestamp==null and .status.phase==\"\
-  Running\")|.metadata.name'); do\n  kubectl exec \"$pod\" -- wget -qO- http://board:8080\n  printf \"\\n\"\ndone\n\
-  ```\n\nОжидаемые наблюдения для этапа целиком:\n- Этап 2: Deployment и Service соответствуют требованиям; запросы\
-  \ потребителей выводят `north-40`."
+hints.2.text: |-
+  Сохраните readiness и selectors при смене ответа.
+
+  Проверьте соответствующий этап после исправления.
+
+  Этап 1: Предварительный прогон обрабатывает по одному хосту в партии, а каждый из `app1`, `app2`, `app3` показывает `north-40`.
+
+  ```sh
+  ansible-playbook rollout.yml --check
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    printf "%s: " "$host"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/maintenance.txt'
+  done
+  ```
+
+  Этап 2: Развёртывание завершается с `2` доступными репликами; запросы потребителей выводят `north-40`.
+
+  ```sh
+  kubectl get deployment board
+  kubectl rollout status deployment/board --timeout=3s
+  for pod in $(kubectl get pods -l app=board -o json | jq -r '.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")|.metadata.name'); do
+    kubectl exec "$pod" -c worker -- wget -qO- http://board:8080
+    printf "\n"
+  done
+  ```
+
+  Ожидаемые наблюдения для этапа целиком:
+  - Этап 2: Deployment и Service соответствуют требованиям; запросы потребителей выводят `north-40`.
+
 phrases.0: 'Я ограничил пачки обслуживания с помощью serial: 1.'
 phrases.1: Я проверил контракт обслуживания на каждом целевом узле.
 phrases.2: Я проверил готовые реплики и сохранённый Service при выкатке.
@@ -70,3 +90,8 @@ stages.0.objectives.1.text: На каждом управляемом хосте 
 stages.1.objectives.0.text: Deployment `board` завершает развёртывание с `2` доступными репликами.
 stages.1.objectives.1.text: Service `board` предоставляет приложение на порту `8080`.
 stages.1.objectives.2.text: Каждый работающий Pod приложения получает `north-40` от `http://board:8080`.
+diagnostics.serial: Обслуживание должно ограничивать размер пакета одним хостом.
+diagnostics.strategy: Rolling update должен сохранять эффективный surge один и нулевую недоступность.
+diagnostics.available: Deployment board должен иметь две доступные реплики.
+diagnostics.service: Service board должен выбирать приложение и направлять TCP 8080 на его порт.
+diagnostics.http: Каждый работающий Pod приложения должен получать north-40 от board:8080.

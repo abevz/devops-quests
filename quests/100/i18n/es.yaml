@@ -70,73 +70,42 @@ hints.1.text: 'Etapa 1: inspect application.yaml — Argo CD apunta a una ruta r
   git -C repository show origin/main:manifests/board.yaml
 
   ```'
-hints.2.text: 'Restaure el registro pull Secret desde private-release.json, alcance reader.hcl a dispatch de solo
-  lectura, ejecute sync-secret.sh y verifique la imagen en ejecución digest y Respuesta HTTP.
-
+hints.2.text: |-
+  Restaure el registro pull Secret desde private-release.json, alcance reader.hcl a dispatch de solo lectura, ejecute sync-secret.sh y verifique la imagen en ejecución digest y Respuesta HTTP.
 
   Verifica la etapa reparada y compara el resultado observado.
 
-
-  Etapa 1/2: El controlador informa `Synced` en la revisión esperada; en la etapa final también informa `Healthy`
-  y la carga está lista.
-
+  Etapa 1/2: El controlador informa `Synced` en la revisión esperada; en la etapa final también informa `Healthy` y la carga está lista.
 
   ```sh
-
-  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
-  printf ''\n''
-
+  kubectl get application board -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}'; printf '\n'
   kubectl get deployment board
-
   ```
 
-
-  Etapa 2: El hash publicado coincide con la versión registrada; la comprobación de ascendencia, cuando existe,
-  termina con código `0`.
-
+  Etapa 2: El hash publicado coincide con la versión registrada; la comprobación de ascendencia, cuando existe, termina con código `0`.
 
   ```sh
-
   source platform.env
-
   cat release-commit
-
   git -C repository ls-remote origin refs/heads/main
-
   ```
 
-
-  Etapa 2: El Secret y el registro Vault permitido contienen `north-secret`, HTTP devuelve `north-100` y la otra
-  ruta Vault devuelve HTTP `403`.
-
+  Etapa 2: El Secret y el registro Vault permitido contienen `north-secret`, HTTP devuelve `north-100` y la otra ruta Vault devuelve HTTP `403`.
 
   ```sh
-
   source platform.env
-
-  kubectl get secret route-secret -o jsonpath=''{.data.value}'' | base64 -d
-
-  printf ''\n''
-
-  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
-
-  printf ''\n''
-
-  curl -fsS --max-time 3 -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
-
-  curl -sS --max-time 3 -o /dev/null -w ''%{http_code}\n'' -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN")
-  "$VAULT_ADDR/v1/secret/data/other"
-
+  kubectl get secret route-secret -o jsonpath='{.data.value}' | base64 -d
+  printf '\n'
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  printf '\n'
+  curl -fsS --max-time 3 -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
+  curl -sS --max-time 3 -o /dev/null -w '%{http_code}\n' -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/other"
   ```
-
 
   Observaciones esperadas para la etapa completa:
+  - Etapa 1/2: La reconciliación, configuración de carga y observaciones de la imagen en ejecución mostradas cumplen los requisitos de esta etapa.
+  - Etapa 2: El hash remoto coincide con `release-commit`; el manifiesto Git contiene la imagen congelada suministrada y la referencia al Secret `route-secret`.
 
-  - Etapa 1/2: La reconciliación, configuración de carga y observaciones de la imagen en ejecución mostradas cumplen
-  los requisitos de esta etapa.
-
-  - Etapa 2: El hash remoto coincide con `release-commit`; el manifiesto Git contiene la imagen congelada suministrada
-  y la referencia al Secret `route-secret`.'
 phrases.0: Aislé fallas en cada límite de entrega.
 phrases.1: Conservé la imagen immutable, la reconciliación identity y Git.
 phrases.2: Verifiqué el acceso secreto con privilegios mínimos y un servicio real de extremo a extremo.
@@ -147,7 +116,9 @@ questions.1.points.0: Revisión de fuente correcta, ejecutando digest y con alca
 questions.1.points.1: Una solicitud útil tiene éxito a través del servicio recuperado.
 questions.1.prompt: ¿Qué verifica una recuperación completa más allá de un controlador green?
 diagnostics.repo: application/board repoURL debe ser igual a GIT_URL.
-diagnostics.path: application/board source.path debe ser igual a manifests.
+diagnostics.path: |-
+  El directorio de origen debe apuntar a manifests dentro del repositorio.
+
 diagnostics.target: application/board targetRevision debe ser igual a main.
 diagnostics.selfheal: application/board selfHeal debe ser igual a true.
 diagnostics.prune: application/board prune debe ser igual a true.
@@ -161,17 +132,28 @@ diagnostics.release_revision: application/board sync.revision debe ser igual a r
 diagnostics.rollout: El despliegue de deployment/board debe completarse.
 diagnostics.http: La petición a board:8080 debe devolver north-100.
 diagnostics.image: private-release.json image no debe estar vacío.
-diagnostics.board_image: deployment/board containers[0].image debe ser igual a private-release.json image.
+diagnostics.board_image: |-
+  La imagen del worker identificado por nombre debe coincidir con private-release.json.
+
 diagnostics.board_policy: deployment/board containers[0].imagePullPolicy debe ser igual a Always.
-diagnostics.board_secret: deployment/board imagePullSecrets debe ser igual a [registry-pull].
-diagnostics.board_env: El env del primer contenedor board debe contener solo ROUTE_SECRET de route-secret, clave
-  value.
+diagnostics.board_secret: |-
+  worker debe usar solo las credenciales existentes registry-pull, incluidas las referencias efectivas de los Pods.
+
+diagnostics.board_env: |-
+  ROUTE_SECRET del worker identificado por nombre debe referenciar route-secret/value sin literal ni variable duplicada.
+
 diagnostics.secret: El valor descodificado de route-secret debe ser north-secret.
-diagnostics.image_id: Un Pod board debe tener un contenedor listo cuyo imageID contenga el digest fijado.
+diagnostics.image_id: |-
+  Un Pod actual de este Deployment debe tener un worker listo y en ejecución con el digest congelado exacto.
+
 diagnostics.reader: El token lector (reader) de Vault debe leer north-secret de secret/data/dispatch.
 diagnostics.denied: La petición de Vault reader a secret/data/other debe devolver HTTP 403.
-diagnostics.git_image: La primera imagen board del manifiesto Git debe coincidir con la imagen de private-release.json.
-diagnostics.git_env: La primera entrada de entorno del manifiesto Git debe referenciar el Secret route-secret.
+diagnostics.git_image: |-
+  La imagen del worker identificado por nombre debe coincidir con private-release.json.
+
+diagnostics.git_env: |-
+  ROUTE_SECRET del worker identificado por nombre debe referenciar route-secret/value sin literal ni variable duplicada.
+
 stages.0.objectives.0.text: La Application `board` informa `Synced` en la revisión publicada prevista. Restaura
   automáticamente las desviaciones y elimina los recursos que ya no están en la versión deseada.
 stages.1.objectives.0.text: El `main` remoto coincide con la revisión registrada en `release-commit`.

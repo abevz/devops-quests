@@ -6,14 +6,28 @@ set +e
 set -e
 set -euo pipefail
 cd ~/quest
-failed=0
-check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
-dns_ip=$(kubectl get service station-dns -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
-client=$(kubectl get deployment client -o json 2>/dev/null || true)
-check 'deployment/client dnsPolicy = None [DQ:dns_policy]' '.spec.template.spec.dnsPolicy=="None"' "$client"
-if ! test -n "$dns_ip" || ! jq -e --arg ip "$dns_ip" '.spec.template.spec.dnsConfig.nameservers==[$ip]' <<<"$client" >/dev/null 2>&1; then printf '%s\n' 'deployment/client nameservers = [station-dns Service IP]: ✗ [DQ:nameserver]'; failed=1; fi
-exit "$failed"
+python3 -I - <<'DQ_BOSS'
+import json, os, re, subprocess, sys
+from pathlib import Path
+from decimal import Decimal
 
+def get(kind, name=None):
+    args=['kubectl','get',kind]+([name] if name else [])+['-o','json']
+    return json.loads(subprocess.check_output(args,stderr=subprocess.DEVNULL,timeout=3))
+
+def require(good, marker):
+    if not good:raise AssertionError(marker)
+
+try:
+    service=get('service','station-dns');d=get('deployment','client');spec=d['spec']['template']['spec']
+    require(spec.get('dnsPolicy')=='None','dns_policy')
+    require(bool(spec.get('dnsConfig',{}).get('nameservers')) and set(spec['dnsConfig']['nameservers'])=={service['spec']['clusterIP']},'nameserver')
+
+except Exception as error:
+    marker = str(error) if isinstance(error,AssertionError) and re.fullmatch(r'[a-z0-9_]+',str(error)) else 'nameserver'
+    print('Required result is missing: ✗ [DQ:'+marker+']')
+    sys.exit(1)
+DQ_BOSS
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -37,11 +51,10 @@ dns_ip=$(kubectl get service station-dns -o jsonpath='{.spec.clusterIP}' 2>/dev/
 expected=$(cat /run/dq/facts/0/expected-dns-address 2>/dev/null || true)
 lookup=''
 if test -n "$dns_ip" && test -n "$expected"; then
-  if ! lookup=$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- nslookup station.internal "$dns_ip" 2>/dev/null); then lookup=''; fi
+  if ! lookup=$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -c worker -- nslookup station.internal "$dns_ip" 2>/dev/null); then lookup=''; fi
 fi
 if ! test -n "$expected" || ! dns_answer_has "$lookup" "$expected"; then printf '%s\n' 'client DNS station.internal answer = expected-dns-address: ✗ [DQ:answer]'; failed=1; fi
 exit "$failed"
-
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

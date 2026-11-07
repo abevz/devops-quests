@@ -6,7 +6,7 @@ app=$(kubectl get application board -o json 2>/dev/null || true)
 rev=$(cat /run/dq/facts/0/baseline-commit 2>/dev/null || true)
 check() { local label=$1 expression=$2; if ! jq -e --arg rev "$rev" --arg url "$GIT_URL" "$expression" <<<"$app" >/dev/null 2>&1; then printf '%s\n' "application/board $label: ✗"; failed=1; fi; }
 check 'repoURL = GIT_URL [DQ:repo]' '.spec.source.repoURL==$url'
-check 'path = manifests [DQ:path]' '.spec.source.path=="manifests"'
+check 'path = manifests [DQ:path]' '(.spec.source.path | (startswith("/")|not) and ([splits("/") | select(.!="" and .!=".")]==["manifests"]))'
 check 'targetRevision = main [DQ:target]' '.spec.source.targetRevision=="main"'
 check 'selfHeal = true [DQ:selfheal]' '.spec.syncPolicy.automated.selfHeal==true'
 check 'prune = true [DQ:prune]' '.spec.syncPolicy.automated.prune==true'

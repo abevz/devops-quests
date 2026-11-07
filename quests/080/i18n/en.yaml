@@ -60,71 +60,41 @@ hints.1.text: 'A Git commit can be Synced while its image tag does not exist.
   git -C repository show origin/main:manifests/board.yaml
 
   ```'
-hints.2.text: 'Commit the supplied immutable digest, preserve pull credentials and verify both Git and the running
-  imageID. Publish a descendant commit to `origin/main` and record its hash in `release-commit`.
-
+hints.2.text: |-
+  Commit the supplied immutable digest, preserve pull credentials and verify both Git and the running imageID. Publish a descendant commit to `origin/main` and record its hash in `release-commit`.
 
   Verify the repaired stage and compare the observed result.
 
-
-  Stage 1/2: The controller reports `Synced` at the expected revision; in the final stage it also reports `Healthy`
-  and the workload is ready.
-
+  Stage 1/2: The controller reports `Synced` at the expected revision; in the final stage it also reports `Healthy` and the workload is ready.
 
   ```sh
-
-  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
-  printf ''\n''
-
+  kubectl get application board -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}'; printf '\n'
   kubectl get deployment board
-
   ```
-
 
   Stage 2: The published hash matches the recorded release; the ancestry check, when present, exits `0`.
 
-
   ```sh
-
   source platform.env
-
   cat release-commit
-
   git -C repository ls-remote origin refs/heads/main
-
   git -C repository merge-base --is-ancestor "$(cat baseline-commit)" origin/main
-
   ```
 
-
-  Stage 2: The application returns `north-80`; authenticated retrieval of the recorded registry digest returns HTTP
-  `200`.
-
+  Stage 2: The application returns `north-80`; authenticated retrieval of the recorded registry digest returns HTTP `200`.
 
   ```sh
-
   source platform.env
-
-  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
-
-  printf ''\n''
-
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  printf '\n'
   image=$(jq -r .image private-release.json)
-
-  curl -fsS --max-time 4 --config <(printf ''user = "%s:%s"\n'' "$REGISTRY_USER" "$REGISTRY_PASSWORD") --cacert
-  registry-ca.crt -H ''Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json''
-  -o /dev/null -w ''%{http_code}\n'' "https://$REGISTRY/v2/parcel/manifests/${image##*@}"
-
+  curl -fsS --max-time 4 --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") --cacert registry-ca.crt -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' -o /dev/null -w '%{http_code}\n' "https://$REGISTRY/v2/parcel/manifests/${image##*@}"
   ```
-
 
   Expected observations for the complete stage:
+  - Stage 1/2: The displayed reconciliation, workload configuration and running-image observations match this stage’s Requirements.
+  - Stage 2: The remote hash equals `release-commit`, the manifest matches Requirements, and ancestry exits `0` with a different release hash.
 
-  - Stage 1/2: The displayed reconciliation, workload configuration and running-image observations match this stage’s
-  Requirements.
-
-  - Stage 2: The remote hash equals `release-commit`, the manifest matches Requirements, and ancestry exits `0`
-  with a different release hash.'
 phrases.0: I isolated source-path failure from private image retrieval.
 phrases.1: I pinned and verified the immutable release in Git and at runtime.
 phrases.2: I kept authentication and automatic reconciliation intact during recovery.
@@ -137,7 +107,9 @@ questions.1.points.1: Keep the recovered commit descended from known history.
 questions.1.points.2: Verify the observed revision, health and real endpoint together.
 questions.1.prompt: How do you preserve a recovery after GitOps self-heal?
 diagnostics.repo: application/board repoURL must equal GIT_URL.
-diagnostics.path: application/board source.path must equal manifests.
+diagnostics.path: |-
+  The source directory must resolve to manifests inside the repository.
+
 diagnostics.target: application/board targetRevision must equal main.
 diagnostics.synced: application/board sync.status must equal Synced.
 diagnostics.revision_exists: The expected Git revision must exist and be nonempty.
@@ -145,7 +117,9 @@ diagnostics.revision: The application/board sync revision must equal the expecte
 diagnostics.selfheal: application/board selfHeal must equal true.
 diagnostics.health: application/board health.status must equal Healthy.
 diagnostics.prune: application/board prune must equal true.
-diagnostics.secrets: deployment/board imagePullSecrets must equal [registry-pull].
+diagnostics.secrets: |-
+  The worker must use only the existing registry-pull credentials, including effective Pod references.
+
 diagnostics.policy: deployment/board imagePullPolicy must equal Always.
 diagnostics.rollout: The deployment/board rollout must complete.
 diagnostics.http: The request to board:8080 must return north-80.
@@ -154,13 +128,20 @@ diagnostics.fetch: git fetch origin main must succeed.
 diagnostics.origin: origin/main must equal release-commit.
 diagnostics.changed: release-commit must differ from baseline-commit.
 diagnostics.ancestor: baseline-commit must be an ancestor of origin/main.
-diagnostics.git_image: The first board image in Git must equal the image in private-release.json.
+diagnostics.git_image: |-
+  The named worker image must match private-release.json.
+
 diagnostics.git_policy: The board imagePullPolicy in Git must be Always.
-diagnostics.git_secrets: The board imagePullSecrets in Git must equal [registry-pull].
-diagnostics.live_image: deployment/board containers[0].image must equal private-release.json image.
+diagnostics.git_secrets: |-
+  The worker must use only the existing registry-pull credentials, including effective Pod references.
+
+diagnostics.live_image: |-
+  The named worker image must match private-release.json.
+
 diagnostics.live_policy: deployment/board imagePullPolicy must equal Always.
-diagnostics.image_id: A board Pod not marked for deletion must have a ready container whose imageID contains the
-  frozen digest.
+diagnostics.image_id: |-
+  A current Deployment-owned Pod must have a ready running worker with the exact frozen image digest.
+
 diagnostics.registry: Authenticated registry must serve the frozen digest.
 stages.0.objectives.0.text: Application `board` reports `Synced` at the intended published revision. It automatically
   restores drift.

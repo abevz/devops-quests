@@ -43,48 +43,33 @@ hints.1.text: 'Headless DNS hängt vom passenden bereiten endpoints ab.
   kubectl get networkpolicies -o yaml
 
   ```'
-hints.2.text: 'Reparieren Sie den selector, lassen Sie dann DNS und nur den shelf Pod-Port zu.
-
+hints.2.text: |-
+  Reparieren Sie den selector, lassen Sie dann DNS und nur den shelf Pod-Port zu.
 
   Prüfen Sie die reparierte Phase und vergleichen Sie das beobachtete Ergebnis.
 
-
   Phase 1: Die aktuelle Claim-UID entspricht der ursprünglich aufgezeichneten UID.
 
-
   ```sh
-
   cat original-pvc-uid
-
-  kubectl get pvc ledger-shelf-0 -o jsonpath=''{.metadata.uid}''; printf ''\n''
-
+  kubectl get pvc ledger-shelf-0 -o jsonpath='{.metadata.uid}'; printf '\n'
   ```
-
 
   Phase 1: Der Client löst den vollständigen DNS-Namen des Shelf-Pods auf.
 
-
   ```sh
-
-  kubectl exec deployment/client -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."
-
+  kubectl exec deployment/client -c worker -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."
   ```
-
 
   Phase 1: Der Client erhält `ledger-120`.
 
-
   ```sh
-
-  kubectl exec deployment/client -- wget -qO- -T 3 http://shelf-0.shelf:8080
-
+  kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://shelf-0.shelf:8080
   ```
 
-
   Erwartete Beobachtungen für die gesamte Phase:
+  - Phase 1: Die Claim-UID ist unverändert, Service `shelf` ist headless und die Richtlinien erlauben nur den erforderlichen Egress.
 
-  - Phase 1: Die Claim-UID ist unverändert, Service `shelf` ist headless und die Richtlinien erlauben nur den erforderlichen
-  Egress.'
 phrases.0: Ich habe den stateful claim während der Netzwerkwiederherstellung beibehalten.
 phrases.1: Ich habe ordinal DNS anhand des isolierten client verifiziert.
 phrases.2: Ich habe nur die erforderlichen Abhängigkeitsflüsse wiederhergestellt.
@@ -95,15 +80,23 @@ questions.1.points.0: Durch das Ersetzen des Speichers wird eine selector- oder 
 questions.1.points.1: Unnötiger Austausch kann wiederherstellbare Daten zerstören.
 questions.1.prompt: Warum sollte PVC identity während eines Netzwerkvorfalls aufbewahrt werden?
 diagnostics.pvc: Die original-pvc-uid darf nicht leer sein und muss der UID von ledger-shelf-0 entsprechen.
-diagnostics.shelf_service: Service shelf muss clusterIP None und selector app:shelf haben.
+diagnostics.shelf_service: |-
+  Der Headless-Service shelf muss den bereitgestellten Speicher-Pod auswählen.
+
 diagnostics.policies: Das Auflisten der NetworkPolicies muss erfolgreich sein.
 diagnostics.pods: Das Auflisten der Client-Pods muss erfolgreich sein und mindestens einen Pod liefern.
 diagnostics.dns: Die DNS-Abfrage von shelf-0.shelf aus client muss erfolgreich sein.
 diagnostics.http: Die Anfrage von client an shelf-0.shelf:8080 muss ledger-120 liefern.
 diagnostics.named: Es muss genau eine NetworkPolicy namens client-egress geben.
-diagnostics.selector: Der podSelector von client-egress muss genau app:client entsprechen.
-diagnostics.types: policyTypes von client-egress darf nur Egress enthalten.
-diagnostics.egress: Peers und Ports von client-egress müssen die in der Aufgabenbeschreibung beschränkte Form verwenden.
+diagnostics.selector: |-
+  Die Egress-Policy muss jeden aktuellen anfragenden Pod erfassen.
+
+diagnostics.types: |-
+  Egress darf nur DNS und den Datenport des vorhandenen shelf erlauben; andere passende Policies dürfen den Zugriff nicht erweitern.
+
+diagnostics.egress: |-
+  Egress darf nur DNS und den Datenport des vorhandenen shelf erlauben; andere passende Policies dürfen den Zugriff nicht erweitern.
+
 diagnostics.unexpected: client-egress darf keinen unerwarteten Datenfluss enthalten; das Original nennt Ziel, Protokoll
   und Port.
 diagnostics.other_egress: Eine andere NetworkPolicy, die einen Client auswählt, darf keinen zusätzlichen ausgehenden

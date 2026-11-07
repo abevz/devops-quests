@@ -69,73 +69,42 @@ hints.1.text: 'Этап 1: проверьте application.yaml — Argo CD см�
   git -C repository show origin/main:manifests/board.yaml
 
   ```'
-hints.2.text: 'Восстановите pull Secret из private-release.json, ограничьте reader.hcl чтением dispatch, выполните
-  sync-secret.sh и проверьте работающий digest образа и HTTP-ответ.
-
+hints.2.text: |-
+  Восстановите pull Secret из private-release.json, ограничьте reader.hcl чтением dispatch, выполните sync-secret.sh и проверьте работающий digest образа и HTTP-ответ.
 
   Проверьте исправленный этап и сравните наблюдаемый результат.
 
-
-  Этап 1/2: Контроллер сообщает `Synced` для ожидаемой ревизии; на последнем этапе также сообщает `Healthy`, нагрузка
-  готова.
-
+  Этап 1/2: Контроллер сообщает `Synced` для ожидаемой ревизии; на последнем этапе также сообщает `Healthy`, нагрузка готова.
 
   ```sh
-
-  kubectl get application board -o jsonpath=''{.status.sync.status} {.status.health.status} {.status.sync.revision}'';
-  printf ''\n''
-
+  kubectl get application board -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}'; printf '\n'
   kubectl get deployment board
-
   ```
 
-
-  Этап 2: Опубликованный хеш совпадает с записанным релизом; проверка предка, если она есть, завершается с кодом
-  `0`.
-
+  Этап 2: Опубликованный хеш совпадает с записанным релизом; проверка предка, если она есть, завершается с кодом `0`.
 
   ```sh
-
   source platform.env
-
   cat release-commit
-
   git -C repository ls-remote origin refs/heads/main
-
   ```
 
-
-  Этап 2: Secret и разрешённая запись Vault содержат `north-secret`, HTTP возвращает `north-100`, другой путь Vault
-  возвращает HTTP `403`.
-
+  Этап 2: Secret и разрешённая запись Vault содержат `north-secret`, HTTP возвращает `north-100`, другой путь Vault возвращает HTTP `403`.
 
   ```sh
-
   source platform.env
-
-  kubectl get secret route-secret -o jsonpath=''{.data.value}'' | base64 -d
-
-  printf ''\n''
-
-  kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080
-
-  printf ''\n''
-
-  curl -fsS --max-time 3 -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
-
-  curl -sS --max-time 3 -o /dev/null -w ''%{http_code}\n'' -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN")
-  "$VAULT_ADDR/v1/secret/data/other"
-
+  kubectl get secret route-secret -o jsonpath='{.data.value}' | base64 -d
+  printf '\n'
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  printf '\n'
+  curl -fsS --max-time 3 -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
+  curl -sS --max-time 3 -o /dev/null -w '%{http_code}\n' -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/other"
   ```
-
 
   Ожидаемые наблюдения для этапа целиком:
+  - Этап 1/2: Показанные согласование, конфигурация нагрузки и наблюдения работающего образа соответствуют требованиям этого этапа.
+  - Этап 2: Удалённый хеш равен `release-commit`; Git-манифест содержит поставленный зафиксированный образ и ссылку на Secret `route-secret`.
 
-  - Этап 1/2: Показанные согласование, конфигурация нагрузки и наблюдения работающего образа соответствуют требованиям
-  этого этапа.
-
-  - Этап 2: Удалённый хеш равен `release-commit`; Git-манифест содержит поставленный зафиксированный образ и ссылку
-  на Secret `route-secret`.'
 phrases.0: Я отделил сбои на каждой границе доставки.
 phrases.1: Я сохранил immutable identity образа и согласование Git.
 phrases.2: Я проверил минимальные права к секретам и реальную работу сервиса всей цепочки.
@@ -146,7 +115,9 @@ questions.1.points.0: Верную ревизию источника, работ
 questions.1.points.1: Полезный запрос успешно проходит через восстановленный сервис.
 questions.1.prompt: Что проверяет полное восстановление помимо зелёного контроллера?
 diagnostics.repo: application/board repoURL должен совпадать с GIT_URL.
-diagnostics.path: application/board source.path должен совпадать с manifests.
+diagnostics.path: |-
+  Каталог источника должен указывать на manifests внутри репозитория.
+
 diagnostics.target: application/board targetRevision должен совпадать с main.
 diagnostics.selfheal: application/board selfHeal должен совпадать с true.
 diagnostics.prune: application/board prune должен совпадать с true.
@@ -160,16 +131,28 @@ diagnostics.release_revision: application/board sync.revision должен со�
 diagnostics.rollout: Выкатка deployment/board должна завершиться.
 diagnostics.http: Запрос к board:8080 должен вернуть north-100.
 diagnostics.image: private-release.json image должен быть непустым.
-diagnostics.board_image: deployment/board containers[0].image должен совпадать с private-release.json image.
+diagnostics.board_image: |-
+  Образ именованного worker должен совпадать с private-release.json.
+
 diagnostics.board_policy: deployment/board containers[0].imagePullPolicy должен совпадать с Always.
-diagnostics.board_secret: deployment/board imagePullSecrets должен совпадать с [registry-pull].
-diagnostics.board_env: В env первого контейнера board должен быть только ROUTE_SECRET из route-secret, ключ value.
+diagnostics.board_secret: |-
+  worker должен использовать только существующие credentials registry-pull, включая эффективные ссылки Pod.
+
+diagnostics.board_env: |-
+  ROUTE_SECRET именованного worker должен ссылаться на route-secret/value без литерала и дублирования переменной.
+
 diagnostics.secret: Декодированное значение route-secret должно быть north-secret.
-diagnostics.image_id: У Pod board должен быть готовый контейнер, чей imageID содержит зафиксированный digest.
+diagnostics.image_id: |-
+  В текущем Pod данного Deployment должен работать готовый worker с точным замороженным digest образа.
+
 diagnostics.reader: Токен reader Vault должен прочитать north-secret из secret/data/dispatch.
 diagnostics.denied: Запрос Vault reader к secret/data/other должен вернуть HTTP 403.
-diagnostics.git_image: Первый образ board в манифесте Git должен совпадать с образом из private-release.json.
-diagnostics.git_env: Первая переменная окружения в манифесте Git должна ссылаться на Secret route-secret.
+diagnostics.git_image: |-
+  Образ именованного worker должен совпадать с private-release.json.
+
+diagnostics.git_env: |-
+  ROUTE_SECRET именованного worker должен ссылаться на route-secret/value без литерала и дублирования переменной.
+
 stages.0.objectives.0.text: Application `board` сообщает `Synced` для требуемой опубликованной ревизии. Оно автоматически
   устраняет дрейф и удаляет ресурсы, которых больше нет в желаемом релизе.
 stages.1.objectives.0.text: Удалённая `main` равна ревизии из `release-commit`.
