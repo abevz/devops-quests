@@ -5,7 +5,7 @@ set +e
 (
 set -e
 source platform.env
-kubectl get application station -o json | jq -e --arg repo "$GIT_URL" --arg ns "$DQ_NAMESPACE" '.spec.project=="station" and .spec.source.repoURL==$repo and .spec.source.path=="manifests" and .spec.source.targetRevision=="main" and .spec.destination.namespace==$ns and .spec.destination.server=="https://kubernetes.default.svc"' >/dev/null
+kubectl get application station -o json | jq -e --arg repo "$GIT_URL" --arg ns "$DQ_NAMESPACE" 'def same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; .spec.project=="station" and .spec.source.repoURL==$repo and (.spec.source.path | same_dir("manifests")) and .spec.source.targetRevision=="main" and .spec.destination.namespace==$ns and ((.spec.destination.server=="https://kubernetes.default.svc" and ((.spec.destination.name//"")=="")) or (.spec.destination.name=="in-cluster" and ((.spec.destination.server//"")=="")))' >/dev/null
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -22,7 +22,7 @@ kubectl rollout status deployment/board --timeout=3s >/dev/null
 [ $? -eq 0 ] || failed=1
 (
 set -e
-test "$(kubectl exec deployment/board -- wget -qO- http://127.0.0.1:8080)" = north-43
+test "$(kubectl exec deployment/board -c worker -- wget -qO- http://127.0.0.1:8080)" = north-43
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

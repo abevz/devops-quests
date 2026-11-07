@@ -44,33 +44,46 @@ hints.1.text: 'Wygasły token nie może się odnowić; najpierw wystaw nowy ogra
   kubectl describe deployment reader
 
   ```'
-hints.2.text: 'Nowy token trwa tylko 60 s. Ustaw odnowienie increment w renew-request.json na 180 s (w ramach
-  limitu roli 600) i uruchom renew-token.sh, tak aby pozostały lease przekroczył 90 s.
+hints.2.text: |-
+  Nowy token trwa tylko 60 s. Ustaw odnowienie increment w renew-request.json na 180 s (w ramach limitu roli 600) i uruchom renew-token.sh, tak aby pozostały lease przekroczył 90 s.
 
-
-  Zachowaj station-token pod adresem mode 0600, uruchom sync-secret.sh, aby dostarczyć wartość aplikacji do
-  Kubernetes Secret i odzyskaj obciążenie reader.
-
+  Zachowaj station-token pod adresem mode 0600, uruchom sync-secret.sh, aby dostarczyć wartość aplikacji do Kubernetes Secret i odzyskaj obciążenie reader.
 
   Sprawdź obserwowany wynik:
 
+  - `source platform.env; token=$(cat station-token); ls -l station-token; curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$token") "$VAULT_ADDR/v1/auth/token/lookup-self" | jq '.data | {ttl,renewable,explicit_max_ttl,policies}'` — Tryb `-rw-------`, TTL większy niż `90`, renewable `true`, maksymalny TTL `600` oraz polityki `default`, `rail-reader`.
+  - `source platform.env; token=$(cat station-token); curl -fsS -X POST -H @<(printf 'X-Vault-Token: %s\n' "$token") -H 'Content-Type: application/json' --data '{"paths":["secret/data/dispatch","secret/data/other","sys/mounts"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '.data // .'; curl -fsS -X POST -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN") -H 'Content-Type: application/json' --data '{"paths":["sys/policies/acl/rail-reader","auth/token/create/rail-station","auth/token/create/other"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '.data // .'` — Token ma `read` tylko do dispatch; wystawca ma `update` do `auth/token/create/rail-station`; pozostałe wskazane ścieżki mają `deny`.
+  - `kubectl rollout status deployment/reader --timeout=10s; kubectl exec deployment/reader -c worker -- sh -c 'test "$(cat /tmp/route)" = north-secret && printf "configuration matches\n"'` — Rollout kończy się; odbiorca wypisuje `configuration matches`.
 
-  - `source platform.env; token=$(cat station-token); ls -l station-token; curl -fsS -H @<(printf ''X-Vault-Token:
-  %s\n'' "$token") "$VAULT_ADDR/v1/auth/token/lookup-self" | jq ''.data | {ttl,renewable,explicit_max_ttl,policies}''`
-  — Tryb `-rw-------`, TTL większy niż `90`, renewable `true`, maksymalny TTL `600` oraz polityki `default`,
-  `rail-reader`.
+  Sprawdź, czy Deployment i każdy kontener aplikacji w jego aktywnych Podach nie zawierają żadnego z dostarczonych tokenów Vault. Sukces wypisuje tylko `true`; dane dostępowe pozostają na stacji roboczej i nie są wyświetlane.
 
-  - `source platform.env; token=$(cat station-token); curl -fsS -X POST -H @<(printf ''X-Vault-Token: %s\n''
-  "$token") -H ''Content-Type: application/json'' --data ''{"paths":["secret/data/dispatch","secret/data/other","sys/mounts"]}''
-  "$VAULT_ADDR/v1/sys/capabilities-self" | jq ''.data // .''; curl -fsS -X POST -H @<(printf ''X-Vault-Token:
-  %s\n'' "$VAULT_MANAGER_TOKEN") -H ''Content-Type: application/json'' --data ''{"paths":["sys/policies/acl/rail-reader","auth/token/create/rail-station","auth/token/create/other"]}''
-  "$VAULT_ADDR/v1/sys/capabilities-self" | jq ''.data // .''` — Token ma `read` tylko do dispatch; wystawca
-  ma `update` do `auth/token/create/rail-station`; pozostałe wskazane ścieżki mają `deny`.
-
-  - `kubectl rollout status deployment/reader --timeout=10s; kubectl get deployment reader -o json | jq -e
-  --rawfile token station-token ''tostring|contains($token|sub("\n+$";""))|not''; kubectl exec deployment/reader
-  -- sh -c ''test "$(cat /tmp/route)" = north-secret && printf "configuration matches\n"''` — Rollout się kończy,
-  sprawdzenie braku tokenu wypisuje `true`, a odbiorca wypisuje `configuration matches`.'
+  ```sh
+  source platform.env
+  VAULT_MANAGER_TOKEN="${VAULT_MANAGER_TOKEN:-}" VAULT_READER_TOKEN="${VAULT_READER_TOKEN:-}" python3 -I - <<'VERIFY_WORKLOAD_ENV'
+  import json,os,subprocess,sys
+  from pathlib import Path
+  try:
+      deployment=json.loads(subprocess.check_output(['kubectl','get','deployment','reader','-o','json'],stderr=subprocess.DEVNULL,timeout=4))
+      tokens={value for value in (Path('station-token').read_text().strip(),os.environ.get('VAULT_MANAGER_TOKEN'),os.environ.get('VAULT_READER_TOKEN')) if value}
+      assert tokens and all(value not in json.dumps(deployment) for value in tokens)
+      def observed(args):
+          return subprocess.check_output(['kubectl']+args,stderr=subprocess.DEVNULL,timeout=4)
+      replicasets=json.loads(observed(['get','replicasets','-o','json']))
+      pods=json.loads(observed(['get','pods','-o','json']))
+      uid=deployment['metadata']['uid']
+      owners={rs['metadata']['uid'] for rs in replicasets.get('items',[]) if any(ref.get('kind')=='Deployment' and ref.get('uid')==uid and ref.get('controller') is True for ref in rs.get('metadata',{}).get('ownerReferences',[]))}
+      active=[pod for pod in pods.get('items',[]) if pod.get('metadata',{}).get('deletionTimestamp') is None and pod.get('status',{}).get('phase') not in ('Failed','Succeeded') and any(ref.get('kind')=='ReplicaSet' and ref.get('uid') in owners and ref.get('controller') is True for ref in pod.get('metadata',{}).get('ownerReferences',[]))]
+      assert active
+      for pod in active:
+          assert pod.get('status',{}).get('phase')=='Running'
+          for container in pod['spec']['containers']:
+              environment=observed(['exec','--pod-running-timeout=2s',pod['metadata']['name'],'-c',container['name'],'--','env'])
+              assert all(value.encode() not in environment for value in tokens)
+      print('true')
+  except Exception:
+      print('false');sys.exit(1)
+  VERIFY_WORKLOAD_ENV
+  ```
 phrases.0: Rozróżniłem wydanie referencji od odnowienia pozostałego lease.
 phrases.1: Sprawdziłem prawdziwy TTL w ograniczonym absolutnym czasie życia.
 phrases.2: Zachowałem Vault token jako prywatny i dostarczyłem tylko wartość aplikacji w Kubernetes Secret.

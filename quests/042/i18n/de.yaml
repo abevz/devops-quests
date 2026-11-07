@@ -40,27 +40,18 @@ hints.1.text: 'Prüfen Sie die mitgelieferten Eingaben und den beobachteten Zust
   kubectl get secrets
 
   ```'
-hints.2.text: 'Überprüfen Sie imagePullSecrets und den Pull-Fehler Pod, ohne Anmeldeinformationen zu drucken.
+hints.2.text: |-
+  Überprüfen Sie imagePullSecrets und den Pull-Fehler Pod, ohne Anmeldeinformationen zu drucken.
 
-
-  Ersetze das veraltete Docker-Auth-Secret und starte den fehlgeschlagenen Verbraucher neu. Sowohl API-Secret-Daten
-  als auch verschachteltes auth müssen gültiges kanonisches Base64 verwenden.
-
+  Ersetze das veraltete Docker-Auth-Secret und starte den fehlgeschlagenen Verbraucher neu. Die API-Secret-Daten müssen ein gültiges Docker-Zugangsdokument enthalten: verschachteltes auth oder passende username/password-Felder.
   Gib Zugangsdaten nicht aus und speichere sie nicht im Shell-Verlauf.
-
 
   Prüfen Sie das beobachtete Ergebnis:
 
+  - `source platform.env; kubectl get secret registry-pull -o json | jq -e 'env as $e | .type as $t | (if $t=="kubernetes.io/dockerconfigjson" then (.data[".dockerconfigjson"]|@base64d|fromjson|.auths) elif $t=="kubernetes.io/dockercfg" then (.data[".dockercfg"]|@base64d|fromjson) else {} end)[$e.REGISTRY] | if ((.auth//"")|length)>0 then ((.auth|gsub("[\r\n]";"")|@base64d)==($e.REGISTRY_USER+":"+$e.REGISTRY_PASSWORD)) else .username==$e.REGISTRY_USER and .password==$e.REGISTRY_PASSWORD end'` — Gibt `true` aus, ohne Zugangsdaten offenzulegen.
+  - `source platform.env; kubectl get deployment board -o json | jq '{name:.metadata.name,replicas:.spec.replicas,worker:(.spec.template.spec.containers[]|select(.name=="worker")|{image,imagePullPolicy})}'; kubectl get pods -o json | jq '.items[] | select(.metadata.deletionTimestamp==null and any(.spec.containers[]?;.name=="worker")) | {pod:.metadata.name,pullSecrets:[.spec.imagePullSecrets[]?.name]}'` — Zeigt `board`, Replikazahl `1`, das bereitgestellte `PRIVATE_IMAGE`, `Always` und nur `registry-pull`.
+  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080` — Der Rollout wird abgeschlossen; HTTP liefert `north-42`.
 
-  - `source platform.env; kubectl get secret registry-pull -o json | jq -e ''env as $e | .type=="kubernetes.io/dockerconfigjson"
-  and ((.data[".dockerconfigjson"]|@base64d|fromjson|.auths[$e.REGISTRY].auth|@base64d)==($e.REGISTRY_USER+":"+$e.REGISTRY_PASSWORD))''`
-  — Gibt `true` aus, ohne Zugangsdaten offenzulegen.
-
-  - `source platform.env; kubectl get deployment board -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas,IMAGE:.spec.template.spec.containers[0].image,PULL:.spec.template.spec.containers[0].imagePullPolicy,SECRETS:.spec.template.spec.imagePullSecrets[*].name`
-  — Zeigt `board`, Replikazahl `1`, das bereitgestellte `PRIVATE_IMAGE`, `Always` und nur `registry-pull`.
-
-  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board
-  -- wget -qO- -T 3 http://127.0.0.1:8080` — Der Rollout wird abgeschlossen; HTTP liefert `north-42`.'
 phrases.0: Ich habe die registry-Authentifizierung von den kubelet-Pull-Anmeldeinformationen getrennt.
 phrases.1: Ich habe den Verbraucher Secret gedreht und dabei die unveränderliche Bildreferenz beibehalten.
 phrases.2: Ich habe einen neuen privaten Pull und die wiederhergestellte Anwendungsantwort überprüft.
@@ -72,14 +63,28 @@ questions.1.points.0: Bildnamen oder fehlende Digests werden nicht repariert.
 questions.1.points.1: TLS Vertrauen und Netzwerkerreichbarkeit bleiben getrennt.
 questions.1.points.2: Sein namespace und seine Workload-Referenz müssen übereinstimmen.
 questions.1.prompt: Was löst ein Bild pull Secret nicht?
-diagnostics.image: deployment/board containers[0].image muss PRIVATE_IMAGE entsprechen.
+diagnostics.image: |-
+  Das worker-Image in deployment/board muss PRIVATE_IMAGE entsprechen.
+
 diagnostics.replicas: deployment/board replicas muss 1 entsprechen.
-diagnostics.secrets: deployment/board imagePullSecrets muss [registry-pull] entsprechen.
-diagnostics.policy: deployment/board imagePullPolicy muss Always entsprechen.
-diagnostics.secret_type: registry-pull type muss kubernetes.io/dockerconfigjson entsprechen.
-diagnostics.outer: registry-pull dockerconfigjson muss kanonisches base64 verwenden.
-diagnostics.auth: registry-pull auth muss kanonisches base64 verwenden.
-diagnostics.credentials: Das dekodierte registry-pull auth muss Benutzer und Passwort aus platform.env entsprechen.
+diagnostics.secrets: |-
+  Jeder aktive Pod von deployment/board muss effektiv nur registry-pull als Pull-Secret verwenden.
+
+diagnostics.policy: |-
+  Der worker in deployment/board und dessen aktiven Pods muss imagePullPolicy Always verwenden.
+
+diagnostics.secret_type: |-
+  registry-pull muss einen Docker-Zugangsdaten-Secret-Typ verwenden: kubernetes.io/dockerconfigjson oder kubernetes.io/dockercfg.
+
+diagnostics.outer: |-
+  registry-pull muss ein gültiges Docker-Zugangsdokument enthalten.
+
+diagnostics.auth: |-
+  registry-pull muss nutzbare auth- oder username/password-Zugangsdaten enthalten.
+
+diagnostics.credentials: |-
+  Die Zugangsdaten in registry-pull müssen Benutzer und Passwort aus platform.env entsprechen.
+
 diagnostics.rollout: Der Rollout von deployment/board muss abgeschlossen sein.
 diagnostics.http: Die Anfrage an localhost:8080 des Board-Pods muss north-42 liefern.
 stages.0.objectives.0.text: Deployment `board` verwendet das mitgelieferte private Image, die Pull-Policy `Always`

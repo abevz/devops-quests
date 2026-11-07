@@ -45,32 +45,46 @@ hints.1.text: 'An expired token cannot renew itself; reissue a fresh bounded acc
   kubectl describe deployment reader
 
   ```'
-hints.2.text: 'A fresh token only lasts 60s. Set the renewal increment in renew-request.json to 180s (within
-  the 600s role cap) and run renew-token.sh so the remaining lease exceeds 90s.
+hints.2.text: |-
+  A fresh token only lasts 60s. Set the renewal increment in renew-request.json to 180s (within the 600s role cap) and run renew-token.sh so the remaining lease exceeds 90s.
 
-
-  Keep station-token at mode 0600, run sync-secret.sh to deliver the application value into the Kubernetes
-  Secret, and recover the reader workload.
-
+  Keep station-token at mode 0600, run sync-secret.sh to deliver the application value into the Kubernetes Secret, and recover the reader workload.
 
   Verify the observed result:
 
+  - `source platform.env; token=$(cat station-token); ls -l station-token; curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$token") "$VAULT_ADDR/v1/auth/token/lookup-self" | jq '.data | {ttl,renewable,explicit_max_ttl,policies}'` — Mode `-rw-------`, TTL greater than `90`, renewable `true`, max TTL `600`, and policies `default`, `rail-reader`.
+  - `source platform.env; token=$(cat station-token); curl -fsS -X POST -H @<(printf 'X-Vault-Token: %s\n' "$token") -H 'Content-Type: application/json' --data '{"paths":["secret/data/dispatch","secret/data/other","sys/mounts"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '.data // .'; curl -fsS -X POST -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN") -H 'Content-Type: application/json' --data '{"paths":["sys/policies/acl/rail-reader","auth/token/create/rail-station","auth/token/create/other"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '.data // .'` — The token has `read` only for dispatch; the issuer has `update` for `auth/token/create/rail-station`; the other named paths have `deny`.
+  - `kubectl rollout status deployment/reader --timeout=10s; kubectl exec deployment/reader -c worker -- sh -c 'test "$(cat /tmp/route)" = north-secret && printf "configuration matches\n"'` — Rollout completes; the consumer prints `configuration matches`.
 
-  - `source platform.env; token=$(cat station-token); ls -l station-token; curl -fsS -H @<(printf ''X-Vault-Token:
-  %s\n'' "$token") "$VAULT_ADDR/v1/auth/token/lookup-self" | jq ''.data | {ttl,renewable,explicit_max_ttl,policies}''`
-  — Mode `-rw-------`, TTL greater than `90`, renewable `true`, max TTL `600`, and policies `default`, `rail-reader`.
+  Verify that the Deployment and every application container in its active Pods contain none of the supplied Vault tokens. This prints only `true` on success; credential values stay on the workstation and are never printed.
 
-  - `source platform.env; token=$(cat station-token); curl -fsS -X POST -H @<(printf ''X-Vault-Token: %s\n''
-  "$token") -H ''Content-Type: application/json'' --data ''{"paths":["secret/data/dispatch","secret/data/other","sys/mounts"]}''
-  "$VAULT_ADDR/v1/sys/capabilities-self" | jq ''.data // .''; curl -fsS -X POST -H @<(printf ''X-Vault-Token:
-  %s\n'' "$VAULT_MANAGER_TOKEN") -H ''Content-Type: application/json'' --data ''{"paths":["sys/policies/acl/rail-reader","auth/token/create/rail-station","auth/token/create/other"]}''
-  "$VAULT_ADDR/v1/sys/capabilities-self" | jq ''.data // .''` — The token has `read` only for dispatch; the
-  issuer has `update` for `auth/token/create/rail-station`; the other named paths have `deny`.
-
-  - `kubectl rollout status deployment/reader --timeout=10s; kubectl get deployment reader -o json | jq -e
-  --rawfile token station-token ''tostring|contains($token|sub("\n+$";""))|not''; kubectl exec deployment/reader
-  -- sh -c ''test "$(cat /tmp/route)" = north-secret && printf "configuration matches\n"''` — Rollout completes,
-  the token-absence test prints `true`, and the consumer prints `configuration matches`.'
+  ```sh
+  source platform.env
+  VAULT_MANAGER_TOKEN="${VAULT_MANAGER_TOKEN:-}" VAULT_READER_TOKEN="${VAULT_READER_TOKEN:-}" python3 -I - <<'VERIFY_WORKLOAD_ENV'
+  import json,os,subprocess,sys
+  from pathlib import Path
+  try:
+      deployment=json.loads(subprocess.check_output(['kubectl','get','deployment','reader','-o','json'],stderr=subprocess.DEVNULL,timeout=4))
+      tokens={value for value in (Path('station-token').read_text().strip(),os.environ.get('VAULT_MANAGER_TOKEN'),os.environ.get('VAULT_READER_TOKEN')) if value}
+      assert tokens and all(value not in json.dumps(deployment) for value in tokens)
+      def observed(args):
+          return subprocess.check_output(['kubectl']+args,stderr=subprocess.DEVNULL,timeout=4)
+      replicasets=json.loads(observed(['get','replicasets','-o','json']))
+      pods=json.loads(observed(['get','pods','-o','json']))
+      uid=deployment['metadata']['uid']
+      owners={rs['metadata']['uid'] for rs in replicasets.get('items',[]) if any(ref.get('kind')=='Deployment' and ref.get('uid')==uid and ref.get('controller') is True for ref in rs.get('metadata',{}).get('ownerReferences',[]))}
+      active=[pod for pod in pods.get('items',[]) if pod.get('metadata',{}).get('deletionTimestamp') is None and pod.get('status',{}).get('phase') not in ('Failed','Succeeded') and any(ref.get('kind')=='ReplicaSet' and ref.get('uid') in owners and ref.get('controller') is True for ref in pod.get('metadata',{}).get('ownerReferences',[]))]
+      assert active
+      for pod in active:
+          assert pod.get('status',{}).get('phase')=='Running'
+          for container in pod['spec']['containers']:
+              environment=observed(['exec','--pod-running-timeout=2s',pod['metadata']['name'],'-c',container['name'],'--','env'])
+              assert all(value.encode() not in environment for value in tokens)
+      print('true')
+  except Exception:
+      print('false');sys.exit(1)
+  VERIFY_WORKLOAD_ENV
+  ```
 phrases.0: I distinguished issuing a credential from renewing its remaining lease.
 phrases.1: I checked the real TTL within a bounded absolute lifetime.
 phrases.2: I kept the Vault token private and delivered only the application value in a Kubernetes Secret.

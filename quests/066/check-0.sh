@@ -4,7 +4,7 @@ failed=0
 set +e
 (
 set -e
-jq -e --slurpfile c /run/dq/facts/0/release-catalog.json '.delete==[$c[0].obsolete]' retention.json >/dev/null
+jq -e --slurpfile c /run/dq/facts/0/release-catalog.json '(.delete|type)=="array" and (.delete|unique)==[$c[0].obsolete]' retention.json >/dev/null
 )
 [ $? -eq 0 ] || failed=1
 (

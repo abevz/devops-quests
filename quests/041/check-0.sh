@@ -32,17 +32,16 @@ exit "$failed"
 (
 set -e
 source platform.env
-failed=0
-if ! test "$(git -C repository show origin/main:notice.txt 2>/dev/null)" = north-41; then
-  printf '%s\n' 'origin/main:notice.txt = north-41: ✗ [DQ:origin_file]'
-  failed=1
-fi
-
-if ! test "$(git -C repository show HEAD:notice.txt 2>/dev/null)" = north-41; then
-  printf '%s\n' 'HEAD:notice.txt = north-41: ✗ [DQ:head_file]'
-  failed=1
-fi
-exit "$failed"
+python3 -I - <<'DQ_NOTICE'
+import subprocess,sys
+failed=False
+for ref,marker in [('origin/main','origin_file'),('HEAD','head_file')]:
+    result=subprocess.run(['git','-C','repository','show',ref+':notice.txt'],capture_output=True)
+    if result.returncode or result.stdout.replace(b'\r\n',b'\n').rstrip(b'\n')!=b'north-41':
+        print(f'{ref}:notice.txt = north-41: ✗ [DQ:{marker}]')
+        failed=True
+sys.exit(int(failed))
+DQ_NOTICE
 )
 [ $? -eq 0 ] || failed=1
 (

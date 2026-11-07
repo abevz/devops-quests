@@ -16,15 +16,37 @@ if ! curl -fsS -H @"$headers/manager" "$VAULT_ADDR/v1/sys/policies/acl/rail-read
   failed=1
 fi
 
-if ! python3 - <<'ACL_SCOPE'
-import re
+if ! python3 -I - <<'ACL_SCOPE'
+import json,re,sys
 from pathlib import Path
-p = Path('observed-reader.hcl').read_text()
-p = re.sub(r'/\*.*?\*/', '', p, flags=re.S)
-p = re.sub(r'(?m)(#|//).*$','',p)
-block = r'path\s+"secret/data/dispatch"\s*\{\s*capabilities\s*=\s*\[\s*"read"\s*,?\s*\]\s*\}'
-if not re.fullmatch(r'\s*(?:' + block + r'\s*)+', p):
-    raise SystemExit(1)
+text=Path('observed-reader.hcl').read_text()
+def unique_object(pairs):
+    result={}
+    for key,value in pairs:
+        if key in result:raise ValueError('duplicate policy field')
+        result[key]=value
+    return result
+try:
+    value=json.loads(text,object_pairs_hook=unique_object)
+except json.JSONDecodeError:
+    value=None
+except ValueError:
+    sys.exit(1)
+if value is not None:
+    if not isinstance(value,dict) or set(value)!={'path'}:sys.exit(1)
+    paths=value['path']
+    if not isinstance(paths,dict) or set(paths)!={'secret/data/dispatch'}:sys.exit(1)
+    rule=paths['secret/data/dispatch']
+    constraints={'allowed_parameters','denied_parameters','required_parameters','min_wrapping_ttl','max_wrapping_ttl'}
+    if not isinstance(rule,dict) or not set(rule)<={'capabilities'}|constraints:sys.exit(1)
+    capabilities=rule.get('capabilities')
+    ok=isinstance(capabilities,list) and bool(capabilities) and all(item=='read' for item in capabilities)
+else:
+    text=re.sub(r'/\*.*?\*/','',text,flags=re.S)
+    text=re.sub(r'(?m)(#|//).*$','',text)
+    block=r'path\s+"secret/data/dispatch"\s*\{\s*capabilities\s*=\s*\[\s*"read"(?:\s*,\s*"read")*\s*,?\s*\]\s*\}'
+    ok=re.fullmatch(r'\s*(?:'+block+r'\s*)+',text) is not None
+sys.exit(0 if ok else 1)
 ACL_SCOPE
 then
   printf '%s\n' 'rail-reader policy: secret/data/dispatch [read] only: ✗ [DQ:policy_scope]'

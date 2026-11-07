@@ -46,34 +46,46 @@ hints.1.text: 'Ein abgelaufenes Token kann sich nicht selbst erneuern; stelle zu
   kubectl describe deployment reader
 
   ```'
-hints.2.text: 'Ein neuer Token ist nur 60s gültig. Setzen Sie die Erneuerung increment in renew-request.json
-  auf 180s (innerhalb der Rollenobergrenze 600s) und führen Sie renew-token.sh aus, sodass der verbleibende
-  lease 90s übersteigt.
+hints.2.text: |-
+  Ein neuer Token ist nur 60s gültig. Setzen Sie die Erneuerung increment in renew-request.json auf 180s (innerhalb der Rollenobergrenze 600s) und führen Sie renew-token.sh aus, sodass der verbleibende lease 90s übersteigt.
 
-
-  Halten Sie station-token im Modus 0600, führen Sie sync-secret.sh aus, um den Anwendungswert an Kubernetes
-  Secret zu liefern, und stellen Sie die Arbeitslast reader wieder her.
-
+  Halten Sie station-token im Modus 0600, führen Sie sync-secret.sh aus, um den Anwendungswert an Kubernetes Secret zu liefern, und stellen Sie die Arbeitslast reader wieder her.
 
   Prüfen Sie das beobachtete Ergebnis:
 
+  - `source platform.env; token=$(cat station-token); ls -l station-token; curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$token") "$VAULT_ADDR/v1/auth/token/lookup-self" | jq '.data | {ttl,renewable,explicit_max_ttl,policies}'` — Modus `-rw-------`, TTL größer als `90`, renewable `true`, maximale TTL `600` und Policies `default`, `rail-reader`.
+  - `source platform.env; token=$(cat station-token); curl -fsS -X POST -H @<(printf 'X-Vault-Token: %s\n' "$token") -H 'Content-Type: application/json' --data '{"paths":["secret/data/dispatch","secret/data/other","sys/mounts"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '.data // .'; curl -fsS -X POST -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN") -H 'Content-Type: application/json' --data '{"paths":["sys/policies/acl/rail-reader","auth/token/create/rail-station","auth/token/create/other"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '.data // .'` — Das Token hat `read` nur für Dispatch; der Aussteller hat `update` für `auth/token/create/rail-station`; die anderen genannten Pfade haben `deny`.
+  - `kubectl rollout status deployment/reader --timeout=10s; kubectl exec deployment/reader -c worker -- sh -c 'test "$(cat /tmp/route)" = north-secret && printf "configuration matches\n"'` — Der Rollout wird abgeschlossen; der Verbraucher gibt `configuration matches` aus.
 
-  - `source platform.env; token=$(cat station-token); ls -l station-token; curl -fsS -H @<(printf ''X-Vault-Token:
-  %s\n'' "$token") "$VAULT_ADDR/v1/auth/token/lookup-self" | jq ''.data | {ttl,renewable,explicit_max_ttl,policies}''`
-  — Modus `-rw-------`, TTL größer als `90`, renewable `true`, maximale TTL `600` und Policies `default`, `rail-reader`.
+  Prüfe, dass Deployment und jeder Anwendungscontainer seiner aktiven Pods keine der bereitgestellten Vault-Token enthalten. Bei Erfolg erscheint nur `true`; Zugangsdaten bleiben auf der Workstation und werden nie ausgegeben.
 
-  - `source platform.env; token=$(cat station-token); curl -fsS -X POST -H @<(printf ''X-Vault-Token: %s\n''
-  "$token") -H ''Content-Type: application/json'' --data ''{"paths":["secret/data/dispatch","secret/data/other","sys/mounts"]}''
-  "$VAULT_ADDR/v1/sys/capabilities-self" | jq ''.data // .''; curl -fsS -X POST -H @<(printf ''X-Vault-Token:
-  %s\n'' "$VAULT_MANAGER_TOKEN") -H ''Content-Type: application/json'' --data ''{"paths":["sys/policies/acl/rail-reader","auth/token/create/rail-station","auth/token/create/other"]}''
-  "$VAULT_ADDR/v1/sys/capabilities-self" | jq ''.data // .''` — Das Token hat `read` nur für Dispatch; der
-  Aussteller hat `update` für `auth/token/create/rail-station`; die anderen genannten Pfade haben `deny`.
-
-  - `kubectl rollout status deployment/reader --timeout=10s; kubectl get deployment reader -o json | jq -e
-  --rawfile token station-token ''tostring|contains($token|sub("\n+$";""))|not''; kubectl exec deployment/reader
-  -- sh -c ''test "$(cat /tmp/route)" = north-secret && printf "configuration matches\n"''` — Der Rollout wird
-  abgeschlossen, die Token-Abwesenheitsprüfung gibt `true` aus und der Verbraucher gibt `configuration matches`
-  aus.'
+  ```sh
+  source platform.env
+  VAULT_MANAGER_TOKEN="${VAULT_MANAGER_TOKEN:-}" VAULT_READER_TOKEN="${VAULT_READER_TOKEN:-}" python3 -I - <<'VERIFY_WORKLOAD_ENV'
+  import json,os,subprocess,sys
+  from pathlib import Path
+  try:
+      deployment=json.loads(subprocess.check_output(['kubectl','get','deployment','reader','-o','json'],stderr=subprocess.DEVNULL,timeout=4))
+      tokens={value for value in (Path('station-token').read_text().strip(),os.environ.get('VAULT_MANAGER_TOKEN'),os.environ.get('VAULT_READER_TOKEN')) if value}
+      assert tokens and all(value not in json.dumps(deployment) for value in tokens)
+      def observed(args):
+          return subprocess.check_output(['kubectl']+args,stderr=subprocess.DEVNULL,timeout=4)
+      replicasets=json.loads(observed(['get','replicasets','-o','json']))
+      pods=json.loads(observed(['get','pods','-o','json']))
+      uid=deployment['metadata']['uid']
+      owners={rs['metadata']['uid'] for rs in replicasets.get('items',[]) if any(ref.get('kind')=='Deployment' and ref.get('uid')==uid and ref.get('controller') is True for ref in rs.get('metadata',{}).get('ownerReferences',[]))}
+      active=[pod for pod in pods.get('items',[]) if pod.get('metadata',{}).get('deletionTimestamp') is None and pod.get('status',{}).get('phase') not in ('Failed','Succeeded') and any(ref.get('kind')=='ReplicaSet' and ref.get('uid') in owners and ref.get('controller') is True for ref in pod.get('metadata',{}).get('ownerReferences',[]))]
+      assert active
+      for pod in active:
+          assert pod.get('status',{}).get('phase')=='Running'
+          for container in pod['spec']['containers']:
+              environment=observed(['exec','--pod-running-timeout=2s',pod['metadata']['name'],'-c',container['name'],'--','env'])
+              assert all(value.encode() not in environment for value in tokens)
+      print('true')
+  except Exception:
+      print('false');sys.exit(1)
+  VERIFY_WORKLOAD_ENV
+  ```
 phrases.0: Ich habe die Ausstellung einer Berechtigung von der Erneuerung der verbleibenden lease unterschieden.
 phrases.1: Ich habe den echten TTL innerhalb einer begrenzten Lebensdauer getestet.
 phrases.2: Ich habe den Vault token privat gehalten und nur den Anwendungswert in einem Kubernetes Secret geliefert.

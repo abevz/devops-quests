@@ -9,7 +9,7 @@ kubectl get application station -o json | jq -e '.status.sync.status=="Synced" a
 [ $? -eq 0 ] || failed=1
 (
 set -e
-test "$(kubectl exec deployment/relay -- printenv ROUTE)" = north
+test "$(kubectl exec deployment/relay -c worker -- printenv ROUTE)" = north
 )
 [ $? -eq 0 ] || failed=1
 (
