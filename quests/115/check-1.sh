@@ -22,14 +22,37 @@ set -e
 set -euo pipefail
 cd ~/quest
 failed=0
+selector_ok() {
+  python3 -I - /dev/fd/3 /dev/fd/4 /dev/fd/5 /dev/fd/6 3<<<"$1" 4<<<"$pods" 5<<<"$2" 6<<<"$3" <<'DQ_SELECTOR'
+import sys
+
+def _dq_read_argument(value):
+    if not value.startswith('/dev/fd/'):
+        return value
+    with open(value, encoding='utf-8', newline='') as source:
+        return source.read().removesuffix('\n')
+
+sys.argv = [_dq_read_argument(value) for value in sys.argv]
+
+import json,sys
+try:
+    service,pods=json.loads(sys.argv[1]),json.loads(sys.argv[2])['items'];key,value=sys.argv[3:5]
+    selector=service['spec']['selector']
+    intended=[p for p in pods if p['metadata'].get('labels',{}).get(key)==value and not p['metadata'].get('deletionTimestamp')]
+    def matches(p):return all(p['metadata'].get('labels',{}).get(k)==v for k,v in selector.items())
+    ok=isinstance(selector,dict) and selector.get(key)==value and bool(intended) and all(matches(p) for p in intended) and all(not matches(p) or p['metadata'].get('labels',{}).get(key)==value for p in pods)
+except (ValueError,KeyError,TypeError,AttributeError):ok=False
+sys.exit(not ok)
+DQ_SELECTOR
+}
+pods=$(timeout 2s kubectl get pods -o json 2>/dev/null || true)
 check() { local id=$1 label=$2 expression=$3 document=$4; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗ [DQ:$id]"; failed=1; fi; }
 deployments=$(timeout 2s kubectl get deployment blue green -o json 2>/dev/null || true)
 service=$(timeout 2s kubectl get service board -o json 2>/dev/null || true)
 endpoints=$(timeout 2s kubectl get endpointslices -l kubernetes.io/service-name=board -o json 2>/dev/null || true)
-check selector_canary 'service/board selector = release board' '.spec.selector=={release:"board"}' "$service"
+if ! selector_ok "$service" release board; then printf '%s\n' 'service selector retains only the supplied board workload: ✗ [DQ:selector_canary]'; failed=1; fi
 check endpoints 'four unique ready EndpointSlice target names' '[.items[].endpoints[] | select(.conditions.ready==true and (.targetRef.name | type=="string" and length>0)) | .targetRef.name] | unique | length==4' "$endpoints"
 exit "$failed"
-
 )
 [ $? -eq 0 ] || failed=1
 (

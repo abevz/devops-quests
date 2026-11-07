@@ -11,12 +11,44 @@ check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<
 class=$(jq -r '.class // ""' /run/dq/facts/0/ingress-target.json 2>/dev/null || true)
 ingress=$(kubectl get ingress board -o json 2>/dev/null || true)
 if ! test -n "$class" || ! jq -e --arg class "$class" '.spec.ingressClassName==$class' <<<"$ingress" >/dev/null 2>&1; then printf '%s\n' 'ingress/board class = supplied private class: ✗ [DQ:ingress_class]'; failed=1; fi
-check 'ingress/board first host = station.internal [DQ:host]' '.spec.rules[0].host=="station.internal"' "$ingress"
-check 'ingress/board first path = / [DQ:path]' '.spec.rules[0].http.paths[0].path=="/"' "$ingress"
-check 'ingress/board first pathType = Prefix [DQ:path_type]' '.spec.rules[0].http.paths[0].pathType=="Prefix"' "$ingress"
-check 'ingress/board first backend = board:8080 [DQ:backend]' '.spec.rules[0].http.paths[0].backend.service=={name:"board",port:{number:8080}}' "$ingress"
-exit "$failed"
+service=$(kubectl get service board -o json 2>/dev/null || true)
+if ! python3 -I - /dev/fd/3 /dev/fd/4 3<<<"$ingress" 4<<<"$service" <<'DQ_INGRESS_ROUTE'
+import sys
 
+def _dq_read_argument(value):
+    if not value.startswith('/dev/fd/'):
+        return value
+    with open(value, encoding='utf-8', newline='') as source:
+        return source.read().removesuffix('\n')
+
+sys.argv = [_dq_read_argument(value) for value in sys.argv]
+
+import json,sys
+try:
+    ingress=json.loads(sys.argv[1]);service=json.loads(sys.argv[2])
+    rules=[r for r in ingress['spec']['rules'] if r.get('host')=='station.internal']
+    paths=[p for rule in rules for p in rule.get('http',{}).get('paths',[])]
+except (ValueError,KeyError,TypeError,AttributeError):rules=[];paths=[];service={}
+failed=False
+
+def good_backend(path):
+    try:
+        backend=path['backend']['service']
+        if backend['name']!='board':return False
+        port=backend['port']
+        if set(port)=={'number'}:return port['number']==8080
+        if set(port)=={'name'}:
+            matches=[p for p in service['spec']['ports'] if p.get('name')==port['name'] and p.get('protocol','TCP')=='TCP']
+            return len(matches)==1 and matches[0]['port']==8080
+    except (ValueError,KeyError,TypeError,AttributeError):pass
+    return False
+checks=[('host',bool(rules)),('path',any(p.get('path')=='/' for p in paths)),('path_type',any(p.get('path')=='/' and p.get('pathType')=='Prefix' for p in paths)),('backend',bool(paths) and all(good_backend(p) for p in paths))]
+for marker,ok in checks:
+    if not ok:failed=True;print('ingress/board route contract: ✗ [DQ:'+marker+']')
+sys.exit(failed)
+DQ_INGRESS_ROUTE
+then failed=1; fi
+exit "$failed"
 )
 [ $? -eq 0 ] || failed=1
 (

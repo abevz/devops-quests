@@ -52,9 +52,9 @@ def test_missing_canary_deployments_and_pod_ips_fail(tmp_path):
 
 def test_resources_and_readiness_must_be_on_same_admitted_pod(tmp_path):
     pods = {"items": [
-        {"metadata": {}, "spec": {"containers": [{"resources": {"requests": {"cpu": "100m", "memory": "16Mi"}}}]}, "status": {}},
-        {"metadata": {}, "spec": {"containers": [{"resources": {"limits": {"cpu": "200m", "memory": "32Mi"}}}]}, "status": {}},
-        {"metadata": {}, "spec": {"containers": [{}]}, "status": {"containerStatuses": [{"ready": True}]}},
+        {"metadata": {}, "spec": {"containers": [{"name": "worker", "resources": {"requests": {"cpu": "100m", "memory": "16Mi"}}}]}, "status": {}},
+        {"metadata": {}, "spec": {"containers": [{"name": "worker", "resources": {"limits": {"cpu": "200m", "memory": "32Mi"}}}]}, "status": {}},
+        {"metadata": {}, "spec": {"containers": [{"name": "worker"}]}, "status": {"containerStatuses": [{"name": "worker", "ready": True}]}},
     ]}
     kubectl = f'''case "$1 $2" in
       'get pods') cat <<'JSON'

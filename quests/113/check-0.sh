@@ -28,15 +28,14 @@ class=$(jq -r '.class // ""' /run/dq/facts/0/gateway-target.json 2>/dev/null || 
 url=$(jq -r '.url // ""' /run/dq/facts/0/gateway-target.json 2>/dev/null || true)
 gateway=$(kubectl get gateway station -o json 2>/dev/null || true)
 route=$(kubectl get httproute board -o json 2>/dev/null || true)
-check 'httproute/board first parent = station [DQ:parent]' '.spec.parentRefs[0].name=="station"' "$route"
-check 'httproute/board hostnames = [north.station.internal] [DQ:hostnames]' '.spec.hostnames==["north.station.internal"]' "$route"
-check 'httproute/board first backend name = board [DQ:backend_name]' '.spec.rules[0].backendRefs[0].name=="board"' "$route"
-check 'httproute/board first backend port = 8080 [DQ:backend_port]' '.spec.rules[0].backendRefs[0].port==8080' "$route"
+check 'httproute/board first parent = station [DQ:parent]' '(.metadata.namespace//"") as $ns | any(.spec.parentRefs[]?; .name=="station" and (.group//"gateway.networking.k8s.io")=="gateway.networking.k8s.io" and (.kind//"Gateway")=="Gateway" and (.namespace==null or .namespace==$ns))' "$route"
+check 'httproute/board hostnames = [north.station.internal] [DQ:hostnames]' '(.spec.hostnames|type)=="array" and (.spec.hostnames|unique)==["north.station.internal"]' "$route"
+check 'httproute/board first backend name = board [DQ:backend_name]' '(.metadata.namespace//"") as $ns | (.spec.rules|length)>0 and all(.spec.rules[]; (.backendRefs|length)>0 and all(.backendRefs[] | select((.weight//1)>0); .name=="board" and (.kind//"Service")=="Service" and (.group//"")=="" and (.namespace==null or .namespace==$ns) and (.weight//1)>=0) and any(.backendRefs[]; (.weight//1)>0))' "$route"
+check 'httproute/board first backend port = 8080 [DQ:backend_port]' '(.spec.rules|length)>0 and all(.spec.rules[]; (.backendRefs|length)>0 and any(.backendRefs[]; (.weight//1)>0) and all(.backendRefs[] | select((.weight//1)>0); .port==8080))' "$route"
 check 'httproute/board a parent Accepted=True [DQ:parent_accepted]' 'any(.status.parents[]?;any(.conditions[]?;.type=="Accepted" and .status=="True"))' "$route"
 check 'httproute/board a parent ResolvedRefs=True [DQ:parent_resolved]' 'any(.status.parents[]?;any(.conditions[]?;.type=="ResolvedRefs" and .status=="True"))' "$route"
 check 'httproute/board one parent has both conditions [DQ:parent_both]' 'any(.status.parents[]?;any(.conditions[]?;.type=="Accepted" and .status=="True") and any(.conditions[]?;.type=="ResolvedRefs" and .status=="True"))' "$route"
 exit "$failed"
-
 )
 [ $? -eq 0 ] || failed=1
 (

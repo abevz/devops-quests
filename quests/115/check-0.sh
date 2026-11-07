@@ -1,8 +1,32 @@
 set -euo pipefail
 cd ~/quest
 failed=0
+selector_ok() {
+  python3 -I - /dev/fd/3 /dev/fd/4 /dev/fd/5 /dev/fd/6 3<<<"$1" 4<<<"$pods" 5<<<"$2" 6<<<"$3" <<'DQ_SELECTOR'
+import sys
+
+def _dq_read_argument(value):
+    if not value.startswith('/dev/fd/'):
+        return value
+    with open(value, encoding='utf-8', newline='') as source:
+        return source.read().removesuffix('\n')
+
+sys.argv = [_dq_read_argument(value) for value in sys.argv]
+
+import json,sys
+try:
+    service,pods=json.loads(sys.argv[1]),json.loads(sys.argv[2])['items'];key,value=sys.argv[3:5]
+    selector=service['spec']['selector']
+    intended=[p for p in pods if p['metadata'].get('labels',{}).get(key)==value and not p['metadata'].get('deletionTimestamp')]
+    def matches(p):return all(p['metadata'].get('labels',{}).get(k)==v for k,v in selector.items())
+    ok=isinstance(selector,dict) and selector.get(key)==value and bool(intended) and all(matches(p) for p in intended) and all(not matches(p) or p['metadata'].get('labels',{}).get(key)==value for p in pods)
+except (ValueError,KeyError,TypeError,AttributeError):ok=False
+sys.exit(not ok)
+DQ_SELECTOR
+}
+pods=$(timeout 2s kubectl get pods -o json 2>/dev/null || true)
 check() { local id=$1 label=$2 expression=$3 document=$4; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗ [DQ:$id]"; failed=1; fi; }
 service=$(timeout 2s kubectl get service board -o json 2>/dev/null || true)
-check selector 'service/board selector = app green' '.spec.selector=={app:"green"}' "$service"
+if ! selector_ok "$service" app green; then printf '%s\n' 'service selector retains only the supplied green workload: ✗ [DQ:selector]'; failed=1; fi
 if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = green-115; then printf '%s\n' 'board:8080 = green-115: ✗ [DQ:http]'; failed=1; fi
 exit "$failed"

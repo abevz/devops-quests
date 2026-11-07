@@ -7,43 +7,48 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: 'set -euo pipefail
-
+    check: |-
+      set -euo pipefail
       cd ~/quest
-
       failed=0
-
-      check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1;
-      then printf ''%s\n'' "$label: ✗"; failed=1; fi; }
-
-      if ! jq -e ''.fault=="selector"'' diagnosis.json >/dev/null 2>&1; then printf ''%s\n'' ''diagnosis.json fault
-      = selector: ✗ [DQ:diagnosis]''; failed=1; fi
-
+      check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
+      if ! jq -e '(.fault|type)=="string" and ((.fault|ascii_downcase|gsub("^[[:space:]]+|[[:space:]]+$";"")|gsub("[_[:space:]-]+";" ")) as $fault | ["selector","service selector","service selector mismatch","selector mismatch","selector fault"] | index($fault)!=null)' diagnosis.json >/dev/null 2>&1; then printf '%s\n' 'diagnosis.json fault = selector: ✗ [DQ:diagnosis]'; failed=1; fi
       exit "$failed"
-
-      '
   - text: stages.0.objectives.1.text
-    check: 'set -euo pipefail
-
+    check: |-
+      set -euo pipefail
       cd ~/quest
-
       failed=0
+      selector_ok() {
+        python3 -I - /dev/fd/3 /dev/fd/4 /dev/fd/5 /dev/fd/6 3<<<"$1" 4<<<"$pods" 5<<<"$2" 6<<<"$3" <<'DQ_SELECTOR'
+      import sys
 
-      check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1;
-      then printf ''%s\n'' "$label: ✗"; failed=1; fi; }
+      def _dq_read_argument(value):
+          if not value.startswith('/dev/fd/'):
+              return value
+          with open(value, encoding='utf-8', newline='') as source:
+              return source.read().removesuffix('\n')
 
+      sys.argv = [_dq_read_argument(value) for value in sys.argv]
+
+      import json,sys
+      try:
+          service,pods=json.loads(sys.argv[1]),json.loads(sys.argv[2])['items'];key,value=sys.argv[3:5]
+          selector=service['spec']['selector']
+          intended=[p for p in pods if p['metadata'].get('labels',{}).get(key)==value and not p['metadata'].get('deletionTimestamp')]
+          def matches(p):return all(p['metadata'].get('labels',{}).get(k)==v for k,v in selector.items())
+          ok=isinstance(selector,dict) and selector.get(key)==value and bool(intended) and all(matches(p) for p in intended) and all(not matches(p) or p['metadata'].get('labels',{}).get(key)==value for p in pods)
+      except (ValueError,KeyError,TypeError,AttributeError):ok=False
+      sys.exit(not ok)
+      DQ_SELECTOR
+      }
+      pods=$(timeout 2s kubectl get pods -o json 2>/dev/null || true)
+      check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
       service=$(kubectl get service board -o json 2>/dev/null || true)
-
       endpoints=$(kubectl get endpointslices -l kubernetes.io/service-name=board -o json 2>/dev/null || true)
-
-      check ''service/board selector = app:board [DQ:selector]'' ''.spec.selector=={app:"board"}'' "$service"
-
-      check ''service/board EndpointSlice has a ready endpoint [DQ:endpoint]'' ''any(.items[].endpoints[]?;.conditions.ready==true)''
-      "$endpoints"
-
+      if ! selector_ok "$service" app board; then printf '%s\n' 'service selector retains only the supplied board workload: ✗ [DQ:selector]'; failed=1; fi
+      check 'service/board EndpointSlice has a ready endpoint [DQ:endpoint]' 'any(.items[].endpoints[]?;.conditions.ready==true)' "$endpoints"
       exit "$failed"
-
-      '
   - text: stages.0.objectives.2.text
     check: 'set -euo pipefail
 
