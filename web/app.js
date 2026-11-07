@@ -1,7 +1,7 @@
 import { storageGet, storageSet, sidebarKey, readCollapsed, saveCollapsed, installNavigationIcons } from "./navigation.mjs";
 import { renderDiagrams } from "./diagrams.mjs";
 import { referenceParts } from "./reference.mjs";
-import { attemptState, canRun, filterLevels, narrative, showHintGuide } from "./play.mjs";
+import { attemptState, canRun, filterLevels, narrative, renderWhenChanged, showHintGuide } from "./play.mjs";
 import { keySequence } from "./controls.mjs";
 import { diagnosticMessages } from "./diagnostics.mjs";
 import { scoreBreakdown } from "./score-preview.mjs";
@@ -71,6 +71,9 @@ function block(value, parent, language = contentLanguage()) {
   if (content.language !== language) p.append(el("small", t("language.fallback"), "muted"));
   parent.append(p);
 }
+// Polling refreshes the bay every few seconds; see renderWhenChanged in play.mjs.
+const renderIfChanged = (node, inputs, render) =>
+  renderWhenChanged(node, [i18n.language, contentLanguage(), inputs], render);
 function translationControls() {
   contentLabels();
   document.querySelector("footer").textContent = [t("footer.caption"), i18n.translationNotice(readingTranslation)].filter(Boolean).join(" · ");
@@ -817,26 +820,45 @@ function renderQuest() {
     difficulty: t("difficulty." + q.difficulty),
     mode: t("mode." + r.mode),
   });
-  $("quest-title").replaceChildren(el("span", "#" + i18n.number(q.id)));
-  block(q.title, $("quest-title"));
-  $("brief").replaceChildren();
-  block(narrative(q.brief, q.stages[0].objectives), $("brief"));
-  $("stage").replaceChildren();
-  block(narrative(q.stages[r.stage].brief, q.stages[r.stage].objectives), $("stage"));
-  $("objectives").replaceChildren();
-  q.stages[r.stage].objectives.forEach((g, i) => {
-    const item = el("li", undefined, r.goals[i] ? "ok" : "");
-    item.append(el("span", r.goals[i] ? "✓ " : "○ "));
-    const wrap = el("span");
-    block(g, wrap);
-    item.append(wrap);
-    $("objectives").append(item);
+  renderIfChanged($("quest-title"), [q.id, q.title], (node) => {
+    node.append(el("span", "#" + i18n.number(q.id)));
+    block(q.title, node);
   });
+  renderIfChanged($("brief"), [q.id, q.brief], (node) => block(narrative(q.brief, q.stages[0].objectives), node));
+  renderIfChanged($("stage"), [q.id, r.stage, q.stages[r.stage].brief], (node) =>
+    block(narrative(q.stages[r.stage].brief, q.stages[r.stage].objectives), node),
+  );
+  renderIfChanged($("objectives"), [q.id, r.stage, q.stages[r.stage].objectives, r.goals], (node) =>
+    q.stages[r.stage].objectives.forEach((g, i) => {
+      const item = el("li", undefined, r.goals[i] ? "ok" : "");
+      item.append(el("span", r.goals[i] ? "✓ " : "○ "));
+      const wrap = el("span");
+      block(g, wrap);
+      item.append(wrap);
+      node.append(item);
+    }),
+  );
   for (const id of ["check", "reset", "stop"]) $(id).disabled = !active;
   $("hint-box").hidden = r.mode === "exam" || !active;
   $("hint").disabled = r.hints >= state.scoring.hint_limit;
-  renderHints(q.hints, $("hints"));
-  $("events").replaceChildren();
+  renderIfChanged($("hints"), [q.id, q.hints], (node) => renderHints(q.hints, node));
+  renderIfChanged($("events"), [q.id, r.stage, r.events], (node) => renderEvents(q, r, node));
+  $("debrief").hidden = r.status !== "passed";
+  renderIfChanged(
+    $("debrief"),
+    [q.id, r.status, r.score, r.hints, r.resets, r.started, r.ended, r.mode, r.score_details, r.commands],
+    () => renderDebrief(q, r),
+  );
+  if (active) {
+    if (!$("bay").hidden) connectTerminal(r);
+  } else if (terminalKind === "quest") {
+    disposeTerminals();
+  }
+  renderIfChanged($("bay-facts"), [q.id, q.facts], () => renderFacts(q.facts));
+  renderIfChanged($("check-feedback"), [r.id, lastCheck], () => renderCheckFeedback(r, q));
+  tick();
+}
+function renderEvents(q, r, node) {
   for (const event of r.events) {
     if (
       event.message?.key === "npc.confirmed" ||
@@ -862,9 +884,10 @@ function renderQuest() {
         box,
       );
     } else block(event.text, box);
-    $("events").append(box);
+    node.append(box);
   }
-  $("debrief").hidden = r.status !== "passed";
+}
+function renderDebrief(q, r) {
   if (q.debrief) {
     $("debrief").replaceChildren(el("h3", t("quest.closed", { score: r.score })));
     const earned = [
@@ -912,14 +935,6 @@ function renderQuest() {
     renderQuestions(q.questions ?? [], $("debrief"));
     $("debrief").append(el("h3", t("trace.title")), el("pre", r.commands.join("\n") || t("trace.empty"), "commands"));
   }
-  if (active) {
-    if (!$("bay").hidden) connectTerminal(r);
-  } else if (terminalKind === "quest") {
-    disposeTerminals();
-  }
-  renderFacts(q.facts);
-  renderCheckFeedback(r, q);
-  tick();
 }
 $("bay-back").onclick = () => screen("map");
 function renderFacts(facts, node = $("bay-facts")) {

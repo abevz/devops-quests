@@ -69,3 +69,14 @@ export function attemptState(run) {
 export function showHintGuide(hints, index) {
   return index === 0 || hints[index].url !== hints[index - 1].url;
 }
+
+// Rebuild a region only when its inputs change. Polling refreshes the bay every few seconds;
+// recreating unchanged regions would drop any text the learner is selecting or copying.
+export function renderWhenChanged(node, inputs, render) {
+  const key = JSON.stringify(inputs);
+  if (node.dataset.renderKey === key) return false;
+  node.dataset.renderKey = key;
+  node.replaceChildren();
+  render(node);
+  return true;
+}
