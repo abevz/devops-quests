@@ -8,6 +8,7 @@ import re
 import secrets
 import subprocess
 import threading
+import time
 
 import pytest
 
@@ -18,6 +19,92 @@ pytestmark = pytest.mark.skipif(
     os.environ.get("DQ_INTEGRATION") != "1",
     reason="Explicit local sandbox opt-in required",
 )
+
+
+def wait_098_convergence(runtime, run, check, old_pods, old_sets):
+    """Integration only: rolling updates can briefly route to a retiring Pod.
+
+    The game polls every 2.5s. Allow at most 30s here, requiring three
+    consecutive successes and independently proving the old rollout retired.
+    Owner decision #2 permits old terminating Pods outside ready endpoints.
+    """
+    deadline = time.monotonic() + 30
+    successes = 0
+    last = "No response observed"
+    while time.monotonic() < deadline:
+        try:
+            observed = runtime.exec(
+                run, check, check=False, timeout=max(0.001, deadline - time.monotonic())
+            )
+            last = observed.stderr + "\n" + observed.stdout
+            successes = successes + 1 if observed.returncode == 0 else 0
+            if successes >= 3:
+                snapshot = runtime.kube(
+                    "-n", runtime.namespace(run), "get", "pods,replicasets",
+                    "-l", "app=board", "-o", "json",
+                    timeout=max(0.001, deadline - time.monotonic()),
+                )
+                items = json.loads(snapshot.stdout)["items"]
+                endpoints = runtime.kube(
+                    "-n", runtime.namespace(run), "get", "endpointslices",
+                    "-l", "kubernetes.io/service-name=board", "-o", "json",
+                    timeout=max(0.001, deadline - time.monotonic()),
+                )
+                ready = [
+                    endpoint
+                    for item in json.loads(endpoints.stdout)["items"]
+                    for endpoint in item.get("endpoints", [])
+                    if endpoint.get("conditions", {}).get("ready") is not False
+                ]
+                remaining_pods = [
+                    item for item in items
+                    if item["kind"] == "Pod" and (
+                        item["metadata"]["uid"] in old_pods
+                        or any(
+                            owner.get("kind") == "ReplicaSet"
+                            and owner.get("controller") is True
+                            and owner.get("uid") in old_sets
+                            for owner in item["metadata"].get("ownerReferences", [])
+                        )
+                    )
+                ]
+                pods_retired = all(
+                    item["metadata"].get("deletionTimestamp")
+                    and not any(
+                        endpoint.get("targetRef", {}).get("uid") == item["metadata"]["uid"]
+                        or (endpoint.get("targetRef", {}).get("name")
+                            and endpoint["targetRef"]["name"] == item["metadata"].get("name"))
+                        or set(endpoint.get("addresses", [])) & {
+                            address["ip"] for address in item.get("status", {}).get("podIPs", [])
+                        }
+                        or item.get("status", {}).get("podIP") in endpoint.get("addresses", [])
+                        for endpoint in ready
+                    )
+                    for item in remaining_pods
+                )
+                sets_retired = all(
+                    item.get("spec", {}).get("replicas", 0) == 0
+                    and item.get("status", {}).get("replicas", 0) == 0
+                    for item in items
+                    if item["kind"] == "ReplicaSet" and item["metadata"]["uid"] in old_sets
+                )
+                if pods_retired and sets_retired:
+                    assert time.monotonic() <= deadline, last
+                    return observed
+                last += "\nOld board Pods terminating outside ready endpoints: " + str(pods_retired)
+                last += "\nReady endpoints: " + json.dumps(ready)
+                last += "\nOld Pod observations: " + json.dumps([
+                    {"uid": item["metadata"]["uid"], "status": item.get("status", {})}
+                    for item in remaining_pods
+                ])
+                last += "\nOld board ReplicaSets scaled to zero: " + str(sets_retired)
+        except subprocess.TimeoutExpired as error:
+            last += "\n" + str(error)
+            break
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(1, remaining))
+    pytest.fail("098 did not converge within 30s; last response:\n" + last)
 
 
 @pytest.mark.parametrize("number", RELEASED)
@@ -185,6 +272,15 @@ def test_quest(number):
             reference = (
                 ROOT / "solutions" / f"{number:03}" / f"{stage}.sh"
             ).read_text()
+            if number == 98:
+                snapshot = runtime.kube(
+                    "-n", runtime.namespace(run), "get", "pods,replicasets",
+                    "-l", "app=board", "-o", "json",
+                )
+                items = json.loads(snapshot.stdout)["items"]
+                old_pods = {item["metadata"]["uid"] for item in items if item["kind"] == "Pod"}
+                old_sets = {item["metadata"]["uid"] for item in items if item["kind"] == "ReplicaSet"}
+                assert old_pods and old_sets, "Missing original board rollout"
             stop = threading.Event()
             observation_errors = []
 
@@ -234,7 +330,11 @@ def test_quest(number):
                 runtime.game_controls(run)
             if number in {75, 77, 116, 117}:
                 runtime.observe(run)
-            after = runtime.exec(run, check, check=False, timeout=60)
+            after = (
+                wait_098_convergence(runtime, run, check, old_pods, old_sets)
+                if number == 98
+                else runtime.exec(run, check, check=False, timeout=60)
+            )
             assert after.returncode == 0, after.stderr + "\n" + after.stdout
             assert not any(goals()), "Production objective checks did not pass"
             log[-1]["after"] = "PASS"

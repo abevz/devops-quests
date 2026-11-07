@@ -28,30 +28,212 @@ exit "$failed"
 [ $? -eq 0 ] || failed=1
 (
 set -e
-failed=0
-if ! test "$(tofu state list 2>/dev/null | sort)" = "$(printf '%s\n' local_file.north local_file.south | sort)"; then
-  printf '%s\n' 'tofu state list = {local_file.north, local_file.south}: ✗ [DQ:condition_3]'
-  failed=1
-fi
-exit "$failed"
+python3 -I - <<'DQ_PROPERTY'
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+
+def read_json(path, successful=True):
+    if not successful:
+        return None
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def resource_records(document, section='values'):
+    if not isinstance(document, dict):
+        return []
+    values = document.get(section)
+    root = values.get('root_module') if isinstance(values, dict) else None
+    if not isinstance(root, dict):
+        return []
+    records = []
+    pending = [root]
+    while pending:
+        module = pending.pop()
+        resources = module.get('resources') or []
+        children = module.get('child_modules') or []
+        if not isinstance(resources, list) or not isinstance(children, list):
+            return []
+        for resource in resources:
+            if not isinstance(resource, dict):
+                return []
+            records.append((module.get('address'), resource))
+        if not all(isinstance(child, dict) for child in children):
+            return []
+        pending.extend(children)
+    return records
+
+
+def same_target(value, expected, existing=False):
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        expanded = os.path.expanduser(value)
+        parent, leaf = os.path.split(expanded)
+        if leaf in ('', '.', '..'):
+            return False
+        # Validate raw traversal before pathlib normalizes it: file/.. and
+        # absent/../file are not usable aliases of an existing file.
+        if not stat.S_ISDIR(os.stat(parent or '.').st_mode):
+            return False
+        target = Path(expected)
+        if existing or target.exists():
+            if not stat.S_ISREG(os.stat(expanded).st_mode):
+                return False
+            return Path(expanded).resolve(strict=True) == target.resolve(strict=True)
+        candidate = Path(parent or '.').resolve(strict=True) / leaf
+        return candidate == target.parent.resolve(strict=True) / target.name
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def file_resources(records, filename, in_module=False):
+    found = []
+    for module, resource in records:
+        values = resource.get('values')
+        if (resource.get('mode') == 'managed' and resource.get('type') == 'local_file'
+                and isinstance(values, dict) and same_target(values.get('filename'), filename)
+                and (not in_module or isinstance(module, str) and bool(module))):
+            found.append((module, resource))
+    return found
+
+
+def number_is(value, expected):
+    return type(value) in (int, float) and value == expected
+
+import subprocess
+
+def tofu_json(*arguments):
+    result = subprocess.run(['tofu', *arguments], capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    try:
+        return json.loads(result.stdout)
+    except ValueError:
+        return None
+
+records = resource_records(tofu_json('show', '-json'))
+if len(records) != 2 or not all(len(file_resources(records, name)) == 1 for name in ('north.txt', 'south.txt')):
+    print('State must track exactly both configured route files: ✗ [DQ:condition_3]')
+    sys.exit(1)
+DQ_PROPERTY
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
-failed=0
-if ! jq -e '(.resource_changes|length)==2' recovery-plan.json >/dev/null 2>&1; then
-  printf '%s\n' 'recovery-plan.json resource_changes length = 2: ✗ [DQ:condition_4]'
-  failed=1
-fi
-if ! jq -e 'any(.resource_changes[];.address=="local_file.north" and .change.actions==["no-op"])' recovery-plan.json >/dev/null 2>&1; then
-  printf '%s\n' 'recovery-plan.json local_file.north actions = ["no-op"]: ✗ [DQ:condition_5]'
-  failed=1
-fi
-if ! jq -e 'any(.resource_changes[];.address=="local_file.south" and .change.actions==["create"])' recovery-plan.json >/dev/null 2>&1; then
-  printf '%s\n' 'recovery-plan.json local_file.south actions = ["create"]: ✗ [DQ:condition_6]'
-  failed=1
-fi
-exit "$failed"
+python3 -I - <<'DQ_PROPERTY'
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+
+def read_json(path, successful=True):
+    if not successful:
+        return None
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def resource_records(document, section='values'):
+    if not isinstance(document, dict):
+        return []
+    values = document.get(section)
+    root = values.get('root_module') if isinstance(values, dict) else None
+    if not isinstance(root, dict):
+        return []
+    records = []
+    pending = [root]
+    while pending:
+        module = pending.pop()
+        resources = module.get('resources') or []
+        children = module.get('child_modules') or []
+        if not isinstance(resources, list) or not isinstance(children, list):
+            return []
+        for resource in resources:
+            if not isinstance(resource, dict):
+                return []
+            records.append((module.get('address'), resource))
+        if not all(isinstance(child, dict) for child in children):
+            return []
+        pending.extend(children)
+    return records
+
+
+def same_target(value, expected, existing=False):
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        expanded = os.path.expanduser(value)
+        parent, leaf = os.path.split(expanded)
+        if leaf in ('', '.', '..'):
+            return False
+        # Validate raw traversal before pathlib normalizes it: file/.. and
+        # absent/../file are not usable aliases of an existing file.
+        if not stat.S_ISDIR(os.stat(parent or '.').st_mode):
+            return False
+        target = Path(expected)
+        if existing or target.exists():
+            if not stat.S_ISREG(os.stat(expanded).st_mode):
+                return False
+            return Path(expanded).resolve(strict=True) == target.resolve(strict=True)
+        candidate = Path(parent or '.').resolve(strict=True) / leaf
+        return candidate == target.parent.resolve(strict=True) / target.name
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def file_resources(records, filename, in_module=False):
+    found = []
+    for module, resource in records:
+        values = resource.get('values')
+        if (resource.get('mode') == 'managed' and resource.get('type') == 'local_file'
+                and isinstance(values, dict) and same_target(values.get('filename'), filename)
+                and (not in_module or isinstance(module, str) and bool(module))):
+            found.append((module, resource))
+    return found
+
+
+def number_is(value, expected):
+    return type(value) in (int, float) and value == expected
+
+plan = read_json('recovery-plan.json')
+changes = plan.get('resource_changes') if isinstance(plan, dict) else None
+failed = False
+if not isinstance(changes, list) or len(changes) != 2:
+    print('Saved recovery plan must contain two resource entries: ✗ [DQ:condition_4]')
+    failed = True
+try:
+    original = Path('/run/dq/facts/0/original-north-id').read_text().strip()
+except OSError:
+    original = ''
+north = south = False
+for resource in changes if isinstance(changes, list) else []:
+    if resource.get('mode') != 'managed' or resource.get('type') != 'local_file':
+        continue
+    change = resource.get('change', {})
+    before, after = change.get('before') or {}, change.get('after') or {}
+    if change.get('actions') == ['no-op'] and same_target(before.get('filename'), 'north.txt') and before.get('id') == original and original:
+        north = True
+    if change.get('actions') == ['create'] and same_target(after.get('filename'), 'south.txt'):
+        south = True
+if not north:
+    print('Saved plan must leave the original file unchanged: ✗ [DQ:condition_5]')
+    failed = True
+if not south:
+    print('Saved plan must create the missing file: ✗ [DQ:condition_6]')
+    failed = True
+sys.exit(int(failed))
+DQ_PROPERTY
 )
 [ $? -eq 0 ] || failed=1
 (
