@@ -1,4 +1,4 @@
-"""Equivalent policy grammar must never expand traffic or admission scope."""
+"""Equivalent policy syntax must never expand traffic or admission scope."""
 
 import base64
 import json
