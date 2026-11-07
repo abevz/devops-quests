@@ -8,7 +8,7 @@ dq_group_failed=0
 set +e
 (
 set -e
-ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'python3 -c '"'"'import json; from pathlib import Path; p=Path("/srv/site/facts.json"); d=json.loads(p.read_text()); assert d=={"family":"Debian","architecture":"x86_64"}'"'"''
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'python3 -c '"'"'import json; from pathlib import Path; p=Path("/srv/site/facts.json"); d=json.loads(p.read_text()); assert isinstance(d,dict) and d.get("family")=="Debian" and d.get("architecture")=="x86_64"'"'"''
 )
 dq_condition_rc=$?
 if [ "$dq_condition_rc" -ne 0 ]; then
@@ -17,7 +17,7 @@ dq_group_failed=1
 fi
 (
 set -e
-ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'python3 -c '"'"'import json; from pathlib import Path; p=Path("/srv/site/facts.json"); d=json.loads(p.read_text()); assert d=={"family":"Debian","architecture":"x86_64"}'"'"''
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'python3 -c '"'"'import json; from pathlib import Path; p=Path("/srv/site/facts.json"); d=json.loads(p.read_text()); assert isinstance(d,dict) and d.get("family")=="Debian" and d.get("architecture")=="x86_64"'"'"''
 )
 dq_condition_rc=$?
 if [ "$dq_condition_rc" -ne 0 ]; then
@@ -26,7 +26,7 @@ dq_group_failed=1
 fi
 (
 set -e
-ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'python3 -c '"'"'import json; from pathlib import Path; p=Path("/srv/site/facts.json"); d=json.loads(p.read_text()); assert d=={"family":"Debian","architecture":"x86_64"}'"'"''
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'python3 -c '"'"'import json; from pathlib import Path; p=Path("/srv/site/facts.json"); d=json.loads(p.read_text()); assert isinstance(d,dict) and d.get("family")=="Debian" and d.get("architecture")=="x86_64"'"'"''
 )
 dq_condition_rc=$?
 if [ "$dq_condition_rc" -ne 0 ]; then

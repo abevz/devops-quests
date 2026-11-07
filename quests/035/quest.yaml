@@ -9,29 +9,100 @@ stages:
   - text: stages.0.objectives.0.text
     check: test "$(cat safety-check.txt)" = 'healthy fleet checked'
   - text: stages.0.objectives.1.text
-    check: grep -q UNREACHABLE probe.log
+    check: |-
+      python3 -I - <<'DQ_UNREACHABLE'
+      import json,re
+      from pathlib import Path
+      text=Path('probe.log').read_text()
+      found=bool(re.search(r'(?m)^[^\n]*\bUNREACHABLE!\s*=>',text))
+      try: records=[json.loads(text)]
+      except ValueError:
+       records=[]
+       for line in text.splitlines():
+        try: records.append(json.loads(line))
+        except ValueError: pass
+      for record in records:
+       if not isinstance(record,dict):continue
+       found=found or record.get('event')=='runner_on_unreachable'
+       for play in record.get('plays',[]):
+        for task in play.get('tasks',[]):
+         found=found or any(isinstance(v,dict) and v.get('unreachable') is True for v in task.get('hosts',{}).values())
+      assert found, 'The probe log needs an actual unreachable result'
+      DQ_UNREACHABLE
   - text: stages.0.objectives.2.text
     check: |-
-      set +e
-      (
-      set -e
-      test "$(grep -Ec '^app[123][[:space:]]+:.*unreachable=0.*failed=0' probe.log)" = 3
-      )
-      dq_action_rc=$?
-      set -e
-      if [ "$dq_action_rc" -ne 0 ]; then
-      if ! grep -Eq '^app1[[:space:]]+:.*unreachable=0.*failed=0' probe.log 2>/dev/null; then
-      printf '%s\n' 'Workstation probe.log: app1 must report unreachable=0 and failed=0. ✗ [DQ:recap_1]'
-      fi
-      if ! grep -Eq '^app2[[:space:]]+:.*unreachable=0.*failed=0' probe.log 2>/dev/null; then
-      printf '%s\n' 'Workstation probe.log: app2 must report unreachable=0 and failed=0. ✗ [DQ:recap_2]'
-      fi
-      if ! grep -Eq '^app3[[:space:]]+:.*unreachable=0.*failed=0' probe.log 2>/dev/null; then
-      printf '%s\n' 'Workstation probe.log: app3 must report unreachable=0 and failed=0. ✗ [DQ:recap_3]'
-      fi
-      printf '%s\n' 'Workstation probe.log must contain the three required healthy-host recaps : ✗ [DQ:recap_count]'
-      exit 1
-      fi
+      python3 -I - <<'DQ_RECAP'
+      import json
+      import re
+      from pathlib import Path
+
+
+      def count(value):
+          if isinstance(value, bool):
+              return None
+          if isinstance(value, int) and value >= 0:
+              return value
+          if isinstance(value, str) and re.fullmatch(r'[0-9]+', value):
+              return int(value)
+          return None
+
+
+      def recap(text):
+          # Read an actual recap, not task output which happens to mention a counter.
+          records = []
+          try:
+              records.append(json.loads(text))
+          except ValueError:
+              for line in text.splitlines():
+                  try:
+                      records.append(json.loads(line))
+                  except ValueError:
+                      pass
+          for record in reversed(records):
+              if not isinstance(record, dict):
+                  continue
+              stats = record.get('stats')
+              if record.get('event') == 'playbook_on_stats':
+                  event = record.get('event_data', {})
+                  if isinstance(event, dict):
+                      stats = {host: {key: values.get(host) for key, values in event.items()
+                                      if isinstance(values, dict)}
+                               for host in event.get('processed', {})}
+              if isinstance(stats, dict):
+                  return {host: {({'failures':'failed','dark':'unreachable'}.get(key,key)): count(value)
+                                 for key, value in values.items()}
+                          for host, values in stats.items() if isinstance(values, dict)}
+          rows = {}
+          body = text.rsplit('PLAY RECAP', 1)[-1]
+          for line in body.splitlines():
+              match = re.match(r'^([^\s:]+)\s*:\s*(.*)$', line)
+              if not match:
+                  continue
+              fields = re.findall(r'\b(ok|changed|unreachable|failed|skipped|rescued|ignored)\s*=\s*([0-9]+)(?=\s|$)', match[2])
+              if fields:
+                  # Duplicate rows cannot stand in for another managed host.
+                  if match[1] in rows or len({key for key, _ in fields}) != len(fields):
+                      return {}
+                  rows[match[1]] = {key: int(value) for key, value in fields}
+          return rows
+
+
+      def require_recaps(path, required, positive=(), prefix='recap'):
+          try: text = Path(path).read_text()
+          except OSError: text = ''
+          rows = recap(text)
+          failed = False
+          for number in (1, 2, 3):
+              row = rows.get('app' + str(number), {})
+              ok = all(row.get(key) == value for key, value in required.items())
+              ok = ok and all(isinstance(row.get(key), int) and row[key] > 0 for key in positive)
+              if not ok:
+                  print('app' + str(number) + ' recap does not satisfy the required counters: ✗ [DQ:' + prefix + '_' + str(number) + ']')
+                  failed = True
+          assert not failed, 'Every required managed host needs its own successful recap'
+
+      require_recaps('probe.log', {'unreachable': 0, 'failed': 0})
+      DQ_RECAP
 hints:
 - text: hints.0.text
   guide: ansible-9

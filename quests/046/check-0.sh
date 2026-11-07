@@ -12,15 +12,125 @@ set -e
 set +e
 (
 set -e
-python3 - <<'TAGS'
+python3 -I - <<'TAGS'
+import shlex
+import re
 import yaml
-p=yaml.safe_load(open('rollout.yml'))
-assert len(p)==1 and p[0]['hosts']=='fleet'
-assert not p[0].get('tags'), 'Do not inherit inspection tags on the whole play'
-tasks=p[0]['tasks']; assert len(tasks)==2
-assert tasks[0]['tags']==['deploy'] and 'ansible.builtin.copy' in tasks[0]
-assert tasks[1]['tags']==['inspect'] and tasks[1]['ansible.builtin.stat']=={'path':'/srv/site/banner.txt'}
-assert not any(k in p[0] for k in ['pre_tasks','post_tasks','roles','handlers'])
+
+MODULES = {'copy', 'file', 'stat', 'command', 'assert', 'unarchive', 'template', 'debug', 'fail', 'set_fact', 'meta'}
+KEYWORDS = {'name', 'args', 'action', 'local_action', 'notify', 'listen', 'register', 'tags', 'vars', 'delegate_to', 'delegate_facts', 'run_once', 'no_log', 'become', 'become_user', 'environment', 'when', 'changed_when', 'failed_when', 'check_mode', 'ignore_errors', 'ignore_unreachable', 'until', 'retries', 'delay', 'loop', 'with_items', 'loop_control', 'throttle', 'timeout', 'connection', 'collections', 'any_errors_fatal', 'diff'}
+
+def boolean(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        if value.lower() in ('true', 'yes', 'on', '1'): return True
+        if value.lower() in ('false', 'no', 'off', '0'): return False
+    if type(value) is int and value in (0, 1): return bool(value)
+    return None
+
+def names(value):
+    if value is None: return []
+    if isinstance(value, str): return [part.strip() for part in value.split(',') if part.strip()]
+    assert isinstance(value, list) and all(isinstance(part, str) for part in value)
+    return value
+
+def fleet(play):
+    hosts = play.get('hosts')
+    return hosts in ('fleet', ['fleet']) or (isinstance(hosts, list) and set(hosts) == {'app1', 'app2', 'app3'})
+
+def resolved(value, variables, depth=0):
+    assert depth<16, 'Cyclic static variables'
+    if isinstance(value,dict):return {key:resolved(item,variables,depth+1) for key,item in value.items()}
+    if isinstance(value,list):return [resolved(item,variables,depth+1) for item in value]
+    if not isinstance(value,str):return value
+    full=re.fullmatch(r'{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}',value)
+    if full and full[1] in variables:return resolved(variables[full[1]],variables,depth+1)
+    return re.sub(r'{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}',lambda match:str(resolved(variables[match[1]],variables,depth+1)) if match[1] in variables else match[0],value)
+
+def builtin_module(value, collections=None):
+    assert isinstance(value,str)
+    if value in MODULES:
+        assert not collections or collections=='ansible.builtin' or (isinstance(collections,list) and all(item=='ansible.builtin' for item in collections)), 'A short alias must resolve to a builtin module'
+        return value
+    assert value.startswith('ansible.builtin.') and value.removeprefix('ansible.builtin.') in MODULES, 'Unknown collection modules cannot certify builtin effects'
+    return value.removeprefix('ansible.builtin.')
+
+def action(task):
+    assert isinstance(task, dict)
+    direct = [key for key in task if key.rsplit('.', 1)[-1] in MODULES]
+    explicit = [key for key in ('action', 'local_action') if key in task]
+    assert len(direct) + len(explicit) == 1, 'Exactly one module action per task'
+    assert all(key in KEYWORDS or key in direct for key in task), 'Unknown task action'
+    if direct:
+        key = direct[0]; module = builtin_module(key,task.get('collections')); args = task[key]
+    else:
+        declaration = task[explicit[0]]
+        if isinstance(declaration, dict):
+            args = dict(declaration); module = builtin_module(args.pop('module'),task.get('collections'))
+        else:
+            parts = shlex.split(declaration); module = builtin_module(parts.pop(0),task.get('collections'))
+            args = ' '.join(parts) if module == 'command' else dict(part.split('=', 1) for part in parts)
+    assert module in MODULES
+    if args is None: args = {}
+    if isinstance(args, str):
+        args = {'_raw_params': args} if module in ('command', 'meta') else dict(part.split('=', 1) for part in shlex.split(args))
+    assert isinstance(args, dict)
+    args = {**args, **task.get('args', {})}
+    args = resolved(args, task.get('vars',{}))
+    return module, args
+
+def tasks(items, inherited=None):
+    inherited = inherited or {}
+    for task in items or []:
+        assert isinstance(task, dict)
+        merged = {**inherited, **task}
+        merged['tags'] = names(inherited.get('tags')) + names(task.get('tags'))
+        merged['vars'] = {**inherited.get('vars', {}), **task.get('vars', {})}
+        if 'block' in task:
+            context = {key: merged[key] for key in KEYWORDS if key in merged and key not in ('name', 'action', 'local_action', 'args')}
+            yield from tasks(task['block'], context)
+            yield from tasks(task.get('rescue', []), context)
+            yield from tasks(task.get('always', []), context)
+        else:
+            yield merged
+
+def plays():
+    data = yaml.safe_load(open('rollout.yml'))
+    assert isinstance(data, list) and data and all(isinstance(play, dict) and fleet(play) for play in data)
+    return data
+
+def flat(play):
+    context = {key: play[key] for key in ('no_log', 'check_mode', 'tags', 'vars', 'delegate_to', 'run_once', 'when', 'collections') if key in play}
+    return list(tasks(play.get('pre_tasks', []) + play.get('tasks', []) + play.get('post_tasks', []), context))
+
+def unconditional(task):
+    assert not any(task.get(key) not in (None, [], True, 'true', 'True') for key in ('when',))
+    assert not any(key in task for key in ('loop', 'with_items', 'until', 'ignore_errors', 'ignore_unreachable', 'failed_when'))
+
+def not_masked(task):
+    unconditional(task)
+    assert 'changed_when' not in task, 'Do not mask module change reporting'
+    assert 'check_mode' not in task or boolean(task['check_mode']) is False
+
+selected=[];deploy=[]
+for play in plays():
+ assert not play.get('roles'), 'Inspection selection must be visible in the playbook'
+ for task in flat(play):
+  module,args=action(task)
+  tags=set(names(task.get('tags')))
+  # always participates in every tag selection; never remains excluded unless explicitly requested.
+  executes='always' in tags or 'inspect' in tags
+  if executes:
+   unconditional(task)
+   assert module in ('stat','debug'), 'The inspect selection must be read-only'
+   assert 'changed_when' not in task or boolean(task['changed_when']) is False
+   assert 'check_mode' not in task or boolean(task['check_mode']) is False
+   if module=='stat' and args.get('path')=='/srv/site/banner.txt': selected.append(task)
+  if module=='copy' and args.get('dest')=='/srv/site/banner.txt':
+   assert 'deploy' in tags and not executes
+   deploy.append(task)
+assert selected and deploy, 'Separate deployment from the read-only inspection'
 TAGS
 )
 dq_action_rc=$?
@@ -34,21 +144,203 @@ fi
 (
 set -e
 test -s inspection.log
-python3 - <<'TAGS'
+python3 -I - <<'TAGS'
+import shlex
+import re
 import yaml
-p=yaml.safe_load(open('rollout.yml'))
-assert len(p)==1 and p[0]['hosts']=='fleet'
-assert not p[0].get('tags'), 'Do not inherit inspection tags on the whole play'
-tasks=p[0]['tasks']; assert len(tasks)==2
-assert tasks[0]['tags']==['deploy'] and 'ansible.builtin.copy' in tasks[0]
-assert tasks[1]['tags']==['inspect'] and tasks[1]['ansible.builtin.stat']=={'path':'/srv/site/banner.txt'}
-assert not any(k in p[0] for k in ['pre_tasks','post_tasks','roles','handlers'])
+
+MODULES = {'copy', 'file', 'stat', 'command', 'assert', 'unarchive', 'template', 'debug', 'fail', 'set_fact', 'meta'}
+KEYWORDS = {'name', 'args', 'action', 'local_action', 'notify', 'listen', 'register', 'tags', 'vars', 'delegate_to', 'delegate_facts', 'run_once', 'no_log', 'become', 'become_user', 'environment', 'when', 'changed_when', 'failed_when', 'check_mode', 'ignore_errors', 'ignore_unreachable', 'until', 'retries', 'delay', 'loop', 'with_items', 'loop_control', 'throttle', 'timeout', 'connection', 'collections', 'any_errors_fatal', 'diff'}
+
+def boolean(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        if value.lower() in ('true', 'yes', 'on', '1'): return True
+        if value.lower() in ('false', 'no', 'off', '0'): return False
+    if type(value) is int and value in (0, 1): return bool(value)
+    return None
+
+def names(value):
+    if value is None: return []
+    if isinstance(value, str): return [part.strip() for part in value.split(',') if part.strip()]
+    assert isinstance(value, list) and all(isinstance(part, str) for part in value)
+    return value
+
+def fleet(play):
+    hosts = play.get('hosts')
+    return hosts in ('fleet', ['fleet']) or (isinstance(hosts, list) and set(hosts) == {'app1', 'app2', 'app3'})
+
+def resolved(value, variables, depth=0):
+    assert depth<16, 'Cyclic static variables'
+    if isinstance(value,dict):return {key:resolved(item,variables,depth+1) for key,item in value.items()}
+    if isinstance(value,list):return [resolved(item,variables,depth+1) for item in value]
+    if not isinstance(value,str):return value
+    full=re.fullmatch(r'{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}',value)
+    if full and full[1] in variables:return resolved(variables[full[1]],variables,depth+1)
+    return re.sub(r'{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}',lambda match:str(resolved(variables[match[1]],variables,depth+1)) if match[1] in variables else match[0],value)
+
+def builtin_module(value, collections=None):
+    assert isinstance(value,str)
+    if value in MODULES:
+        assert not collections or collections=='ansible.builtin' or (isinstance(collections,list) and all(item=='ansible.builtin' for item in collections)), 'A short alias must resolve to a builtin module'
+        return value
+    assert value.startswith('ansible.builtin.') and value.removeprefix('ansible.builtin.') in MODULES, 'Unknown collection modules cannot certify builtin effects'
+    return value.removeprefix('ansible.builtin.')
+
+def action(task):
+    assert isinstance(task, dict)
+    direct = [key for key in task if key.rsplit('.', 1)[-1] in MODULES]
+    explicit = [key for key in ('action', 'local_action') if key in task]
+    assert len(direct) + len(explicit) == 1, 'Exactly one module action per task'
+    assert all(key in KEYWORDS or key in direct for key in task), 'Unknown task action'
+    if direct:
+        key = direct[0]; module = builtin_module(key,task.get('collections')); args = task[key]
+    else:
+        declaration = task[explicit[0]]
+        if isinstance(declaration, dict):
+            args = dict(declaration); module = builtin_module(args.pop('module'),task.get('collections'))
+        else:
+            parts = shlex.split(declaration); module = builtin_module(parts.pop(0),task.get('collections'))
+            args = ' '.join(parts) if module == 'command' else dict(part.split('=', 1) for part in parts)
+    assert module in MODULES
+    if args is None: args = {}
+    if isinstance(args, str):
+        args = {'_raw_params': args} if module in ('command', 'meta') else dict(part.split('=', 1) for part in shlex.split(args))
+    assert isinstance(args, dict)
+    args = {**args, **task.get('args', {})}
+    args = resolved(args, task.get('vars',{}))
+    return module, args
+
+def tasks(items, inherited=None):
+    inherited = inherited or {}
+    for task in items or []:
+        assert isinstance(task, dict)
+        merged = {**inherited, **task}
+        merged['tags'] = names(inherited.get('tags')) + names(task.get('tags'))
+        merged['vars'] = {**inherited.get('vars', {}), **task.get('vars', {})}
+        if 'block' in task:
+            context = {key: merged[key] for key in KEYWORDS if key in merged and key not in ('name', 'action', 'local_action', 'args')}
+            yield from tasks(task['block'], context)
+            yield from tasks(task.get('rescue', []), context)
+            yield from tasks(task.get('always', []), context)
+        else:
+            yield merged
+
+def plays():
+    data = yaml.safe_load(open('rollout.yml'))
+    assert isinstance(data, list) and data and all(isinstance(play, dict) and fleet(play) for play in data)
+    return data
+
+def flat(play):
+    context = {key: play[key] for key in ('no_log', 'check_mode', 'tags', 'vars', 'delegate_to', 'run_once', 'when', 'collections') if key in play}
+    return list(tasks(play.get('pre_tasks', []) + play.get('tasks', []) + play.get('post_tasks', []), context))
+
+def unconditional(task):
+    assert not any(task.get(key) not in (None, [], True, 'true', 'True') for key in ('when',))
+    assert not any(key in task for key in ('loop', 'with_items', 'until', 'ignore_errors', 'ignore_unreachable', 'failed_when'))
+
+def not_masked(task):
+    unconditional(task)
+    assert 'changed_when' not in task, 'Do not mask module change reporting'
+    assert 'check_mode' not in task or boolean(task['check_mode']) is False
+
+selected=[];deploy=[]
+for play in plays():
+ assert not play.get('roles'), 'Inspection selection must be visible in the playbook'
+ for task in flat(play):
+  module,args=action(task)
+  tags=set(names(task.get('tags')))
+  # always participates in every tag selection; never remains excluded unless explicitly requested.
+  executes='always' in tags or 'inspect' in tags
+  if executes:
+   unconditional(task)
+   assert module in ('stat','debug'), 'The inspect selection must be read-only'
+   assert 'changed_when' not in task or boolean(task['changed_when']) is False
+   assert 'check_mode' not in task or boolean(task['check_mode']) is False
+   if module=='stat' and args.get('path')=='/srv/site/banner.txt': selected.append(task)
+  if module=='copy' and args.get('dest')=='/srv/site/banner.txt':
+   assert 'deploy' in tags and not executes
+   deploy.append(task)
+assert selected and deploy, 'Separate deployment from the read-only inspection'
 TAGS
 set +e
 (
 set -e
 ansible-playbook --tags inspect rollout.yml > verification.log
-test "$(grep -Ec '^app[123][[:space:]]+:.*changed=0.*unreachable=0.*failed=0' verification.log)" = 3
+python3 -I - <<'DQ_RECAP'
+import json
+import re
+from pathlib import Path
+
+
+def count(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value >= 0:
+        return value
+    if isinstance(value, str) and re.fullmatch(r'[0-9]+', value):
+        return int(value)
+    return None
+
+
+def recap(text):
+    # Read an actual recap, not task output which happens to mention a counter.
+    records = []
+    try:
+        records.append(json.loads(text))
+    except ValueError:
+        for line in text.splitlines():
+            try:
+                records.append(json.loads(line))
+            except ValueError:
+                pass
+    for record in reversed(records):
+        if not isinstance(record, dict):
+            continue
+        stats = record.get('stats')
+        if record.get('event') == 'playbook_on_stats':
+            event = record.get('event_data', {})
+            if isinstance(event, dict):
+                stats = {host: {key: values.get(host) for key, values in event.items()
+                                if isinstance(values, dict)}
+                         for host in event.get('processed', {})}
+        if isinstance(stats, dict):
+            return {host: {({'failures':'failed','dark':'unreachable'}.get(key,key)): count(value)
+                           for key, value in values.items()}
+                    for host, values in stats.items() if isinstance(values, dict)}
+    rows = {}
+    body = text.rsplit('PLAY RECAP', 1)[-1]
+    for line in body.splitlines():
+        match = re.match(r'^([^\s:]+)\s*:\s*(.*)$', line)
+        if not match:
+            continue
+        fields = re.findall(r'\b(ok|changed|unreachable|failed|skipped|rescued|ignored)\s*=\s*([0-9]+)(?=\s|$)', match[2])
+        if fields:
+            # Duplicate rows cannot stand in for another managed host.
+            if match[1] in rows or len({key for key, _ in fields}) != len(fields):
+                return {}
+            rows[match[1]] = {key: int(value) for key, value in fields}
+    return rows
+
+
+def require_recaps(path, required, positive=(), prefix='recap'):
+    try: text = Path(path).read_text()
+    except OSError: text = ''
+    rows = recap(text)
+    failed = False
+    for number in (1, 2, 3):
+        row = rows.get('app' + str(number), {})
+        ok = all(row.get(key) == value for key, value in required.items())
+        ok = ok and all(isinstance(row.get(key), int) and row[key] > 0 for key in positive)
+        if not ok:
+            print('app' + str(number) + ' recap does not satisfy the required counters: ✗ [DQ:' + prefix + '_' + str(number) + ']')
+            failed = True
+    assert not failed, 'Every required managed host needs its own successful recap'
+
+require_recaps('verification.log', {'changed':0,'unreachable':0,'failed':0}, prefix='inspection_recap')
+DQ_RECAP
+
 )
 dq_action_rc=$?
 set -e
