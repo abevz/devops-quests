@@ -571,6 +571,59 @@ def test_096_complete_trusted_checksum_is_verified_before_restore(
 
 
 @pytest.mark.parametrize(
+    "form", ["relative", "playbook_dir", "actual_absolute", "different_absolute", "legacy_root"]
+)
+def test_096_checksum_guard_binds_the_actual_controller_archive(tmp_path, form):
+    import hashlib
+
+    contents = b"trusted controller archive bytes"
+    digest, play = integrity_play()
+    digest = hashlib.sha256(contents).hexdigest()
+    play[0]["vars"]["expected_sha256"] = digest
+    (tmp_path / "recovery.tar").write_bytes(contents)
+    (tmp_path / "other.tar").write_bytes(contents)
+    paths = {
+        "relative": "recovery.tar",
+        "playbook_dir": "{{ playbook_dir }}/recovery.tar",
+        "actual_absolute": str(tmp_path / "recovery.tar"),
+        "different_absolute": str(tmp_path / "other.tar"),
+        "legacy_root": "/root/quest/recovery.tar",
+    }
+    play[0]["tasks"][0]["ansible.builtin.stat"]["path"] = paths[form]
+    expect(
+        probe(tmp_path, 96, "VERIFY", play, {"trusted.sha256": digest}),
+        form in {"relative", "playbook_dir", "actual_absolute"},
+    )
+
+
+@pytest.mark.parametrize("occurrence", [1, 2])
+@pytest.mark.parametrize(
+    "form", ["relative", "playbook_dir", "actual_absolute", "different_absolute", "legacy_root"]
+)
+def test_096_restore_source_is_the_actual_controller_archive(tmp_path, form, occurrence):
+    _, play = integrity_play()
+    paths = {
+        "relative": "recovery.tar",
+        "playbook_dir": "{{ playbook_dir }}/recovery.tar",
+        "actual_absolute": str(tmp_path / "recovery.tar"),
+        "different_absolute": str(tmp_path / "other.tar"),
+        "legacy_root": "/root/quest/recovery.tar",
+    }
+    play[0]["tasks"][2]["ansible.builtin.unarchive"]["src"] = paths[form]
+    (tmp_path / "rollout.yml").write_text(yaml.safe_dump(play))
+    result = subprocess.run(
+        [sys.executable, "-"],
+        input=program(96, "VERIFY", occurrence),
+        cwd=tmp_path,
+        env=check_environment(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    expect(result, form in {"relative", "playbook_dir", "actual_absolute"})
+
+
+@pytest.mark.parametrize(
     "representation",
     ["reference", "equivalent", "wrong", "parallel", "untrusted_source"],
 )
