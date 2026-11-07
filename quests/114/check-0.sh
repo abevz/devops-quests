@@ -18,10 +18,34 @@ request() {
   printf 'header = "Authorization: Bearer %s"\n' "$credential" | timeout 2s curl --config - --cacert /run/dq/facts/0/api-ca.pem -sS -o "$output" -w '%{http_code}' "$api/api/v1/namespaces/$DQ_NAMESPACE/$path" 2>/dev/null
 }
 reader=$(timeout 2s kubectl get deployment reader -o json 2>/dev/null || true)
-check 'reader automountServiceAccountToken = false [DQ:automount]' '.spec.template.spec.automountServiceAccountToken==false' "$reader"
-check 'reader first projected token = path token, audience and 600 seconds [DQ:projection]' '.spec.template.spec.volumes[0].projected.sources[0].serviceAccountToken=={path:"token",expirationSeconds:600,audience:"https://kubernetes.default.svc.cluster.local"}' "$reader"
-exit "$failed"
+account='{}'
+if jq -e '.spec.template.spec.automountServiceAccountToken==null' <<<"$reader" >/dev/null 2>&1; then
+  account_name=$(jq -r '.spec.template.spec.serviceAccountName // "default"' <<<"$reader")
+  account=$(timeout 2s kubectl get serviceaccount "$account_name" -o json 2>/dev/null || true)
+fi
+if ! python3 -I - /dev/fd/3 /dev/fd/4 3<<<"$reader" 4<<<"$account" <<'DQ_AUTOMOUNT'
+import sys
 
+def _dq_read_argument(value):
+    if not value.startswith('/dev/fd/'):
+        return value
+    with open(value, encoding='utf-8', newline='') as source:
+        return source.read().removesuffix('\n')
+
+sys.argv = [_dq_read_argument(value) for value in sys.argv]
+
+import json,sys
+try:
+    pod=json.loads(sys.argv[1])['spec']['template']['spec']
+    flag=pod.get('automountServiceAccountToken')
+    ok=flag is False or (flag is None and json.loads(sys.argv[2]).get('automountServiceAccountToken') is False)
+except (ValueError,KeyError,TypeError,AttributeError):ok=False
+if not ok:print('reader automatic credential mounting must be disabled: ✗ [DQ:automount]')
+sys.exit(not ok)
+DQ_AUTOMOUNT
+then failed=1; fi
+check 'reader first projected token = path token, audience and 600 seconds [DQ:projection]' '.spec.template.spec as $pod | [$pod.containers[]? | select(.name=="worker")] as $worker | ($worker|length)==1 and ([$worker[0].volumeMounts[]? | select(.mountPath=="/credential" and (.subPath==null or .subPath=="") and (.subPathExpr==null or .subPathExpr==""))] as $mounts | ($mounts|length)==1 and ([$pod.volumes[]? | select(.name==$mounts[0].name)] as $volumes | ($volumes|length)==1 and ([$volumes[0].projected.sources[]?.serviceAccountToken | select(.path=="token")] as $tokens | ($tokens|length)==1 and $tokens[0].expirationSeconds==600 and $tokens[0].audience=="https://kubernetes.default.svc.cluster.local")))' "$reader"
+exit "$failed"
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -41,9 +65,8 @@ request() {
 }
 reader=$(timeout 2s kubectl get deployment reader -o json 2>/dev/null || true)
 role=$(timeout 2s kubectl get role reader -o json 2>/dev/null || true)
-check 'role/reader rules = named route get only [DQ:role]' '.rules==[{apiGroups:[""],resources:["configmaps"],resourceNames:["route"],verbs:["get"]}]' "$role"
+check 'role/reader rules = named route get only [DQ:role]' 'def exact($items): type=="array" and unique==$items; .rules | type=="array" and length>0 and all(.[]; (.apiGroups|exact([""])) and (.resources|exact(["configmaps"])) and (.resourceNames|exact(["route"])) and (.verbs|exact(["get"])) and ((.nonResourceURLs//[])|length==0))' "$role"
 exit "$failed"
-
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -63,12 +86,11 @@ request() {
 }
 reader=$(timeout 2s kubectl get deployment reader -o json 2>/dev/null || true)
 role=$(timeout 2s kubectl get role reader -o json 2>/dev/null || true)
-token=$(timeout 2s kubectl exec --pod-running-timeout=2s deployment/reader -- cat /credential/token 2>/dev/null || true)
+token=$(timeout 2s kubectl exec --pod-running-timeout=2s deployment/reader -c worker -- cat /credential/token 2>/dev/null || true)
 status=$(request "$token" configmaps/route "$scratch/route" || true)
 if ! test "$status" = 200; then printf '%s\n' 'reader GET configmaps/route status = 200: ✗ [DQ:allowed]'; failed=1; fi
 if ! jq -e '.data.route=="north-114"' "$scratch/route" >/dev/null 2>&1; then printf '%s\n' 'reader route data = north-114: ✗ [DQ:value]'; failed=1; fi
 exit "$failed"
-
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -88,14 +110,13 @@ request() {
 }
 reader=$(timeout 2s kubectl get deployment reader -o json 2>/dev/null || true)
 role=$(timeout 2s kubectl get role reader -o json 2>/dev/null || true)
-token=$(timeout 2s kubectl exec --pod-running-timeout=2s deployment/reader -- cat /credential/token 2>/dev/null || true)
+token=$(timeout 2s kubectl exec --pod-running-timeout=2s deployment/reader -c worker -- cat /credential/token 2>/dev/null || true)
 status=$(request "$token" configmaps/route "$scratch/route" || true)
 for path in configmaps secrets configmaps/offlimits; do
   status=$(request "$token" "$path" /dev/null || true)
   if ! test "$status" = 403; then printf '%s\n' "reader GET $path status = 403: ✗ [DQ:denied_${path//\//_}]"; failed=1; fi
 done
 exit "$failed"
-
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

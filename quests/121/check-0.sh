@@ -31,14 +31,29 @@ if ! jq -e --arg url "https://$name:8443/validate" '.webhooks[0].clientConfig.ur
   printf '%s\n' 'webhook clientConfig.url = https://dq-webhook-<bay>:8443/validate: ✗ [DQ:url]'
   failed=1
 fi
-if ! python3 - "$webhook" <<'DQ_CA'
+if ! python3 -I - /dev/fd/3 3<<<"$webhook" <<'DQ_CA'
+import sys
+
+def _dq_read_argument(value):
+    if not value.startswith('/dev/fd/'):
+        return value
+    with open(value, encoding='utf-8', newline='') as source:
+        return source.read().removesuffix('\n')
+
+sys.argv = [_dq_read_argument(value) for value in sys.argv]
+
 import base64
+import re
 import json
 import sys
 from pathlib import Path
 try:
-    actual = base64.b64decode(json.loads(sys.argv[1])["webhooks"][0]["clientConfig"]["caBundle"], validate=True).strip()
-    expected = Path("admission-ca.pem").read_bytes().strip()
+    def certificate(value):
+        match=re.fullmatch(rb'\s*-----BEGIN CERTIFICATE-----\s*([A-Za-z0-9+/=\s]+)-----END CERTIFICATE-----\s*',value)
+        if not match:raise ValueError('single PEM certificate')
+        return base64.b64decode(re.sub(rb'\s+',b'',match[1]),validate=True)
+    actual=certificate(base64.b64decode(json.loads(sys.argv[1])["webhooks"][0]["clientConfig"]["caBundle"],validate=True))
+    expected=certificate(Path('admission-ca.pem').read_bytes())
     if not expected or actual != expected:
         raise ValueError("CA mismatch")
 except (KeyError, IndexError, TypeError, ValueError, OSError):
@@ -48,12 +63,51 @@ then
   printf '%s\n' 'webhook caBundle = admission-ca.pem: ✗ [DQ:ca]'
   failed=1
 fi
-if ! test -n "$installation" || ! jq -e --arg install "$installation" --arg run "${DQ_NAMESPACE#dq-}" '.webhooks[0].namespaceSelector=={"matchLabels":{"devops-quests.installation":$install,"devops-quests.run":$run}}' <<<"$webhook" >/dev/null 2>&1; then
+if ! test -n "$installation" || ! python3 -I - /dev/fd/3 /dev/fd/4 /dev/fd/5 3<<<"$webhook" 4<<<"$installation" 5<<<"${DQ_NAMESPACE#dq-}" <<'DQ_NAMESPACE_SCOPE'
+import sys
+
+def _dq_read_argument(value):
+    if not value.startswith('/dev/fd/'):
+        return value
+    with open(value, encoding='utf-8', newline='') as source:
+        return source.read().removesuffix('\n')
+
+sys.argv = [_dq_read_argument(value) for value in sys.argv]
+
+import json,sys
+def simple_selector(value, labels):
+    if not isinstance(value,dict) or set(value)-{'matchLabels','matchExpressions'}:return False
+    matches=value.get('matchLabels',{})
+    clauses=value.get('matchExpressions',[])
+    if not isinstance(matches,dict) or not isinstance(clauses,list):return False
+    if set(matches)-set(labels) or any(e.get('key') not in labels for e in clauses):return False
+    for key,expected in labels.items():
+        allowed={matches[key]} if key in matches else None
+        exclusions=set();exists=key in matches
+        for clause in clauses:
+            if clause['key']!=key:continue
+            operator=clause.get('operator');values=clause.get('values',[])
+            if operator=='In':
+                if not values:return False
+                allowed=set(values) if allowed is None else allowed & set(values)
+                exists=True
+            elif operator=='NotIn':exclusions.update(values)
+            elif operator=='Exists':exists=True
+            else:return False
+        if allowed is None or not exists or allowed-exclusions!={expected}:return False
+    return True
+
+try:
+    scope=json.loads(sys.argv[1])['webhooks'][0]['namespaceSelector']
+    ok=simple_selector(scope,{'devops-quests.installation':sys.argv[2],'devops-quests.run':sys.argv[3]})
+except (ValueError,KeyError,IndexError,TypeError,AttributeError):ok=False
+sys.exit(not ok)
+DQ_NAMESPACE_SCOPE
+then
   printf '%s\n' 'webhook namespaceSelector = bay installation and run labels: ✗ [DQ:namespace]'
   failed=1
 fi
 exit "$failed"
-
 )
 [ $? -eq 0 ] || failed=1
 (

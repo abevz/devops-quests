@@ -10,11 +10,10 @@ failed=0
 check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
 umask 077
 role=$(timeout 2s kubectl get role station-reader -o json 2>/dev/null || true)
-check 'role/station-reader rules = named route get only [DQ:role]' '.rules==[{apiGroups:[""],resources:["configmaps"],resourceNames:["route"],verbs:["get"]}]' "$role"
+check 'role/station-reader rules = named route get only [DQ:role]' 'def exact($items): type=="array" and unique==$items; .rules | type=="array" and length>0 and all(.[]; (.apiGroups|exact([""])) and (.resources|exact(["configmaps"])) and (.resourceNames|exact(["route"])) and (.verbs|exact(["get"])) and ((.nonResourceURLs//[])|length==0))' "$role"
 binding=$(timeout 2s kubectl get rolebinding station-reader -o json 2>/dev/null || true)
-if ! jq -e --arg ns "$DQ_NAMESPACE" '.subjects==[{kind:"ServiceAccount",name:"controller",namespace:$ns}]' <<<"$binding" >/dev/null 2>&1; then printf '%s\n' 'rolebinding/station-reader subjects = controller in bay namespace: ✗ [DQ:binding]'; failed=1; fi
+if ! jq -e --arg ns "$DQ_NAMESPACE" '.subjects | type=="array" and length>0 and all(.[]; (.kind=="ServiceAccount" and .name=="controller" and (.namespace==null or .namespace=="" or .namespace==$ns) and (.apiGroup==null or .apiGroup=="")) or (.kind=="User" and .name==("system:serviceaccount:"+$ns+":controller") and (.apiGroup==null or .apiGroup=="" or .apiGroup=="rbac.authorization.k8s.io") and (.namespace==null or .namespace=="")))' <<<"$binding" >/dev/null 2>&1; then printf '%s\n' 'rolebinding/station-reader subjects = controller in bay namespace: ✗ [DQ:binding]'; failed=1; fi
 exit "$failed"
-
 )
 [ $? -eq 0 ] || failed=1
 (

@@ -4,46 +4,191 @@ failed=0
 set +e
 (
 set -e
-set -euo pipefail
-cd ~/quest
-failed=0
-check() { local id=$1 label=$2 expression=$3 document=$4; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗ [DQ:$id]"; failed=1; fi; }
 quota=$(timeout 2s kubectl get resourcequota station -o json 2>/dev/null || true)
-check quota 'ResourceQuota station hard = supplied budget' '.spec.hard=={"requests.cpu":"200m","limits.cpu":"400m","requests.memory":"32Mi","limits.memory":"64Mi",pods:"2"}' "$quota"
-exit "$failed"
+python3 -I - /dev/fd/3 3<<<"$quota" <<'DQ_QUOTA'
+import sys
 
+def _dq_read_argument(value):
+    if not value.startswith('/dev/fd/'):
+        return value
+    with open(value, encoding='utf-8', newline='') as source:
+        return source.read().removesuffix('\n')
+
+sys.argv = [_dq_read_argument(value) for value in sys.argv]
+
+import json,re,sys
+from decimal import Decimal, InvalidOperation
+
+def quantity(value):
+    if isinstance(value,bool) or not isinstance(value,(str,int,float)):
+        raise ValueError("quantity type")
+    match=re.fullmatch(r"([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)([numkKMGTPE]|[KMGTPE]i)?",str(value))
+    if not match:
+        raise ValueError("quantity syntax")
+    number,suffix=match.groups()
+    scales={"":Decimal(1),"n":Decimal("1e-9"),"u":Decimal("1e-6"),"m":Decimal("1e-3"),"k":Decimal("1e3"),"K":Decimal("1e3")}
+    for index,letter in enumerate("MGTPE",2):
+        scales[letter]=Decimal(1000)**index
+    for index,letter in enumerate("KMGTPE",1):
+        scales[letter+"i"]=Decimal(1024)**index
+    return Decimal(number)*scales[suffix or ""]
+
+def equal(value,expected):
+    try:return quantity(value)==quantity(expected)
+    except (ValueError,TypeError,InvalidOperation,OverflowError):return False
+
+def emit(marker,label,ok):
+    global failed
+    if not ok:
+        failed=True;print(label+": ✗ [DQ:"+marker+"]")
+
+def doc(value):
+    try:
+        result=json.loads(value)
+        return result if isinstance(result,dict) else {}
+    except ValueError:return {}
+
+def worker(pod):
+    items=[c for c in pod.get('spec',{}).get('containers',[]) if c.get('name')=='worker']
+    return items[0] if len(items)==1 else {}
+
+failed=False
+quota=doc(sys.argv[1]);hard=quota.get('spec',{}).get('hard',{})
+expected={'requests.cpu':'200m','limits.cpu':'400m','requests.memory':'32Mi','limits.memory':'64Mi','pods':'2'}
+emit('quota','ResourceQuota station hard = supplied budget',all(equal(hard.get(key),value) for key,value in expected.items()))
+sys.exit(failed)
+DQ_QUOTA
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
-set -euo pipefail
-cd ~/quest
-failed=0
-check() { local id=$1 label=$2 expression=$3 document=$4; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗ [DQ:$id]"; failed=1; fi; }
 limits=$(timeout 2s kubectl get limitrange defaults -o json 2>/dev/null || true)
 board=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
-check default 'LimitRange defaults default.cpu = 200m' '.spec.limits[0].default.cpu=="200m"' "$limits"
-check request 'LimitRange defaults defaultRequest.cpu = 100m' '.spec.limits[0].defaultRequest.cpu=="100m"' "$limits"
-check template 'board first container resources = empty' '(.spec.template.spec.containers[0].resources//{})=={}' "$board"
-exit "$failed"
+python3 -I - /dev/fd/3 /dev/fd/4 3<<<"$limits" 4<<<"$board" <<'DQ_DEFAULTS'
+import sys
 
+def _dq_read_argument(value):
+    if not value.startswith('/dev/fd/'):
+        return value
+    with open(value, encoding='utf-8', newline='') as source:
+        return source.read().removesuffix('\n')
+
+sys.argv = [_dq_read_argument(value) for value in sys.argv]
+
+import json,re,sys
+from decimal import Decimal, InvalidOperation
+
+def quantity(value):
+    if isinstance(value,bool) or not isinstance(value,(str,int,float)):
+        raise ValueError("quantity type")
+    match=re.fullmatch(r"([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)([numkKMGTPE]|[KMGTPE]i)?",str(value))
+    if not match:
+        raise ValueError("quantity syntax")
+    number,suffix=match.groups()
+    scales={"":Decimal(1),"n":Decimal("1e-9"),"u":Decimal("1e-6"),"m":Decimal("1e-3"),"k":Decimal("1e3"),"K":Decimal("1e3")}
+    for index,letter in enumerate("MGTPE",2):
+        scales[letter]=Decimal(1000)**index
+    for index,letter in enumerate("KMGTPE",1):
+        scales[letter+"i"]=Decimal(1024)**index
+    return Decimal(number)*scales[suffix or ""]
+
+def equal(value,expected):
+    try:return quantity(value)==quantity(expected)
+    except (ValueError,TypeError,InvalidOperation,OverflowError):return False
+
+def emit(marker,label,ok):
+    global failed
+    if not ok:
+        failed=True;print(label+": ✗ [DQ:"+marker+"]")
+
+def doc(value):
+    try:
+        result=json.loads(value)
+        return result if isinstance(result,dict) else {}
+    except ValueError:return {}
+
+def worker(pod):
+    items=[c for c in pod.get('spec',{}).get('containers',[]) if c.get('name')=='worker']
+    return items[0] if len(items)==1 else {}
+
+failed=False
+limits=doc(sys.argv[1]);board=doc(sys.argv[2]);items=[x for x in limits.get('spec',{}).get('limits',[]) if x.get('type')=='Container']
+container=worker(board.get('spec',{}).get('template',{}))
+# The API allows one Container entry; duplicates must not allow contradictory defaults.
+emit('default','LimitRange defaults default.cpu = 200m',bool(items) and all(equal(x.get('default',{}).get('cpu'),'200m') for x in items))
+emit('request','LimitRange defaults defaultRequest.cpu = 100m',bool(items) and all(equal(x.get('defaultRequest',{}).get('cpu'),'100m') for x in items))
+emit('template','board worker resources = empty',bool(container) and (container.get('resources') or {})=={})
+sys.exit(failed)
+DQ_DEFAULTS
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
-set -euo pipefail
-cd ~/quest
-failed=0
-check() { local id=$1 label=$2 expression=$3 document=$4; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗ [DQ:$id]"; failed=1; fi; }
 board=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
 pods=$(timeout 2s kubectl get pods -l app=board -o json 2>/dev/null || true)
-check ready 'deployment board readyReplicas = 1' '.status.readyReplicas==1' "$board"
-check pod_requests 'non-terminating board Pod requests = CPU 100m, memory 16Mi' 'any(.items[]?;.metadata.deletionTimestamp==null and .spec.containers[0].resources.requests=={cpu:"100m",memory:"16Mi"})' "$pods"
-check pod_limits 'non-terminating board Pod limits = CPU 200m, memory 32Mi' 'any(.items[]?;.metadata.deletionTimestamp==null and .spec.containers[0].resources.limits=={cpu:"200m",memory:"32Mi"})' "$pods"
-check pod_ready 'non-terminating board Pod has a ready container' 'any(.items[]?;.metadata.deletionTimestamp==null and any(.status.containerStatuses[]?;.ready==true))' "$pods"
-check same_pod 'one non-terminating Pod has required resources and ready container' 'any(.items[]?;.metadata.deletionTimestamp==null and .spec.containers[0].resources.requests=={cpu:"100m",memory:"16Mi"} and .spec.containers[0].resources.limits=={cpu:"200m",memory:"32Mi"} and any(.status.containerStatuses[]?;.ready==true))' "$pods"
-exit "$failed"
+python3 -I - /dev/fd/3 /dev/fd/4 3<<<"$board" 4<<<"$pods" <<'DQ_ADMITTED'
+import sys
 
+def _dq_read_argument(value):
+    if not value.startswith('/dev/fd/'):
+        return value
+    with open(value, encoding='utf-8', newline='') as source:
+        return source.read().removesuffix('\n')
+
+sys.argv = [_dq_read_argument(value) for value in sys.argv]
+
+import json,re,sys
+from decimal import Decimal, InvalidOperation
+
+def quantity(value):
+    if isinstance(value,bool) or not isinstance(value,(str,int,float)):
+        raise ValueError("quantity type")
+    match=re.fullmatch(r"([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)([numkKMGTPE]|[KMGTPE]i)?",str(value))
+    if not match:
+        raise ValueError("quantity syntax")
+    number,suffix=match.groups()
+    scales={"":Decimal(1),"n":Decimal("1e-9"),"u":Decimal("1e-6"),"m":Decimal("1e-3"),"k":Decimal("1e3"),"K":Decimal("1e3")}
+    for index,letter in enumerate("MGTPE",2):
+        scales[letter]=Decimal(1000)**index
+    for index,letter in enumerate("KMGTPE",1):
+        scales[letter+"i"]=Decimal(1024)**index
+    return Decimal(number)*scales[suffix or ""]
+
+def equal(value,expected):
+    try:return quantity(value)==quantity(expected)
+    except (ValueError,TypeError,InvalidOperation,OverflowError):return False
+
+def emit(marker,label,ok):
+    global failed
+    if not ok:
+        failed=True;print(label+": ✗ [DQ:"+marker+"]")
+
+def doc(value):
+    try:
+        result=json.loads(value)
+        return result if isinstance(result,dict) else {}
+    except ValueError:return {}
+
+def worker(pod):
+    items=[c for c in pod.get('spec',{}).get('containers',[]) if c.get('name')=='worker']
+    return items[0] if len(items)==1 else {}
+
+failed=False
+board=doc(sys.argv[1]);pods=doc(sys.argv[2]);eligible=[p for p in pods.get('items',[]) if not p.get('metadata',{}).get('deletionTimestamp')]
+def request(p):
+    r=worker(p).get('resources',{}).get('requests',{})
+    return equal(r.get('cpu'),'100m') and equal(r.get('memory'),'16Mi')
+def limit(p):
+    r=worker(p).get('resources',{}).get('limits',{})
+    return equal(r.get('cpu'),'200m') and equal(r.get('memory'),'32Mi')
+def ready(p):return bool(worker(p)) and any(c.get('name')=='worker' and c.get('ready') is True for c in p.get('status',{}).get('containerStatuses',[]))
+emit('ready','deployment board readyReplicas = 1',board.get('status',{}).get('readyReplicas')==1)
+emit('pod_requests','non-terminating board worker requests = CPU 100m, memory 16Mi',any(request(p) for p in eligible))
+emit('pod_limits','non-terminating board worker limits = CPU 200m, memory 32Mi',any(limit(p) for p in eligible))
+emit('pod_ready','non-terminating board Pod has a ready worker',any(ready(p) for p in eligible))
+emit('same_pod','one non-terminating Pod has required worker resources and readiness',any(request(p) and limit(p) and ready(p) for p in eligible))
+sys.exit(failed)
+DQ_ADMITTED
 )
 [ $? -eq 0 ] || failed=1
 (

@@ -18,9 +18,8 @@ for name in statefulset pvc pod; do
   if ! test -n "$actual" || ! test -n "$original" || { if test "$name" = pod; then test "$actual" = "$original"; else test "$actual" != "$original"; fi; }; then printf '%s\n' "$name UID matches required relationship to $file: ✗ [DQ:uid_$name]"; failed=1; fi
 done
 check 'statefulset/shelf serviceName = shelf [DQ:service_name]' '.spec.serviceName=="shelf"' "$statefulset"
-check 'statefulset/shelf first volumeMounts = ledger at /data [DQ:mount]' '.spec.template.spec.containers[0].volumeMounts==[{name:"ledger",mountPath:"/data"}]' "$statefulset"
+check 'statefulset/shelf first volumeMounts = ledger at /data [DQ:mount]' '[.spec.template.spec.containers[]? | select(.name=="worker")] as $worker | ($worker|length)==1 and ($worker[0].volumeMounts|length)==1 and ($worker[0].volumeMounts[0] | .name=="ledger" and .mountPath=="/data" and (.readOnly==null or .readOnly==false) and (.mountPropagation==null or .mountPropagation=="None") and (.subPath==null or .subPath=="") and (.subPathExpr==null or .subPathExpr=="") and (.recursiveReadOnly==null or .recursiveReadOnly=="Disabled") and (keys-["name","mountPath","readOnly","mountPropagation","subPath","subPathExpr","recursiveReadOnly"]|length)==0)' "$statefulset"
 exit "$failed"
-
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -42,14 +41,38 @@ set -e
 set -euo pipefail
 cd ~/quest
 failed=0
+service=$(kubectl get service shelf -o json 2>/dev/null || true)
+selector_ok() {
+  python3 -I - /dev/fd/3 /dev/fd/4 /dev/fd/5 /dev/fd/6 3<<<"$1" 4<<<"$pods" 5<<<"$2" 6<<<"$3" <<'DQ_SELECTOR'
+import sys
+
+def _dq_read_argument(value):
+    if not value.startswith('/dev/fd/'):
+        return value
+    with open(value, encoding='utf-8', newline='') as source:
+        return source.read().removesuffix('\n')
+
+sys.argv = [_dq_read_argument(value) for value in sys.argv]
+
+import json,sys
+try:
+    service,pods=json.loads(sys.argv[1]),json.loads(sys.argv[2])['items'];key,value=sys.argv[3:5]
+    selector=service['spec']['selector']
+    intended=[p for p in pods if p['metadata'].get('labels',{}).get(key)==value and not p['metadata'].get('deletionTimestamp')]
+    def matches(p):return all(p['metadata'].get('labels',{}).get(k)==v for k,v in selector.items())
+    ok=isinstance(selector,dict) and selector.get(key)==value and bool(intended) and all(matches(p) for p in intended) and all(not matches(p) or p['metadata'].get('labels',{}).get(key)==value for p in pods)
+except (ValueError,KeyError,TypeError,AttributeError):ok=False
+sys.exit(not ok)
+DQ_SELECTOR
+}
+pods=$(timeout 2s kubectl get pods -o json 2>/dev/null || true)
 check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
 statefulset=$(kubectl get statefulset shelf -o json 2>/dev/null || true)
 pvc=$(kubectl get pvc ledger-shelf-0 -o json 2>/dev/null || true)
 pod=$(kubectl get pod shelf-0 -o json 2>/dev/null || true)
 check 'service/shelf clusterIP = None [DQ:clusterip]' '.spec.clusterIP=="None"' "$(kubectl get service shelf -o json 2>/dev/null || true)"
-check 'service/shelf selector = app:shelf [DQ:selector]' '.spec.selector=={app:"shelf"}' "$(kubectl get service shelf -o json 2>/dev/null || true)"
+if ! selector_ok "$service" app shelf; then printf '%s\n' 'service selector retains only the supplied shelf workload: ✗ [DQ:selector]'; failed=1; fi
 exit "$failed"
-
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -61,10 +84,9 @@ check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<
 statefulset=$(kubectl get statefulset shelf -o json 2>/dev/null || true)
 pvc=$(kubectl get pvc ledger-shelf-0 -o json 2>/dev/null || true)
 pod=$(kubectl get pod shelf-0 -o json 2>/dev/null || true)
-if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s shelf-0 -- wget -qO- -T 3 http://shelf-0.shelf:8080 2>/dev/null)" = ledger-111; then printf '%s\n' 'shelf-0.shelf:8080 = ledger-111: ✗ [DQ:http]'; failed=1; fi
-if ! timeout 4s kubectl exec --pod-running-timeout=2s shelf-0 -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local." >/dev/null 2>&1; then printf '%s\n' 'shelf-0.shelf ordinal DNS lookup succeeds: ✗ [DQ:dns]'; failed=1; fi
+if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s shelf-0 -c worker -- wget -qO- -T 3 http://shelf-0.shelf:8080 2>/dev/null)" = ledger-111; then printf '%s\n' 'shelf-0.shelf:8080 = ledger-111: ✗ [DQ:http]'; failed=1; fi
+if ! timeout 4s kubectl exec --pod-running-timeout=2s shelf-0 -c worker -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local." >/dev/null 2>&1; then printf '%s\n' 'shelf-0.shelf ordinal DNS lookup succeeds: ✗ [DQ:dns]'; failed=1; fi
 exit "$failed"
-
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

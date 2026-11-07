@@ -4,7 +4,7 @@ failed=0
 set +e
 (
 set -e
-kubectl get role route-reader -o json | jq -e '.rules==[{"apiGroups":[""],"resources":["configmaps"],"resourceNames":["route"],"verbs":["get"]}]' >/dev/null
+kubectl get role route-reader -o json | jq -e 'def exact($items): type=="array" and unique==$items; .rules | type=="array" and length>0 and all(.[]; (.apiGroups|exact([""])) and (.resources|exact(["configmaps"])) and (.resourceNames|exact(["route"])) and (.verbs|exact(["get"])) and ((.nonResourceURLs//[])|length==0))' >/dev/null
 )
 [ $? -eq 0 ] || failed=1
 (

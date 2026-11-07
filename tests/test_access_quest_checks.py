@@ -22,7 +22,8 @@ def run_access_check(tmp_path, number, *, deny=True):
     reader = {
         "spec": {"template": {"spec": {
             "automountServiceAccountToken": False,
-            "volumes": [{"projected": {"sources": [{"serviceAccountToken": {
+            "containers": [{"name": "worker", "volumeMounts": [{"name": "credential", "mountPath": "/credential", "readOnly": True}]}],
+            "volumes": [{"name": "credential", "projected": {"sources": [{"serviceAccountToken": {
                 "path": "token", "expirationSeconds": 600,
                 "audience": "https://kubernetes.default.svc.cluster.local",
             }}]}}],

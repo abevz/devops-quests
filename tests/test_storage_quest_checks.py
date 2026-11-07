@@ -35,9 +35,10 @@ def run_check(tmp_path, number, stage, kubectl, facts, *, tar=None, archive=None
 @pytest.mark.parametrize('pod, accepted', [('new-pod', True), ('', False)])
 def test_statefulset_requires_a_real_replacement_pod(tmp_path, pod, accepted):
     kubectl = f'''case "$1 $2" in
-      'get statefulset') echo '{{"metadata":{{"uid":"sts"}},"spec":{{"serviceName":"shelf","template":{{"spec":{{"containers":[{{"volumeMounts":[{{"name":"ledger","mountPath":"/data"}}]}}]}}}}}},"status":{{"readyReplicas":1}}}}' ;;
+      'get statefulset') echo '{{"metadata":{{"uid":"sts"}},"spec":{{"serviceName":"shelf","template":{{"spec":{{"containers":[{{"name":"worker","volumeMounts":[{{"name":"ledger","mountPath":"/data"}}]}}]}}}}}},"status":{{"readyReplicas":1}}}}' ;;
       'get pvc') echo '{{"metadata":{{"uid":"pvc"}}}}' ;;
       'get pod') if [ -n '{pod}' ]; then echo '{{"metadata":{{"uid":"{pod}"}}}}'; else exit 1; fi ;;
+      'get pods') echo '{{"items":[{{"metadata":{{"name":"shelf-0","labels":{{"app":"shelf"}}}}}}]}}' ;;
       'get service') echo '{{"spec":{{"clusterIP":"None","selector":{{"app":"shelf"}}}}}}' ;;
       'exec --pod-running-timeout=2s') if [[ "$*" == *wget* ]]; then echo ledger-111; fi ;;
       *) exit 1 ;;
@@ -59,9 +60,14 @@ def make_archive(names):
 
 def test_failed_archive_read_cannot_match_empty_file_checksum(tmp_path):
     empty_hash = hashlib.sha256(b'').hexdigest()
-    tar = 'if [ "$1" = tf ]; then echo ledger.txt; else exit 1; fi\n'
+    member = tarfile.TarInfo('ledger.txt')
+    member.size = 1024
+    truncated = member.tobuf() + b'partial'
+    with pytest.raises(tarfile.ReadError):
+        with tarfile.open(fileobj=io.BytesIO(truncated)) as broken:
+            broken.extractfile('ledger.txt').read()
     kubectl = 'if [ "$1 $2" = "get pvc" ]; then echo claim; else exit 1; fi\n'
-    result = run_check(tmp_path, '128', 0, kubectl, {'original-ledger.sha256': empty_hash, 'original-pvc-uid': 'claim'}, tar=tar, archive=make_archive(['ledger.txt']))
+    result = run_check(tmp_path, '128', 0, kubectl, {'original-ledger.sha256': empty_hash, 'original-pvc-uid': 'claim'}, archive=truncated)
     assert result.returncode != 0
     assert 'ledger.tar ledger.txt checksum' in result.stdout
 

@@ -7,26 +7,70 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: 'set -euo pipefail
-
+    check: |-
+      set -euo pipefail
       cd ~/quest
-
       failed=0
+      selector_ok() {
+        python3 -I - /dev/fd/3 /dev/fd/4 /dev/fd/5 /dev/fd/6 3<<<"$1" 4<<<"$pods" 5<<<"$2" 6<<<"$3" <<'DQ_SELECTOR'
+      import sys
 
-      check() { local id=$1 label=$2 expression=$3 document=$4; if ! jq -e "$expression" <<<"$document" >/dev/null
-      2>&1; then printf ''%s\n'' "$label: ✗ [DQ:$id]"; failed=1; fi; }
+      def _dq_read_argument(value):
+          if not value.startswith('/dev/fd/'):
+              return value
+          with open(value, encoding='utf-8', newline='') as source:
+              return source.read().removesuffix('\n')
 
+      sys.argv = [_dq_read_argument(value) for value in sys.argv]
+
+      import json,sys
+      try:
+          service,pods=json.loads(sys.argv[1]),json.loads(sys.argv[2])['items'];key,value=sys.argv[3:5]
+          selector=service['spec']['selector']
+          intended=[p for p in pods if p['metadata'].get('labels',{}).get(key)==value and not p['metadata'].get('deletionTimestamp')]
+          def matches(p):return all(p['metadata'].get('labels',{}).get(k)==v for k,v in selector.items())
+          ok=isinstance(selector,dict) and selector.get(key)==value and bool(intended) and all(matches(p) for p in intended) and all(not matches(p) or p['metadata'].get('labels',{}).get(key)==value for p in pods)
+      except (ValueError,KeyError,TypeError,AttributeError):ok=False
+      sys.exit(not ok)
+      DQ_SELECTOR
+      }
+      pods=$(timeout 2s kubectl get pods -o json 2>/dev/null || true)
+      check() { local id=$1 label=$2 expression=$3 document=$4; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗ [DQ:$id]"; failed=1; fi; }
       service=$(timeout 2s kubectl get service board -o json 2>/dev/null || true)
+      if ! python3 -I - /dev/fd/3 /dev/fd/4 3<<<"$service" 4<<<"$pods" <<'DQ_METRICS_PORT'
+      import sys
 
-      check port ''service board first port = 8080'' ''.spec.ports[0].port==8080'' "$service"
+      def _dq_read_argument(value):
+          if not value.startswith('/dev/fd/'):
+              return value
+          with open(value, encoding='utf-8', newline='') as source:
+              return source.read().removesuffix('\n')
 
-      check target_port ''service board first targetPort = 8080'' ''.spec.ports[0].targetPort==8080'' "$service"
+      sys.argv = [_dq_read_argument(value) for value in sys.argv]
 
-      check selector ''service board selector = app board'' ''.spec.selector=={app:"board"}'' "$service"
-
+      import json,sys
+      try:
+          service=json.loads(sys.argv[1]);pods=json.loads(sys.argv[2])['items']
+          ports=[p for p in service['spec']['ports'] if p.get('name')=='http']
+          port=ports[0] if len(ports)==1 else {}
+          published=port.get('port')==8080 and port.get('protocol','TCP')=='TCP'
+          value=port.get('targetPort',port.get('port'))
+          if type(value) is int:target=value==8080
+          elif isinstance(value,str):
+              targets=[p for p in pods if p.get('metadata',{}).get('labels',{}).get('app')=='board' and not p.get('metadata',{}).get('deletionTimestamp')]
+              target=bool(targets)
+              for pod in targets:
+                  found=[p['containerPort'] for c in pod['spec']['containers'] for p in c.get('ports',[]) if p.get('name')==value and p.get('protocol','TCP')=='TCP']
+                  target=target and found==[8080]
+          else:target=False
+      except (ValueError,KeyError,TypeError,AttributeError):published=target=False
+      if not published:print('service board HTTP port = 8080: ✗ [DQ:port]')
+      if not target:print('service board HTTP target reaches application listener: ✗ [DQ:target_port]')
+      sys.exit(not (published and target))
+      DQ_METRICS_PORT
+      then failed=1; fi
+      if ! selector_ok "$service" app board; then printf '%s\n' 'service selector retains only the supplied board workload: ✗ [DQ:selector]'; failed=1; fi
       exit "$failed"
-
-      '
   - text: stages.0.objectives.1.text
     check: "set -euo pipefail\ncd ~/quest\nfailed=0\ncheck() { local id=$1 label=$2 expression=$3 document=$4; if\
       \ ! jq -e \"$expression\" <<<\"$document\" >/dev/null 2>&1; then printf '%s\\n' \"$label: ✗ [DQ:$id]\"; failed=1;\

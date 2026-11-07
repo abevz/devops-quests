@@ -43,69 +43,110 @@ set -e
 set -euo pipefail
 cd ~/quest
 failed=0
-board=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
-for field in hostNetwork hostPID hostIPC; do
-  if ! jq -e --arg field "$field" '.spec.template.spec[$field] != true' <<<"$board" >/dev/null 2>&1; then
-    printf '%s\n' "deployment/board $field != true: ✗ [DQ:host_${field,,}]"
-    failed=1
-  fi
-done
-if ! jq -e 'all(.spec.template.spec.volumes[]?; .hostPath==null)' <<<"$board" >/dev/null 2>&1; then
-  printf '%s\n' 'deployment/board volumes hostPath = none: ✗ [DQ:hostpath]'
-  failed=1
-fi
-if ! jq -e '.spec.template.spec.securityContext.runAsNonRoot==true' <<<"$board" >/dev/null 2>&1; then
-  printf '%s\n' 'deployment/board runAsNonRoot = true: ✗ [DQ:nonroot]'
-  failed=1
-fi
-if ! jq -e '.spec.template.spec.securityContext.runAsUser==1000' <<<"$board" >/dev/null 2>&1; then
-  printf '%s\n' 'deployment/board runAsUser = 1000: ✗ [DQ:uid]'
-  failed=1
-fi
-if ! jq -e '.spec.template.spec.securityContext.seccompProfile.type=="RuntimeDefault"' <<<"$board" >/dev/null 2>&1; then
-  printf '%s\n' 'deployment/board seccompProfile.type = RuntimeDefault: ✗ [DQ:seccomp]'
-  failed=1
-fi
-for field in privileged allowPrivilegeEscalation readOnlyRootFilesystem drop add seccomp; do
-  case "$field" in
-    privileged) expr='all((.spec.template.spec.containers+(.spec.template.spec.initContainers//[]))[]; .securityContext.privileged != true)' ;;
-    allowPrivilegeEscalation) expr='all((.spec.template.spec.containers+(.spec.template.spec.initContainers//[]))[]; .securityContext.allowPrivilegeEscalation==false)' ;;
-    readOnlyRootFilesystem) expr='all((.spec.template.spec.containers+(.spec.template.spec.initContainers//[]))[]; .securityContext.readOnlyRootFilesystem==true)' ;;
-    drop) expr='all((.spec.template.spec.containers+(.spec.template.spec.initContainers//[]))[]; (.securityContext.capabilities.drop // [] | index("ALL")) != null)' ;;
-    add) expr='all((.spec.template.spec.containers+(.spec.template.spec.initContainers//[]))[]; (.securityContext.capabilities.add // [] | length)==0)' ;;
-    seccomp) expr='all((.spec.template.spec.containers+(.spec.template.spec.initContainers//[]))[]; (.securityContext.seccompProfile.type // "RuntimeDefault")=="RuntimeDefault")' ;;
-  esac
-  if ! jq -e "$expr" <<<"$board" >/dev/null 2>&1; then
-    printf '%s\n' "deployment/board containers securityContext $field: ✗ [DQ:security_${field,,}]"
-    failed=1
-  fi
-done
-if ! jq -e '[.spec.template.spec.volumes[]? | select(.name=="scratch" and .emptyDir!=null)] | length==1' <<<"$board" >/dev/null 2>&1; then
-  printf '%s\n' 'deployment/board volume scratch = emptyDir: ✗ [DQ:volume]'
-  failed=1
-fi
-if ! jq -e '[.spec.template.spec.containers[0].volumeMounts[]? | select(.name=="scratch" and .mountPath=="/tmp" and .readOnly!=true)] | length==1' <<<"$board" >/dev/null 2>&1; then
-  printf '%s\n' 'deployment/board worker scratch → /tmp writable: ✗ [DQ:mount]'
-  failed=1
-fi
-if ! jq -e 'all((.spec.template.spec.containers+(.spec.template.spec.initContainers//[]))[]; all(.volumeMounts[]?; (.name=="scratch" and .mountPath=="/tmp") or .readOnly==true))' <<<"$board" >/dev/null 2>&1; then
-  printf '%s\n' 'deployment/board worker writable mounts = [/tmp]: ✗ [DQ:mounts]'
-  failed=1
-fi
-if ! timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -- sh -c 'awk '\''$2=="/" {found=1; if ($4 ~ /(^|,)ro(,|$)/) ok=1} END {exit !(found && ok)}'\'' /proc/mounts' >/dev/null 2>&1; then
+document=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
+if ! python3 -I - /dev/fd/3 3<<<"$document" <<'DQ_SECURITY'
+import sys
+
+def _dq_read_argument(value):
+    if not value.startswith('/dev/fd/'):
+        return value
+    with open(value, encoding='utf-8', newline='') as source:
+        return source.read().removesuffix('\n')
+
+sys.argv = [_dq_read_argument(value) for value in sys.argv]
+
+import json,sys
+try:
+    document=json.loads(sys.argv[1]);pod=document["spec"]["template"]["spec"]
+    regular=pod["containers"];initial=pod.get("initContainers",[]) or []
+    if not isinstance(regular,list) or not regular or not isinstance(initial,list):raise ValueError("containers")
+    containers=regular+initial;policy=pod.get("securityContext",{}) or {}
+    contexts=[c.get("securityContext",{}) or {} for c in containers]
+    if not isinstance(policy,dict) or not all(isinstance(c,dict) for c in contexts):raise ValueError("context")
+    valid=True
+except (ValueError,KeyError,TypeError,AttributeError):
+    pod={};regular=[];containers=[];policy={};contexts=[];valid=False
+
+def emit(marker,label,condition):
+    global failed
+    if not valid or not condition:
+        failed=True;print(label+": ✗ [DQ:"+marker+"]")
+
+def profile(context):
+    value=context.get("seccompProfile")
+    if value is None:return None
+    return value.get("type","invalid") if isinstance(value,dict) else "invalid"
+
+def positive_ids():
+    return all(type(v) is int and v>0 for c in [policy]+contexts for v in [c.get("runAsUser")] if v is not None)
+
+def nonroot():
+    no_false=all(c.get("runAsNonRoot") in (None,True) and c.get("runAsNonRoot") is not False for c in [policy]+contexts)
+    inherited=all((c.get("runAsNonRoot") if c.get("runAsNonRoot") is not None else policy.get("runAsNonRoot")) is True for c in contexts)
+    return no_false and inherited and positive_ids()
+
+def default_filter():
+    return all(profile(c) in (None,"RuntimeDefault") for c in [policy]+contexts) and all((profile(c) or profile(policy))=="RuntimeDefault" for c in contexts)
+
+def caps(context,key):
+    value=context.get("capabilities",{}) or {}
+    if not isinstance(value,dict):return None
+    result=value.get(key,[]) or []
+    return result if isinstance(result,list) else None
+
+failed=False
+for field in ("hostNetwork","hostPID","hostIPC"):
+    emit("host_"+field.lower(),"deployment/board "+field+" != true",pod.get(field) is not True)
+volumes=pod.get("volumes",[]) or []
+emit("hostpath","deployment/board volumes hostPath = none",isinstance(volumes,list) and all(isinstance(v,dict) and v.get("hostPath") is None for v in volumes))
+emit("nonroot","deployment/board effective containers are non-root",nonroot())
+if True:emit("uid","deployment/board explicit UIDs are positive",positive_ids())
+emit("seccomp","deployment/board effective default syscall filter",default_filter())
+emit("security_privileged","deployment/board containers privileged != true",all(c.get("privileged") is not True for c in contexts))
+emit("security_allowprivilegeescalation","deployment/board containers cannot gain privileges",all(c.get("allowPrivilegeEscalation") is False for c in contexts))
+if True:emit("security_readonlyrootfilesystem","deployment/board containers have root filesystems that are not writable",all(c.get("readOnlyRootFilesystem") is True for c in contexts))
+emit("security_drop","deployment/board containers drop ALL capabilities",all(caps(c,"drop") is not None and "ALL" in caps(c,"drop") for c in contexts))
+emit("security_add","deployment/board containers add no capabilities",all(caps(c,"add")==[] for c in contexts))
+if True:
+    emit("security_seccomp","deployment/board containers do not override with another filter",all(profile(c) in (None,"RuntimeDefault") for c in contexts))
+    try:
+        if not isinstance(volumes,list):raise ValueError("volumes")
+        by_name={v["name"]:v for v in volumes}
+        if len(by_name)!=len(volumes):raise ValueError("volume identity")
+        workers=[c for c in regular if c.get("name")=="worker"]
+        if len(workers)!=1:raise ValueError("worker")
+        tmp=[m for m in workers[0].get("volumeMounts",[]) if m.get("mountPath")=="/tmp"]
+        if len(tmp)!=1:raise ValueError("tmp mount")
+        temporary=by_name[tmp[0]["name"]]
+        volume_ok=isinstance(temporary.get("emptyDir"),dict)
+        mount_ok=volume_ok and tmp[0].get("readOnly") is not True
+        def readonly(mount):
+            source=by_name[mount["name"]]
+            if mount.get("readOnly") is True:return True
+            if any(source.get(key) is not None for key in ("configMap","secret","projected","downwardAPI")):return True
+            return any(isinstance(source.get(key),dict) and source[key].get("readOnly") is True for key in ("persistentVolumeClaim","csi"))
+        mounts_ok=all((m.get("name")==tmp[0]["name"] and m.get("mountPath")=="/tmp") or readonly(m) for c in containers for m in c.get("volumeMounts",[]))
+    except (KeyError,ValueError,TypeError,AttributeError):volume_ok=mount_ok=mounts_ok=False
+    emit("volume","deployment/board temporary volume is emptyDir",volume_ok)
+    emit("mount","deployment/board worker temporary storage at /tmp is writable",mount_ok)
+    emit("mounts","deployment/board other mounts are not writable",mounts_ok)
+sys.exit(failed)
+DQ_SECURITY
+then failed=1; fi
+if ! timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- sh -c 'awk '\''$2=="/" {found=1; if ($4 ~ /(^|,)ro(,|$)/) ok=1} END {exit !(found && ok)}'\'' /proc/mounts' >/dev/null 2>&1; then
   printf '%s\n' 'deployment/board / mount = ro: ✗ [DQ:root]'
   failed=1
 fi
-if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -- id -u 2>/dev/null)" = 1000; then
-  printf '%s\n' 'deployment/board id -u = 1000: ✗ [DQ:live_uid]'
+live_uid=$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- id -u 2>/dev/null || true)
+if ! [[ "$live_uid" =~ ^[0-9]+$ ]] || ! test "$live_uid" -gt 0; then
+  printf '%s\n' 'deployment/board id -u is positive: ✗ [DQ:live_uid]'
   failed=1
 fi
-if ! timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -- sh -c 'printf writable > /tmp/write-probe; test "$(cat /tmp/write-probe)" = writable' >/dev/null 2>&1; then
+if ! timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- sh -c 'printf writable > /tmp/write-probe; test "$(cat /tmp/write-probe)" = writable' >/dev/null 2>&1; then
   printf '%s\n' 'deployment/board /tmp write/read: ✗ [DQ:tmp]'
   failed=1
 fi
 exit "$failed"
-
 )
 [ $? -eq 0 ] || failed=1
 (

@@ -7,97 +7,87 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: 'set -euo pipefail
-
-      cd ~/quest
-
-      failed=0
-
-      board=$(kubectl get deployment board -o json 2>/dev/null || true)
-
-      check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1;
-      then printf ''%s\n'' "$label: ✗"; failed=1; fi; }
-
-      check ''prepare command = sh -c cp /input/route /shared/route [DQ:prepare]'' ''.spec.template.spec.initContainers[0].command==["sh","-c","cp
-      /input/route /shared/route"]'' "$board"
-
-      exit "$failed"
-
-      '
-  - text: stages.0.objectives.1.text
-    check: 'set -euo pipefail
-
-      cd ~/quest
-
-      failed=0
-
-      board=$(kubectl get deployment board -o json 2>/dev/null || true)
-
-      check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1;
-      then printf ''%s\n'' "$label: ✗"; failed=1; fi; }
-
-      check ''watcher startup command = test -s /shared/heartbeat [DQ:startup_command]'' ''.spec.template.spec.initContainers[1].startupProbe.exec.command==["test","-s","/shared/heartbeat"]''
-      "$board"
-
-      check ''watcher startup periodSeconds = 1 [DQ:period]'' ''.spec.template.spec.initContainers[1].startupProbe.periodSeconds==1''
-      "$board"
-
-      check ''watcher startup failureThreshold = 10 [DQ:threshold]'' ''.spec.template.spec.initContainers[1].startupProbe.failureThreshold==10''
-      "$board"
-
-      check ''watcher restartPolicy = Always [DQ:restart]'' ''.spec.template.spec.initContainers[1].restartPolicy=="Always"''
-      "$board"
-
-      exit "$failed"
-
-      '
-  - text: stages.0.objectives.2.text
-    check: 'set -euo pipefail
-
-      cd ~/quest
-
-      failed=0
-
-      board=$(kubectl get deployment board -o json 2>/dev/null || true)
-
-      check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1;
-      then printf ''%s\n'' "$label: ✗"; failed=1; fi; }
-
-      check ''board volumes = supplied input and shared volumes [DQ:volumes]'' ''.spec.template.spec.volumes==[{name:"input",configMap:{name:"route",defaultMode:420}},{name:"shared",emptyDir:{}}]''
-      "$board"
-
-      exit "$failed"
-
-      '
-  - text: stages.0.objectives.3.text
-    check: 'set -euo pipefail
-
-      cd ~/quest
-
-      failed=0
-
+    check: |-
       pods=$(kubectl get pods -l app=board -o json 2>/dev/null || true)
+      route=$(kubectl get configmap route -o json 2>/dev/null || true)
+      python3 -I - /dev/fd/3 /dev/fd/4 3<<<"$pods" 4<<<"$route" <<'DQ_PREPARED'
+      import sys
 
-      check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1;
-      then printf ''%s\n'' "$label: ✗"; failed=1; fi; }
+      def _dq_read_argument(value):
+          if not value.startswith('/dev/fd/'):
+              return value
+          with open(value, encoding='utf-8', newline='') as source:
+              return source.read().removesuffix('\n')
 
-      check ''a nonterminating board Pod has successful prepare [DQ:prepare_status]'' ''any(.items[]?;.metadata.deletionTimestamp==null
-      and any(.status.initContainerStatuses[]?;.name=="prepare" and .state.terminated.exitCode==0))'' "$pods"
+      sys.argv = [_dq_read_argument(value) for value in sys.argv]
 
-      check ''a nonterminating board Pod has started running watcher [DQ:watcher_status]'' ''any(.items[]?;.metadata.deletionTimestamp==null
-      and any(.status.initContainerStatuses[]?;.name=="watcher" and .started==true and .state.running!=null))''
-      "$pods"
+      import json,subprocess,sys
+      try:
+          pods=json.loads(sys.argv[1])['items'];route=json.loads(sys.argv[2])['data']['route'].encode()
+          candidates=[p for p in pods if not p['metadata'].get('deletionTimestamp') and any(c.get('name')=='prepare' and c.get('state',{}).get('terminated',{}).get('exitCode')==0 for c in p.get('status',{}).get('initContainerStatuses',[]))]
+          ok=False
+          for pod in candidates:
+              result=subprocess.run(['kubectl','exec',pod['metadata']['name'],'-c','worker','--','cat','/shared/route'],capture_output=True,timeout=4)
+              if result.returncode==0 and result.stdout==route:ok=True;break
+      except (ValueError,KeyError,TypeError,AttributeError,OSError,subprocess.TimeoutExpired):ok=False
+      if not ok:print('prepare makes the supplied route available at /shared/route: ✗ [DQ:prepare]')
+      sys.exit(not ok)
+      DQ_PREPARED
+  - text: stages.0.objectives.1.text
+    check: |-
+      board=$(kubectl get deployment board -o json 2>/dev/null || true)
+      python3 -I - /dev/fd/3 3<<<"$board" <<'DQ_HEARTBEAT'
+      import sys
 
-      check ''a nonterminating board Pod has a ready regular container [DQ:ready]'' ''any(.items[]?;.metadata.deletionTimestamp==null
-      and any(.status.containerStatuses[]?;.ready==true))'' "$pods"
+      def _dq_read_argument(value):
+          if not value.startswith('/dev/fd/'):
+              return value
+          with open(value, encoding='utf-8', newline='') as source:
+              return source.read().removesuffix('\n')
 
-      check ''one nonterminating board Pod has all three conditions [DQ:same]'' ''any(.items[]?;.metadata.deletionTimestamp==null
-      and any(.status.initContainerStatuses[]?;.name=="prepare" and .state.terminated.exitCode==0) and any(.status.initContainerStatuses[]?;.name=="watcher"
-      and .started==true and .state.running!=null) and any(.status.containerStatuses[]?;.ready==true))'' "$pods"
+      sys.argv = [_dq_read_argument(value) for value in sys.argv]
 
+      import json,shlex,sys
+      try:
+          containers=json.loads(sys.argv[1])['spec']['template']['spec']['initContainers']
+          matches=[c for c in containers if c.get('name')=='watcher']
+          watcher=matches[0] if len(matches)==1 else {}
+      except (ValueError,KeyError,TypeError,AttributeError):watcher={}
+      probe=watcher.get('startupProbe',{})
+      command=probe.get('exec',{}).get('command',[])
+      try:
+          if len(command)==3 and command[0] in ('sh','/bin/sh') and command[1]=='-c':command=shlex.split(command[2].strip().removesuffix(';'))
+          if command and command[0]=='exec':command=command[1:]
+          if command and command[0] in ('busybox','/bin/busybox'):command=command[1:]
+          heartbeat=command in (['test','-s','/shared/heartbeat'],['/bin/test','-s','/shared/heartbeat'],['[','-s','/shared/heartbeat',']'])
+      except (ValueError,TypeError,AttributeError):heartbeat=False
+      checks=[('startup_command',heartbeat),('period',probe.get('periodSeconds')==1),('threshold',probe.get('failureThreshold')==10),('restart',watcher.get('restartPolicy')=='Always')]
+      failed=False
+      for marker,ok in checks:
+          if not ok:failed=True;print('watcher '+marker+': ✗ [DQ:'+marker+']')
+      sys.exit(failed)
+      DQ_HEARTBEAT
+  - text: stages.0.objectives.2.text
+    check: |-
+      set -euo pipefail
+      cd ~/quest
+      failed=0
+      board=$(kubectl get deployment board -o json 2>/dev/null || true)
+      check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
+      check 'board volumes = supplied input and shared volumes [DQ:volumes]' '.spec.template.spec.volumes as $volumes | ($volumes|length)==2 and ($volumes[0]|keys)==["configMap","name"] and $volumes[0].name=="input" and $volumes[0].configMap.name=="route" and ($volumes[0].configMap.defaultMode//420)==420 and ($volumes[0].configMap.optional==null or $volumes[0].configMap.optional==false) and ($volumes[0].configMap.items==null) and ($volumes[0].configMap|keys-["name","defaultMode","optional","items"]|length)==0 and ($volumes[1]|keys)==["emptyDir","name"] and $volumes[1].name=="shared" and ($volumes[1].emptyDir|keys-["medium"]|length)==0 and ($volumes[1].emptyDir.medium//"")==""' "$board"
       exit "$failed"
-
-      '
+  - text: stages.0.objectives.3.text
+    check: |-
+      set -euo pipefail
+      cd ~/quest
+      failed=0
+      pods=$(kubectl get pods -l app=board -o json 2>/dev/null || true)
+      check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
+      check 'a nonterminating board Pod has successful prepare [DQ:prepare_status]' 'any(.items[]?;.metadata.deletionTimestamp==null and any(.status.initContainerStatuses[]?;.name=="prepare" and .state.terminated.exitCode==0))' "$pods"
+      check 'a nonterminating board Pod has started running watcher [DQ:watcher_status]' 'any(.items[]?;.metadata.deletionTimestamp==null and any(.status.initContainerStatuses[]?;.name=="watcher" and .started==true and .state.running!=null))' "$pods"
+      check 'a nonterminating board Pod has a ready regular container [DQ:ready]' 'any(.items[]?;.metadata.deletionTimestamp==null and any(.status.containerStatuses[]?;.name=="worker" and .ready==true))' "$pods"
+      check 'one nonterminating board Pod has all three conditions [DQ:same]' 'any(.items[]?;.metadata.deletionTimestamp==null and any(.status.initContainerStatuses[]?;.name=="prepare" and .state.terminated.exitCode==0) and any(.status.initContainerStatuses[]?;.name=="watcher" and .started==true and .state.running!=null) and any(.status.containerStatuses[]?;.name=="worker" and .ready==true))' "$pods"
+      exit "$failed"
   - text: stages.0.objectives.4.text
     check: 'set -euo pipefail
 
@@ -113,18 +103,12 @@ stages:
 
       '
   - text: stages.0.objectives.5.text
-    check: 'set -euo pipefail
-
+    check: |-
+      set -euo pipefail
       cd ~/quest
-
       failed=0
-
-      if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -- wget -qO- -T 3 http://board:8080/route
-      2>/dev/null)" = north-101; then printf ''%s\n'' ''board:8080/route = north-101: ✗ [DQ:http]''; failed=1; fi
-
+      if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080/route 2>/dev/null)" = north-101; then printf '%s\n' 'board:8080/route = north-101: ✗ [DQ:http]'; failed=1; fi
       exit "$failed"
-
-      '
 hints:
 - text: hints.0.text
   guide: kubernetes-workloads

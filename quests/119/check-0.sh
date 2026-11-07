@@ -17,7 +17,18 @@ if ! pods=$(kubectl get pods -l app=client -o json 2>/dev/null); then
   failed=1
   pods='{"items":[]}'
 fi
-if ! python3 - "$policies" "$pods" "board" <<'DQ_POLICY'
+target_pods=$(kubectl get pods -l app=board -o json 2>/dev/null || echo '{"items":[]}')
+if ! python3 -I - /dev/fd/3 /dev/fd/4 "board" /dev/fd/5 3<<<"$policies" 4<<<"$pods" 5<<<"$target_pods" <<'DQ_POLICY'
+import sys
+
+def _dq_read_argument(value):
+    if not value.startswith('/dev/fd/'):
+        return value
+    with open(value, encoding='utf-8', newline='') as source:
+        return source.read().removesuffix('\n')
+
+sys.argv = [_dq_read_argument(value) for value in sys.argv]
+
 import json
 import sys
 
@@ -48,18 +59,26 @@ def matches(selector, labels):
 
 
 def simple_selector(value, labels):
-    if not isinstance(value, dict) or set(value) - {"matchLabels", "matchExpressions"}:
-        return False
-    exact = dict(value.get("matchLabels", {}))
-    expressions = value.get("matchExpressions", [])
-    for expression in expressions:
-        if expression.get("operator") != "In" or len(expression.get("values", [])) != 1:
-            return False
-        key, selected = expression.get("key"), expression["values"][0]
-        if key in exact and exact[key] != selected:
-            return False
-        exact[key] = selected
-    return exact == labels
+    if not isinstance(value,dict) or set(value)-{'matchLabels','matchExpressions'}:return False
+    matches=value.get('matchLabels',{})
+    clauses=value.get('matchExpressions',[])
+    if not isinstance(matches,dict) or not isinstance(clauses,list):return False
+    if set(matches)-set(labels) or any(e.get('key') not in labels for e in clauses):return False
+    for key,expected in labels.items():
+        allowed={matches[key]} if key in matches else None
+        exclusions=set();exists=key in matches
+        for clause in clauses:
+            if clause['key']!=key:continue
+            operator=clause.get('operator');values=clause.get('values',[])
+            if operator=='In':
+                if not values:return False
+                allowed=set(values) if allowed is None else allowed & set(values)
+                exists=True
+            elif operator=='NotIn':exclusions.update(values)
+            elif operator=='Exists':exists=True
+            else:return False
+        if allowed is None or not exists or allowed-exclusions!={expected}:return False
+    return True
 
 
 def flows(spec, target):
@@ -76,9 +95,24 @@ def flows(spec, target):
             else:
                 raise ValueError("unbounded or unexpected destination")
             for port in rule["ports"]:
-                if set(port) - {"port", "protocol", "endPort"} or not isinstance(port.get("port"), int) or isinstance(port.get("port"), bool):
-                    raise ValueError("unbounded or named port")
-                number = port["port"]
+                if set(port)-{'port','protocol','endPort'}:raise ValueError('port fields')
+                value=port.get('port');protocol=port.get('protocol','TCP')
+                if type(value) is int:number=value
+                elif isinstance(value,str) and destination=='dns':
+                    # Protected pinned kind CoreDNS ports, not a player-editable resolver.
+                    mapping={('dns','UDP'):53,('dns-tcp','TCP'):53}
+                    number=mapping[(value,protocol)]
+                elif isinstance(value,str) and destination==target:
+                    candidates=[p for p in target_pods['items'] if p.get('metadata',{}).get('labels',{}).get('app')==target and not p.get('metadata',{}).get('deletionTimestamp')]
+                    if not candidates:raise ValueError('target Pods')
+                    resolved=[]
+                    for pod in candidates:
+                        ports=[entry['containerPort'] for container in pod['spec']['containers'] for entry in container.get('ports',[]) if entry.get('name')==value and entry.get('protocol','TCP')==protocol]
+                        if len(ports)!=1:raise ValueError('named target port')
+                        resolved+=ports
+                    if len(set(resolved))!=1:raise ValueError('inconsistent target ports')
+                    number=resolved[0]
+                else:raise ValueError('unbounded port')
                 if port.get("endPort", number) != number:
                     raise ValueError("port range")
                 result.add((destination, port.get("protocol", "TCP"), number))
@@ -122,6 +156,7 @@ def validate(document, pods, target):
 
 
 try:
+    target_pods=json.loads(sys.argv[4]) if len(sys.argv)>4 else {"items":[]}
     problems = validate(json.loads(sys.argv[1]), json.loads(sys.argv[2]), sys.argv[3])
 except (KeyError, TypeError, ValueError, AttributeError, json.JSONDecodeError):
     problems = ["networkpolicies / client Pod labels: ✗ [DQ:invalid_input]"]
@@ -133,7 +168,6 @@ then
   failed=1
 fi
 exit "$failed"
-
 )
 [ $? -eq 0 ] || failed=1
 (

@@ -21,7 +21,7 @@ kubectl get pod "$bad" -o json | jq -e '.status.phase=="Running" and any(.status
 (
 set -e
 bad=$(kubectl get pods -l app=quarantine -o json | jq -er '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")]|if length==1 then .[0].metadata.name else error("expected one current Running quarantine Pod") end') || exit $?
-test "$(kubectl exec "$bad" -- printenv ROUTE)" = retired
+test "$(kubectl exec "$bad" -c worker -- printenv ROUTE)" = retired
 )
 [ $? -eq 0 ] || failed=1
 (
