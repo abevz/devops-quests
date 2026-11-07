@@ -14,7 +14,7 @@ exit "$failed"
 (
 set -e
 failed=0
-if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/relay -- printenv RELEASE 2>/dev/null)" = release-81; then
+if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/relay -c worker -- printenv RELEASE 2>/dev/null)" = release-81; then
   printf '%s\n' 'deployment/relay RELEASE = release-81: ✗ [DQ:relay]'; failed=1
 fi
 exit "$failed"

@@ -4,7 +4,103 @@ failed=0
 set +e
 (
 set -e
-jq -e '.resource_changes[]|select(.address=="local_file.ledger")|.change.actions|index("delete")!=null and index("create")!=null' rejected-plan.json >/dev/null
+python3 -I - <<'DQ_PROPERTY'
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+
+def read_json(path, successful=True):
+    if not successful:
+        return None
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def resource_records(document, section='values'):
+    if not isinstance(document, dict):
+        return []
+    values = document.get(section)
+    root = values.get('root_module') if isinstance(values, dict) else None
+    if not isinstance(root, dict):
+        return []
+    records = []
+    pending = [root]
+    while pending:
+        module = pending.pop()
+        resources = module.get('resources') or []
+        children = module.get('child_modules') or []
+        if not isinstance(resources, list) or not isinstance(children, list):
+            return []
+        for resource in resources:
+            if not isinstance(resource, dict):
+                return []
+            records.append((module.get('address'), resource))
+        if not all(isinstance(child, dict) for child in children):
+            return []
+        pending.extend(children)
+    return records
+
+
+def same_target(value, expected, existing=False):
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        expanded = os.path.expanduser(value)
+        parent, leaf = os.path.split(expanded)
+        if leaf in ('', '.', '..'):
+            return False
+        # Validate raw traversal before pathlib normalizes it: file/.. and
+        # absent/../file are not usable aliases of an existing file.
+        if not stat.S_ISDIR(os.stat(parent or '.').st_mode):
+            return False
+        target = Path(expected)
+        if existing or target.exists():
+            if not stat.S_ISREG(os.stat(expanded).st_mode):
+                return False
+            return Path(expanded).resolve(strict=True) == target.resolve(strict=True)
+        candidate = Path(parent or '.').resolve(strict=True) / leaf
+        return candidate == target.parent.resolve(strict=True) / target.name
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def file_resources(records, filename, in_module=False):
+    found = []
+    for module, resource in records:
+        values = resource.get('values')
+        if (resource.get('mode') == 'managed' and resource.get('type') == 'local_file'
+                and isinstance(values, dict) and same_target(values.get('filename'), filename)
+                and (not in_module or isinstance(module, str) and bool(module))):
+            found.append((module, resource))
+    return found
+
+
+def number_is(value, expected):
+    return type(value) in (int, float) and value == expected
+
+plan = read_json('rejected-plan.json')
+try:
+    original = Path('original-id').read_text().strip()
+except OSError:
+    original = ''
+changes = plan.get('resource_changes', []) if isinstance(plan, dict) else []
+valid = False
+for resource in changes if isinstance(changes, list) else []:
+    change = resource.get('change', {})
+    before = change.get('before') or {}
+    actions = change.get('actions')
+    if (resource.get('mode') == 'managed' and resource.get('type') == 'local_file'
+            and same_target(before.get('filename'), 'ledger.txt')
+            and original and before.get('id') == original
+            and isinstance(actions, list) and sorted(actions) == ['create', 'delete']):
+        valid = True
+sys.exit(0 if valid else 1)
+DQ_PROPERTY
 )
 [ $? -eq 0 ] || failed=1
 (

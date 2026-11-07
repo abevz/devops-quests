@@ -51,12 +51,12 @@ if ! tofu output -json contracts 2>/dev/null | jq -e '.depot.release==1' >/dev/n
   printf '%s\n' 'contracts.depot.release = 1: ✗ [DQ:condition_6]'
   failed=1
 fi
-if ! jq -e '.configuration.root_module.module_calls.station.source=="./modules/v2"' upgrade-plan.json >/dev/null 2>&1; then
-  printf '%s\n' 'upgrade-plan.json station.source = ./modules/v2: ✗ [DQ:condition_7]'
+if ! jq -e --arg checksum "$(sha256sum north.txt 2>/dev/null | cut -d' ' -f1)" '.planned_values.outputs.contracts.value.station | .release==2 and .checksum==$checksum' upgrade-plan.json >/dev/null 2>&1; then
+  printf '%s\n' 'Saved station contract must report release 2 and the current file checksum: ✗ [DQ:condition_7]'
   failed=1
 fi
-if ! jq -e '.configuration.root_module.module_calls.depot.source=="./modules/v1"' upgrade-plan.json >/dev/null 2>&1; then
-  printf '%s\n' 'upgrade-plan.json depot.source = ./modules/v1: ✗ [DQ:condition_8]'
+if ! jq -e '.planned_values.outputs.contracts.value.depot.release==1' upgrade-plan.json >/dev/null 2>&1; then
+  printf '%s\n' 'Saved depot contract must retain release 1: ✗ [DQ:condition_8]'
   failed=1
 fi
 exit "$failed"
