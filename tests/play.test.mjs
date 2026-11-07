@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { attemptState, canRun, filterLevels, narrative } from "../web/play.mjs";
+import { attemptState, canRun, filterLevels, narrative, renderWhenChanged } from "../web/play.mjs";
 const levels = [
   {
     id: 1,
@@ -98,4 +98,17 @@ test("finished attempts never expose live controls, including after reload", () 
   assert.equal(attemptState({ status: "active", preparing: true }).showStop, false);
   assert.equal(attemptState({ status: "active" }).showStop, true);
   assert.equal(attemptState({ status: "active" }).showTerminal, true);
+});
+
+test("polling keeps unchanged regions intact so text selection survives", () => {
+  const node = { dataset: {}, cleared: 0, rendered: 0, replaceChildren() { this.cleared += 1; } };
+  const render = (target) => { target.rendered += 1; };
+  assert.equal(renderWhenChanged(node, ["en", 45, "brief"], render), true);
+  assert.equal(renderWhenChanged(node, ["en", 45, "brief"], render), false);
+  assert.equal(renderWhenChanged(node, ["en", 45, "brief"], render), false);
+  assert.equal(node.cleared, 1);
+  assert.equal(node.rendered, 1);
+  assert.equal(renderWhenChanged(node, ["ru", 45, "brief"], render), true);
+  assert.equal(renderWhenChanged(node, ["ru", 45, "brief v2"], render), true);
+  assert.equal(node.rendered, 3);
 });
