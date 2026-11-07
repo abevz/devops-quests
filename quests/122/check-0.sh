@@ -22,10 +22,10 @@ failed=0
 child=$(git -C repository show HEAD:apps/child.yaml 2>/dev/null | python3 -c 'import json,sys,yaml; json.dump(yaml.safe_load(sys.stdin),sys.stdout)' 2>/dev/null || true)
 check 'Git child kind = Application [DQ:child_kind]' '.kind=="Application"' "$child"
 check 'Git child name = board [DQ:child_name]' '.metadata.name=="board"' "$child"
-check 'Git child source path = manifests [DQ:child_source]' '.spec.source.path=="manifests"' "$child"
+check 'Git child source path = manifests [DQ:child_source]' 'def same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; (.spec.source.path | same_dir("manifests"))' "$child"
 check 'child Application project = station [DQ:project]' '.spec.project=="station"' "$app"
 if ! jq -e --arg ns "$DQ_NAMESPACE" '.spec.destination.namespace==$ns' <<<"$app" >/dev/null 2>&1; then printf '%s\n' 'child Application destination = bay namespace: ✗ [DQ:destination]'; failed=1; fi
-check 'child Application source path = manifests [DQ:source]' '.spec.source.path=="manifests"' "$app"
+check 'child Application source path = manifests [DQ:source]' 'def same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; (.spec.source.path | same_dir("manifests"))' "$app"
 if ! jq -e --arg ns "$DQ_NAMESPACE" '.metadata.annotations["argocd.argoproj.io/tracking-id"]==($ns+"_parent:argoproj.io/Application:"+$ns+"/board")' <<<"$app" >/dev/null 2>&1; then printf '%s\n' 'child Application tracking-id = parent tracking ID: ✗ [DQ:tracking]'; failed=1; fi
 exit "$failed"
 )
@@ -70,7 +70,7 @@ exit "$failed"
 (
 set -e
 failed=0
-if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = north-122; then printf '%s\n' 'board:8080 = north-122: ✗ [DQ:http]'; failed=1; fi
+if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = north-122; then printf '%s\n' 'board:8080 = north-122: ✗ [DQ:http]'; failed=1; fi
 exit "$failed"
 )
 [ $? -eq 0 ] || failed=1

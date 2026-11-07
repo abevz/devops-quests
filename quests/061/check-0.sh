@@ -19,7 +19,7 @@ kubectl -n "$ARGO_NAMESPACE" get secret station-repository -o json | jq -e --arg
 (
 set -e
 source platform.env
-kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" '.spec.source.repoURL==$url and .spec.source.path=="manifests" and .spec.source.targetRevision=="main"' >/dev/null
+kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" 'def same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url and (.spec.source.path | same_dir("manifests")) and .spec.source.targetRevision=="main"' >/dev/null
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -35,7 +35,7 @@ kubectl rollout status deployment/board --timeout=3s >/dev/null
 [ $? -eq 0 ] || failed=1
 (
 set -e
-test "$(kubectl exec deployment/board -- wget -qO- -T 3 http://board:8080)" = north-61
+test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-61
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

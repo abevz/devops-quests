@@ -20,7 +20,7 @@ if ! test "$(kubectl get secret route-secret -o jsonpath='{.data.value}' 2>/dev/
   failed=1
 fi
 
-if ! test "$(kubectl exec deployment/relay -- printenv ROUTE_SECRET 2>/dev/null)" = north-secret; then
+if ! test "$(kubectl exec deployment/relay -c worker -- printenv ROUTE_SECRET 2>/dev/null)" = north-secret; then
   printf '%s\n' 'deployment/relay ROUTE_SECRET = north-secret: ✗ [DQ:env]'
   failed=1
 fi

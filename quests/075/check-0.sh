@@ -8,7 +8,7 @@ source platform.env
 source webhook.env
 GITEA_API="${GIT_URL%/rail/station.git}/api/v1/repos/rail/station"
 hook=$(cat /run/dq/facts/0/hook-id)
-curl -fsS -u "$GIT_USER:$GIT_PASSWORD" "$GITEA_API/hooks/$hook" | jq -e --arg url "$(jq -er .url /run/dq/facts/0/webhook-target.json)" '.active==true and .type=="gogs" and .config.url==$url and .config.content_type=="json" and .events==["push"] and .branch_filter=="main"' >/dev/null
+curl -fsS -u "$GIT_USER:$GIT_PASSWORD" "$GITEA_API/hooks/$hook" | jq -e --arg url "$(jq -er .url /run/dq/facts/0/webhook-target.json)" '.active==true and .type=="gogs" and (.config.url | sub("\\?$";""))==$url and .config.content_type=="json" and .events==["push"] and .branch_filter=="main"' >/dev/null
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -23,7 +23,7 @@ git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/initial-commit
 (
 set -e
 source platform.env
-kubectl get application board -o json | jq -e --arg url "$GIT_URL" '.spec.source.repoURL==$url and .spec.source.path=="manifests" and .spec.source.targetRevision=="main"' >/dev/null
+kubectl get application board -o json | jq -e --arg url "$GIT_URL" 'def same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url and (.spec.source.path | same_dir("manifests")) and .spec.source.targetRevision=="main"' >/dev/null
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -39,7 +39,7 @@ kubectl rollout status deployment/board --timeout=3s >/dev/null
 [ $? -eq 0 ] || failed=1
 (
 set -e
-test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -- wget -qO- -T 3 http://board:8080)" = north-75
+test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-75
 )
 [ $? -eq 0 ] || failed=1
 (

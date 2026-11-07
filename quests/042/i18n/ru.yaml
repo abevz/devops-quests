@@ -39,27 +39,18 @@ hints.1.text: 'Изучите поставленные входные данны
   kubectl get secrets
 
   ```'
-hints.2.text: 'Изучите imagePullSecrets и ошибку загрузки Pod без вывода учётных данных.
+hints.2.text: |-
+  Изучите imagePullSecrets и ошибку загрузки Pod без вывода учётных данных.
 
-
-  Замените устаревший Docker auth Secret и перезапустите неработающий потребитель. И данные API Secret, и вложенный
-  auth должны использовать корректный канонический base64.
-
+  Замените устаревший Docker auth Secret и перезапустите неработающий потребитель. Данные API Secret должны содержать корректный документ Docker credentials: вложенный auth либо соответствующие поля username/password.
   Не выводите значения credentials и не сохраняйте их в истории shell.
-
 
   Проверьте наблюдаемый результат:
 
+  - `source platform.env; kubectl get secret registry-pull -o json | jq -e 'env as $e | .type as $t | (if $t=="kubernetes.io/dockerconfigjson" then (.data[".dockerconfigjson"]|@base64d|fromjson|.auths) elif $t=="kubernetes.io/dockercfg" then (.data[".dockercfg"]|@base64d|fromjson) else {} end)[$e.REGISTRY] | if ((.auth//"")|length)>0 then ((.auth|gsub("[\r\n]";"")|@base64d)==($e.REGISTRY_USER+":"+$e.REGISTRY_PASSWORD)) else .username==$e.REGISTRY_USER and .password==$e.REGISTRY_PASSWORD end'` — Печатает `true`, не раскрывая credentials.
+  - `source platform.env; kubectl get deployment board -o json | jq '{name:.metadata.name,replicas:.spec.replicas,worker:(.spec.template.spec.containers[]|select(.name=="worker")|{image,imagePullPolicy})}'; kubectl get pods -o json | jq '.items[] | select(.metadata.deletionTimestamp==null and any(.spec.containers[]?;.name=="worker")) | {pod:.metadata.name,pullSecrets:[.spec.imagePullSecrets[]?.name]}'` — Показывает `board`, число реплик `1`, предоставленный `PRIVATE_IMAGE`, `Always` и только `registry-pull`.
+  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080` — Rollout завершается; HTTP возвращает `north-42`.
 
-  - `source platform.env; kubectl get secret registry-pull -o json | jq -e ''env as $e | .type=="kubernetes.io/dockerconfigjson"
-  and ((.data[".dockerconfigjson"]|@base64d|fromjson|.auths[$e.REGISTRY].auth|@base64d)==($e.REGISTRY_USER+":"+$e.REGISTRY_PASSWORD))''`
-  — Печатает `true`, не раскрывая credentials.
-
-  - `source platform.env; kubectl get deployment board -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas,IMAGE:.spec.template.spec.containers[0].image,PULL:.spec.template.spec.containers[0].imagePullPolicy,SECRETS:.spec.template.spec.imagePullSecrets[*].name`
-  — Показывает `board`, число реплик `1`, предоставленный `PRIVATE_IMAGE`, `Always` и только `registry-pull`.
-
-  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board
-  -- wget -qO- -T 3 http://127.0.0.1:8080` — Rollout завершается; HTTP возвращает `north-42`.'
 phrases.0: Я отделил авторизацию registry от учётных данных загрузки kubelet.
 phrases.1: Я обновил Secret потребителя и сохранил неизменяемую ссылку образа.
 phrases.2: Я проверил новую приватную загрузку и ответ восстановленного приложения.
@@ -71,14 +62,28 @@ questions.1.points.0: Он не исправляет имя образа или 
 questions.1.points.1: Доверие TLS и сетевая доступность остаются отдельными вопросами.
 questions.1.points.2: Его namespace и ссылка нагрузки должны совпадать.
 questions.1.prompt: Чего не решает image pull Secret?
-diagnostics.image: deployment/board containers[0].image должен совпадать с PRIVATE_IMAGE.
+diagnostics.image: |-
+  Образ worker в deployment/board должен совпадать с PRIVATE_IMAGE.
+
 diagnostics.replicas: deployment/board replicas должен совпадать с 1.
-diagnostics.secrets: deployment/board imagePullSecrets должен совпадать с [registry-pull].
-diagnostics.policy: deployment/board imagePullPolicy должен совпадать с Always.
-diagnostics.secret_type: registry-pull type должен совпадать с kubernetes.io/dockerconfigjson.
-diagnostics.outer: registry-pull dockerconfigjson должен использовать канонический base64.
-diagnostics.auth: registry-pull auth должен использовать канонический base64.
-diagnostics.credentials: Декодированный registry-pull auth должен совпадать с пользователем и паролем из platform.env.
+diagnostics.secrets: |-
+  Каждый активный Pod deployment/board должен фактически использовать только registry-pull как pull Secret.
+
+diagnostics.policy: |-
+  worker в deployment/board и его активных Pod должен использовать imagePullPolicy Always.
+
+diagnostics.secret_type: |-
+  registry-pull должен иметь тип Docker credential Secret: kubernetes.io/dockerconfigjson или kubernetes.io/dockercfg.
+
+diagnostics.outer: |-
+  registry-pull должен содержать корректный документ Docker credentials.
+
+diagnostics.auth: |-
+  registry-pull должен содержать пригодные credentials: auth либо username/password.
+
+diagnostics.credentials: |-
+  Credentials registry-pull должны совпадать с пользователем и паролем из platform.env.
+
 diagnostics.rollout: Выкатка deployment/board должна завершиться.
 diagnostics.http: Запрос к localhost:8080 Pod board должен вернуть north-42.
 stages.0.objectives.0.text: Deployment `board` использует поставленный приватный образ, политику загрузки `Always`

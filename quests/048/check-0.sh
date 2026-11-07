@@ -37,8 +37,36 @@ curl -fsS -X POST -H "X-Vault-Token: $VAULT_MANAGER_TOKEN" -H 'Content-Type: app
 set -e
 source platform.env
 token=$(cat station-token)
-kubectl get deployment reader -o json | DQ_CHECK_TOKEN="$token" python3 -c 'import json,os,sys; d=json.load(sys.stdin); e=d["spec"]["template"]["spec"]["containers"][0]["env"]; assert e==[{"name":"ROUTE","valueFrom":{"secretKeyRef":{"name":"route-secret","key":"value"}}}]; assert os.environ["DQ_CHECK_TOKEN"] not in json.dumps(d), "Keep the Vault token out of the workload"'
-test "$(kubectl exec deployment/reader -- cat /tmp/route)" = north-secret
+kubectl get deployment reader -o json | DQ_CHECK_TOKEN="$token" VAULT_MANAGER_TOKEN="${VAULT_MANAGER_TOKEN:-}" VAULT_READER_TOKEN="${VAULT_READER_TOKEN:-}" python3 -I -c 'import json,os,sys,subprocess
+try:
+    deployment=json.load(sys.stdin)
+    workers=[item for item in deployment['"'"'spec'"'"']['"'"'template'"'"']['"'"'spec'"'"']['"'"'containers'"'"'] if item.get('"'"'name'"'"')=='"'"'worker'"'"']
+    assert len(workers)==1
+    entries=[entry for entry in workers[0].get('"'"'env'"'"',[]) if entry.get('"'"'name'"'"')=='"'"'ROUTE'"'"']
+    assert entries
+    effective=entries[-1]
+    assert effective.get('"'"'value'"'"') in (None,'"'"''"'"')
+    reference=effective.get('"'"'valueFrom'"'"',{}).get('"'"'secretKeyRef'"'"',{})
+    assert reference.get('"'"'name'"'"')=='"'"'route-secret'"'"' and reference.get('"'"'key'"'"')=='"'"'value'"'"'
+    tokens={value for value in (os.environ.get('"'"'DQ_CHECK_TOKEN'"'"'),os.environ.get('"'"'VAULT_MANAGER_TOKEN'"'"'),os.environ.get('"'"'VAULT_READER_TOKEN'"'"')) if value}
+    assert tokens and all(value not in json.dumps(deployment) for value in tokens)
+    def observed(args):
+        return subprocess.check_output(['"'"'kubectl'"'"']+args,stderr=subprocess.DEVNULL,timeout=4)
+    replicasets=json.loads(observed(['"'"'get'"'"','"'"'replicasets'"'"','"'"'-o'"'"','"'"'json'"'"']))
+    pods=json.loads(observed(['"'"'get'"'"','"'"'pods'"'"','"'"'-o'"'"','"'"'json'"'"']))
+    uid=deployment['"'"'metadata'"'"']['"'"'uid'"'"']
+    owners={rs['"'"'metadata'"'"']['"'"'uid'"'"'] for rs in replicasets.get('"'"'items'"'"',[]) if any(ref.get('"'"'kind'"'"')=='"'"'Deployment'"'"' and ref.get('"'"'uid'"'"')==uid and ref.get('"'"'controller'"'"') is True for ref in rs.get('"'"'metadata'"'"',{}).get('"'"'ownerReferences'"'"',[]))}
+    active=[pod for pod in pods.get('"'"'items'"'"',[]) if pod.get('"'"'metadata'"'"',{}).get('"'"'deletionTimestamp'"'"') is None and pod.get('"'"'status'"'"',{}).get('"'"'phase'"'"') not in ('"'"'Failed'"'"','"'"'Succeeded'"'"') and any(ref.get('"'"'kind'"'"')=='"'"'ReplicaSet'"'"' and ref.get('"'"'uid'"'"') in owners and ref.get('"'"'controller'"'"') is True for ref in pod.get('"'"'metadata'"'"',{}).get('"'"'ownerReferences'"'"',[]))]
+    assert active
+    for pod in active:
+        assert pod.get('"'"'status'"'"',{}).get('"'"'phase'"'"')=='"'"'Running'"'"'
+        for container in pod['"'"'spec'"'"']['"'"'containers'"'"']:
+            environment=observed(['"'"'exec'"'"','"'"'--pod-running-timeout=2s'"'"',pod['"'"'metadata'"'"']['"'"'name'"'"'],'"'"'-c'"'"',container['"'"'name'"'"'],'"'"'--'"'"','"'"'env'"'"'])
+            assert all(value.encode() not in environment for value in tokens)
+except Exception:
+    sys.exit(1)
+'
+test "$(kubectl exec deployment/reader -c worker -- cat /tmp/route)" = north-secret
 )
 [ $? -eq 0 ] || failed=1
 (
