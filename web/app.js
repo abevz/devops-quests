@@ -482,6 +482,7 @@ async function openBriefing(number, mode = filters.mode, track = filters.path) {
       track,
       minutes: Number($("exam-minutes").value),
     };
+    $("preview-resources").open = false;
     readingTranslation = false;
     translationControls();
     renderPreview();
@@ -525,6 +526,13 @@ function renderPreview() {
     max: q.estimated_minutes[1],
   });
   $("preview-time").lang = contentLanguage();
+  renderIfChanged($("preview-sandbox"), q.dependencies, (node) => {
+    const sandboxes = ["kubernetes", "ansible", "tofu"].filter((name) => q.dependencies.includes(name));
+    node.textContent = (sandboxes.length ? sandboxes : ["workstation"])
+      .map((name) => tc("dependency." + name))
+      .join(" · ");
+    node.lang = contentLanguage();
+  });
   $("preview-dependencies").replaceChildren(
     ...["workstation", ...q.dependencies].map((name) => elc("li", "dependency." + name)),
   );
