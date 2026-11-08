@@ -8,6 +8,11 @@ stages:
   objectives:
   - text: stages.0.objectives.0.text
     check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
       policy=$(kubectl get networkpolicy board-ingress -o json)
       pods=$(kubectl get pods -l app=board -o json)
       python3 -I - /dev/fd/3 /dev/fd/4 3<<<"$policy" 4<<<"$pods" <<'DQ_INGRESS_POLICY'
@@ -74,6 +79,16 @@ stages:
       except (ValueError,KeyError,TypeError,AttributeError):ok=False
       sys.exit(not ok)
       DQ_INGRESS_POLICY
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+      printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
   - text: stages.0.objectives.1.text
     check: test "$(kubectl get networkpolicy -o json | jq '.items|length')" = 1
   - text: stages.0.objectives.2.text

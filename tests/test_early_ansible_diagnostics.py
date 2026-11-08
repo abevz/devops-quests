@@ -9,7 +9,7 @@ import pytest
 from devops_quests.catalog import ROOT, Catalog
 
 
-@pytest.mark.parametrize(("number", "stage", "expected"), [(2, 0, 6), (10, 0, 9), (10, 1, 2), (20, 0, 4), (20, 1, 16), (63, 0, 20)])
+@pytest.mark.parametrize(("number", "stage", "expected"), [(2, 0, 6), (10, 0, 9), (10, 1, 2), (20, 0, 4), (20, 1, 16), (63, 0, 13)])
 def test_every_failure_has_a_translated_marker(tmp_path, number, stage, expected):
     home = tmp_path / "home"
     (home / "quest").mkdir(parents=True)

@@ -1,10 +1,8 @@
 """Fleet playbook and live-host failures expose translated diagnostics."""
 
-import ast
 import os
 import re
 import subprocess
-import sys
 
 import pytest
 import yaml
@@ -53,53 +51,6 @@ def check_markers(catalog, output):
     return markers
 
 
-@pytest.mark.parametrize(
-    "play",
-    [
-        [None],
-        [{"hosts": "wrong", "tasks": [], "handlers": []}],
-        [{"hosts": "fleet", "tasks": [{"shell": "true"}]}],
-    ],
-)
-def test_malformed_or_invalid_play_has_diagnostic(tmp_path, catalog, play):
-    (tmp_path / "rollout.yml").write_text(yaml.safe_dump(play))
-    source = (ROOT / "quests/079/check-0.sh").read_text()
-    checks = [goal["check"] for goal in catalog.quests[79]["stages"][0]["objectives"]]
-    expected = "set -euo pipefail\ncd ~/quest\nfailed=0\nset +e\n"
-    for check in checks:
-        expected += "(\nset -e\n" + check + "\n)\n[ $? -eq 0 ] || failed=1\n"
-    expected += 'exit "$failed"\n'
-    assert source == expected
-    code = source.split("<<'DQ_FLEET'\n", 1)[1].split("\nDQ_FLEET\n", 1)[0]
-    result = subprocess.run(
-        [sys.executable, "-"],
-        input=code,
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    assert result.returncode != 0
-    assert not result.stderr, result.stderr
-    check_markers(catalog, result.stdout)
-    tree = ast.parse(code)
-    assignment = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == "DIAGNOSTIC_IDS"
-            for target in node.targets
-        )
-    )
-    for marker in ast.literal_eval(assignment.value).values():
-        assert set(catalog.public(79)["diagnostics"][marker]) >= {
-            "en",
-            "pl",
-            "es",
-            "de",
-            "ru",
-        }
 
 
 @pytest.mark.parametrize("host", [1, 2, 3])

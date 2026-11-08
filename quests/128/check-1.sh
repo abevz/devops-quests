@@ -4,6 +4,11 @@ failed=0
 set +e
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 checksum=$(cat /run/dq/facts/0/original-ledger.sha256 2>/dev/null || true)
 python3 -I - /dev/fd/3 3<<<"$checksum" <<'DQ_ARCHIVE'
 import sys
@@ -34,6 +39,16 @@ if not entries:print('ledger.tar contains exactly ledger.txt: ✗ [DQ:entries]')
 if not matching:print('ledger.tar ledger.txt checksum = original-ledger.sha256: ✗ [DQ:archive_hash]')
 sys.exit(not (entries and matching))
 DQ_ARCHIVE
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_1_0]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (

@@ -103,7 +103,13 @@ def test_container_checks_reject_a_different_state_id(
     docker.chmod(0o755)
     import json
 
-    resource = {"address": address, "values": {"id": "different-id"}}
+    resource = {
+        "address": address,
+        "mode": "managed",
+        "type": "docker_container",
+        "name": "worker",
+        "values": {"name": "rail-worker", "id": "different-id"},
+    }
     module = (
         {"resources": [resource]}
         if number == 26
@@ -123,4 +129,4 @@ def test_container_checks_reject_a_different_state_id(
         result = subprocess.run(["bash", "-c", check], capture_output=True, text=True)
         assert result.returncode != 0
         assert len(result.stdout.splitlines()) == 1
-        assert "id = original-id" in result.stdout
+        assert "[DQ:condition_2]" in result.stdout

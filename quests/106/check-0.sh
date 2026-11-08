@@ -4,6 +4,11 @@ failed=0
 set +e
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 services=$(kubectl get service board-internal board-headless board-node -o json 2>/dev/null || true)
 original=$(cat /run/dq/facts/0/service-contracts.json 2>/dev/null || true)
 pods=$(kubectl get pods -l app=board -o json 2>/dev/null || true)
@@ -64,10 +69,25 @@ ports=[p for p in by_name.get('board-node',{}).get('spec',{}).get('ports',[]) if
 report('node_port',len(ports)==1 and type(ports[0].get('nodePort')) is int and ports[0]['nodePort']>=30000)
 sys.exit(failed)
 DQ_SERVICE_CONTRACTS
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -103,6 +123,16 @@ if ! selector_ok "$internal" app board; then printf '%s\n' 'service selector ret
 if ! selector_ok "$headless" app board; then printf '%s\n' 'service selector retains only the supplied board workload: ✗ [DQ:headless_selector]'; failed=1; fi
 if ! selector_ok "$nodeport" app board; then printf '%s\n' 'service selector retains only the supplied board workload: ✗ [DQ:node_selector]'; failed=1; fi
 exit "$failed"
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (

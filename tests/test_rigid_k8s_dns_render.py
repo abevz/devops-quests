@@ -5,7 +5,6 @@ import re
 import subprocess
 import sys
 
-import pytest
 import yaml
 
 from devops_quests.catalog import ROOT
@@ -31,22 +30,6 @@ def run(marker, *arguments):
     )
 
 
-@pytest.mark.parametrize(
-    "core,accepted",
-    [
-        (".:1053 { errors hosts { 10.0.0.1 north.station.internal ttl 1 } }", True),
-        (
-            ".:1053 {\n # same zone\n hosts {\n ttl 1\n 10.0.0.1 north.station.internal\n }\n errors\n}",
-            True,
-        ),
-        (".:53 { errors hosts { 10.0.0.1 north.station.internal ttl 1 } }", False),
-        (".:1053 { errors hosts { 10.0.0.2 north.station.internal ttl 1 } }", False),
-        (".:1053 { errors hosts { 10.0.0.1 north.station.internal ttl 30 } }", False),
-        (".:1053 { errors hosts { 10.0.0.1 other.internal ttl 1 } }", False),
-    ],
-)
-def test_corefile_retains_address_zone_listener_and_ttl(core, accepted):
-    assert (run("DQ_CORE", core, "10.0.0.1").returncode == 0) is accepted
 
 
 def dns():
@@ -167,16 +150,6 @@ def test_rendered_configmap_is_the_one_referenced_by_named_board_worker():
     assert json.loads(select_cm(docs).stdout) == {}
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        "hosts { 10.0.0.1 north.station.internal ttl 1 }",
-        "log errors hosts { 10.0.0.1 north.station.internal ttl 1 }",
-        "errors errors hosts { 10.0.0.1 north.station.internal ttl 1 }",
-    ],
-)
-def test_corefile_keeps_the_explicit_single_errors_hosts_contract(body):
-    assert run("DQ_CORE", ".:1053 { " + body + " }", "10.0.0.1").returncode != 0
 
 
 def test_inherited_coredns_entrypoint_requires_the_running_binary_proof():

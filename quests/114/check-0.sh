@@ -4,6 +4,11 @@ failed=0
 set +e
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -46,6 +51,16 @@ DQ_AUTOMOUNT
 then failed=1; fi
 check 'reader first projected token = path token, audience and 600 seconds [DQ:projection]' '.spec.template.spec as $pod | [$pod.containers[]? | select(.name=="worker")] as $worker | ($worker|length)==1 and ([$worker[0].volumeMounts[]? | select(.mountPath=="/credential" and (.subPath==null or .subPath=="") and (.subPathExpr==null or .subPathExpr==""))] as $mounts | ($mounts|length)==1 and ([$pod.volumes[]? | select(.name==$mounts[0].name)] as $volumes | ($volumes|length)==1 and ([$volumes[0].projected.sources[]?.serviceAccountToken | select(.path=="token")] as $tokens | ($tokens|length)==1 and $tokens[0].expirationSeconds==600 and $tokens[0].audience=="https://kubernetes.default.svc.cluster.local")))' "$reader"
 exit "$failed"
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (

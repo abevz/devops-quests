@@ -16,6 +16,11 @@ stages:
       exit "$failed"
   - text: stages.0.objectives.1.text
     check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
       set -euo pipefail
       cd ~/quest
       failed=0
@@ -49,6 +54,16 @@ stages:
       if ! selector_ok "$service" app board; then printf '%s\n' 'service selector retains only the supplied board workload: ✗ [DQ:selector]'; failed=1; fi
       check 'service/board EndpointSlice has a ready endpoint [DQ:endpoint]' 'any(.items[].endpoints[]?;.conditions.ready==true)' "$endpoints"
       exit "$failed"
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+      printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
   - text: stages.0.objectives.2.text
     check: 'set -euo pipefail
 

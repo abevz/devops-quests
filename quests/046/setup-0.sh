@@ -1,8 +1,8 @@
 set -euo pipefail
 cd ~/quest
-ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'set -eu; printf "%s\n" north-46 > /srv/site/banner.txt'
-ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'set -eu; printf "%s\n" north-46 > /srv/site/banner.txt'
-ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'set -eu; printf "%s\n" north-46 > /srv/site/banner.txt'
+ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'set -eu; printf "%s\n" north-46 > /srv/site/banner.txt; chmod 0600 /srv/site/banner.txt'
+ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'set -eu; printf "%s\n" north-46 > /srv/site/banner.txt; chmod 0600 /srv/site/banner.txt'
+ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'set -eu; printf "%s\n" north-46 > /srv/site/banner.txt; chmod 0600 /srv/site/banner.txt'
 cat > rollout.yml <<'DQ_ASSET'
 - name: SignalRail station configuration
   hosts: fleet

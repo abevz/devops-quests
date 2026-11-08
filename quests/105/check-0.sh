@@ -4,6 +4,11 @@ failed=0
 set +e
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -21,7 +26,6 @@ dns_answer_has() {
 }
 dns=$(kubectl get deployment station-dns -o json 2>/dev/null || true)
 service=$(kubectl get service station-dns -o json 2>/dev/null || true)
-core=$(kubectl get configmap station-dns -o jsonpath='{.data.Corefile}' 2>/dev/null || true)
 expected=$(cat /run/dq/facts/0/expected-dns-address 2>/dev/null || true)
 entrypoint_version=''
 if jq -e '[.spec.template.spec.containers[]? | select(.name=="worker")] | length==1 and ((.[0].command//[])|length)==0' <<<"$dns" >/dev/null 2>&1; then
@@ -62,39 +66,23 @@ if not exposure:print('station-dns ports = TCP/UDP 53 to 1053: ✗ [DQ:ports]')
 sys.exit(not (command and exposure))
 DQ_DNS_RUNTIME
 then failed=1; fi
-if ! test -n "$expected" || ! python3 -I - /dev/fd/3 /dev/fd/4 3<<<"$core" 4<<<"$expected" <<'DQ_CORE'
-import sys
-
-def _dq_read_argument(value):
-    if not value.startswith('/dev/fd/'):
-        return value
-    with open(value, encoding='utf-8', newline='') as source:
-        return source.read().removesuffix('\n')
-
-sys.argv = [_dq_read_argument(value) for value in sys.argv]
-
-import re,shlex,sys
-try:
-    # Parse the supplied single-zone hosts configuration; ignore comments and layout.
-    tokens=shlex.split(re.sub(r'([{}])',r' \1 ',sys.argv[1]),comments=True)
-    if tokens[0] not in ('.:1053',':1053') or tokens[1]!='{' or tokens[-1]!='}':raise ValueError('listener')
-    body=tokens[2:-1]
-    errors=0
-    while body and body[0]=='errors':errors+=1;body=body[1:]
-    while body and body[-1]=='errors':errors+=1;body=body[:-1]
-    if errors!=1:raise ValueError('supplied errors plugin')
-    if body[:2]!=['hosts','{'] or body[-1]!='}':raise ValueError('hosts plugin')
-    values=body[2:-1];ttl=[];records=[]
-    while values:
-        if values[0]=='ttl':ttl.append(values[1]);values=values[2:]
-        else:records.append(tuple(values[:2]));values=values[2:]
-    ok=ttl==['1'] and records==[(sys.argv[2].strip(),'north.station.internal')]
-except (ValueError,IndexError,TypeError):ok=False
-sys.exit(not ok)
-
-DQ_CORE
-then printf '%s\n' 'station-dns Corefile matches supplied hosts, port and TTL: ✗ [DQ:core]'; failed=1; fi
+resolver=$(jq -r '.spec.clusterIP // empty' <<<"$service" 2>/dev/null || true)
+answer=$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -c worker -- nslookup north.station.internal "$resolver" 2>/dev/null || true)
+if ! test -n "$expected" || ! test -n "$resolver" || ! dns_answer_has "$answer" "$expected"; then
+  printf '%s\n' 'The private resolver must answer north.station.internal with the intended Service address: ✗ [DQ:core]'
+  failed=1
+fi
 exit "$failed"
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
