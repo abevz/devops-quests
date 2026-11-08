@@ -1,7 +1,17 @@
 import { storageGet, storageSet, sidebarKey, readCollapsed, saveCollapsed, installNavigationIcons } from "./navigation.mjs";
 import { renderDiagrams } from "./diagrams.mjs";
 import { referenceParts } from "./reference.mjs";
-import { attemptState, briefingHintView, canRun, filterLevels, narrative, objectiveGroups, renderWhenChanged, showHintGuide } from "./play.mjs";
+import {
+  attemptState,
+  briefingHintView,
+  canRun,
+  filterLevels,
+  narrative,
+  objectiveGroups,
+  renderWhenChanged,
+  showHintGuide,
+  trackForLevel,
+} from "./play.mjs";
 import { keySequence } from "./controls.mjs";
 import { diagnosticMessages } from "./diagnostics.mjs";
 import { scoreBreakdown } from "./score-preview.mjs";
@@ -486,6 +496,8 @@ function renderPreview() {
   $("preview-title").replaceChildren(el("span", "#" + q.id));
   block(q.title, $("preview-title"));
   $("preview-mode").textContent = t("mode." + preview.mode) + (preview.mode === "track" ? " · " + preview.track : "");
+  $("preview-mode-control").hidden = preview.mode === "exam";
+  $("preview-play-mode").value = preview.mode === "exam" ? "normal" : preview.mode;
   $("preview-story").replaceChildren();
   block(narrative(q.brief, q.stages[0].objectives), $("preview-story"));
   $("preview-stages").replaceChildren();
@@ -543,6 +555,7 @@ function renderPreview() {
       ? state.progress.some((p) => p.level === q.id)
       : canRun(level, state, preview.mode, preview.track);
   const active = state.run?.status === "active";
+  $("preview-play-mode").disabled = active || busy;
   $("preview-run").disabled = !eligible || active || busy;
   $("preview-availability").textContent = tc(
     active
@@ -554,6 +567,22 @@ function renderPreview() {
           : "preview.locked",
   );
 }
+$("preview-play-mode").onchange = () => {
+  if (!preview || preview.mode === "exam") return;
+  preview.mode = $("preview-play-mode").value;
+  if (preview.mode === "track") {
+    const level = state.levels.find((item) => item.id === preview.quest.id) ?? preview.quest;
+    preview.track = trackForLevel(level, filters.path);
+    filters.path = preview.track;
+    $("play-track").value = filters.path;
+  } else {
+    preview.track = filters.path;
+  }
+  filters.mode = preview.mode;
+  $("play-mode").value = filters.mode;
+  renderMap();
+  renderPreview();
+};
 $("preview-run").onclick = () =>
   action(async () => {
     await api("start", {
