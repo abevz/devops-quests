@@ -8,6 +8,11 @@ stages:
   objectives:
   - text: stages.0.objectives.0.text
     check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
       document=$(kubectl get deployment relay -o json 2>/dev/null || true)
       python3 -I - /dev/fd/3 3<<<"$document" <<'DQ_QUANTITY'
       import sys
@@ -60,6 +65,16 @@ stages:
                   print(label+": ✗ [DQ:"+marker+"]")
       sys.exit(failed)
       DQ_QUANTITY
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+      printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
   - text: stages.0.objectives.1.text
     check: kubectl rollout status deployment/relay --timeout=3s >/dev/null
 hints:

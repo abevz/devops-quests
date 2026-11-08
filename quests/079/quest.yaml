@@ -10,166 +10,13 @@ stages:
     check: 'if ! test -s repair.log; then printf ''%s\n'' ''repair.log empty: ✗ [DQ:repair]''; exit 1; fi'
   - text: stages.0.objectives.1.text
     check: |-
-      dq_result_failed=0
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
       set +e
       (
-      set -e
-      python3 -I - <<'DQ_FLEET'
-      import shlex
-      import yaml
-
-      MODULES = {'copy', 'file', 'stat', 'command', 'assert', 'unarchive', 'template', 'debug', 'fail', 'set_fact', 'meta'}
-      KEYWORDS = {'name', 'args', 'action', 'local_action', 'notify', 'listen', 'register', 'tags', 'vars', 'delegate_to', 'delegate_facts', 'run_once', 'no_log', 'become', 'become_user', 'environment', 'when', 'changed_when', 'failed_when', 'check_mode', 'ignore_errors', 'ignore_unreachable', 'until', 'retries', 'delay', 'loop', 'with_items', 'loop_control', 'throttle', 'timeout', 'connection', 'collections', 'any_errors_fatal', 'diff'}
-
-      def boolean(value):
-          if isinstance(value, bool):
-              return value
-          if isinstance(value, str):
-              if value.lower() in ('true', 'yes', 'on', '1'): return True
-              if value.lower() in ('false', 'no', 'off', '0'): return False
-          if type(value) is int and value in (0, 1): return bool(value)
-          return None
-
-      def mode(value):
-          if isinstance(value, bool): return None
-          if isinstance(value, int): return value
-          try: return int(str(value), 8)
-          except (TypeError, ValueError): return None
-
-      def names(value):
-          if value is None: return []
-          if isinstance(value, str): return [part.strip() for part in value.split(',') if part.strip()]
-          assert isinstance(value, list) and all(isinstance(part, str) for part in value)
-          return value
-
-      def fleet(play):
-          hosts = play.get('hosts')
-          return hosts in ('fleet', ['fleet']) or (isinstance(hosts, list) and set(hosts) == {'app1', 'app2', 'app3'})
-
-      def builtin_module(value, collections=None):
-          assert isinstance(value,str)
-          if value in MODULES:
-              assert not collections or collections=='ansible.builtin' or (isinstance(collections,list) and all(item=='ansible.builtin' for item in collections)), 'A short alias must resolve to a builtin module'
-              return value
-          assert value.startswith('ansible.builtin.') and value.removeprefix('ansible.builtin.') in MODULES, 'Unknown collection modules cannot certify builtin effects'
-          return value.removeprefix('ansible.builtin.')
-
-      def action(task):
-          assert isinstance(task, dict)
-          direct = [key for key in task if key.rsplit('.', 1)[-1] in MODULES]
-          explicit = [key for key in ('action', 'local_action') if key in task]
-          assert len(direct) + len(explicit) == 1, 'Exactly one module action per task'
-          assert all(key in KEYWORDS or key in direct for key in task), 'Unknown task action'
-          if direct:
-              key = direct[0]; module = builtin_module(key,task.get('collections')); args = task[key]
-          else:
-              declaration = task[explicit[0]]
-              if isinstance(declaration, dict):
-                  args = dict(declaration); module = builtin_module(args.pop('module'),task.get('collections'))
-              else:
-                  parts = shlex.split(declaration); module = builtin_module(parts.pop(0),task.get('collections'))
-                  args = ' '.join(parts) if module == 'command' else dict(part.split('=', 1) for part in parts)
-          assert module in MODULES
-          if args is None: args = {}
-          if isinstance(args, str):
-              args = {'_raw_params': args} if module in ('command', 'meta') else dict(part.split('=', 1) for part in shlex.split(args))
-          assert isinstance(args, dict)
-          args = {**args, **task.get('args', {})}
-          return module, args
-
-      def tasks(items, inherited=None):
-          inherited = inherited or {}
-          for task in items or []:
-              assert isinstance(task, dict)
-              merged = {**inherited, **task}
-              merged['tags'] = names(inherited.get('tags')) + names(task.get('tags'))
-              merged['vars'] = {**inherited.get('vars', {}), **task.get('vars', {})}
-              if 'block' in task:
-                  context = {key: merged[key] for key in KEYWORDS if key in merged and key not in ('name', 'action', 'local_action', 'args')}
-                  yield from tasks(task['block'], context)
-                  yield from tasks(task.get('rescue', []), context)
-                  yield from tasks(task.get('always', []), context)
-              else:
-                  yield merged
-
-      def plays():
-          data = yaml.safe_load(open('rollout.yml'))
-          assert isinstance(data, list) and data and all(isinstance(play, dict) and fleet(play) for play in data)
-          return data
-
-      def flat(play):
-          context = {key: play[key] for key in ('no_log', 'check_mode', 'tags', 'vars', 'delegate_to', 'run_once', 'when', 'collections') if key in play}
-          return list(tasks(play.get('pre_tasks', []) + play.get('tasks', []) + play.get('post_tasks', []), context))
-
-      def command(args):
-          if 'argv' in args:
-              assert isinstance(args['argv'], list) and all(isinstance(part, str) for part in args['argv'])
-              return args['argv']
-          parts = shlex.split(args.get('_raw_params', args.get('cmd', '')))
-          if parts and parts[0] in ('/bin/cat','/usr/bin/cat','/usr/local/bin/dq-service'):
-              parts[0] = parts[0].rsplit('/',1)[-1]
-          if len(parts)>1 and parts[0]=='cat' and parts[1]=='--': parts.pop(1)
-          return parts
-
-      def unconditional(task):
-          assert not any(task.get(key) not in (None, [], True, 'true', 'True') for key in ('when',))
-          assert not any(key in task for key in ('loop', 'with_items', 'until', 'ignore_errors', 'ignore_unreachable', 'failed_when'))
-
-      def not_masked(task):
-          unconditional(task)
-          assert 'changed_when' not in task, 'Do not mask module change reporting'
-          assert 'check_mode' not in task or boolean(task['check_mode']) is False
-
-      def reload_handler(play, task, expected='dq-service'):
-          notified = names(task.get('notify'))
-          assert notified, 'The changed file must notify a reload'
-          handlers = list(tasks(play.get('handlers', []), {'collections':play.get('collections')}))
-          selected = [handler for handler in handlers if set(notified) & ({handler.get('name')} | set(names(handler.get('listen'))))]
-          assert selected and all(any(name in ({h.get('name')} | set(names(h.get('listen')))) for h in selected) for name in notified)
-          for handler in selected:
-              unconditional(handler)
-              module, args = action(handler)
-              assert module == 'command' and command(args) == [expected, 'reload']
-              assert set(args) <= {'argv', 'cmd', '_raw_params', 'expand_argument_vars', 'strip_empty_ends'}
-
-      import sys
-      DIAGNOSTIC_IDS = {'invalid': 'invalid', 'duplicate': 'duplicate', 'notify_scope': 'notify_scope', 'dir_state': 'dir_state', 'order': 'order', 'path_dir': 'path_dir', 'path_banner': 'path_banner', 'path_route': 'path_route', 'path_module_dir': 'path_module_dir', 'path_module_banner': 'path_module_banner', 'path_module_route': 'path_module_route', 'path_mode_dir': 'path_mode_dir', 'path_mode_banner': 'path_mode_banner', 'path_mode_route': 'path_mode_route'}
-
-      class ConditionFailure(AssertionError):pass
-
-      def require(ok,condition='invalid'):
-       if not ok:raise ConditionFailure(condition)
-
-      try:
-       data=plays();require(len(data)==1)
-       play=data[0];require(not play.get('roles'))
-       found={}
-       for position,task in enumerate(flat(play)):
-        module,args=action(task)
-        if module in ('debug','stat'):unconditional(task);continue
-        not_masked(task);require(module in ('copy','file'))
-        path=args.get('path') if module=='file' else args.get('dest')
-        require(path in ('/srv/site/config','/srv/site/message','/srv/site/config/route'))
-        require(path not in found,'duplicate')
-        if path!='/srv/site/message':require(not names(task.get('notify')),'notify_scope')
-        found[path]=(position,module,args,task)
-       for path,kind,expected,content,slug in [('/srv/site/config','file',0o755,None,'dir'),('/srv/site/message','copy',0o644,'north-79','banner'),('/srv/site/config/route','copy',0o644,'route=north','route')]:
-        require(path in found,'path_'+slug)
-        _,module,args,task=found[path]
-        require(module==kind,'path_module_'+slug);require(mode(args.get('mode'))==expected,'path_mode_'+slug)
-        if kind=='file':require(args.get('state')=='directory','dir_state')
-        else:
-         require(isinstance(args.get('content'),str) and args['content'].rstrip('\n')==content)
-         require('src' not in args and boolean(args.get('force',True)) is True)
-        if path=='/srv/site/message':reload_handler(play,task)
-       require(found['/srv/site/config'][0]<found['/srv/site/config/route'][0],'order')
-      except (OSError,ValueError,TypeError,KeyError,AttributeError,AssertionError,yaml.YAMLError) as error:
-       marker=DIAGNOSTIC_IDS.get(str(error),'invalid') if isinstance(error,ConditionFailure) else 'invalid'
-       print('rollout.yml condition failed: ✗ [DQ:'+marker+']')
-       sys.exit(1)
-      DQ_FLEET
-      )
-      [ $? -eq 0 ] || dq_result_failed=1
+      set -euo pipefail
+      dq_result_failed=0
+      set +e
       (
       set -e
       python3 -I - <<'DQ_RECAP'
@@ -188,15 +35,24 @@ stages:
           return None
 
 
+      def unique_counter_fields(pairs):
+          result = {}
+          for key, value in pairs:
+              if key in result:
+                  raise RuntimeError('Ambiguous recap field')
+              result[key] = value
+          return result
+
+
       def recap(text):
           # Read an actual recap, not task output which happens to mention a counter.
           records = []
           try:
-              records.append(json.loads(text))
+              records.append(json.loads(text, object_pairs_hook=unique_counter_fields))
           except ValueError:
               for line in text.splitlines():
                   try:
-                      records.append(json.loads(line))
+                      records.append(json.loads(line, object_pairs_hook=unique_counter_fields))
                   except ValueError:
                       pass
           for record in reversed(records):
@@ -210,9 +66,18 @@ stages:
                                       if isinstance(values, dict)}
                                for host in event.get('processed', {})}
               if isinstance(stats, dict):
-                  return {host: {({'failures':'failed','dark':'unreachable'}.get(key,key)): count(value)
-                                 for key, value in values.items()}
-                          for host, values in stats.items() if isinstance(values, dict)}
+                  rows = {}
+                  for host, values in stats.items():
+                      if not isinstance(values, dict):
+                          continue
+                      row = {}
+                      for key, value in values.items():
+                          key = {'failures':'failed','dark':'unreachable'}.get(key, key)
+                          if key in row:
+                              raise RuntimeError('Ambiguous normalized recap field')
+                          row[key] = count(value)
+                      rows[host] = row
+                  return rows
           rows = {}
           body = text.rsplit('PLAY RECAP', 1)[-1]
           for line in body.splitlines():
@@ -248,6 +113,16 @@ stages:
       [ $? -eq 0 ] || dq_result_failed=1
       set -e
       test "$dq_result_failed" -eq 0
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+      printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
   - text: stages.0.objectives.2.text
     check: |-
       dq_group_failed=0

@@ -4,6 +4,11 @@ failed=0
 set +e
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -16,10 +21,25 @@ check cm_data 'rendered ConfigMap data = ROUTE north-108' '.data=={ROUTE:"north-
 check cm_name 'rendered ConfigMap name starts route-' '.metadata.name | startswith("route-")' "$cm"
 check rendered_replicas 'rendered Deployment replicas = 2' '.spec.replicas==2' "$rendered_board"
 exit "$failed"
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -38,6 +58,16 @@ check ready 'live board readyReplicas = 2' '.status.readyReplicas==2' "$board"
 if ! test -n "$name" || ! jq -e --arg name "$name" '[.spec.template.spec.containers[]? | select(.name=="worker")] as $worker | ($worker|length)==1 and ($worker[0].env|length)==1 and ($worker[0].env[0] | .name=="ROUTE" and (.value==null or .value=="") and (.valueFrom|keys)==["configMapKeyRef"] and .valueFrom.configMapKeyRef.name==$name and .valueFrom.configMapKeyRef.key=="ROUTE" and (.valueFrom.configMapKeyRef.optional==null or .valueFrom.configMapKeyRef.optional==false or .valueFrom.configMapKeyRef.optional==true))' <<<"$board" >/dev/null 2>&1; then printf '%s\n' 'board env = single ROUTE reference to rendered ConfigMap: ✗ [DQ:env]'; failed=1; fi
 check live_data 'live ConfigMap data = ROUTE north-108' '.data=={ROUTE:"north-108"}' "$live_cm"
 exit "$failed"
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (

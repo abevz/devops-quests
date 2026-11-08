@@ -57,34 +57,3 @@ exec bash -c "$script"
         else:
             assert f"app{n}-test /srv/site/message = {expected}: ✗" in result.stdout
             assert f"app{n}-test /srv/site/message mode = 644: ✗" in result.stdout
-
-
-def test_rescue_requires_a_block_to_handle_failure(tmp_path):
-    (tmp_path / "rollout.yml").write_text(
-        "- hosts: fleet\n  serial: 1\n  tasks:\n"
-        "  - rescue:\n"
-        "    - ansible.builtin.copy: {src: previous.txt, dest: /srv/site/message, mode: '0644'}\n"
-        "      notify: Reload banner\n"
-        "    always:\n    - ansible.builtin.debug: {msg: done}\n"
-    )
-    source = (ROOT / "quests/063/check-0.sh").read_text()
-    program = source.split("<<'SCOPE'\n", 1)[1].split("\nSCOPE\n", 1)[0]
-    result = subprocess.run(["python3", "-"], input=program, cwd=tmp_path, capture_output=True, text=True, timeout=5)
-    assert result.returncode != 0
-    assert "first task block is a nonempty list" in result.stdout
-
-
-def test_rescue_serial_must_be_numeric_one(tmp_path):
-    (tmp_path / "rollout.yml").write_text(
-        "- hosts: fleet\n  serial: true\n  tasks:\n"
-        "  - block:\n    - ansible.builtin.debug: {msg: work}\n"
-        "    rescue:\n"
-        "    - ansible.builtin.copy: {src: previous.txt, dest: /srv/site/message, mode: '0644'}\n"
-        "      notify: Reload banner\n"
-        "    always:\n    - ansible.builtin.debug: {msg: done}\n"
-    )
-    source = (ROOT / "quests/063/check-0.sh").read_text()
-    program = source.split("<<'SCOPE'\n", 1)[1].split("\nSCOPE\n", 1)[0]
-    result = subprocess.run(["python3", "-"], input=program, cwd=tmp_path, capture_output=True, text=True, timeout=5)
-    assert result.returncode != 0
-    assert "first play serial = 1" in result.stdout

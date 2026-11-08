@@ -4,6 +4,11 @@ failed=0
 set +e
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 dq_group_failed=0
 set +e
 (
@@ -35,10 +40,25 @@ dq_group_failed=1
 fi
 set -e
 test "$dq_group_failed" -eq 0
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 dq_group_failed=0
 set +e
 (
@@ -70,6 +90,16 @@ dq_group_failed=1
 fi
 set -e
 test "$dq_group_failed" -eq 0
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

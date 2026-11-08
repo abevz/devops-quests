@@ -7,271 +7,192 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: test -s inspection.log
+    check: |-
+      if ! test -s inspection.log; then
+        printf '%s\n' 'The workstation inspection.log must be nonempty: ✗ [DQ:inspection_log]'
+        exit 1
+      fi
   - text: stages.0.objectives.1.text
     check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
       set +e
       (
-      set -e
-      python3 -I - <<'TAGS'
-      import shlex
+      set -euo pipefail
+      set -euo pipefail
+      cd ~/quest
+      python3 -I - <<'DQ_INSPECTION'
+      import base64
+      from concurrent.futures import ThreadPoolExecutor
+      import json
+      import os
       import re
-      import yaml
+      import shlex
+      import signal
+      import subprocess
+      import tempfile
+      import time
 
-      MODULES = {'copy', 'file', 'stat', 'command', 'assert', 'unarchive', 'template', 'debug', 'fail', 'set_fact', 'meta'}
-      KEYWORDS = {'name', 'args', 'action', 'local_action', 'notify', 'listen', 'register', 'tags', 'vars', 'delegate_to', 'delegate_facts', 'run_once', 'no_log', 'become', 'become_user', 'environment', 'when', 'changed_when', 'failed_when', 'check_mode', 'ignore_errors', 'ignore_unreachable', 'until', 'retries', 'delay', 'loop', 'with_items', 'loop_control', 'throttle', 'timeout', 'connection', 'collections', 'any_errors_fatal', 'diff'}
+      started = time.monotonic()
+      deadline = started + 15
+      cleanup_deadline = started + 23
+      def budget(limit=5):
+          remaining = deadline - time.monotonic()
+          if remaining <= 0: raise TimeoutError()
+          return min(limit, remaining)
 
-      def boolean(value):
-          if isinstance(value, bool):
-              return value
-          if isinstance(value, str):
-              if value.lower() in ('true', 'yes', 'on', '1'): return True
-              if value.lower() in ('false', 'no', 'off', '0'): return False
-          if type(value) is int and value in (0, 1): return bool(value)
-          return None
+      REMOTE_READ = "import base64,json,os; from pathlib import Path; p=Path('/srv/site/banner.txt'); s=p.stat(); print(json.dumps({'data':base64.b64encode(p.read_bytes()).decode(),'mode':s.st_mode,'uid':s.st_uid,'gid':s.st_gid,'mtime':s.st_mtime_ns,'ctime':s.st_ctime_ns,'link':os.readlink(p) if p.is_symlink() else None}))"
+      REMOTE_RESTORE = "import base64,json,os,sys; from pathlib import Path; p=Path('/srv/site/banner.txt'); old=json.loads(base64.b64decode(sys.argv[1])); link=old['link']; different=(p.is_symlink() and (link is None or os.readlink(p)!=link)) or (link is not None and not p.is_symlink()); different and p.unlink(missing_ok=True); link is not None and not p.is_symlink() and p.symlink_to(link); p.write_bytes(base64.b64decode(old['data'])); os.chown(p,old['uid'],old['gid']); os.chmod(p,old['mode'] & 0o7777); os.utime(p,ns=(old['mtime'],old['mtime']))"
+      def remote(host, code, argument=None):
+          suffix = os.environ['DQ_NAMESPACE'].removeprefix('dq-')
+          command = 'python3 -c '+shlex.quote(code)
+          if argument is not None: command += ' '+shlex.quote(argument)
+          result = subprocess.run(['ssh','-n','-o','BatchMode=yes','-p','2222','root@'+host+'-'+suffix,command],capture_output=True,text=True,timeout=budget(2))
+          if result.returncode: raise RuntimeError('Unable to observe or restore banner')
+          return result.stdout
 
-      def names(value):
-          if value is None: return []
-          if isinstance(value, str): return [part.strip() for part in value.split(',') if part.strip()]
-          assert isinstance(value, list) and all(isinstance(part, str) for part in value)
-          return value
+      def banners():
+          with ThreadPoolExecutor(max_workers=3) as pool:
+              return dict(pool.map(lambda host:(host,json.loads(remote(host,REMOTE_READ))),('app1','app2','app3')))
 
-      def fleet(play):
-          hosts = play.get('hosts')
-          return hosts in ('fleet', ['fleet']) or (isinstance(hosts, list) and set(hosts) == {'app1', 'app2', 'app3'})
+      def inspected():
+          global deadline
+          before = banners()
+          changed = []
+          try:
+              with tempfile.TemporaryFile(mode='w+') as output:
+                  run = subprocess.Popen(['ansible-playbook','--tags','inspect','rollout.yml'],stdout=output,stderr=subprocess.STDOUT,start_new_session=True)
+                  try:
+                      run.wait(timeout=budget(8))
+                  except BaseException:
+                      # Cancel this probe's local workers before restoring banners.
+                      try:
+                          os.killpg(run.pid, signal.SIGKILL)
+                      except ProcessLookupError:
+                          pass
+                      run.wait(timeout=budget(2))
+                      raise
+                  output.seek(0)
+                  text = output.read()
+              after = banners()
+              changed = [host for host in before if before[host] != after[host]]
+              return run.returncode, text, changed
+          finally:
+              deadline = cleanup_deadline
+              # A failed inspection must not leave the learner's banners damaged by the probe.
+              # Successful read-only runs require no restoration and do not touch file metadata.
+              def restore(item):
+                  host, original = item
+                  try:
+                      current = json.loads(remote(host,REMOTE_READ))
+                  except Exception:
+                      current = None
+                  if current != original:
+                      encoded = base64.b64encode(json.dumps(original).encode()).decode()
+                      remote(host,REMOTE_RESTORE,encoded)
+              with ThreadPoolExecutor(max_workers=3) as pool:
+                  list(pool.map(restore,before.items()))
 
-      def resolved(value, variables, depth=0):
-          assert depth<16, 'Cyclic static variables'
-          if isinstance(value,dict):return {key:resolved(item,variables,depth+1) for key,item in value.items()}
-          if isinstance(value,list):return [resolved(item,variables,depth+1) for item in value]
-          if not isinstance(value,str):return value
-          full=re.fullmatch(r'{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}',value)
-          if full and full[1] in variables:return resolved(variables[full[1]],variables,depth+1)
-          return re.sub(r'{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}',lambda match:str(resolved(variables[match[1]],variables,depth+1)) if match[1] in variables else match[0],value)
-
-      def builtin_module(value, collections=None):
-          assert isinstance(value,str)
-          if value in MODULES:
-              assert not collections or collections=='ansible.builtin' or (isinstance(collections,list) and all(item=='ansible.builtin' for item in collections)), 'A short alias must resolve to a builtin module'
-              return value
-          assert value.startswith('ansible.builtin.') and value.removeprefix('ansible.builtin.') in MODULES, 'Unknown collection modules cannot certify builtin effects'
-          return value.removeprefix('ansible.builtin.')
-
-      def action(task):
-          assert isinstance(task, dict)
-          direct = [key for key in task if key.rsplit('.', 1)[-1] in MODULES]
-          explicit = [key for key in ('action', 'local_action') if key in task]
-          assert len(direct) + len(explicit) == 1, 'Exactly one module action per task'
-          assert all(key in KEYWORDS or key in direct for key in task), 'Unknown task action'
-          if direct:
-              key = direct[0]; module = builtin_module(key,task.get('collections')); args = task[key]
-          else:
-              declaration = task[explicit[0]]
-              if isinstance(declaration, dict):
-                  args = dict(declaration); module = builtin_module(args.pop('module'),task.get('collections'))
-              else:
-                  parts = shlex.split(declaration); module = builtin_module(parts.pop(0),task.get('collections'))
-                  args = ' '.join(parts) if module == 'command' else dict(part.split('=', 1) for part in parts)
-          assert module in MODULES
-          if args is None: args = {}
-          if isinstance(args, str):
-              args = {'_raw_params': args} if module in ('command', 'meta') else dict(part.split('=', 1) for part in shlex.split(args))
-          assert isinstance(args, dict)
-          args = {**args, **task.get('args', {})}
-          args = resolved(args, task.get('vars',{}))
-          return module, args
-
-      def tasks(items, inherited=None):
-          inherited = inherited or {}
-          for task in items or []:
-              assert isinstance(task, dict)
-              merged = {**inherited, **task}
-              merged['tags'] = names(inherited.get('tags')) + names(task.get('tags'))
-              merged['vars'] = {**inherited.get('vars', {}), **task.get('vars', {})}
-              if 'block' in task:
-                  context = {key: merged[key] for key in KEYWORDS if key in merged and key not in ('name', 'action', 'local_action', 'args')}
-                  yield from tasks(task['block'], context)
-                  yield from tasks(task.get('rescue', []), context)
-                  yield from tasks(task.get('always', []), context)
-              else:
-                  yield merged
-
-      def plays():
-          data = yaml.safe_load(open('rollout.yml'))
-          assert isinstance(data, list) and data and all(isinstance(play, dict) and fleet(play) for play in data)
-          return data
-
-      def flat(play):
-          context = {key: play[key] for key in ('no_log', 'check_mode', 'tags', 'vars', 'delegate_to', 'run_once', 'when', 'collections') if key in play}
-          return list(tasks(play.get('pre_tasks', []) + play.get('tasks', []) + play.get('post_tasks', []), context))
-
-      def unconditional(task):
-          assert not any(task.get(key) not in (None, [], True, 'true', 'True') for key in ('when',))
-          assert not any(key in task for key in ('loop', 'with_items', 'until', 'ignore_errors', 'ignore_unreachable', 'failed_when'))
-
-      def not_masked(task):
-          unconditional(task)
-          assert 'changed_when' not in task, 'Do not mask module change reporting'
-          assert 'check_mode' not in task or boolean(task['check_mode']) is False
-
-      selected=[];deploy=[]
-      for play in plays():
-       assert not play.get('roles'), 'Inspection selection must be visible in the playbook'
-       for task in flat(play):
-        module,args=action(task)
-        tags=set(names(task.get('tags')))
-        # always participates in every tag selection; never remains excluded unless explicitly requested.
-        executes='always' in tags or 'inspect' in tags
-        if executes:
-         unconditional(task)
-         assert module in ('stat','debug'), 'The inspect selection must be read-only'
-         assert 'changed_when' not in task or boolean(task['changed_when']) is False
-         assert 'check_mode' not in task or boolean(task['check_mode']) is False
-         if module=='stat' and args.get('path')=='/srv/site/banner.txt': selected.append(task)
-        if module=='copy' and args.get('dest')=='/srv/site/banner.txt':
-         assert 'deploy' in tags and not executes
-         deploy.append(task)
-      assert selected and deploy, 'Separate deployment from the read-only inspection'
-      TAGS
-      )
-      dq_action_rc=$?
+      try:
+          status, text, changed = inspected()
+          for host in changed:
+              print(host+' banner changed during inspection: ✗ [DQ:inspection_scope]')
+          if status: print('Inspection selection did not complete: ✗ [DQ:inspection_run]')
+          raise SystemExit(int(bool(status or changed)))
+      except Exception:
+          print('Inspection could not verify unchanged banners: ✗ [DQ:inspection_scope]')
+          raise SystemExit(1)
+      DQ_INSPECTION
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
       set -e
-      if [ "$dq_action_rc" -ne 0 ]; then
-      printf '%s\n' 'Workstation rollout.yml must satisfy the retained safe-inspection scope check : ✗ [DQ:inspection_scope]'
-      exit 1
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+      printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
       fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
   - text: stages.0.objectives.2.text
     check: |-
-      test -s inspection.log
-      python3 -I - <<'TAGS'
-      import shlex
-      import re
-      import yaml
-
-      MODULES = {'copy', 'file', 'stat', 'command', 'assert', 'unarchive', 'template', 'debug', 'fail', 'set_fact', 'meta'}
-      KEYWORDS = {'name', 'args', 'action', 'local_action', 'notify', 'listen', 'register', 'tags', 'vars', 'delegate_to', 'delegate_facts', 'run_once', 'no_log', 'become', 'become_user', 'environment', 'when', 'changed_when', 'failed_when', 'check_mode', 'ignore_errors', 'ignore_unreachable', 'until', 'retries', 'delay', 'loop', 'with_items', 'loop_control', 'throttle', 'timeout', 'connection', 'collections', 'any_errors_fatal', 'diff'}
-
-      def boolean(value):
-          if isinstance(value, bool):
-              return value
-          if isinstance(value, str):
-              if value.lower() in ('true', 'yes', 'on', '1'): return True
-              if value.lower() in ('false', 'no', 'off', '0'): return False
-          if type(value) is int and value in (0, 1): return bool(value)
-          return None
-
-      def names(value):
-          if value is None: return []
-          if isinstance(value, str): return [part.strip() for part in value.split(',') if part.strip()]
-          assert isinstance(value, list) and all(isinstance(part, str) for part in value)
-          return value
-
-      def fleet(play):
-          hosts = play.get('hosts')
-          return hosts in ('fleet', ['fleet']) or (isinstance(hosts, list) and set(hosts) == {'app1', 'app2', 'app3'})
-
-      def resolved(value, variables, depth=0):
-          assert depth<16, 'Cyclic static variables'
-          if isinstance(value,dict):return {key:resolved(item,variables,depth+1) for key,item in value.items()}
-          if isinstance(value,list):return [resolved(item,variables,depth+1) for item in value]
-          if not isinstance(value,str):return value
-          full=re.fullmatch(r'{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}',value)
-          if full and full[1] in variables:return resolved(variables[full[1]],variables,depth+1)
-          return re.sub(r'{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}',lambda match:str(resolved(variables[match[1]],variables,depth+1)) if match[1] in variables else match[0],value)
-
-      def builtin_module(value, collections=None):
-          assert isinstance(value,str)
-          if value in MODULES:
-              assert not collections or collections=='ansible.builtin' or (isinstance(collections,list) and all(item=='ansible.builtin' for item in collections)), 'A short alias must resolve to a builtin module'
-              return value
-          assert value.startswith('ansible.builtin.') and value.removeprefix('ansible.builtin.') in MODULES, 'Unknown collection modules cannot certify builtin effects'
-          return value.removeprefix('ansible.builtin.')
-
-      def action(task):
-          assert isinstance(task, dict)
-          direct = [key for key in task if key.rsplit('.', 1)[-1] in MODULES]
-          explicit = [key for key in ('action', 'local_action') if key in task]
-          assert len(direct) + len(explicit) == 1, 'Exactly one module action per task'
-          assert all(key in KEYWORDS or key in direct for key in task), 'Unknown task action'
-          if direct:
-              key = direct[0]; module = builtin_module(key,task.get('collections')); args = task[key]
-          else:
-              declaration = task[explicit[0]]
-              if isinstance(declaration, dict):
-                  args = dict(declaration); module = builtin_module(args.pop('module'),task.get('collections'))
-              else:
-                  parts = shlex.split(declaration); module = builtin_module(parts.pop(0),task.get('collections'))
-                  args = ' '.join(parts) if module == 'command' else dict(part.split('=', 1) for part in parts)
-          assert module in MODULES
-          if args is None: args = {}
-          if isinstance(args, str):
-              args = {'_raw_params': args} if module in ('command', 'meta') else dict(part.split('=', 1) for part in shlex.split(args))
-          assert isinstance(args, dict)
-          args = {**args, **task.get('args', {})}
-          args = resolved(args, task.get('vars',{}))
-          return module, args
-
-      def tasks(items, inherited=None):
-          inherited = inherited or {}
-          for task in items or []:
-              assert isinstance(task, dict)
-              merged = {**inherited, **task}
-              merged['tags'] = names(inherited.get('tags')) + names(task.get('tags'))
-              merged['vars'] = {**inherited.get('vars', {}), **task.get('vars', {})}
-              if 'block' in task:
-                  context = {key: merged[key] for key in KEYWORDS if key in merged and key not in ('name', 'action', 'local_action', 'args')}
-                  yield from tasks(task['block'], context)
-                  yield from tasks(task.get('rescue', []), context)
-                  yield from tasks(task.get('always', []), context)
-              else:
-                  yield merged
-
-      def plays():
-          data = yaml.safe_load(open('rollout.yml'))
-          assert isinstance(data, list) and data and all(isinstance(play, dict) and fleet(play) for play in data)
-          return data
-
-      def flat(play):
-          context = {key: play[key] for key in ('no_log', 'check_mode', 'tags', 'vars', 'delegate_to', 'run_once', 'when', 'collections') if key in play}
-          return list(tasks(play.get('pre_tasks', []) + play.get('tasks', []) + play.get('post_tasks', []), context))
-
-      def unconditional(task):
-          assert not any(task.get(key) not in (None, [], True, 'true', 'True') for key in ('when',))
-          assert not any(key in task for key in ('loop', 'with_items', 'until', 'ignore_errors', 'ignore_unreachable', 'failed_when'))
-
-      def not_masked(task):
-          unconditional(task)
-          assert 'changed_when' not in task, 'Do not mask module change reporting'
-          assert 'check_mode' not in task or boolean(task['check_mode']) is False
-
-      selected=[];deploy=[]
-      for play in plays():
-       assert not play.get('roles'), 'Inspection selection must be visible in the playbook'
-       for task in flat(play):
-        module,args=action(task)
-        tags=set(names(task.get('tags')))
-        # always participates in every tag selection; never remains excluded unless explicitly requested.
-        executes='always' in tags or 'inspect' in tags
-        if executes:
-         unconditional(task)
-         assert module in ('stat','debug'), 'The inspect selection must be read-only'
-         assert 'changed_when' not in task or boolean(task['changed_when']) is False
-         assert 'check_mode' not in task or boolean(task['check_mode']) is False
-         if module=='stat' and args.get('path')=='/srv/site/banner.txt': selected.append(task)
-        if module=='copy' and args.get('dest')=='/srv/site/banner.txt':
-         assert 'deploy' in tags and not executes
-         deploy.append(task)
-      assert selected and deploy, 'Separate deployment from the read-only inspection'
-      TAGS
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
       set +e
       (
-      set -e
-      ansible-playbook --tags inspect rollout.yml > verification.log
-      python3 -I - <<'DQ_RECAP'
+      set -euo pipefail
+      set -euo pipefail
+      cd ~/quest
+      python3 -I - <<'DQ_INSPECTION_RECAP'
+      import base64
+      from concurrent.futures import ThreadPoolExecutor
       import json
+      import os
       import re
-      from pathlib import Path
+      import shlex
+      import signal
+      import subprocess
+      import tempfile
+      import time
 
+      started = time.monotonic()
+      deadline = started + 15
+      cleanup_deadline = started + 23
+      def budget(limit=5):
+          remaining = deadline - time.monotonic()
+          if remaining <= 0: raise TimeoutError()
+          return min(limit, remaining)
+
+      REMOTE_READ = "import base64,json,os; from pathlib import Path; p=Path('/srv/site/banner.txt'); s=p.stat(); print(json.dumps({'data':base64.b64encode(p.read_bytes()).decode(),'mode':s.st_mode,'uid':s.st_uid,'gid':s.st_gid,'mtime':s.st_mtime_ns,'ctime':s.st_ctime_ns,'link':os.readlink(p) if p.is_symlink() else None}))"
+      REMOTE_RESTORE = "import base64,json,os,sys; from pathlib import Path; p=Path('/srv/site/banner.txt'); old=json.loads(base64.b64decode(sys.argv[1])); link=old['link']; different=(p.is_symlink() and (link is None or os.readlink(p)!=link)) or (link is not None and not p.is_symlink()); different and p.unlink(missing_ok=True); link is not None and not p.is_symlink() and p.symlink_to(link); p.write_bytes(base64.b64decode(old['data'])); os.chown(p,old['uid'],old['gid']); os.chmod(p,old['mode'] & 0o7777); os.utime(p,ns=(old['mtime'],old['mtime']))"
+      def remote(host, code, argument=None):
+          suffix = os.environ['DQ_NAMESPACE'].removeprefix('dq-')
+          command = 'python3 -c '+shlex.quote(code)
+          if argument is not None: command += ' '+shlex.quote(argument)
+          result = subprocess.run(['ssh','-n','-o','BatchMode=yes','-p','2222','root@'+host+'-'+suffix,command],capture_output=True,text=True,timeout=budget(2))
+          if result.returncode: raise RuntimeError('Unable to observe or restore banner')
+          return result.stdout
+
+      def banners():
+          with ThreadPoolExecutor(max_workers=3) as pool:
+              return dict(pool.map(lambda host:(host,json.loads(remote(host,REMOTE_READ))),('app1','app2','app3')))
+
+      def inspected():
+          global deadline
+          before = banners()
+          changed = []
+          try:
+              with tempfile.TemporaryFile(mode='w+') as output:
+                  run = subprocess.Popen(['ansible-playbook','--tags','inspect','rollout.yml'],stdout=output,stderr=subprocess.STDOUT,start_new_session=True)
+                  try:
+                      run.wait(timeout=budget(8))
+                  except BaseException:
+                      # Cancel this probe's local workers before restoring banners.
+                      try:
+                          os.killpg(run.pid, signal.SIGKILL)
+                      except ProcessLookupError:
+                          pass
+                      run.wait(timeout=budget(2))
+                      raise
+                  output.seek(0)
+                  text = output.read()
+              after = banners()
+              changed = [host for host in before if before[host] != after[host]]
+              return run.returncode, text, changed
+          finally:
+              deadline = cleanup_deadline
+              # A failed inspection must not leave the learner's banners damaged by the probe.
+              # Successful read-only runs require no restoration and do not touch file metadata.
+              def restore(item):
+                  host, original = item
+                  try:
+                      current = json.loads(remote(host,REMOTE_READ))
+                  except Exception:
+                      current = None
+                  if current != original:
+                      encoded = base64.b64encode(json.dumps(original).encode()).decode()
+                      remote(host,REMOTE_RESTORE,encoded)
+              with ThreadPoolExecutor(max_workers=3) as pool:
+                  list(pool.map(restore,before.items()))
 
       def count(value):
           if isinstance(value, bool):
@@ -283,15 +204,24 @@ stages:
           return None
 
 
+      def unique_counter_fields(pairs):
+          result = {}
+          for key, value in pairs:
+              if key in result:
+                  raise RuntimeError('Ambiguous recap field')
+              result[key] = value
+          return result
+
+
       def recap(text):
           # Read an actual recap, not task output which happens to mention a counter.
           records = []
           try:
-              records.append(json.loads(text))
+              records.append(json.loads(text, object_pairs_hook=unique_counter_fields))
           except ValueError:
               for line in text.splitlines():
                   try:
-                      records.append(json.loads(line))
+                      records.append(json.loads(line, object_pairs_hook=unique_counter_fields))
                   except ValueError:
                       pass
           for record in reversed(records):
@@ -305,9 +235,18 @@ stages:
                                       if isinstance(values, dict)}
                                for host in event.get('processed', {})}
               if isinstance(stats, dict):
-                  return {host: {({'failures':'failed','dark':'unreachable'}.get(key,key)): count(value)
-                                 for key, value in values.items()}
-                          for host, values in stats.items() if isinstance(values, dict)}
+                  rows = {}
+                  for host, values in stats.items():
+                      if not isinstance(values, dict):
+                          continue
+                      row = {}
+                      for key, value in values.items():
+                          key = {'failures':'failed','dark':'unreachable'}.get(key, key)
+                          if key in row:
+                              raise RuntimeError('Ambiguous normalized recap field')
+                          row[key] = count(value)
+                      rows[host] = row
+                  return rows
           rows = {}
           body = text.rsplit('PLAY RECAP', 1)[-1]
           for line in body.splitlines():
@@ -323,41 +262,39 @@ stages:
           return rows
 
 
-      def require_recaps(path, required, positive=(), prefix='recap'):
-          try: text = Path(path).read_text()
-          except OSError: text = ''
+
+      try:
+          status, text, changed = inspected()
           rows = recap(text)
-          failed = False
-          for number in (1, 2, 3):
-              row = rows.get('app' + str(number), {})
-              ok = all(row.get(key) == value for key, value in required.items())
-              ok = ok and all(isinstance(row.get(key), int) and row[key] > 0 for key in positive)
-              if not ok:
-                  print('app' + str(number) + ' recap does not satisfy the required counters: ✗ [DQ:' + prefix + '_' + str(number) + ']')
+          failed = status != 0
+          if failed: print('Inspection selection did not complete: ✗ [DQ:inspection_run]')
+          for number in (1,2,3):
+              row = rows.get('app'+str(number), {})
+              if any(row.get(key) != 0 for key in ('changed','unreachable','failed')):
+                  print('app'+str(number)+' inspection must report zero changed/unreachable/failed: ✗ [DQ:inspection_recap_'+str(number)+']')
                   failed = True
-          assert not failed, 'Every required managed host needs its own successful recap'
-
-      require_recaps('verification.log', {'changed':0,'unreachable':0,'failed':0}, prefix='inspection_recap')
-      DQ_RECAP
-
-      )
-      dq_action_rc=$?
+          raise SystemExit(int(failed))
+      except Exception:
+          print('Inspection recap could not be verified: ✗ [DQ:inspection_run]')
+          raise SystemExit(1)
+      DQ_INSPECTION_RECAP
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
       set -e
-      if [ "$dq_action_rc" -ne 0 ]; then
-      if ! grep -Eq '^app1[[:space:]]+:.*changed=0.*unreachable=0.*failed=0' verification.log 2>/dev/null; then
-      printf '%s\n' 'Workstation verification.log: app1 must report changed=0, unreachable=0 and failed=0. ✗ [DQ:inspection_recap_1]'
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+      printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_2]'
       fi
-      if ! grep -Eq '^app2[[:space:]]+:.*changed=0.*unreachable=0.*failed=0' verification.log 2>/dev/null; then
-      printf '%s\n' 'Workstation verification.log: app2 must report changed=0, unreachable=0 and failed=0. ✗ [DQ:inspection_recap_2]'
-      fi
-      if ! grep -Eq '^app3[[:space:]]+:.*changed=0.*unreachable=0.*failed=0' verification.log 2>/dev/null; then
-      printf '%s\n' 'Workstation verification.log: app3 must report changed=0, unreachable=0 and failed=0. ✗ [DQ:inspection_recap_3]'
-      fi
-      printf '%s\n' 'Workstation verification.log must report changed=0, unreachable=0 and failed=0 for app1, app2 and app3 : ✗ [DQ:inspection_run]'
-      exit 1
-      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
   - text: stages.0.objectives.3.text
     check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
       dq_group_failed=0
       set +e
       (
@@ -389,6 +326,16 @@ stages:
       fi
       set -e
       test "$dq_group_failed" -eq 0
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+      printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_3]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
 hints:
 - text: hints.0.text
   guide: ansible-12

@@ -15,6 +15,11 @@ exit "$failed"
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
 apps=$(kubectl get application parent board -o json 2>/dev/null || true)
 app=$(jq -c '[.items[]?|select(.metadata.name=="board")][0] // {}' <<<"$apps" 2>/dev/null || true)
@@ -28,6 +33,16 @@ if ! jq -e --arg ns "$DQ_NAMESPACE" '.spec.destination.namespace==$ns' <<<"$app"
 check 'child Application source path = manifests [DQ:source]' 'def same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; (.spec.source.path | same_dir("manifests"))' "$app"
 if ! jq -e --arg ns "$DQ_NAMESPACE" '.metadata.annotations["argocd.argoproj.io/tracking-id"]==($ns+"_parent:argoproj.io/Application:"+$ns+"/board")' <<<"$app" >/dev/null 2>&1; then printf '%s\n' 'child Application tracking-id = parent tracking ID: ✗ [DQ:tracking]'; failed=1; fi
 exit "$failed"
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (

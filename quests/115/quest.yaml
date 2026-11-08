@@ -8,6 +8,11 @@ stages:
   objectives:
   - text: stages.0.objectives.0.text
     check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
       set -euo pipefail
       cd ~/quest
       failed=0
@@ -40,6 +45,16 @@ stages:
       if ! selector_ok "$service" app green; then printf '%s\n' 'service selector retains only the supplied green workload: ✗ [DQ:selector]'; failed=1; fi
       if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = green-115; then printf '%s\n' 'board:8080 = green-115: ✗ [DQ:http]'; failed=1; fi
       exit "$failed"
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+      printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
 - brief: stages.1.brief
   objectives:
   - text: stages.1.objectives.0.text
@@ -71,6 +86,11 @@ stages:
       '
   - text: stages.1.objectives.1.text
     check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
       set -euo pipefail
       cd ~/quest
       failed=0
@@ -105,32 +125,97 @@ stages:
       if ! selector_ok "$service" release board; then printf '%s\n' 'service selector retains only the supplied board workload: ✗ [DQ:selector_canary]'; failed=1; fi
       check endpoints 'four unique ready EndpointSlice target names' '[.items[].endpoints[] | select(.conditions.ready==true and (.targetRef.name | type=="string" and length>0)) | .targetRef.name] | unique | length==4' "$endpoints"
       exit "$failed"
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+      printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_1_1]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
   - text: stages.1.objectives.2.text
-    check: "set -euo pipefail\ncd ~/quest\npython3 - <<'DQ_PROBES'\nimport concurrent.futures\nimport subprocess\n\
-      import sys\nimport time\n\n# Includes both Kubernetes lookups. Reserve 3s for the Service and 0.5s for diagnostics.\n\
-      deadline = time.monotonic() + 22\npod_deadline = deadline - 3.5\nfailed = False\npod_markers = {\"blue\":\
-      \ \"[DQ:pod_blue]\", \"green\": \"[DQ:pod_green]\"}\nip_markers = {\"blue\": \"[DQ:ips_blue]\", \"green\"\
-      : \"[DQ:ips_green]\"}\n\ndef output(arguments):\n    return subprocess.run(arguments, stdout=subprocess.PIPE,\
-      \ stderr=subprocess.DEVNULL,\n                          check=False).stdout.replace(b\"\\x00\", b\"\").rstrip(b\"\
-      \\n\")\n\ndef probe(target):\n    version, ip = target\n    actual = output([\"timeout\", \"3s\", \"kubectl\"\
-      , \"exec\", \"--pod-running-timeout=2s\",\n                     \"deployment/client\", \"--\", \"wget\", \"\
-      -qO-\", \"-T\", \"2\", f\"http://{ip}:8080\"])\n    return actual == f\"{version}-115\".encode()\n\ntargets\
-      \ = []\nfor version in (\"blue\", \"green\"):\n    ips = output([\"timeout\", \"2s\", \"kubectl\", \"get\"\
-      , \"pods\", \"-l\", f\"app={version}\",\n                  \"-o\", \"jsonpath={.items[*].status.podIP}\"]).decode().split()\n\
-      \    if not ips:\n        print(f\"{version} Pod IPs present: ✗ {ip_markers[version]}\", flush=True)\n   \
-      \     failed = True\n    targets.extend((version, ip) for ip in ips)\n\nnext_target = 0\nwith concurrent.futures.ThreadPoolExecutor(max_workers=2)\
-      \ as pool:\n    active = {}\n    while next_target < len(targets) or active:\n        while len(active) <\
-      \ 2 and next_target < len(targets) and time.monotonic() + 3 <= pod_deadline:\n            target = targets[next_target]\n\
-      \            active[pool.submit(probe, target)] = target\n            next_target += 1\n        if not active:\n\
-      \            break\n        completed, _ = concurrent.futures.wait(active, return_when=concurrent.futures.FIRST_COMPLETED)\n\
-      \        for future in completed:\n            version, ip = active.pop(future)\n            if not future.result():\n\
-      \                print(f\"{version} Pod {ip}:8080 = {version}-115: ✗ {pod_markers[version]}\", flush=True)\n\
-      \                failed = True\n\nif next_target < len(targets):\n    pending = \", \".join(ip for _, ip in\
-      \ targets[next_target:])\n    print(f\"Probe time budget exhausted; unchecked Pod IPs: {pending}: ✗ [DQ:probe_budget]\"\
-      , flush=True)\n    failed = True\n\nactual = output([\"timeout\", \"3s\", \"kubectl\", \"exec\", \"--pod-running-timeout=2s\"\
-      ,\n                 \"deployment/client\", \"--\", \"wget\", \"-qO-\", \"-T\", \"2\", \"http://board:8080\"\
-      ])\nif actual not in (b\"blue-115\", b\"green-115\"):\n    print(\"board:8080 = blue-115 or green-115: ✗ [DQ:canary_http]\"\
-      , flush=True)\n    failed = True\nsys.exit(int(failed))\nDQ_PROBES\n"
+    check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
+      set -euo pipefail
+      cd ~/quest
+      python3 - <<'DQ_PROBES'
+      import concurrent.futures
+      import subprocess
+      import sys
+      import time
+
+      # Includes both Kubernetes lookups. Reserve 3s for the Service and 0.5s for diagnostics.
+      deadline = time.monotonic() + 22
+      pod_deadline = deadline - 3.5
+      failed = False
+      pod_markers = {"blue": "[DQ:pod_blue]", "green": "[DQ:pod_green]"}
+      ip_markers = {"blue": "[DQ:ips_blue]", "green": "[DQ:ips_green]"}
+
+      def output(arguments):
+          return subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                check=False).stdout.replace(b"\x00", b"").rstrip(b"\n")
+
+      def probe(target):
+          version, ip = target
+          actual = output(["timeout", "3s", "kubectl", "exec", "--pod-running-timeout=2s",
+                           "deployment/client", "--", "wget", "-qO-", "-T", "2", f"http://{ip}:8080"])
+          return actual == f"{version}-115".encode()
+
+      targets = []
+      for version in ("blue", "green"):
+          ips = output(["timeout", "2s", "kubectl", "get", "pods", "-l", f"app={version}",
+                        "-o", "jsonpath={.items[*].status.podIP}"]).decode().split()
+          if not ips:
+              print(f"{version} Pod IPs present: ✗ {ip_markers[version]}", flush=True)
+              failed = True
+          targets.extend((version, ip) for ip in ips)
+
+      next_target = 0
+      with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+          active = {}
+          while next_target < len(targets) or active:
+              while len(active) < 2 and next_target < len(targets) and time.monotonic() + 3 <= pod_deadline:
+                  target = targets[next_target]
+                  active[pool.submit(probe, target)] = target
+                  next_target += 1
+              if not active:
+                  break
+              completed, _ = concurrent.futures.wait(active, return_when=concurrent.futures.FIRST_COMPLETED)
+              for future in completed:
+                  version, ip = active.pop(future)
+                  if not future.result():
+                      print(f"{version} Pod {ip}:8080 = {version}-115: ✗ {pod_markers[version]}", flush=True)
+                      failed = True
+
+      if next_target < len(targets):
+          pending = ", ".join(ip for _, ip in targets[next_target:])
+          print(f"Probe time budget exhausted; unchecked Pod IPs: {pending}: ✗ [DQ:probe_budget]", flush=True)
+          failed = True
+
+      actual = output(["timeout", "3s", "kubectl", "exec", "--pod-running-timeout=2s",
+                       "deployment/client", "--", "wget", "-qO-", "-T", "2", "http://board:8080"])
+      if actual not in (b"blue-115", b"green-115"):
+          print("board:8080 = blue-115 or green-115: ✗ [DQ:canary_http]", flush=True)
+          failed = True
+      sys.exit(int(failed))
+      DQ_PROBES
+
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+      printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_1_2]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
 hints:
 - text: hints.0.text
   guide: release-overlays

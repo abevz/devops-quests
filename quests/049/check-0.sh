@@ -4,6 +4,11 @@ failed=0
 set +e
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 source platform.env
 document=$(kubectl get deployment board -o json 2>/dev/null || true)
 replicasets=$(kubectl get replicasets -o json 2>/dev/null || true)
@@ -88,10 +93,25 @@ try:
 except Exception:
     sys.exit(1)
 DQ_PRIVATE_IMAGE
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 source platform.env
 document=$(kubectl get deployment board -o json 2>/dev/null || true)
 replicasets=$(kubectl get replicasets -o json 2>/dev/null || true)
@@ -177,6 +197,16 @@ try:
 except Exception:
     sys.exit(1)
 DQ_PRIVATE_ONLY_AUTH
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (

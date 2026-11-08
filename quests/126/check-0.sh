@@ -4,6 +4,11 @@ failed=0
 set +e
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 quota=$(timeout 2s kubectl get resourcequota station -o json 2>/dev/null || true)
 python3 -I - /dev/fd/3 3<<<"$quota" <<'DQ_QUOTA'
 import sys
@@ -58,10 +63,25 @@ expected={'requests.cpu':'200m','limits.cpu':'400m','requests.memory':'32Mi','li
 emit('quota','ResourceQuota station hard = supplied budget',all(equal(hard.get(key),value) for key,value in expected.items()))
 sys.exit(failed)
 DQ_QUOTA
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 limits=$(timeout 2s kubectl get limitrange defaults -o json 2>/dev/null || true)
 board=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
 python3 -I - /dev/fd/3 /dev/fd/4 3<<<"$limits" 4<<<"$board" <<'DQ_DEFAULTS'
@@ -120,10 +140,25 @@ emit('request','LimitRange defaults defaultRequest.cpu = 100m',bool(items) and a
 emit('template','board worker resources = empty',bool(container) and (container.get('resources') or {})=={})
 sys.exit(failed)
 DQ_DEFAULTS
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 board=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
 pods=$(timeout 2s kubectl get pods -l app=board -o json 2>/dev/null || true)
 python3 -I - /dev/fd/3 /dev/fd/4 3<<<"$board" 4<<<"$pods" <<'DQ_ADMITTED'
@@ -189,6 +224,16 @@ emit('pod_ready','non-terminating board Pod has a ready worker',any(ready(p) for
 emit('same_pod','one non-terminating Pod has required worker resources and readiness',any(request(p) and limit(p) and ready(p) for p in eligible))
 sys.exit(failed)
 DQ_ADMITTED
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_2]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (

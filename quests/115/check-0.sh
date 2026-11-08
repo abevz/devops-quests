@@ -1,5 +1,12 @@
 set -euo pipefail
 cd ~/quest
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+set -euo pipefail
+cd ~/quest
 failed=0
 selector_ok() {
   python3 -I - /dev/fd/3 /dev/fd/4 /dev/fd/5 /dev/fd/6 3<<<"$1" 4<<<"$pods" 5<<<"$2" 6<<<"$3" <<'DQ_SELECTOR'
@@ -30,3 +37,13 @@ service=$(timeout 2s kubectl get service board -o json 2>/dev/null || true)
 if ! selector_ok "$service" app green; then printf '%s\n' 'service selector retains only the supplied green workload: ✗ [DQ:selector]'; failed=1; fi
 if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = green-115; then printf '%s\n' 'board:8080 = green-115: ✗ [DQ:http]'; failed=1; fi
 exit "$failed"
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0

@@ -38,6 +38,11 @@ exit "$failed"
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -73,6 +78,16 @@ pod=$(kubectl get pod shelf-0 -o json 2>/dev/null || true)
 check 'service/shelf clusterIP = None [DQ:clusterip]' '.spec.clusterIP=="None"' "$(kubectl get service shelf -o json 2>/dev/null || true)"
 if ! selector_ok "$service" app shelf; then printf '%s\n' 'service selector retains only the supplied shelf workload: ✗ [DQ:selector]'; failed=1; fi
 exit "$failed"
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_2]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (

@@ -74,6 +74,11 @@ test "$dq_group_failed" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 dq_group_failed=0
 set +e
 (
@@ -157,15 +162,24 @@ def count(value):
     return None
 
 
+def unique_counter_fields(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise RuntimeError('Ambiguous recap field')
+        result[key] = value
+    return result
+
+
 def recap(text):
     # Read an actual recap, not task output which happens to mention a counter.
     records = []
     try:
-        records.append(json.loads(text))
+        records.append(json.loads(text, object_pairs_hook=unique_counter_fields))
     except ValueError:
         for line in text.splitlines():
             try:
-                records.append(json.loads(line))
+                records.append(json.loads(line, object_pairs_hook=unique_counter_fields))
             except ValueError:
                 pass
     for record in reversed(records):
@@ -179,9 +193,18 @@ def recap(text):
                                 if isinstance(values, dict)}
                          for host in event.get('processed', {})}
         if isinstance(stats, dict):
-            return {host: {({'failures':'failed','dark':'unreachable'}.get(key,key)): count(value)
-                           for key, value in values.items()}
-                    for host, values in stats.items() if isinstance(values, dict)}
+            rows = {}
+            for host, values in stats.items():
+                if not isinstance(values, dict):
+                    continue
+                row = {}
+                for key, value in values.items():
+                    key = {'failures':'failed','dark':'unreachable'}.get(key, key)
+                    if key in row:
+                        raise RuntimeError('Ambiguous normalized recap field')
+                    row[key] = count(value)
+                rows[host] = row
+            return rows
     rows = {}
     body = text.rsplit('PLAY RECAP', 1)[-1]
     for line in body.splitlines():
@@ -230,6 +253,16 @@ fi
 printf '%s\n' 'The workstation repeat-run check of rollout.yml or /tmp/idempotence-second.log failed : ✗ [DQ:repeat_run]'
 exit 1
 fi
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_2]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

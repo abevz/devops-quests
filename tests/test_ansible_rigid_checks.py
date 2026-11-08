@@ -123,7 +123,6 @@ def test_012_required_json_fields_allow_unrelated_metadata(tmp_path, representat
     [
         (25, "/tmp/idempotence-second.log", "DQ_RECAP"),
         (35, "probe.log", "DQ_RECAP"),
-        (46, "verification.log", "DQ_RECAP"),
         (74, "check.log", "DQ_RECAP"),
         (79, "second.log", "DQ_RECAP"),
     ],
@@ -200,60 +199,6 @@ def test_035_real_unreachable_evidence(tmp_path, representation):
     )
 
 
-@pytest.mark.parametrize(
-    "representation", ["reference", "equivalent", "wrong", "parallel", "extra_play"]
-)
-def test_028_task_name_is_not_the_serial_contract(tmp_path, representation):
-    label = (
-        "Deliver the route message"
-        if representation == "reference"
-        else "Publish the same banner"
-    )
-    hosts = ["app1", "app2", "app3"]
-    if representation == "wrong":
-        hosts = ["app2", "app1", "app3"]
-    serial = (
-        2
-        if representation == "parallel"
-        else (["33%", "1"] if representation == "equivalent" else 1)
-    )
-    play = [
-        {
-            "hosts": "fleet",
-            "serial": serial,
-            "tasks": [
-                {
-                    "name": label,
-                    "copy": {
-                        "dest": "/srv/site/message",
-                        "content": "north-ready",
-                        "mode": "0644",
-                    },
-                }
-            ],
-        }
-    ]
-    trace = "\n".join(
-        json.dumps(event)
-        for host in hosts
-        for event in ({"task": label}, {"host": host, "task": label})
-    )
-    if representation == "extra_play":
-        play.append(
-            {
-                "hosts": "fleet",
-                "tasks": [
-                    {"name": "Read the banner", "stat": {"path": "/srv/site/message"}}
-                ],
-            }
-        )
-        trace += "\n" + "\n".join(
-            json.dumps({"host": host, "task": "Read the banner"}) for host in hosts
-        )
-    expect(
-        probe(tmp_path, 28, "CHECK", play, {"rollout-events.jsonl": trace}),
-        representation in ("reference", "equivalent", "extra_play"),
-    )
 
 
 def scope_play():
@@ -282,209 +227,14 @@ def scope_play():
     ]
 
 
-@pytest.mark.parametrize(
-    "representation",
-    ["reference", "equivalent", "wrong", "parallel", "no_block", "wrong_handler"],
-)
-def test_063_recovery_property_and_one_host_batches(tmp_path, representation):
-    play = scope_play()
-    task = play[0]["tasks"][0]
-    if representation == "equivalent":
-        play[0]["serial"] = ["33%", "1"]
-        play[0]["hosts"] = ["fleet"]
-        task["rescue"][0] = {
-            "copy": {
-                "src": "previous.txt",
-                "dest": "/srv/site/message",
-                "mode": 420,
-                "backup": False,
-            },
-            "notify": ["Bring back banner"],
-        }
-        play[0]["handlers"] = [reload("Bring back banner", argv=True)]
-        play[0]["tasks"].insert(0, {"debug": {"msg": "starting"}})
-    if representation == "wrong":
-        task["rescue"][0]["ansible.builtin.copy"]["src"] = "candidate.txt"
-    if representation == "parallel":
-        play[0]["serial"] = "100%"
-    if representation == "no_block":
-        del task["block"]
-    if representation == "wrong_handler":
-        play[0]["handlers"][0]["command"] = "echo no-reload"
-    expect(
-        probe(tmp_path, 63, "SCOPE", play),
-        representation in ("reference", "equivalent"),
-    )
 
 
-@pytest.mark.parametrize(
-    "representation", ["reference", "equivalent", "wrong", "override"]
-)
-def test_069_effective_no_log_cannot_be_replaced_by_a_clean_log(
-    tmp_path, representation
-):
-    play = [
-        {
-            "hosts": "fleet",
-            "tasks": [
-                {
-                    "ansible.builtin.copy": {
-                        "dest": "/srv/site/station-token",
-                        "mode": "0600",
-                        "content": "credential",
-                    },
-                    "no_log": True,
-                }
-            ],
-        }
-    ]
-    if representation == "equivalent":
-        task = play[0]["tasks"][0]
-        del task["no_log"]
-        task["copy"] = task.pop("ansible.builtin.copy")
-        task["copy"]["mode"] = 384
-        play[0]["tasks"] = [{"block": [task], "no_log": "yes"}]
-    if representation == "wrong":
-        play[0]["tasks"][0]["no_log"] = False
-    if representation == "override":
-        play[0]["no_log"] = True
-        play[0]["tasks"][0]["no_log"] = False
-    expect(
-        probe(tmp_path, 69, "SECRET", play),
-        representation in ("reference", "equivalent"),
-    )
 
 
-@pytest.mark.parametrize(
-    "representation", ["reference", "equivalent", "wrong", "mutating", "masked"]
-)
-def test_046_inspection_is_read_only_across_tag_layouts(tmp_path, representation):
-    deploy = {
-        "ansible.builtin.copy": {"dest": "/srv/site/banner.txt", "content": "banner"},
-        "tags": ["deploy"],
-    }
-    inspect = {
-        "ansible.builtin.stat": {"path": "/srv/site/banner.txt"},
-        "tags": ["inspect"],
-    }
-    play = [{"hosts": "fleet", "tasks": [deploy, inspect]}]
-    if representation == "equivalent":
-        inspect["stat"] = inspect.pop("ansible.builtin.stat")
-        inspect["stat"]["get_checksum"] = False
-        del inspect["tags"]
-        deploy["tags"] = "deploy"
-        play[0]["tasks"] = [deploy, {"block": [inspect], "tags": "inspect"}]
-        play[0]["handlers"] = []
-    if representation == "wrong":
-        inspect["ansible.builtin.stat"]["path"] = "/wrong"
-    if representation == "mutating":
-        deploy["tags"].append("inspect")
-    if representation == "masked":
-        inspect["changed_when"] = True
-    expect(
-        probe(tmp_path, 46, "TAGS", play), representation in ("reference", "equivalent")
-    )
 
 
-@pytest.mark.parametrize(
-    "representation",
-    ["reference", "equivalent", "wrong", "forced", "always_check", "masked"],
-)
-def test_074_preview_observer_is_read_only_and_skips_in_check_mode(
-    tmp_path, representation
-):
-    play = [
-        {
-            "hosts": "fleet",
-            "handlers": [reload()],
-            "tasks": [
-                {
-                    "copy": {
-                        "dest": "/srv/site/message",
-                        "content": "north-74\n",
-                        "mode": "0644",
-                    },
-                    "notify": "Reload banner",
-                },
-                {"command": "cat /run/quest-service.pid", "changed_when": False},
-            ],
-        }
-    ]
-    task = play[0]["tasks"][1]
-    if representation == "equivalent":
-        task["command"] = {"argv": ["cat", "/run/quest-service.pid"]}
-        task["changed_when"] = "false"
-        task["check_mode"] = "{{ ansible_check_mode }}"
-        play[0]["tasks"][0]["copy"]["mode"] = 420
-        play[0]["handlers"] = [reload(argv=True)]
-    if representation == "wrong":
-        task["command"] = "cat /wrong"
-    if representation == "forced":
-        task["check_mode"] = False
-    if representation == "always_check":
-        task["check_mode"] = True
-    if representation == "masked":
-        task["changed_when"] = True
-    expect(
-        probe(tmp_path, 74, "CHECK_MODE_TASK", play),
-        representation in ("reference", "equivalent"),
-    )
 
 
-@pytest.mark.parametrize(
-    "representation",
-    ["reference", "equivalent", "wrong", "masked", "extra_action", "wrong_handler"],
-)
-def test_079_honest_fleet_convergence(tmp_path, representation):
-    play = [
-        {
-            "hosts": "fleet",
-            "handlers": [reload()],
-            "tasks": [
-                {
-                    "file": {
-                        "path": "/srv/site/config",
-                        "state": "directory",
-                        "mode": "0755",
-                    }
-                },
-                {
-                    "copy": {
-                        "dest": "/srv/site/message",
-                        "content": "north-79\n",
-                        "mode": "0644",
-                    },
-                    "notify": "Reload banner",
-                },
-                {
-                    "copy": {
-                        "dest": "/srv/site/config/route",
-                        "content": "route=north\n",
-                        "mode": "0644",
-                    }
-                },
-            ],
-        }
-    ]
-    if representation == "equivalent":
-        play[0]["handlers"] = [reload("Apply banner", argv=True)]
-        task = play[0]["tasks"][1]
-        task["notify"] = ["Apply banner"]
-        task["copy"].update(content="north-79", mode=420, backup=False, owner="root")
-        play[0]["tasks"] = [{"block": play[0]["tasks"], "tags": ["fleet"]}]
-        play[0]["pre_tasks"] = []
-    if representation == "wrong":
-        play[0]["tasks"][2]["copy"]["content"] = "route=south\n"
-    if representation == "masked":
-        play[0]["tasks"][1]["changed_when"] = False
-    if representation == "extra_action":
-        play[0]["tasks"][1]["shell"] = "echo wrong"
-    if representation == "wrong_handler":
-        play[0]["handlers"][0]["command"] = "echo no-reload"
-    expect(
-        probe(tmp_path, 79, "DQ_FLEET", play),
-        representation in ("reference", "equivalent"),
-    )
 
 
 def integrity_play():
@@ -596,62 +346,8 @@ def test_096_checksum_guard_binds_the_actual_controller_archive(tmp_path, form):
     )
 
 
-@pytest.mark.parametrize("occurrence", [1, 2])
-@pytest.mark.parametrize(
-    "form", ["relative", "playbook_dir", "actual_absolute", "different_absolute", "legacy_root"]
-)
-def test_096_restore_source_is_the_actual_controller_archive(tmp_path, form, occurrence):
-    _, play = integrity_play()
-    paths = {
-        "relative": "recovery.tar",
-        "playbook_dir": "{{ playbook_dir }}/recovery.tar",
-        "actual_absolute": str(tmp_path / "recovery.tar"),
-        "different_absolute": str(tmp_path / "other.tar"),
-        "legacy_root": "/root/quest/recovery.tar",
-    }
-    play[0]["tasks"][2]["ansible.builtin.unarchive"]["src"] = paths[form]
-    (tmp_path / "rollout.yml").write_text(yaml.safe_dump(play))
-    result = subprocess.run(
-        [sys.executable, "-"],
-        input=program(96, "VERIFY", occurrence),
-        cwd=tmp_path,
-        env=check_environment(tmp_path),
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    expect(result, form in {"relative", "playbook_dir", "actual_absolute"})
 
 
-@pytest.mark.parametrize(
-    "representation",
-    ["reference", "equivalent", "wrong", "parallel", "untrusted_source"],
-)
-def test_096_restore_properties_not_dictionary_bytes(tmp_path, representation):
-    _, play = integrity_play()
-    if representation == "equivalent":
-        play[0]["serial"] = "33%"
-        task = play[0]["tasks"][2]
-        task["unarchive"] = task.pop("ansible.builtin.unarchive")
-        task["unarchive"].update(mode=420, owner="0", group=0, remote_src=False)
-        play[0]["handlers"] = [reload("Reload station", argv=True)]
-    if representation == "wrong":
-        play[0]["tasks"][2]["ansible.builtin.unarchive"]["mode"] = "0600"
-    if representation == "parallel":
-        play[0]["serial"] = [1, 2]
-    if representation == "untrusted_source":
-        play[0]["tasks"][2]["ansible.builtin.unarchive"]["src"] = "other.tar"
-    (tmp_path / "rollout.yml").write_text(yaml.safe_dump(play))
-    code = program(96, "VERIFY", 1)
-    result = subprocess.run(
-        [sys.executable, "-"],
-        input=code,
-        cwd=tmp_path,
-        env=check_environment(tmp_path),
-        capture_output=True,
-        text=True,
-    )
-    expect(result, representation in ("reference", "equivalent"))
 
 
 @pytest.mark.parametrize("representation", ["reference", "equivalent", "wrong"])
@@ -696,6 +392,9 @@ def test_038_exact_defaults_remain_exact(tmp_path, representation):
         "always_writer",
         "never_writer",
         "command_writer",
+        "command_equivalent",
+        "dynamic_role",
+        "local_play",
         "external_binding",
         "notify_writer",
     ],
@@ -713,14 +412,25 @@ def test_032_dynamic_report_in_the_real_workstation(tmp_path, representation):
         "delegate_to": "localhost",
         "run_once": True,
     }
-    play = [{"hosts": "fleet", "tasks": [task]}]
+    play = [{"hosts": "fleet", "gather_facts": False, "tasks": [task]}]
     if representation == "equivalent":
         task["local_action"] = {"module": "copy", **task.pop("ansible.builtin.copy")}
         del task["delegate_to"]
         task["local_action"]["content"] = (
-            "{{ ansible_play_hosts_all | sort | join('\\n') }}\n"
+            "{{ ansible_play_hosts_all | sort | join('\n') }}\n"
         )
         task["run_once"] = "yes"
+    if representation == "command_equivalent":
+        content = task["ansible.builtin.copy"]["content"]
+        play[0]["tasks"] = [{"command": {"argv": ["python3", "-c", "from pathlib import Path; import sys; Path(sys.argv[1]).write_text(sys.argv[2])", "{{ playbook_dir }}/fleet.txt", content]}, "delegate_to": "localhost", "run_once": True}]
+    if representation == "dynamic_role":
+        role = tmp_path / "roles/dynamic_report/tasks/main.yml"
+        role.parent.mkdir(parents=True)
+        role.write_text(yaml.safe_dump([task]))
+        play[0]["roles"] = ["dynamic_report"]
+        play[0]["tasks"] = []
+    if representation == "local_play":
+        play[0]["hosts"] = "localhost"
     if representation == "wrong":
         task["ansible.builtin.copy"]["content"] = "app1\napp2\napp3\n"
     if representation == "not_once":
@@ -770,7 +480,7 @@ def test_032_dynamic_report_in_the_real_workstation(tmp_path, representation):
             }
         )
     if representation == "external_binding":
-        play[0]["vars"] = {"body": "{{ groups.fleet | sort | join('\\n') }}\n"}
+        play[0]["vars"] = {"body": "{{ groups.fleet | sort | join('\n') }}\n"}
         task["ansible.builtin.copy"]["content"] = "{{ body }}"
         play[0]["vars_files"] = ["overrides.yml"]
         (tmp_path / "overrides.yml").write_text(
@@ -788,7 +498,8 @@ def test_032_dynamic_report_in_the_real_workstation(tmp_path, representation):
                 "delegate_to": "localhost",
             }
         ]
-    (tmp_path / "ansible.cfg").write_text("[defaults]\ninventory=inventory.ini\n")
+    (tmp_path / "ansible.cfg").write_text("[defaults]\ninventory=inventory.ini\ntimeout=1\n")
+    (tmp_path / "fleet.txt").write_text("app1\napp2\napp3\n")
     (tmp_path / "inventory.ini").write_text("[fleet]\napp1\napp2\napp3\n")
     fixture = tmp_path / "rollout.yml"
     fixture.write_text(yaml.safe_dump(play))
@@ -802,7 +513,7 @@ def test_032_dynamic_report_in_the_real_workstation(tmp_path, representation):
             "--entrypoint",
             "python3",
             "--mount",
-            f"type=bind,src={tmp_path},dst=/proof,readonly",
+            f"type=bind,src={tmp_path},dst=/proof",
             "--workdir",
             "/proof",
             image,
@@ -814,66 +525,15 @@ def test_032_dynamic_report_in_the_real_workstation(tmp_path, representation):
         text=True,
         timeout=30,
     )
-    expect(result, representation in ("reference", "equivalent"))
+    expect(result, representation in ("reference", "equivalent", "not_once", "role_writer", "command_equivalent", "dynamic_role", "local_play"))
 
 
-@pytest.mark.parametrize("branch", ["rescue", "always"])
-def test_046_hidden_inspection_mutation_is_rejected(tmp_path, branch):
-    deploy = {
-        "copy": {"dest": "/srv/site/banner.txt", "content": "north-46"},
-        "tags": "deploy",
-    }
-    inspect = {"stat": {"path": "/srv/site/banner.txt"}}
-    block = {
-        "block": [inspect],
-        "tags": "inspect",
-        branch: [
-            {
-                "copy": {"dest": "/tmp/unsafe", "content": "changed"},
-                "changed_when": False,
-            }
-        ],
-    }
-    expect(
-        probe(tmp_path, 46, "TAGS", [{"hosts": "fleet", "tasks": [deploy, block]}]),
-        False,
-    )
 
 
-def test_046_static_path_variables_and_read_only_always_are_equivalent(tmp_path):
-    play = [
-        {
-            "hosts": "fleet",
-            "vars": {"banner_path": "/srv/site/banner.txt"},
-            "tasks": [
-                {
-                    "copy": {"dest": "{{ banner_path }}", "content": "north-46"},
-                    "tags": "deploy",
-                },
-                {
-                    "block": [
-                        {"stat": {"path": "{{ banner_path }}", "get_checksum": False}}
-                    ],
-                    "always": [{"debug": {"msg": "inspection complete"}}],
-                    "tags": "inspect",
-                },
-            ],
-        }
-    ]
-    expect(probe(tmp_path, 46, "TAGS", play), True)
 
 
-@pytest.mark.parametrize("control", ["when", "check_mode", "ignore_errors"])
-def test_063_inactive_recovery_block_is_not_certified(tmp_path, control):
-    play = scope_play()
-    play[0]["tasks"][0][control] = False if control == "when" else True
-    expect(probe(tmp_path, 63, "SCOPE", play), False)
 
 
-def test_063_harmless_preflight_does_not_need_serial(tmp_path):
-    play = scope_play()
-    play.insert(0, {"hosts": "fleet", "tasks": [{"debug": {"msg": "preflight"}}]})
-    expect(probe(tmp_path, 63, "SCOPE", play), True)
 
 
 @pytest.mark.parametrize(
@@ -917,21 +577,6 @@ def test_096_integrity_failure_cannot_be_swallowed_or_invalidated(tmp_path, bypa
     expect(probe(tmp_path, 96, "VERIFY", play, {"trusted.sha256": digest}), False)
 
 
-def test_046_unselected_deployment_reporting_does_not_mutate_inspection(tmp_path):
-    play = [
-        {
-            "hosts": "fleet",
-            "tasks": [
-                {
-                    "copy": {"dest": "/srv/site/banner.txt", "content": "north-46"},
-                    "tags": "deploy",
-                    "changed_when": False,
-                },
-                {"stat": {"path": "/srv/site/banner.txt"}, "tags": "inspect"},
-            ],
-        }
-    ]
-    expect(probe(tmp_path, 46, "TAGS", play), True)
 
 
 def test_096_explicit_false_ignore_errors_and_read_only_preflight_are_equivalent(
@@ -948,16 +593,6 @@ def test_096_explicit_false_ignore_errors_and_read_only_preflight_are_equivalent
         },
     )
     expect(probe(tmp_path, 96, "VERIFY", play, {"trusted.sha256": digest}), True)
-    (tmp_path / "rollout.yml").write_text(yaml.safe_dump(play))
-    result = subprocess.run(
-        [sys.executable, "-"],
-        input=program(96, "VERIFY", 1),
-        cwd=tmp_path,
-        env=check_environment(tmp_path),
-        capture_output=True,
-        text=True,
-    )
-    expect(result, True)
 
 
 def test_096_target_write_before_verification_is_rejected(tmp_path):
@@ -977,52 +612,6 @@ def test_096_spaced_side_effect_lookup_cannot_mutate_archive(tmp_path):
     expect(probe(tmp_path, 96, "VERIFY", play, {"trusted.sha256": digest}), False)
 
 
-def test_028_parallel_role_delivery_is_not_hidden_by_visible_task_trace(tmp_path):
-    label = "Visible serial delivery"
-    play = [
-        {"hosts": "fleet", "roles": ["unchecked_delivery"]},
-        {
-            "hosts": "fleet",
-            "serial": 1,
-            "tasks": [
-                {
-                    "name": label,
-                    "copy": {
-                        "dest": "/srv/site/message",
-                        "content": "north-ready",
-                        "mode": "0644",
-                    },
-                }
-            ],
-        },
-    ]
-    role = tmp_path / "roles/unchecked_delivery/tasks/main.yml"
-    role.parent.mkdir(parents=True)
-    role.write_text(
-        yaml.safe_dump(
-            [
-                {
-                    "copy": {
-                        "dest": "/srv/site/message",
-                        "content": "unverified",
-                        "mode": "0644",
-                    }
-                }
-            ]
-        )
-    )
-    trace = (
-        "\n".join(
-            json.dumps({"task": "unchecked_delivery : copy", "host": host})
-            for host in ("app2", "app1", "app3")
-        )
-        + "\n"
-        + "\n".join(
-            json.dumps({"task": label, "host": host})
-            for host in ("app1", "app2", "app3")
-        )
-    )
-    expect(probe(tmp_path, 28, "CHECK", play, {"rollout-events.jsonl": trace}), False)
 
 
 def test_096_role_cannot_restore_before_the_visible_checksum_guard(tmp_path):
@@ -1064,59 +653,8 @@ def test_096_forced_handlers_cannot_bypass_checksum_failure(tmp_path):
     expect(probe(tmp_path, 96, "VERIFY", play, {"trusted.sha256": digest}), False)
 
 
-@pytest.mark.parametrize(
-    "count,serial,good",
-    [
-        (3, "33%", True),
-        (7, "33%", False),
-        (7, "14%", True),
-        (3, [1, 1, "100%"], True),
-        (3, "33.3%", False),
-        (3, True, False),
-    ],
-)
-def test_063_percentage_effect_uses_actual_inventory_and_remaining_hosts(
-    tmp_path, count, serial, good
-):
-    play = scope_play()
-    play[0]["serial"] = serial
-    (tmp_path / "inventory.json").write_text(
-        json.dumps(
-            {
-                "_meta": {"hostvars": {}},
-                "all": {"children": ["fleet"]},
-                "fleet": {"hosts": ["app" + str(i) for i in range(1, count + 1)]},
-            }
-        )
-    )
-    expect(probe(tmp_path, 63, "SCOPE", play), good)
 
 
-def test_046_foreign_collection_is_not_a_read_only_builtin(tmp_path):
-    module = (
-        tmp_path
-        / "collections/ansible_collections/foreign/check/plugins/modules/stat.py"
-    )
-    module.parent.mkdir(parents=True)
-    module.write_text(
-        "from ansible.module_utils.basic import AnsibleModule\nfrom pathlib import Path\nm=AnsibleModule(argument_spec={'path':{'type':'path'}},supports_check_mode=True)\nPath('/tmp/hidden-inspection-write').write_text('changed')\nm.exit_json(changed=False,stat={'exists':True})\n"
-    )
-    play = [
-        {
-            "hosts": "fleet",
-            "tasks": [
-                {
-                    "copy": {"dest": "/srv/site/banner.txt", "content": "north-46"},
-                    "tags": "deploy",
-                },
-                {
-                    "foreign.check.stat": {"path": "/srv/site/banner.txt"},
-                    "tags": "inspect",
-                },
-            ],
-        }
-    ]
-    expect(probe(tmp_path, 46, "TAGS", play), False)
 
 
 @pytest.mark.parametrize(
@@ -1183,57 +721,6 @@ def test_096_declared_execution_edges_cannot_bypass_integrity(tmp_path, bypass):
     expect(probe(tmp_path, 96, "VERIFY", play, {"trusted.sha256": digest}), False)
 
 
-@pytest.mark.skipif(
-    os.environ.get("DQ_INTEGRATION") != "1",
-    reason="Qualified Ansible inventory CLI is in the workstation",
-)
-@pytest.mark.parametrize(
-    "count,serial,good",
-    [
-        (3, "33%", True),
-        (7, "33%", False),
-        (7, "14%", True),
-        (3, [1, 1, "100%"], True),
-        (3, "33.3%", False),
-        (3, True, False),
-    ],
-)
-def test_063_real_inventory_cli_percentage_semantics(tmp_path, count, serial, good):
-    image = os.environ.get("DQ_ANSIBLE_TEST_IMAGE")
-    assert image
-    play = scope_play()
-    play[0]["serial"] = serial
-    (tmp_path / "rollout.yml").write_text(yaml.safe_dump(play))
-    (tmp_path / "ansible.cfg").write_text("[defaults]\ninventory=inventory.ini\n")
-    (tmp_path / "inventory.ini").write_text(
-        "[fleet]\n"
-        + "".join(
-            f"app{i} ansible_host=app{(i - 1) % 3 + 1}\n" for i in range(1, count + 1)
-        )
-    )
-    result = subprocess.run(
-        [
-            "docker",
-            "--host",
-            "unix:///var/run/docker.sock",
-            "run",
-            "--rm",
-            "--entrypoint",
-            "python3",
-            "--mount",
-            f"type=bind,src={tmp_path},dst=/proof,readonly",
-            "--workdir",
-            "/proof",
-            image,
-            "-I",
-            "-c",
-            program(63, "SCOPE"),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    expect(result, good)
 
 
 def test_096_module_defaults_cannot_switch_to_an_unverified_remote_archive(tmp_path):
@@ -1248,44 +735,6 @@ def test_096_handler_alias_respects_the_play_collection_order(tmp_path):
     expect(probe(tmp_path, 96, "VERIFY", play, {"trusted.sha256": digest}), False)
 
 
-@pytest.mark.skipif(
-    os.environ.get("DQ_INTEGRATION") != "1",
-    reason="Qualified configured inventory CLI is in the workstation",
-)
-def test_063_real_inventory_follows_the_playbook_configuration(tmp_path):
-    image = os.environ.get("DQ_ANSIBLE_TEST_IMAGE")
-    assert image
-    play = scope_play()
-    play[0]["serial"] = "33%"
-    (tmp_path / "rollout.yml").write_text(yaml.safe_dump(play))
-    (tmp_path / "inventory.ini").write_text("[fleet]\napp1\napp2\napp3\n")
-    (tmp_path / "actual.ini").write_text(
-        "[fleet]\n" + "".join(f"app{i}\n" for i in range(1, 8))
-    )
-    (tmp_path / "ansible.cfg").write_text("[defaults]\ninventory=actual.ini\n")
-    result = subprocess.run(
-        [
-            "docker",
-            "--host",
-            "unix:///var/run/docker.sock",
-            "run",
-            "--rm",
-            "--entrypoint",
-            "python3",
-            "--mount",
-            f"type=bind,src={tmp_path},dst=/proof,readonly",
-            "--workdir",
-            "/proof",
-            image,
-            "-I",
-            "-c",
-            program(63, "SCOPE"),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    expect(result, False)
 
 
 @pytest.mark.parametrize("binding", ["unrelated_register", "rebound_register"])

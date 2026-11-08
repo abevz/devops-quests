@@ -14,6 +14,11 @@ kubectl get deployment board -o json | jq -e '.spec.replicas==1' >/dev/null
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 document=$(kubectl get deployment board -o json 2>/dev/null || true)
 python3 -I - /dev/fd/3 3<<<"$document" <<'DQ_QUANTITY'
 import sys
@@ -66,6 +71,16 @@ for category,name,expected,marker,label in [('requests', 'cpu', '50m', None, Non
             print(label+": ✗ [DQ:"+marker+"]")
 sys.exit(failed)
 DQ_QUANTITY
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_2]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
