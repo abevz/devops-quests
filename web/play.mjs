@@ -70,6 +70,16 @@ export function showHintGuide(hints, index) {
   return index === 0 || hints[index].url !== hints[index - 1].url;
 }
 
+// Presentation only: the server retains confirmation, scoring and one-attempt transfers.
+export function briefingHintView(access, mode, active = false, busy = false) {
+  return {
+    titleKey: access.completed ? "hint.review_title" : "hint.prerun_title",
+    showCost: !access.completed && mode !== "exam",
+    showReveal: !access.completed && mode !== "exam",
+    revealDisabled: busy || access.count >= access.total || active,
+  };
+}
+
 // Rebuild a region only when its inputs change. Polling refreshes the bay every few seconds;
 // recreating unchanged regions would drop any text the learner is selecting or copying.
 export function renderWhenChanged(node, inputs, render) {

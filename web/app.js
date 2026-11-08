@@ -1,7 +1,7 @@
 import { storageGet, storageSet, sidebarKey, readCollapsed, saveCollapsed, installNavigationIcons } from "./navigation.mjs";
 import { renderDiagrams } from "./diagrams.mjs";
 import { referenceParts } from "./reference.mjs";
-import { attemptState, canRun, filterLevels, narrative, objectiveGroups, renderWhenChanged, showHintGuide } from "./play.mjs";
+import { attemptState, briefingHintView, canRun, filterLevels, narrative, objectiveGroups, renderWhenChanged, showHintGuide } from "./play.mjs";
 import { keySequence } from "./controls.mjs";
 import { diagnosticMessages } from "./diagnostics.mjs";
 import { scoreBreakdown } from "./score-preview.mjs";
@@ -523,13 +523,19 @@ function renderPreview() {
     : tc("scoring.no_best");
   for (const id of ["preview-score", "preview-best", "preview-availability"]) $(id).lang = contentLanguage();
   const access = q.hint_access;
+  const hintView = briefingHintView(access, preview.mode, state.run?.status === "active", busy);
+  $("preview-hint-title").textContent = tc(hintView.titleKey);
+  $("preview-hint-title").lang = contentLanguage();
+  $("preview-hint-cost").hidden = !hintView.showCost;
+  $("preview-hint-cost").textContent = tc("hint.prerun_cost", { penalty: state.scoring.hint_penalty });
+  $("preview-hint-cost").lang = contentLanguage();
   $("preview-hint-policy").lang = contentLanguage();
   $("preview-hint-policy").textContent = tc(
     access.completed ? "hint.completed_free" : access.count ? "hint.pending" : "hint.briefing_rule",
     { count: access.count, penalty: access.count * state.scoring.hint_penalty },
   );
-  $("preview-hint").hidden = access.completed || preview.mode === "exam";
-  $("preview-hint").disabled = busy || access.count >= access.total || state.run?.status === "active";
+  $("preview-hint").hidden = !hintView.showReveal;
+  $("preview-hint").disabled = hintView.revealDisabled;
   renderHints(q.hints, $("preview-hints"));
   const level = state.levels.find((item) => item.id === q.id);
   const eligible =
@@ -907,7 +913,7 @@ function renderEvents(q, r, node) {
 }
 function renderDebrief(q, r) {
   if (q.debrief) {
-    $("debrief").replaceChildren(el("h3", t("quest.closed", { score: r.score })));
+    $("debrief").replaceChildren(elc("h3", "quest.debrief"), el("p", t("quest.closed", { score: r.score })));
     const earned = [
       !r.hints ? t("achievement.no_hints") : null,
       !r.resets ? t("achievement.no_reset") : null,
