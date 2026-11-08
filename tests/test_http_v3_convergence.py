@@ -25,6 +25,8 @@ def make_fixture(
 ):
     home = tmp_path / "home"
     (home / "quest").mkdir(parents=True)
+    temp_dir = tmp_path / "tmp"
+    temp_dir.mkdir()
     binaries = tmp_path / "bin"
     binaries.mkdir()
     deployment = {
@@ -86,6 +88,7 @@ raise SystemExit(99)
         **os.environ,
         "HOME": str(home),
         "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
+        "TMPDIR": str(temp_dir),
         "DEPLOYMENT_FILE": str(deployment_file),
         "RESPONSES_FILE": str(responses_file),
         "CALLS_FILE": str(calls_file),
@@ -109,6 +112,7 @@ def test_http_v3_poll_passes_after_service_returns_old_body(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert not result.stdout
     assert calls_file.read_text().strip() == "2"
+    assert not list((tmp_path / "tmp").iterdir())
 
 
 def test_http_v3_hung_request_is_bounded_and_never_v3_fails(tmp_path):
@@ -130,6 +134,7 @@ def test_http_v3_hung_request_is_bounded_and_never_v3_fails(tmp_path):
     assert "[DQ:http_v3]" in result.stdout
     assert int(calls_file.read_text().strip()) >= 2
     assert 3.5 <= elapsed < 5
+    assert not list((tmp_path / "tmp").iterdir())
 
 
 def test_http_v3_invalid_utf8_body_is_escaped_without_a_traceback(tmp_path):
@@ -149,6 +154,7 @@ def test_http_v3_invalid_utf8_body_is_escaped_without_a_traceback(tmp_path):
     assert "[DQ:http_v3]" in result.stdout
     assert result.stdout.count("\n") == 1
     assert "Traceback" not in result.stdout + result.stderr
+    assert not list((tmp_path / "tmp").iterdir())
 
 
 def test_quest_objective_and_stage_check_use_the_same_http_poll():

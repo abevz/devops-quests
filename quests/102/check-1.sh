@@ -108,6 +108,10 @@ exit "$failed"
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
 set -euo pipefail
 cd ~/quest
 python3 - <<'DQ_HTTP_V3'
@@ -156,6 +160,16 @@ safe_body = json.dumps(last_body, ensure_ascii=True)
 print(f"board:8080 expected north-102-v3; last body: {safe_body}: ✗ [DQ:http_v3]")
 raise SystemExit(1)
 DQ_HTTP_V3
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_1_2]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
