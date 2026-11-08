@@ -5,6 +5,9 @@ export function canRun(level, state, mode, track) {
   if (mode === "track") return (state.track_opened?.[track] ?? []).includes(level.id);
   return level.opened;
 }
+export function trackForLevel(level, selectedTrack) {
+  return selectedTrack === "Boss" && level.boss ? selectedTrack : level.track;
+}
 export function filterLevels(levels, progress, filters, content) {
   const done = new Map(progress.map((p) => [p.level, p]));
   const query = filters.search.trim().toLocaleLowerCase();

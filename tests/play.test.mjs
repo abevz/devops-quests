@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { attemptState, canRun, filterLevels, narrative, renderWhenChanged } from "../web/play.mjs";
+import {
+  attemptState,
+  canRun,
+  filterLevels,
+  narrative,
+  renderWhenChanged,
+  trackForLevel,
+} from "../web/play.mjs";
 const levels = [
   {
     id: 1,
@@ -37,6 +44,14 @@ test("campaign, track and free eligibility remain distinct", () => {
   assert.equal(canRun(levels[1], state, "track", "Ansible"), true);
   assert.equal(canRun(levels[2], state, "free"), true);
   assert.equal(canRun({ ...levels[2], implemented: false }, state, "free"), false);
+});
+test("briefing By track follows the quest path instead of a stale map selection", () => {
+  const quest = { id: 3, track: "OpenTofu", implemented: true };
+  const selectedTrack = trackForLevel(quest, "Kubernetes");
+  assert.equal(selectedTrack, "OpenTofu");
+  assert.equal(canRun(quest, { track_opened: { OpenTofu: [3] } }, "track", selectedTrack), true);
+  assert.equal(canRun(quest, { track_opened: { Kubernetes: [3] } }, "track", selectedTrack), false);
+  assert.equal(trackForLevel({ track: "Boss", boss: true }, "Boss"), "Boss");
 });
 test("map combines track, difficulty, completion/hints and title/topic search", () => {
   const filters = { mode: "free", track: "", difficulty: "", status: "", search: "" };
