@@ -1,7 +1,7 @@
 import { storageGet, storageSet, sidebarKey, readCollapsed, saveCollapsed, installNavigationIcons } from "./navigation.mjs";
 import { renderDiagrams } from "./diagrams.mjs";
 import { referenceParts } from "./reference.mjs";
-import { attemptState, canRun, filterLevels, narrative, renderWhenChanged, showHintGuide } from "./play.mjs";
+import { attemptState, canRun, filterLevels, narrative, objectiveGroups, renderWhenChanged, showHintGuide } from "./play.mjs";
 import { keySequence } from "./controls.mjs";
 import { diagnosticMessages } from "./diagnostics.mjs";
 import { scoreBreakdown } from "./score-preview.mjs";
@@ -493,13 +493,18 @@ function renderPreview() {
     const section = el("section");
     section.append(elc("h3", "preview.stage", { number: index + 1 }));
     block(narrative(stage.brief, stage.objectives), section);
-    const list = el("ul");
-    for (const goal of stage.objectives) {
-      const li = el("li");
-      block(goal, li);
-      list.append(li);
+    const groups = objectiveGroups(stage);
+    for (const [kind, items] of Object.entries(groups)) {
+      if (!items.length) continue;
+      section.append(el("h4", tc(kind === "keep" ? "quest.keep" : "quest.objectives")));
+      const list = el("ul");
+      for (const { text } of items) {
+        const li = el("li");
+        block(text, li);
+        list.append(li);
+      }
+      section.append(list);
     }
-    section.append(list);
     $("preview-stages").append(section);
   });
   $("preview-time").textContent = tc(preview.mode === "exam" ? "preview.exam_time" : "preview.estimate", {
@@ -828,16 +833,10 @@ function renderQuest() {
   renderIfChanged($("stage"), [q.id, r.stage, q.stages[r.stage].brief], (node) =>
     block(narrative(q.stages[r.stage].brief, q.stages[r.stage].objectives), node),
   );
-  renderIfChanged($("objectives"), [q.id, r.stage, q.stages[r.stage].objectives, r.goals], (node) =>
-    q.stages[r.stage].objectives.forEach((g, i) => {
-      const item = el("li", undefined, r.goals[i] ? "ok" : "");
-      item.append(el("span", r.goals[i] ? "✓ " : "○ "));
-      const wrap = el("span");
-      block(g, wrap);
-      item.append(wrap);
-      node.append(item);
-    }),
-  );
+  const groups = objectiveGroups(q.stages[r.stage], r.goals, r.keep_failures);
+  renderIfChanged($("objectives"), [q.id, r.stage, groups.goals], (node) => renderObjectiveList(groups.goals, node));
+  $("keep-panel").hidden = !groups.keep.length;
+  renderIfChanged($("keep-objectives"), [q.id, r.stage, groups.keep], (node) => renderObjectiveList(groups.keep, node));
   for (const id of ["check", "reset", "stop"]) $(id).disabled = !active;
   $("hint-box").hidden = r.mode === "exam" || !active;
   $("hint").disabled = r.hints >= state.scoring.hint_limit;
@@ -857,6 +856,25 @@ function renderQuest() {
   renderIfChanged($("bay-facts"), [q.id, q.facts], () => renderFacts(q.facts));
   renderIfChanged($("check-feedback"), [r.id, lastCheck], () => renderCheckFeedback(r, q));
   tick();
+}
+function renderObjectiveList(items, node) {
+  for (const { text, status, failure } of items) {
+    const item = el("li", undefined, status === "complete" ? "ok" : status === "violated" ? "violated" : "");
+    item.append(el("span", { complete: "✓", pending: "○", kept: "–", violated: "✗" }[status]));
+    const wrap = el("span");
+    block(text, wrap);
+    if (status === "violated") {
+      const diagnostic = el("div", undefined, "keep-diagnostic");
+      diagnostic.append(el("p", tc("quest.keep_violated")));
+      if (failure) {
+        diagnostic.append(el("p", tc(failure.reason ?? "checks.cause.unsatisfied")));
+        for (const message of diagnosticMessages(failure.detail ?? "", state.quest?.diagnostics)) block(message, diagnostic);
+      }
+      wrap.append(diagnostic);
+    }
+    item.append(wrap);
+    node.append(item);
+  }
 }
 function renderEvents(q, r, node) {
   for (const event of r.events) {

@@ -80,3 +80,17 @@ export function renderWhenChanged(node, inputs, render) {
   render(node);
   return true;
 }
+
+// Preserve original objective indices: every condition still participates in Check & finish.
+export function objectiveGroups(stage, goals = [], failures = []) {
+  const groups = { goals: [], keep: [] };
+  stage.objectives.forEach((text, index) => {
+    const keep = stage.keep?.[index] === true;
+    const status = keep ? (goals[index] === false ? "violated" : "kept") : (goals[index] ? "complete" : "pending");
+    groups[keep ? "keep" : "goals"].push({
+      text, index, status,
+      failure: keep && status === "violated" ? failures.find((item) => item.objective === index) ?? null : null,
+    });
+  });
+  return groups;
+}

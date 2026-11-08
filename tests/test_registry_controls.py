@@ -105,6 +105,9 @@ async def test_agent_runs_before_objectives_only_for_an_active_unexpired_bay(
         def run(self, *args):
             return run.copy()
 
+        def active(self):
+            return [run.copy()] if run["status"] == "active" else []
+
         def clock(self):
             return 2
 
@@ -115,6 +118,7 @@ async def test_agent_runs_before_objectives_only_for_an_active_unexpired_bay(
     engine.store = Store()
     engine.locks = {}
     engine.preparing = set()
+    engine.keep_observations = {}
     engine.catalog = SimpleNamespace(
         quests={
             level: {"stages": [{"objectives": [{"check": "probe actual registry"}]}]}
