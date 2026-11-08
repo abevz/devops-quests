@@ -242,9 +242,52 @@ stages:
     check: |-
       set -euo pipefail
       cd ~/quest
-      failed=0
-      if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = north-102-v3; then printf '%s\n' 'board:8080 = north-102-v3: ✗ [DQ:http_v3]'; failed=1; fi
-      exit "$failed"
+      python3 - <<'DQ_HTTP_V3'
+      import json
+      import subprocess
+      import time
+
+      command = [
+          "kubectl", "exec", "--pod-running-timeout=2s", "deployment/board",
+          "-c", "worker", "--", "wget", "-qO-", "-T", "3", "http://board:8080",
+      ]
+      deadline = time.monotonic() + 4.0
+      last_body = "<no response observed>"
+      while True:
+          remaining = deadline - time.monotonic()
+          if remaining <= 0.1:
+              break
+          try:
+              result = subprocess.run(
+                  command, capture_output=True, check=False, text=True,
+                  encoding="utf-8", errors="replace",
+                  timeout=remaining - 0.1,
+              )
+          except subprocess.TimeoutExpired as error:
+              output = error.stdout or b""
+              if isinstance(output, bytes):
+                  output = output.decode("utf-8", errors="replace")
+              output = output.rstrip("\n")
+              if output:
+                  last_body = output
+          except OSError:
+              pass
+          else:
+              output = result.stdout.rstrip("\n")
+              if result.returncode == 0:
+                  last_body = output or "<empty body>"
+                  if output == "north-102-v3":
+                      raise SystemExit(0)
+              elif output:
+                  last_body = output
+          remaining = deadline - time.monotonic()
+          if remaining <= 0.1:
+              break
+          time.sleep(min(0.2, remaining))
+      safe_body = json.dumps(last_body, ensure_ascii=True)
+      print(f"board:8080 expected north-102-v3; last body: {safe_body}: ✗ [DQ:http_v3]")
+      raise SystemExit(1)
+      DQ_HTTP_V3
 hints:
 - text: hints.0.text
   guide: kubernetes-workloads
