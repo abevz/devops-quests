@@ -264,6 +264,7 @@ def make_app(
             },
         }
         if run:
+            run["keep_failures"] = engine.keep_failures(run)
             if run["status"] == "passed":
                 run["score_details"] = store.score_details(run)
             run["preparing"] = run["id"] in engine.preparing

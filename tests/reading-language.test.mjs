@@ -16,6 +16,7 @@ test("reading-area labels exist in every locale and render in the translation la
     "facts.title",
     "preview.resources",
     "preview.stages",
+    "quest.keep",
     "quest.need_hint",
     "quest.objectives",
     "quest.story",

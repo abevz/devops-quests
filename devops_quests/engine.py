@@ -16,10 +16,18 @@ class Engine:
         self.locks = {}
         self.start_lock = asyncio.Lock()
         self.preparing = set()
+        self.keep_observations = {}
         self.aliases = json.loads((catalog.root / "images/aliases.json").read_text())
 
     def lock(self, run):
         return self.locks.setdefault(run["id"], asyncio.Lock())
+
+    def keep_failures(self, run):
+        """Live diagnostics are ephemeral; checks and stored goal booleans stay unchanged."""
+        if not run or run["status"] != "active":
+            return []
+        stage, failures = self.keep_observations.get(run["id"], (None, []))
+        return failures if stage == run["stage"] else []
 
     async def start(self, user, number=None, mode="normal", minutes=15, track=None):
         async with self.start_lock:
@@ -77,6 +85,7 @@ class Engine:
         return self.store.run(run["id"], user)
 
     async def setup_stage(self, run):
+        self.keep_observations.pop(run["id"], None)
         script = self.catalog.script(run["level"], run["stage"], "setup")
         await asyncio.to_thread(
             self.runtime.exec,
@@ -153,9 +162,18 @@ class Engine:
                         }
                     )
             events = run["events"]
+            active_ids = {active["id"] for active in self.store.active()}
+            self.keep_observations = {
+                key: value for key, value in self.keep_observations.items()
+                if key in active_ids
+            }
+            self.keep_observations[run["id"]] = (
+                run["stage"],
+                [item for item in failures if stage["objectives"][item["objective"]].get("keep", False)],
+            )
             if run["mode"] != "exam":
                 for index, passed in enumerate(goals):
-                    if passed and (
+                    if passed and not stage["objectives"][index].get("keep", False) and (
                         index >= len(run["goals"]) or not run["goals"][index]
                     ):
                         objective = stage["objectives"][index]["text"]
@@ -325,6 +343,7 @@ class Engine:
                 try:
                     await self.poll(run)
                 except Exception:
+                    self.keep_observations.pop(run["id"], None)
                     logging.getLogger(__name__).exception(
                         "Bay probe failed: %s", run["id"]
                     )

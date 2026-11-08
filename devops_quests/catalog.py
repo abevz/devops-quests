@@ -93,6 +93,10 @@ class Catalog:
             path = self.root / "quests" / f"{number:03}"
             if (path / "quest.yaml").is_file():
                 self.quests[number] = yaml.safe_load((path / "quest.yaml").read_text())
+                for stage in self.quests[number]["stages"]:
+                    for goal in stage["objectives"]:
+                        if "keep" in goal and type(goal["keep"]) is not bool:
+                            raise ValueError(f"Quest {number}: objective keep must be boolean")
                 self.messages[number] = read_resources(path / "i18n")
 
     def text(self, number, key):
@@ -225,6 +229,7 @@ class Catalog:
                 "objectives": [
                     self.text(number, goal["text"]) for goal in stage["objectives"]
                 ],
+                "keep": [goal.get("keep", False) for goal in stage["objectives"]],
             }
             for stage in quest["stages"]
         ]

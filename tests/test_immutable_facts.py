@@ -37,6 +37,7 @@ def test_capture_rejects_nonlocal_names_before_reading(tmp_path, name):
 async def test_production_stage_freezes_facts_after_setup_before_ready():
     events = []
     engine = Engine.__new__(Engine)
+    engine.keep_observations = {}
     engine.catalog = SimpleNamespace(
         script=lambda *args: "write fixture",
         quests={66: {"immutable": {0: ["catalog.json"]}}},
