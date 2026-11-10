@@ -13,20 +13,16 @@ board=$(kubectl get deployment board -o json 2>/dev/null || true)
 python3 -I - /dev/fd/3 3<<<"$board" <<'DQ_ROLLING'
 import sys
 
-def _dq_read_argument(value):
-    if not value.startswith('/dev/fd/'):
-        return value
-    with open(value, encoding='utf-8', newline='') as source:
-        return source.read().removesuffix('\n')
+from dq_check import read_argument as _dq_read_argument
 
 sys.argv = [_dq_read_argument(value) for value in sys.argv]
 
 import json,sys,math,re
 
+from dq_check import workload_worker as _dq_worker
+
 def worker(document):
-    items=[c for c in document["spec"]["template"]["spec"]["containers"] if c.get("name")=="worker"]
-    if len(items)!=1:raise ValueError("worker")
-    return items[0]
+    return _dq_worker(document, error="worker")
 
 def port(container,value):
     if type(value) is int:return value
