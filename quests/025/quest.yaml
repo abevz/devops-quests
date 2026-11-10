@@ -153,87 +153,19 @@ stages:
       from pathlib import Path
 
 
-      def count(value):
-          if isinstance(value, bool):
-              return None
-          if isinstance(value, int) and value >= 0:
-              return value
-          if isinstance(value, str) and re.fullmatch(r'[0-9]+', value):
-              return int(value)
-          return None
 
 
-      def unique_counter_fields(pairs):
-          result = {}
-          for key, value in pairs:
-              if key in result:
-                  raise RuntimeError('Ambiguous recap field')
-              result[key] = value
-          return result
 
 
-      def recap(text):
-          # Read an actual recap, not task output which happens to mention a counter.
-          records = []
-          try:
-              records.append(json.loads(text, object_pairs_hook=unique_counter_fields))
-          except ValueError:
-              for line in text.splitlines():
-                  try:
-                      records.append(json.loads(line, object_pairs_hook=unique_counter_fields))
-                  except ValueError:
-                      pass
-          for record in reversed(records):
-              if not isinstance(record, dict):
-                  continue
-              stats = record.get('stats')
-              if record.get('event') == 'playbook_on_stats':
-                  event = record.get('event_data', {})
-                  if isinstance(event, dict):
-                      stats = {host: {key: values.get(host) for key, values in event.items()
-                                      if isinstance(values, dict)}
-                               for host in event.get('processed', {})}
-              if isinstance(stats, dict):
-                  rows = {}
-                  for host, values in stats.items():
-                      if not isinstance(values, dict):
-                          continue
-                      row = {}
-                      for key, value in values.items():
-                          key = {'failures':'failed','dark':'unreachable'}.get(key, key)
-                          if key in row:
-                              raise RuntimeError('Ambiguous normalized recap field')
-                          row[key] = count(value)
-                      rows[host] = row
-                  return rows
-          rows = {}
-          body = text.rsplit('PLAY RECAP', 1)[-1]
-          for line in body.splitlines():
-              match = re.match(r'^([^\s:]+)\s*:\s*(.*)$', line)
-              if not match:
-                  continue
-              fields = re.findall(r'\b(ok|changed|unreachable|failed|skipped|rescued|ignored)\s*=\s*([0-9]+)(?=\s|$)', match[2])
-              if fields:
-                  # Duplicate rows cannot stand in for another managed host.
-                  if match[1] in rows or len({key for key, _ in fields}) != len(fields):
-                      return {}
-                  rows[match[1]] = {key: int(value) for key, value in fields}
-          return rows
 
 
-      def require_recaps(path, required, positive=(), prefix='recap'):
-          try: text = Path(path).read_text()
-          except OSError: text = ''
-          rows = recap(text)
-          failed = False
-          for number in (1, 2, 3):
-              row = rows.get('app' + str(number), {})
-              ok = all(row.get(key) == value for key, value in required.items())
-              ok = ok and all(isinstance(row.get(key), int) and row[key] > 0 for key in positive)
-              if not ok:
-                  print('app' + str(number) + ' recap does not satisfy the required counters: ✗ [DQ:' + prefix + '_' + str(number) + ']')
-                  failed = True
-          assert not failed, 'Every required managed host needs its own successful recap'
+      from dq_check import ansible_recap as recap
+
+
+      from dq_check import require_recaps as _dq_recaps
+
+      def require_recaps(path, required, positive=(), prefix="recap"):
+          return _dq_recaps(path, required, positive, prefix, dialect='by_host')
 
       require_recaps('/tmp/idempotence-second.log', {'changed': 0, 'failed': 0})
       DQ_RECAP
