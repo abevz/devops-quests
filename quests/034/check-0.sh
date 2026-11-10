@@ -16,39 +16,11 @@ set +e
 set -euo pipefail
 document=$(kubectl get deployment board -o json 2>/dev/null || true)
 python3 -I - /dev/fd/3 3<<<"$document" <<'DQ_QUANTITY'
-import sys
+import json, sys
+from decimal import InvalidOperation
+from dq_check import quantity, read_argument, workload_worker as worker
 
-def _dq_read_argument(value):
-    if not value.startswith('/dev/fd/'):
-        return value
-    with open(value, encoding='utf-8', newline='') as source:
-        return source.read().removesuffix('\n')
-
-sys.argv = [_dq_read_argument(value) for value in sys.argv]
-
-import json,re,sys
-from decimal import Decimal, InvalidOperation
-
-def quantity(value):
-    if isinstance(value,bool) or not isinstance(value,(str,int,float)):
-        raise ValueError("quantity type")
-    match=re.fullmatch(r"([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)([numkKMGTPE]|[KMGTPE]i)?",str(value))
-    if not match:
-        raise ValueError("quantity syntax")
-    number,suffix=match.groups()
-    scales={"":Decimal(1),"n":Decimal("1e-9"),"u":Decimal("1e-6"),"m":Decimal("1e-3"),"k":Decimal("1e3"),"K":Decimal("1e3")}
-    for index,letter in enumerate("MGTPE",2):
-        scales[letter]=Decimal(1000)**index
-    for index,letter in enumerate("KMGTPE",1):
-        scales[letter+"i"]=Decimal(1024)**index
-    return Decimal(number)*scales[suffix or ""]
-
-def worker(document):
-    containers=document["spec"]["template"]["spec"]["containers"]
-    matches=[c for c in containers if c.get("name")=="worker"]
-    if len(matches)!=1:
-        raise ValueError("worker identity")
-    return matches[0]
+sys.argv = [read_argument(value) for value in sys.argv]
 
 try:
     resources=worker(json.loads(sys.argv[1])).get("resources",{})
@@ -57,7 +29,7 @@ except (KeyError,ValueError,TypeError,AttributeError):
 failed=False
 for category,name,expected,marker,label in [('requests', 'cpu', '100m', None, None), ('limits', 'cpu', '300m', None, None)]:
     try:
-        ok=quantity(resources.get(category,{}).get(name))==quantity(expected)
+        ok=quantity(resources.get(category,{}).get(name), dialect="typed_ascii")==quantity(expected, dialect="typed_ascii")
     except (KeyError,ValueError,TypeError,AttributeError,InvalidOperation,OverflowError):
         ok=False
     if not ok:
@@ -87,39 +59,11 @@ set +e
 set -euo pipefail
 document=$(kubectl get deployment board -o json 2>/dev/null || true)
 python3 -I - /dev/fd/3 3<<<"$document" <<'DQ_QUANTITY'
-import sys
+import json, sys
+from decimal import InvalidOperation
+from dq_check import quantity, read_argument, workload_worker as worker
 
-def _dq_read_argument(value):
-    if not value.startswith('/dev/fd/'):
-        return value
-    with open(value, encoding='utf-8', newline='') as source:
-        return source.read().removesuffix('\n')
-
-sys.argv = [_dq_read_argument(value) for value in sys.argv]
-
-import json,re,sys
-from decimal import Decimal, InvalidOperation
-
-def quantity(value):
-    if isinstance(value,bool) or not isinstance(value,(str,int,float)):
-        raise ValueError("quantity type")
-    match=re.fullmatch(r"([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)([numkKMGTPE]|[KMGTPE]i)?",str(value))
-    if not match:
-        raise ValueError("quantity syntax")
-    number,suffix=match.groups()
-    scales={"":Decimal(1),"n":Decimal("1e-9"),"u":Decimal("1e-6"),"m":Decimal("1e-3"),"k":Decimal("1e3"),"K":Decimal("1e3")}
-    for index,letter in enumerate("MGTPE",2):
-        scales[letter]=Decimal(1000)**index
-    for index,letter in enumerate("KMGTPE",1):
-        scales[letter+"i"]=Decimal(1024)**index
-    return Decimal(number)*scales[suffix or ""]
-
-def worker(document):
-    containers=document["spec"]["template"]["spec"]["containers"]
-    matches=[c for c in containers if c.get("name")=="worker"]
-    if len(matches)!=1:
-        raise ValueError("worker identity")
-    return matches[0]
+sys.argv = [read_argument(value) for value in sys.argv]
 
 try:
     resources=worker(json.loads(sys.argv[1])).get("resources",{})
@@ -128,7 +72,7 @@ except (KeyError,ValueError,TypeError,AttributeError):
 failed=False
 for category,name,expected,marker,label in [('requests', 'memory', '16Mi', None, None), ('limits', 'memory', '64Mi', None, None)]:
     try:
-        ok=quantity(resources.get(category,{}).get(name))==quantity(expected)
+        ok=quantity(resources.get(category,{}).get(name), dialect="typed_ascii")==quantity(expected, dialect="typed_ascii")
     except (KeyError,ValueError,TypeError,AttributeError,InvalidOperation,OverflowError):
         ok=False
     if not ok:
