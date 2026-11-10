@@ -12,6 +12,7 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 TOOLS = {
     "crane": (
         "https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz",
@@ -47,6 +48,10 @@ def get(url):
 
 
 def main():
+    from scripts.image_tags import image_tag
+
+    kind_tag = image_tag(ROOT, "kind", "0.1.0")
+    workstation_tag = image_tag(ROOT, "workstation", "0.1.0")
     (ROOT / ".state").mkdir(mode=0o700, exist_ok=True)
     manifest_path = ROOT / "tools.lock.json"
     recorded = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
@@ -147,7 +152,7 @@ def main():
             "--build-arg",
             "KIND=" + images["kind"],
             "-t",
-            "devops-quests/kind:0.1.0",
+            kind_tag,
             "-f",
             "images/Kind.Dockerfile",
             ".",
@@ -160,7 +165,7 @@ def main():
             *docker,
             "image",
             "inspect",
-            "devops-quests/kind:0.1.0",
+            kind_tag,
             "--format",
             "{{.Id}}",
         ],
@@ -180,7 +185,7 @@ def main():
             "--build-arg",
             "DOCKER_CLI=" + images["docker_cli"],
             "-t",
-            "devops-quests/workstation:0.1.0",
+            workstation_tag,
             "-f",
             "images/Workstation.Dockerfile",
             ".",
@@ -193,7 +198,7 @@ def main():
             *docker,
             "image",
             "inspect",
-            "devops-quests/workstation:0.1.0",
+            workstation_tag,
             "--format",
             "{{.Id}}",
         ],

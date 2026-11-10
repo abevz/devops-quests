@@ -11,6 +11,7 @@ from aiohttp import WSMsgType
 from aiohttp.test_utils import TestClient
 
 from devops_quests import terminal
+from devops_quests.catalog import ROOT
 from devops_quests.server import COOKIE
 from scripts.editor_pty_check import check, check_unicode_shell
 from scripts.terminal_benchmark import ProductionTestServer, fixture
@@ -25,6 +26,7 @@ pytestmark = pytest.mark.skipif(
 def workstation():
     name = "dq-terminal-check-" + secrets.token_hex(6)
     docker = ["docker", "--host", "unix:///var/run/docker.sock"]
+    image = json.loads((ROOT / ".state/built-image.json").read_text())["id"]
     subprocess.run(
         [
             *docker,
@@ -44,7 +46,7 @@ def workstation():
             "0.5",
             "--entrypoint",
             "sleep",
-            "devops-quests/workstation:0.1.0",
+            image,
             "infinity",
         ],
         capture_output=True,
