@@ -14,13 +14,11 @@ const contentKeys = [...html.matchAll(/data-i18n-content="([^"]+)"/g)].map((m) =
 test("reading-area labels exist in every locale and render in the translation language", () => {
   assert.deepEqual([...new Set(contentKeys)].sort(), [
     "facts.title",
-    "preview.resources",
     "preview.stages",
     "quest.keep",
     "quest.need_hint",
     "quest.objectives",
     "quest.story",
-    "scoring.best_rule",
   ]);
   for (const lang of languages)
     for (const key of contentKeys) assert.ok(Object.hasOwn(messages[lang], key), `${lang}: ${key}`);
@@ -44,7 +42,6 @@ test("reading-area strings in app.js use the content language", () => {
     "facts.",
     "scoring.formula",
     "scoring.best",
-    "scoring.no_best",
     "hint.briefing_rule",
     "preview.ready",
     "guide.full",
@@ -53,7 +50,7 @@ test("reading-area strings in app.js use the content language", () => {
     assert.ok(app.includes(`"${key}`), key);
   for (const key of ["preview.stage", "dependency.", "facts.network", "guide.full", "guide.full_lab"])
     assert.doesNotMatch(app, new RegExp(`\\bt\\("${key.replace(".", "\\.")}`), key);
-  assert.match(app, /\$\("preview-score"\)\.textContent = tc\(/);
+  assert.match(app, /\$\("preview-best"\)\.textContent = q\.best/);
   assert.match(app, /\$\("preview-time"\)\.textContent = tc\(/);
   assert.match(app, /\$\("preview-hint-policy"\)\.textContent = tc\(/);
   assert.match(app, /i18n\.content\(guideData\.titles, language\)/);

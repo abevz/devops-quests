@@ -482,7 +482,6 @@ async function openBriefing(number, mode = filters.mode, track = filters.path) {
       track,
       minutes: Number($("exam-minutes").value),
     };
-    $("preview-resources").open = false;
     readingTranslation = false;
     translationControls();
     renderPreview();
@@ -533,15 +532,11 @@ function renderPreview() {
       .join(" · ");
     node.lang = contentLanguage();
   });
-  $("preview-dependencies").replaceChildren(
-    ...["workstation", ...q.dependencies].map((name) => elc("li", "dependency." + name)),
-  );
-  renderFacts(q.facts, $("preview-facts"));
-  $("preview-score").textContent = tc("scoring.formula", state.scoring);
+  $("preview-best").hidden = !q.best;
   $("preview-best").textContent = q.best
     ? tc("scoring.best", { score: q.best.score, seconds: Math.floor(q.best.seconds), hints: q.best.hints })
-    : tc("scoring.no_best");
-  for (const id of ["preview-score", "preview-best", "preview-availability"]) $(id).lang = contentLanguage();
+    : "";
+  for (const id of ["preview-best", "preview-availability"]) $(id).lang = contentLanguage();
   const access = q.hint_access;
   const hintView = briefingHintView(access, preview.mode, state.run?.status === "active", busy);
   $("preview-hint-title").textContent = tc(hintView.titleKey);
