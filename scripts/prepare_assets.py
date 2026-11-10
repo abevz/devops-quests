@@ -158,6 +158,10 @@ def release_build():
             raise RuntimeError(
                 "Image build input changed; refresh build-images.lock.json: " + name
             )
+    if "dq_check.py" not in lock["inputs"]:
+        raise RuntimeError(
+            "Image build input is missing; refresh build-images.lock.json: dq_check.py"
+        )
     tools_only(project_only=True)
     state = ROOT / ".state"
     state.mkdir(mode=0o700, exist_ok=True)
