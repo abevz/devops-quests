@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 INPUTS = (
+    "dq_check.py",
     "images.lock.json",
     "tools.lock.json",
     "build-images.lock.json",

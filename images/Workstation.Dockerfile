@@ -27,3 +27,7 @@ WORKDIR /home/hacker
 RUN rm -f /etc/ssh/ssh_host_*
 ENTRYPOINT ["/usr/local/bin/dq-entrypoint"]
 CMD ["workstation"]
+
+# Install the same offline helper for isolated system and Ansible Python checks.
+COPY dq_check.py /opt/dq/dq_check.py
+RUN for python in /usr/bin/python3 /opt/ansible/bin/python3; do "$python" -c 'import sysconfig; from pathlib import Path; Path(sysconfig.get_path("purelib"), "dq_check.pth").write_text("/opt/dq\n")'; done

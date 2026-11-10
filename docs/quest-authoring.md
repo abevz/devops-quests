@@ -181,3 +181,55 @@ solution would fail, do not bend the objective text to the check; list it under
   an isolated host. Capture headed screenshots with a synthetic user for UI changes.
 - Check any measurements use only necessary local data and preserve accounts, progress,
   pending hints, and Labs. Obtain independent read-only review of the final diff.
+
+## Shared Python check predicates
+
+`dq_check.py` contains offline validation primitives extracted from the existing
+checks. It is installed in both the workstation's system Python and Ansible venv,
+and included in the local Python package for isolated regression subprocesses.
+Use `python3 -I` to import it; do not add the learner's directory or `PYTHONPATH`
+to imports. Keep input collection, shell waits, `check-N.sh` aggregation and existing
+`[DQ:...]` messages at their current entrypoints (principles 3 and 5).
+
+For example, after collecting the same JSON input into a here-string descriptor:
+
+```sh
+python3 -I - /dev/fd/3 3<<<"$deployment" <<'DQ_PROPERTY'
+import json, sys
+from dq_check import quantity, read_argument, workload_worker
+worker = workload_worker(json.loads(read_argument(sys.argv[1])))
+actual = worker.get("resources", {}).get("requests", {}).get("cpu")
+sys.exit(not (quantity(actual) == quantity("100m")))
+DQ_PROPERTY
+```
+
+This is an import example, not a replacement diagnostic wrapper. Preserve each
+quest's missing-value defaults, exception boundaries and diagnostic output.
+`quantity` has explicit `typed_ascii` (034 family), `unicode_finite` (068/095) and
+`coerced_ascii` (130) dialects. `selector_matches` distinguishes `pdb`,
+`policy_required` and `policy_optional`; `selector_equivalent` proves fixed-label
+identity rather than matching a snapshot. Named-object lookup, strict workload
+workers and optional pod workers retain their different missing/duplicate policies.
+`ready_image` / `current_pods` are snapshots and add no rollout waits.
+
+`ansible_recap` preserves ambiguous-field refusal; `require_recaps` selects
+`by_counter`, `by_host` or `shared_marker` to retain the original diagnostic text.
+OpenTofu primitives preserve `values` vs `planned_values`, filesystem aliases,
+managed resources and module membership. `module_forwards` selects `module`
+(region/station, 064) or `output` (value/route, 098) dialects, without evaluating HCL.
+The source docstrings and `tests/test_check_helper.py` record the original contracts.
+The differential tests use frozen pre-migration definitions in
+`tests/fixtures/check-helper-reference.json`; do not rewrite those references to
+follow migrations. Existing rigid tests continue to exercise the shipped entrypoints.
+Before migrating a check, compare it with its original body and run its unchanged
+rigid tests and affected-level real solution matrix; do not select a dialect by name
+alone or normalize away a difference found in the inventory.
+
+The helper has only standard-library imports; it fetches nothing at check time.
+Its source is a tracked workstation build input and an asset-receipt input. Immutable
+prebuilt image provenance in `build-images.lock.json` is not rewritten to bless a
+stale image: release-build verification refuses changed or untracked helper inputs
+until an authorized release refreshes the lock. Source development uses `make bootstrap`
+with the checkout's namespaced tags. A helper/image update changes the workstation ID
+and Lab profile versions: preview needs `make bootstrap`; saved Labs become an older
+version and must be exported/recreated.
