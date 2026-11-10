@@ -13,30 +13,17 @@ quota=$(timeout 2s kubectl get resourcequota station -o json 2>/dev/null || true
 python3 -I - /dev/fd/3 3<<<"$quota" <<'DQ_QUOTA'
 import sys
 
-def _dq_read_argument(value):
-    if not value.startswith('/dev/fd/'):
-        return value
-    with open(value, encoding='utf-8', newline='') as source:
-        return source.read().removesuffix('\n')
+from dq_check import read_argument as _dq_read_argument
 
 sys.argv = [_dq_read_argument(value) for value in sys.argv]
 
 import json,re,sys
 from decimal import Decimal, InvalidOperation
 
+from dq_check import quantity as _dq_quantity
+
 def quantity(value):
-    if isinstance(value,bool) or not isinstance(value,(str,int,float)):
-        raise ValueError("quantity type")
-    match=re.fullmatch(r"([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)([numkKMGTPE]|[KMGTPE]i)?",str(value))
-    if not match:
-        raise ValueError("quantity syntax")
-    number,suffix=match.groups()
-    scales={"":Decimal(1),"n":Decimal("1e-9"),"u":Decimal("1e-6"),"m":Decimal("1e-3"),"k":Decimal("1e3"),"K":Decimal("1e3")}
-    for index,letter in enumerate("MGTPE",2):
-        scales[letter]=Decimal(1000)**index
-    for index,letter in enumerate("KMGTPE",1):
-        scales[letter+"i"]=Decimal(1024)**index
-    return Decimal(number)*scales[suffix or ""]
+    return _dq_quantity(value, dialect="typed_ascii")
 
 def equal(value,expected):
     try:return quantity(value)==quantity(expected)
@@ -53,9 +40,7 @@ def doc(value):
         return result if isinstance(result,dict) else {}
     except ValueError:return {}
 
-def worker(pod):
-    items=[c for c in pod.get('spec',{}).get('containers',[]) if c.get('name')=='worker']
-    return items[0] if len(items)==1 else {}
+from dq_check import optional_pod_worker as worker
 
 failed=False
 quota=doc(sys.argv[1]);hard=quota.get('spec',{}).get('hard',{})
@@ -87,30 +72,17 @@ board=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
 python3 -I - /dev/fd/3 /dev/fd/4 3<<<"$limits" 4<<<"$board" <<'DQ_DEFAULTS'
 import sys
 
-def _dq_read_argument(value):
-    if not value.startswith('/dev/fd/'):
-        return value
-    with open(value, encoding='utf-8', newline='') as source:
-        return source.read().removesuffix('\n')
+from dq_check import read_argument as _dq_read_argument
 
 sys.argv = [_dq_read_argument(value) for value in sys.argv]
 
 import json,re,sys
 from decimal import Decimal, InvalidOperation
 
+from dq_check import quantity as _dq_quantity
+
 def quantity(value):
-    if isinstance(value,bool) or not isinstance(value,(str,int,float)):
-        raise ValueError("quantity type")
-    match=re.fullmatch(r"([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)([numkKMGTPE]|[KMGTPE]i)?",str(value))
-    if not match:
-        raise ValueError("quantity syntax")
-    number,suffix=match.groups()
-    scales={"":Decimal(1),"n":Decimal("1e-9"),"u":Decimal("1e-6"),"m":Decimal("1e-3"),"k":Decimal("1e3"),"K":Decimal("1e3")}
-    for index,letter in enumerate("MGTPE",2):
-        scales[letter]=Decimal(1000)**index
-    for index,letter in enumerate("KMGTPE",1):
-        scales[letter+"i"]=Decimal(1024)**index
-    return Decimal(number)*scales[suffix or ""]
+    return _dq_quantity(value, dialect="typed_ascii")
 
 def equal(value,expected):
     try:return quantity(value)==quantity(expected)
@@ -127,9 +99,7 @@ def doc(value):
         return result if isinstance(result,dict) else {}
     except ValueError:return {}
 
-def worker(pod):
-    items=[c for c in pod.get('spec',{}).get('containers',[]) if c.get('name')=='worker']
-    return items[0] if len(items)==1 else {}
+from dq_check import optional_pod_worker as worker
 
 failed=False
 limits=doc(sys.argv[1]);board=doc(sys.argv[2]);items=[x for x in limits.get('spec',{}).get('limits',[]) if x.get('type')=='Container']
@@ -164,30 +134,17 @@ pods=$(timeout 2s kubectl get pods -l app=board -o json 2>/dev/null || true)
 python3 -I - /dev/fd/3 /dev/fd/4 3<<<"$board" 4<<<"$pods" <<'DQ_ADMITTED'
 import sys
 
-def _dq_read_argument(value):
-    if not value.startswith('/dev/fd/'):
-        return value
-    with open(value, encoding='utf-8', newline='') as source:
-        return source.read().removesuffix('\n')
+from dq_check import read_argument as _dq_read_argument
 
 sys.argv = [_dq_read_argument(value) for value in sys.argv]
 
 import json,re,sys
 from decimal import Decimal, InvalidOperation
 
+from dq_check import quantity as _dq_quantity
+
 def quantity(value):
-    if isinstance(value,bool) or not isinstance(value,(str,int,float)):
-        raise ValueError("quantity type")
-    match=re.fullmatch(r"([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)([numkKMGTPE]|[KMGTPE]i)?",str(value))
-    if not match:
-        raise ValueError("quantity syntax")
-    number,suffix=match.groups()
-    scales={"":Decimal(1),"n":Decimal("1e-9"),"u":Decimal("1e-6"),"m":Decimal("1e-3"),"k":Decimal("1e3"),"K":Decimal("1e3")}
-    for index,letter in enumerate("MGTPE",2):
-        scales[letter]=Decimal(1000)**index
-    for index,letter in enumerate("KMGTPE",1):
-        scales[letter+"i"]=Decimal(1024)**index
-    return Decimal(number)*scales[suffix or ""]
+    return _dq_quantity(value, dialect="typed_ascii")
 
 def equal(value,expected):
     try:return quantity(value)==quantity(expected)
@@ -204,9 +161,7 @@ def doc(value):
         return result if isinstance(result,dict) else {}
     except ValueError:return {}
 
-def worker(pod):
-    items=[c for c in pod.get('spec',{}).get('containers',[]) if c.get('name')=='worker']
-    return items[0] if len(items)==1 else {}
+from dq_check import optional_pod_worker as worker
 
 failed=False
 board=doc(sys.argv[1]);pods=doc(sys.argv[2]);eligible=[p for p in pods.get('items',[]) if not p.get('metadata',{}).get('deletionTimestamp')]

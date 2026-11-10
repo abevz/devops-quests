@@ -30,11 +30,7 @@ stages:
       if ! python3 -I - /dev/fd/3 /dev/fd/4 "board" /dev/fd/5 3<<<"$policies" 4<<<"$pods" 5<<<"$target_pods" <<'DQ_POLICY'
       import sys
 
-      def _dq_read_argument(value):
-          if not value.startswith('/dev/fd/'):
-              return value
-          with open(value, encoding='utf-8', newline='') as source:
-              return source.read().removesuffix('\n')
+      from dq_check import read_argument as _dq_read_argument
 
       sys.argv = [_dq_read_argument(value) for value in sys.argv]
 
@@ -42,52 +38,13 @@ stages:
       import sys
 
 
+      from dq_check import selector_matches as _dq_matches
+
       def matches(selector, labels):
-          if not isinstance(selector, dict) or set(selector) - {"matchLabels", "matchExpressions"}:
-              raise ValueError("selector")
-          for key, value in selector.get("matchLabels", {}).items():
-              if labels.get(key) != value:
-                  return False
-          for expression in selector.get("matchExpressions", []):
-              key = expression.get("key")
-              operator = expression.get("operator")
-              values = expression.get("values", [])
-              if operator == "In":
-                  result = key in labels and labels[key] in values
-              elif operator == "NotIn":
-                  result = key not in labels or labels[key] not in values
-              elif operator == "Exists":
-                  result = key in labels
-              elif operator == "DoesNotExist":
-                  result = key not in labels
-              else:
-                  raise ValueError("selector operator")
-              if not result:
-                  return False
-          return True
+          return _dq_matches(labels, selector, dialect="policy_optional")
 
 
-      def simple_selector(value, labels):
-          if not isinstance(value,dict) or set(value)-{'matchLabels','matchExpressions'}:return False
-          matches=value.get('matchLabels',{})
-          clauses=value.get('matchExpressions',[])
-          if not isinstance(matches,dict) or not isinstance(clauses,list):return False
-          if set(matches)-set(labels) or any(e.get('key') not in labels for e in clauses):return False
-          for key,expected in labels.items():
-              allowed={matches[key]} if key in matches else None
-              exclusions=set();exists=key in matches
-              for clause in clauses:
-                  if clause['key']!=key:continue
-                  operator=clause.get('operator');values=clause.get('values',[])
-                  if operator=='In':
-                      if not values:return False
-                      allowed=set(values) if allowed is None else allowed & set(values)
-                      exists=True
-                  elif operator=='NotIn':exclusions.update(values)
-                  elif operator=='Exists':exists=True
-                  else:return False
-              if allowed is None or not exists or allowed-exclusions!={expected}:return False
-          return True
+      from dq_check import selector_equivalent as simple_selector
 
 
       def flows(spec, target):

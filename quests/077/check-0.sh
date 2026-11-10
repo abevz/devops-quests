@@ -15,33 +15,18 @@ pods=$(kubectl get pods -o json)
 python3 -I - /dev/fd/3 /dev/fd/4 /dev/fd/5 3<<<"$budget" 4<<<"$deployment" 5<<<"$pods" <<'DQ_PDB'
 import sys
 
-def _dq_read_argument(value):
-    if not value.startswith('/dev/fd/'):
-        return value
-    with open(value, encoding='utf-8', newline='') as source:
-        return source.read().removesuffix('\n')
+from dq_check import read_argument as _dq_read_argument
 
 sys.argv = [_dq_read_argument(value) for value in sys.argv]
 
 import json,sys,re
 
-def selected(labels,selector):
-    if not isinstance(selector,dict):return False
-    if not all(labels.get(k)==v for k,v in selector.get('matchLabels',{}).items()):return False
-    for clause in selector.get('matchExpressions',[]):
-        key=clause['key'];operator=clause['operator'];values=clause.get('values',[])
-        if operator=='In':ok=key in labels and labels[key] in values
-        elif operator=='NotIn':ok=key not in labels or labels[key] not in values
-        elif operator=='Exists':ok=key in labels
-        elif operator=='DoesNotExist':ok=key not in labels
-        else:return False
-        if not ok:return False
-    return True
+from dq_check import selector_matches as _dq_selected
 
-def amount(value,count):
-    if type(value) is int and value>=0:return value
-    if isinstance(value,str) and re.fullmatch(r'[0-9]+%',value):return (int(value[:-1])*count+99)//100
-    raise ValueError('budget')
+def selected(labels, selector):
+    return _dq_selected(labels, selector, dialect="pdb")
+
+from dq_check import pdb_amount as amount
 try:
     budget=json.loads(sys.argv[1]);deployment=json.loads(sys.argv[2]);pods=json.loads(sys.argv[3])['items']
     labels=deployment['spec']['template']['metadata']['labels'];selector=budget['spec']['selector'];count=deployment['spec']['replicas']
