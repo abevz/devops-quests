@@ -77,12 +77,7 @@ def get(kind, name=None):
 def require(good, marker):
     if not good:raise AssertionError(marker)
 
-def port_number(containers, value, protocol='TCP'):
-    if type(value) is int:return value
-    if not isinstance(value,str) or not value:raise ValueError('named port')
-    found={p['containerPort'] for c in containers for p in c.get('ports',[]) if p.get('name')==value and p.get('protocol','TCP')==protocol}
-    if len(found)!=1:raise ValueError('named port')
-    return found.pop()
+from dq_check import port_number as port_number
 
 try:
     service=get('service','board')['spec'];d=get('deployment','board');labels=d['spec']['template']['metadata']['labels']
@@ -129,11 +124,7 @@ def get(kind, name=None):
 def require(good, marker):
     if not good:raise AssertionError(marker)
 
-def current_pods(deployment,replicasets,pods):
-    uid=deployment['metadata']['uid']
-    if not isinstance(uid,str) or not uid:raise ValueError('deployment identity')
-    owners={rs['metadata']['uid'] for rs in replicasets.get('items',[]) if any(ref.get('kind')=='Deployment' and ref.get('uid')==uid and ref.get('controller') is True for ref in rs.get('metadata',{}).get('ownerReferences',[]))}
-    return [pod for pod in pods.get('items',[]) if pod.get('metadata',{}).get('deletionTimestamp') is None and pod.get('status',{}).get('phase') not in ('Failed','Succeeded') and any(ref.get('kind')=='ReplicaSet' and ref.get('uid') in owners and ref.get('controller') is True for ref in pod.get('metadata',{}).get('ownerReferences',[]))]
+from dq_check import current_pods
 
 try:
     d=get('deployment','board');pods=current_pods(d,get('replicasets'),get('pods'));pods=[p for p in pods if p.get('status',{}).get('phase')=='Running']

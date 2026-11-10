@@ -52,11 +52,7 @@ document=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
 if ! python3 -I - /dev/fd/3 3<<<"$document" <<'DQ_SECURITY'
 import sys
 
-def _dq_read_argument(value):
-    if not value.startswith('/dev/fd/'):
-        return value
-    with open(value, encoding='utf-8', newline='') as source:
-        return source.read().removesuffix('\n')
+from dq_check import read_argument as _dq_read_argument
 
 sys.argv = [_dq_read_argument(value) for value in sys.argv]
 
@@ -77,27 +73,24 @@ def emit(marker,label,condition):
     if not valid or not condition:
         failed=True;print(label+": ✗ [DQ:"+marker+"]")
 
-def profile(context):
-    value=context.get("seccompProfile")
-    if value is None:return None
-    return value.get("type","invalid") if isinstance(value,dict) else "invalid"
+from dq_check import seccomp_profile as profile
+
+from dq_check import positive_user_ids as _dq_positive_ids
 
 def positive_ids():
-    return all(type(v) is int and v>0 for c in [policy]+contexts for v in [c.get("runAsUser")] if v is not None)
+    return _dq_positive_ids(policy, contexts)
+
+from dq_check import nonroot_policy as _dq_nonroot
 
 def nonroot():
-    no_false=all(c.get("runAsNonRoot") in (None,True) and c.get("runAsNonRoot") is not False for c in [policy]+contexts)
-    inherited=all((c.get("runAsNonRoot") if c.get("runAsNonRoot") is not None else policy.get("runAsNonRoot")) is True for c in contexts)
-    return no_false and inherited and positive_ids()
+    return _dq_nonroot(policy, contexts)
+
+from dq_check import runtime_default_policy as _dq_default_filter
 
 def default_filter():
-    return all(profile(c) in (None,"RuntimeDefault") for c in [policy]+contexts) and all((profile(c) or profile(policy))=="RuntimeDefault" for c in contexts)
+    return _dq_default_filter(policy, contexts)
 
-def caps(context,key):
-    value=context.get("capabilities",{}) or {}
-    if not isinstance(value,dict):return None
-    result=value.get(key,[]) or []
-    return result if isinstance(result,list) else None
+from dq_check import capability_list as caps
 
 failed=False
 for field in ("hostNetwork","hostPID","hostIPC"):
@@ -125,11 +118,10 @@ if True:
         temporary=by_name[tmp[0]["name"]]
         volume_ok=isinstance(temporary.get("emptyDir"),dict)
         mount_ok=volume_ok and tmp[0].get("readOnly") is not True
+        from dq_check import readonly_mount as _dq_readonly
+
         def readonly(mount):
-            source=by_name[mount["name"]]
-            if mount.get("readOnly") is True:return True
-            if any(source.get(key) is not None for key in ("configMap","secret","projected","downwardAPI")):return True
-            return any(isinstance(source.get(key),dict) and source[key].get("readOnly") is True for key in ("persistentVolumeClaim","csi"))
+            return _dq_readonly(mount, by_name)
         mounts_ok=all((m.get("name")==tmp[0]["name"] and m.get("mountPath")=="/tmp") or readonly(m) for c in containers for m in c.get("volumeMounts",[]))
     except (KeyError,ValueError,TypeError,AttributeError):volume_ok=mount_ok=mounts_ok=False
     emit("volume","deployment/board temporary volume is emptyDir",volume_ok)

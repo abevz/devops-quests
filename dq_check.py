@@ -1,9 +1,10 @@
 """Offline validation primitives shared by quest checks.
 
-No quest calls this module until its migration PR. Explicit dialects preserve
-existing predicates; callers retain their diagnostics, input collection and waits.
+Explicit dialects preserve existing predicates; callers retain their diagnostics,
+input collection and waits.
 """
 
+import base64
 import json
 import os
 import re
@@ -1111,3 +1112,281 @@ def module_forwards(
         return True
     except (OSError, ValueError, KeyError, TypeError):
         return False
+
+
+# Additional primitives required by the remaining check migrations.
+
+
+def credential_fields(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate credential field")
+        result[key] = value
+    return result
+
+
+def registry_credentials(secret, registry, user, password):
+    """Validate the original exact registry entry and either Docker credential format."""
+    kind = secret.get("type")
+    key = (
+        ".dockerconfigjson"
+        if kind == "kubernetes.io/dockerconfigjson"
+        else ".dockercfg"
+        if kind == "kubernetes.io/dockercfg"
+        else None
+    )
+    if key is None:
+        return False
+    value = json.loads(
+        base64.b64decode(secret["data"][key], validate=True),
+        object_pairs_hook=credential_fields,
+    )
+    auths = value.get("auths") if key == ".dockerconfigjson" else value
+    if not isinstance(auths, dict):
+        return False
+    entry = auths.get(registry)
+    if not isinstance(entry, dict):
+        return False
+    auth = entry.get("auth")
+    if auth not in (None, ""):
+        return (
+            isinstance(auth, str)
+            and base64.b64decode(
+                auth.replace("\r", "").replace("\n", ""), validate=True
+            )
+            == (user + ":" + password).encode()
+        )
+    return entry.get("username") == user and entry.get("password") == password
+
+
+def pull_secret_names(pod):
+    names = set()
+    for entry in pod.get("spec", {}).get("imagePullSecrets") or []:
+        value = entry.get("name")
+        if not isinstance(value, str) or not re.fullmatch(
+            "[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?", value
+        ):
+            raise ValueError("pull credential identity")
+        names.add(value)
+    return names
+
+
+def port_number(containers, value, protocol="TCP"):
+    """Resolve exact numeric or uniquely named workload ports, preserving protocol filtering."""
+    if type(value) is int:
+        return value
+    if not isinstance(value, str) or not value:
+        raise ValueError("named port")
+    found = {
+        p["containerPort"]
+        for c in containers
+        for p in c.get("ports", [])
+        if p.get("name") == value and p.get("protocol", "TCP") == protocol
+    }
+    if len(found) != 1:
+        raise ValueError("named port")
+    return found.pop()
+
+
+def _readiness_port(container, value):
+    if type(value) is int:
+        return value
+    if not isinstance(value, str):
+        raise ValueError("port")
+    found = [
+        p["containerPort"] for p in container.get("ports", []) if p.get("name") == value
+    ]
+    if len(found) != 1 or type(found[0]) is not int:
+        raise ValueError("named port")
+    return found[0]
+
+
+def _readiness_worker(document):
+    return workload_worker(document, error="worker")
+
+
+def readiness_probe(document, tcp=False):
+    """067/102 HTTP readiness, optionally TCP; retain their unbounded direct integer port policy."""
+    container = _readiness_worker(document)
+    probe = container.get("readinessProbe", {})
+    kinds = [
+        name
+        for name in ("httpGet", "tcpSocket", "exec", "grpc")
+        if probe.get(name) is not None
+    ]
+    if len(kinds) != 1 or kinds[0] not in (
+        ["httpGet", "tcpSocket"] if tcp else ["httpGet"]
+    ):
+        return False
+    action = probe[kinds[0]]
+    if action.get("host", "") != "":
+        return False
+    if kinds[0] == "httpGet" and action.get("scheme", "HTTP") != "HTTP":
+        return False
+    return _readiness_port(container, action.get("port")) == 8080
+
+
+def _health_worker(document):
+    return workload_worker(document, error="application worker identity")
+
+
+def workload_agreement(desired, live):
+    left, right = (_health_worker(desired), _health_worker(live))
+    if left.get("image") != right.get("image"):
+        return False
+    if (left.get("command") or []) != (right.get("command") or []) or (
+        left.get("args") or []
+    ) != (right.get("args") or []):
+        return False
+    if env_values(left.get("env")) != env_values(right.get("env")):
+        return False
+    return all(
+        (
+            health_probe(left, field) == health_probe(right, field)
+            for field in ("readinessProbe", "livenessProbe", "startupProbe")
+        )
+    )
+
+
+def workload_safety(reference, current):
+    old = reference["spec"]["template"]["spec"]
+    new = current["spec"]["template"]["spec"]
+    base = _health_worker(reference)
+    actual = _health_worker(current)
+    old_pod = old.get("securityContext", {})
+    new_pod = new.get("securityContext", {})
+    for field in ("runAsUser", "runAsGroup", "runAsNonRoot", "seccompProfile"):
+        expected = base.get("securityContext", {}).get(field, old_pod.get(field))
+        observed = actual.get("securityContext", {}).get(field, new_pod.get(field))
+        if expected is not None and expected != observed:
+            return False
+    for field in ("hostNetwork", "hostPID", "hostIPC"):
+        if bool(new.get(field)) != bool(old.get(field)):
+            return False
+    for container in new.get("containers", []) + new.get("initContainers", []):
+        context = container.get("securityContext", {})
+        if (
+            context.get("privileged", False)
+            or context.get("allowPrivilegeEscalation") is not False
+        ):
+            return False
+        if "ALL" not in context.get("capabilities", {}).get("drop", []) or context.get(
+            "capabilities", {}
+        ).get("add"):
+            return False
+        uid = context.get("runAsUser", new_pod.get("runAsUser"))
+        nonroot = context.get("runAsNonRoot", new_pod.get("runAsNonRoot"))
+        if uid == 0 or not (nonroot is True or (type(uid) is int and uid > 0)):
+            return False
+    return True
+
+
+def selector_implies(selector, required):
+    """Prove exact required identities and satisfiability of label conjunctions."""
+    if not isinstance(selector, dict) or set(selector) - {
+        "matchLabels",
+        "matchExpressions",
+    }:
+        return False
+    allowed = {k: {v} for k, v in selector.get("matchLabels", {}).items()}
+    present = set(allowed)
+    absent = set()
+    excluded = {}
+    for e in selector.get("matchExpressions", []):
+        k, op, vs = (e.get("key"), e.get("operator"), set(e.get("values", [])))
+        if op == "In":
+            present.add(k)
+            allowed[k] = allowed.get(k, vs) & vs
+        elif op == "NotIn":
+            excluded.setdefault(k, set()).update(vs)
+        elif op == "DoesNotExist":
+            absent.add(k)
+        elif op == "Exists":
+            present.add(k)
+        else:
+            return False
+    if present & absent:
+        return False
+    for k in allowed:
+        allowed[k] -= excluded.get(k, set())
+    return all((allowed.get(k) == {v} for k, v in required.items())) and all(
+        (v for v in allowed.values())
+    )
+
+
+def capability_list(context, key):
+    value = context.get("capabilities", {}) or {}
+    if not isinstance(value, dict):
+        return None
+    result = value.get(key, []) or []
+    return result if isinstance(result, list) else None
+
+
+def seccomp_profile(context):
+    value = context.get("seccompProfile")
+    if value is None:
+        return None
+    return value.get("type", "invalid") if isinstance(value, dict) else "invalid"
+
+
+def positive_user_ids(policy, contexts):
+    return all(
+        (
+            type(v) is int and v > 0
+            for c in [policy] + contexts
+            for v in [c.get("runAsUser")]
+            if v is not None
+        )
+    )
+
+
+def nonroot_policy(policy, contexts):
+    no_false = all(
+        (
+            c.get("runAsNonRoot") in (None, True) and c.get("runAsNonRoot") is not False
+            for c in [policy] + contexts
+        )
+    )
+    inherited = all(
+        (
+            (
+                c.get("runAsNonRoot")
+                if c.get("runAsNonRoot") is not None
+                else policy.get("runAsNonRoot")
+            )
+            is True
+            for c in contexts
+        )
+    )
+    return no_false and inherited and positive_user_ids(policy, contexts)
+
+
+def runtime_default_policy(policy, contexts):
+    return all(
+        (seccomp_profile(c) in (None, "RuntimeDefault") for c in [policy] + contexts)
+    ) and all(
+        (
+            (seccomp_profile(c) or seccomp_profile(policy)) == "RuntimeDefault"
+            for c in contexts
+        )
+    )
+
+
+def readonly_mount(mount, by_name):
+    source = by_name[mount["name"]]
+    if mount.get("readOnly") is True:
+        return True
+    if any(
+        (
+            source.get(key) is not None
+            for key in ("configMap", "secret", "projected", "downwardAPI")
+        )
+    ):
+        return True
+    return any(
+        (
+            isinstance(source.get(key), dict) and source[key].get("readOnly") is True
+            for key in ("persistentVolumeClaim", "csi")
+        )
+    )

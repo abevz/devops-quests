@@ -24,21 +24,9 @@ from dq_check import workload_worker as _dq_worker
 def worker(document):
     return _dq_worker(document, error="worker")
 
-def port(container,value):
-    if type(value) is int:return value
-    if not isinstance(value,str):raise ValueError("port")
-    found=[p["containerPort"] for p in container.get("ports",[]) if p.get("name")==value]
-    if len(found)!=1 or type(found[0]) is not int:raise ValueError("named port")
-    return found[0]
 
-def readiness(document,tcp=False):
-    container=worker(document);probe=container.get("readinessProbe",{})
-    kinds=[name for name in ("httpGet","tcpSocket","exec","grpc") if probe.get(name) is not None]
-    if len(kinds)!=1 or kinds[0] not in (["httpGet","tcpSocket"] if tcp else ["httpGet"]):return False
-    action=probe[kinds[0]]
-    if action.get("host","")!="":return False
-    if kinds[0]=="httpGet" and action.get("scheme","HTTP")!="HTTP":return False
-    return port(container,action.get("port"))==8080
+
+from dq_check import readiness_probe as readiness
 def scaled(value,count,up):
     if type(value) is int:
         if value<0:raise ValueError("negative budget")

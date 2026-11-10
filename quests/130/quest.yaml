@@ -24,22 +24,20 @@ stages:
           args=['kubectl','get',kind]+([name] if name else [])+['-o','json']
           return json.loads(subprocess.check_output(args,stderr=subprocess.DEVNULL,timeout=3))
 
-      def named(items, name):
-          found=[x for x in items or [] if isinstance(x,dict) and x.get('name')==name]
-          if len(found)!=1:raise ValueError('named identity')
-          return found[0]
+      from dq_check import named as _dq_named
 
-      def worker(document):return named(document['spec']['template']['spec']['containers'],'worker')
+      def named(items, name):
+          return _dq_named(items, name, error="named identity")
+
+      from dq_check import workload_worker as _dq_worker
+
+      def worker(document):
+          return _dq_worker(document, error="named identity", ignore_non_mappings=True)
+
+      from dq_check import quantity as _dq_quantity
 
       def quantity(value):
-          if isinstance(value,bool):raise ValueError('quantity')
-          match=re.fullmatch(r'([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)([numkKMGTPE]|[KMGTPE]i)?',str(value))
-          if not match:raise ValueError('quantity')
-          suffix=match[2] or ''
-          factors={'':1,'n':Decimal('1e-9'),'u':Decimal('1e-6'),'m':Decimal('1e-3'),'k':1000,'K':1000}
-          for i,s in enumerate('MGTPE',2):factors[s]=1000**i
-          for i,s in enumerate('KMGTPE',1):factors[s+'i']=1024**i
-          return Decimal(match[1])*factors[suffix]
+          return _dq_quantity(value, dialect='coerced_ascii')
 
       def require(good, marker):
           if not good:raise AssertionError(marker)
@@ -140,22 +138,20 @@ stages:
           args=['kubectl','get',kind]+([name] if name else [])+['-o','json']
           return json.loads(subprocess.check_output(args,stderr=subprocess.DEVNULL,timeout=3))
 
-      def named(items, name):
-          found=[x for x in items or [] if isinstance(x,dict) and x.get('name')==name]
-          if len(found)!=1:raise ValueError('named identity')
-          return found[0]
+      from dq_check import named as _dq_named
 
-      def worker(document):return named(document['spec']['template']['spec']['containers'],'worker')
+      def named(items, name):
+          return _dq_named(items, name, error="named identity")
+
+      from dq_check import workload_worker as _dq_worker
+
+      def worker(document):
+          return _dq_worker(document, error="named identity", ignore_non_mappings=True)
+
+      from dq_check import quantity as _dq_quantity
 
       def quantity(value):
-          if isinstance(value,bool):raise ValueError('quantity')
-          match=re.fullmatch(r'([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)([numkKMGTPE]|[KMGTPE]i)?',str(value))
-          if not match:raise ValueError('quantity')
-          suffix=match[2] or ''
-          factors={'':1,'n':Decimal('1e-9'),'u':Decimal('1e-6'),'m':Decimal('1e-3'),'k':1000,'K':1000}
-          for i,s in enumerate('MGTPE',2):factors[s]=1000**i
-          for i,s in enumerate('KMGTPE',1):factors[s+'i']=1024**i
-          return Decimal(match[1])*factors[suffix]
+          return _dq_quantity(value, dialect='coerced_ascii')
 
       def require(good, marker):
           if not good:raise AssertionError(marker)
@@ -341,42 +337,14 @@ stages:
       def require(good, marker):
           if not good:raise AssertionError(marker)
 
-      def port_number(containers, value, protocol='TCP'):
-          if type(value) is int:return value
-          if not isinstance(value,str) or not value:raise ValueError('named port')
-          found={p['containerPort'] for c in containers for p in c.get('ports',[]) if p.get('name')==value and p.get('protocol','TCP')==protocol}
-          if len(found)!=1:raise ValueError('named port')
-          return found.pop()
+      from dq_check import port_number as port_number
+
+      from dq_check import selector_matches as _dq_matches
 
       def matches(selector, labels):
-          if not isinstance(selector,dict) or set(selector)-{'matchLabels','matchExpressions'}:raise ValueError('selector')
-          if any(labels.get(k)!=v for k,v in selector.get('matchLabels',{}).items()):return False
-          for e in selector.get('matchExpressions',[]):
-              k,op,values=e['key'],e['operator'],e.get('values',[])
-              if op=='In':good=k in labels and labels[k] in values
-              elif op=='NotIn':good=k not in labels or labels[k] not in values
-              elif op=='Exists':good=k in labels
-              elif op=='DoesNotExist':good=k not in labels
-              else:raise ValueError('selector operator')
-              if not good:return False
-          return True
+          return _dq_matches(labels, selector, dialect="policy_required")
 
-      def implies(selector, required):
-          # Prove both the required identities and satisfiability of conjunctions.
-          if not isinstance(selector,dict) or set(selector)-{'matchLabels','matchExpressions'}:return False
-          allowed={k:{v} for k,v in selector.get('matchLabels',{}).items()}
-          present=set(allowed);absent=set();excluded={}
-          for e in selector.get('matchExpressions',[]):
-              k,op,vs=e.get('key'),e.get('operator'),set(e.get('values',[]))
-              if op=='In':
-                  present.add(k);allowed[k]=allowed.get(k,vs)&vs
-              elif op=='NotIn':excluded.setdefault(k,set()).update(vs)
-              elif op=='DoesNotExist':absent.add(k)
-              elif op=='Exists':present.add(k)
-              else:return False
-          if present&absent:return False
-          for k in allowed:allowed[k]-=excluded.get(k,set())
-          return all(allowed.get(k)=={v} for k,v in required.items()) and all(v for v in allowed.values())
+      from dq_check import selector_implies as implies
 
       try:
           policy=get('networkpolicy','board-ingress')['spec'];target=json.loads(Path('/run/dq/facts/0/gateway-target.json').read_text());deployment=get('deployment','board')
