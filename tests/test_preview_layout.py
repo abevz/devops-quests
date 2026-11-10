@@ -1,4 +1,4 @@
-"""The native disclosure keeps launch essentials available before expansion."""
+"""The briefing keeps launch essentials and personal best visible in its aside."""
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -22,14 +22,18 @@ class PreviewLayout(HTMLParser):
             self.stack.pop()
 
 
-def test_preview_disclosure_keeps_launch_essentials_outside():
+def test_preview_aside_keeps_launch_essentials_and_best_without_disclosure():
     root = Path(__file__).resolve().parents[1]
     layout = PreviewLayout((root / "web/index.html").read_text())
-    tag, attrs, _ = layout.nodes["preview-resources"]
-    assert tag == "details"
-    assert "open" not in attrs
-    for name in ("preview-mode-control", "preview-play-mode", "preview-time", "preview-sandbox", "preview-availability", "preview-run"):
-        assert "preview-resources" not in layout.nodes[name][2]
-        assert "preview" in layout.nodes[name][2]
-    for name in ("preview-dependencies", "preview-facts", "preview-score", "preview-best"):
-        assert "preview-resources" in layout.nodes[name][2]
+    for name in ("preview-resources", "preview-dependencies", "preview-facts", "preview-score"):
+        assert name not in layout.nodes
+    for name in ("preview-mode-control", "preview-play-mode", "preview-time", "preview-sandbox", "preview-best", "preview-availability", "preview-run"):
+        ancestors = layout.nodes[name][2]
+        assert "preview" in ancestors
+        assert "aside" in ancestors
+        assert "details" not in ancestors
+    tag, attrs, _ = layout.nodes["preview-best"]
+    assert tag == "p"
+    assert "hidden" in attrs
+    ids = list(layout.nodes)
+    assert ids.index("preview-best") + 1 == ids.index("preview-availability")
