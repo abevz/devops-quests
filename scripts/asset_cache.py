@@ -13,6 +13,7 @@ INPUTS = (
     "labs/images.lock.json",
     "labs/collections.lock.json",
     "scripts/bootstrap.py",
+    "scripts/image_tags.py",
     "scripts/lab_assets.py",
     "scripts/derive_private_image.py",
     "scripts/prepare_assets.py",

@@ -65,3 +65,64 @@ through the UI first if any exist, and only after confirming its data can be dis
 remove `preview/.state/runtime/`. This permanently deletes that preview's accounts,
 progress, Lab records and files. Never remove another installation's state or use a
 global Docker prune.
+
+## Local image ownership across worktrees
+
+Source bootstrap builds use `devops-quests/<namespace>/kind:0.1.0` and
+`devops-quests/<namespace>/workstation:0.1.0` for the two mutable tags. The default namespace
+is the sanitized checkout directory name plus the first 12 SHA-256 characters of its
+resolved absolute path. Two checkouts with the same basename in different directories
+therefore have distinct namespaces. Moving a checkout changes its default namespace.
+
+`DQ_IMAGE_NAMESPACE` overrides the default: 1–64 lowercase letters, digits or hyphens,
+starting and ending with a letter or digit. Use a unique value for each checkout; reusing an override
+explicitly shares ownership and allows retagging. Keep the override consistent when
+building, listing and cleaning images. Print the effective namespace from that checkout:
+
+```sh
+python -m scripts.image_tags
+```
+
+Main and preview follow the same naming rule on their next source build. A build-script
+update invalidates the verified asset receipt, so preview needs one `make bootstrap`
+after update. Cache verification is unchanged. For the same image IDs, the existing
+`.state/built-image.json`, `kind-image.json` and `lab-images.json` retain the exact
+legacy bytes: Lab profile versions hash these files. Runtime image IDs remain pinned.
+No namespace bookkeeping is added to those files. List actual build tags by namespace
+using the command below.
+Existing legacy `devops-quests/*:0.1.0` and `dq-lab-diagnostic:*` host tags are left
+untouched; do not remove them from a task worktree. Release digest references and
+release publication are separate from local source-build tags.
+
+The Lab diagnostic tag remains `dq-lab-diagnostic:<sha256(source)[:20]>`, shared by
+checkouts with identical source. `make bootstrap` / `make lab-assets` reuses an existing
+image only when it carries `devops-quests.lab-asset=true`, without Go or Docker builds.
+A tag without that label causes an error and is never overwritten. An absent tag is
+built once; a per-user lock in `/tmp/devops-quests-images-<uid>/` serializes cooperating
+source builders. Do not remove diagnostic tags as part of worktree cleanup: other
+checkouts and saved Labs may use them. An observed pre-existing limitation is that
+same-source diagnostic rebuilds can yield different image IDs; preserving an existing
+labeled image avoids that rebuild. Bit-reproducible builds are outside this change.
+
+To list images owned by the current checkout (no Docker resources are removed):
+
+```sh
+namespace=$(python -m scripts.image_tags)
+docker --host unix:///var/run/docker.sock image ls --no-trunc \
+  --filter "reference=devops-quests/$namespace/*:*"
+```
+
+After stopping and disposing of only this checkout's sandboxes/Labs through the app,
+remove a specific tag from the listing, for example:
+
+```sh
+docker --host unix:///var/run/docker.sock image rm \
+  "devops-quests/$namespace/workstation:0.1.0"
+```
+
+Use exact tags inside your namespace, never image IDs, `--force`, global image pruning
+or tags belonging to another checkout. Different namespaces may refer to the same
+immutable image ID; deleting one tag retains other references. `git worktree remove`
+removes checkout files, including local image metadata, but leaves Docker tags, images,
+containers, networks and volumes behind. Record your namespace/tags before removing
+the checkout, and clean only the resources whose ownership you have verified.
