@@ -17,76 +17,19 @@ import sys
 from pathlib import Path
 
 
-def read_json(path, successful=True):
-    if not successful:
-        return None
-    try:
-        return json.loads(Path(path).read_text())
-    except (OSError, ValueError):
-        return None
+from dq_check import read_json
 
 
-def resource_records(document, section='values'):
-    if not isinstance(document, dict):
-        return []
-    values = document.get(section)
-    root = values.get('root_module') if isinstance(values, dict) else None
-    if not isinstance(root, dict):
-        return []
-    records = []
-    pending = [root]
-    while pending:
-        module = pending.pop()
-        resources = module.get('resources') or []
-        children = module.get('child_modules') or []
-        if not isinstance(resources, list) or not isinstance(children, list):
-            return []
-        for resource in resources:
-            if not isinstance(resource, dict):
-                return []
-            records.append((module.get('address'), resource))
-        if not all(isinstance(child, dict) for child in children):
-            return []
-        pending.extend(children)
-    return records
+from dq_check import resource_records
 
 
-def same_target(value, expected, existing=False):
-    if not isinstance(value, str) or not value:
-        return False
-    try:
-        expanded = os.path.expanduser(value)
-        parent, leaf = os.path.split(expanded)
-        if leaf in ('', '.', '..'):
-            return False
-        # Validate raw traversal before pathlib normalizes it: file/.. and
-        # absent/../file are not usable aliases of an existing file.
-        if not stat.S_ISDIR(os.stat(parent or '.').st_mode):
-            return False
-        target = Path(expected)
-        if existing or target.exists():
-            if not stat.S_ISREG(os.stat(expanded).st_mode):
-                return False
-            return Path(expanded).resolve(strict=True) == target.resolve(strict=True)
-        candidate = Path(parent or '.').resolve(strict=True) / leaf
-        return candidate == target.parent.resolve(strict=True) / target.name
-    except (OSError, RuntimeError, ValueError):
-        return False
+from dq_check import same_target
 
 
-def file_resources(records, filename, in_module=False):
-    found = []
-    for module, resource in records:
-        values = resource.get('values')
-        if (resource.get('mode') == 'managed' and resource.get('type') == 'local_file'
-                and isinstance(values, dict) and same_target(values.get('filename'), filename)
-                and (not in_module or isinstance(module, str) and bool(module))):
-            found.append((module, resource))
-    return found
+from dq_check import file_resources
 
 
-def number_is(value, expected):
-    return type(value) in (int, float) and value == expected
+from dq_check import number_is
 
 def originals():
     try:
@@ -100,314 +43,24 @@ import re
 from pathlib import Path
 
 
-class UnsupportedForwarder(ValueError):
-    pass
 
 
-def hcl_tokens(source):
-    """Tokenize only; strings/comments/heredocs never become declarations."""
-    length = len(source)
-
-    def comment(position):
-        if source.startswith('/*', position):
-            end = source.find('*/', position + 2)
-            if end < 0:
-                raise UnsupportedForwarder('Unterminated comment')
-            return end + 2
-        end = source.find('\n', position)
-        return length if end < 0 else end
-
-    def heredoc(position):
-        end = source.find('\n', position)
-        if end < 0:
-            raise UnsupportedForwarder('Unterminated heredoc')
-        intro = source[position:end].rstrip('\r')
-        match = re.fullmatch(r'<<(-?)([A-Za-z_][A-Za-z0-9_-]*)[ \t]*', intro)
-        if not match:
-            raise UnsupportedForwarder('Unsupported heredoc marker')
-        indented, marker = match.groups()
-        position = end + 1
-        while position < length:
-            end = source.find('\n', position)
-            end = length if end < 0 else end
-            line = source[position:end].rstrip('\r')
-            if line.strip() == marker:
-                # Ambiguous whitespace is rejected rather than exposing string
-                # contents as executable HCL declarations.
-                if line != marker and (not indented or line.lstrip(' \t') != marker):
-                    raise UnsupportedForwarder('Unsupported heredoc delimiter whitespace')
-                return end
-            position = end + 1
-        raise UnsupportedForwarder('Unterminated heredoc')
-
-    def quoted(position):
-        position += 1
-        while position < length:
-            if source[position] == '\\':
-                position += 2
-            elif source.startswith(('$${', '%%{'), position):
-                position += 3
-            elif source.startswith(('${', '%{'), position):
-                position = interpolation(position + 2)
-            elif source[position] == '"':
-                return position + 1
-            else:
-                position += 1
-        raise UnsupportedForwarder('Unterminated string')
-
-    def interpolation(position):
-        depth = 1
-        while position < length:
-            if source[position] == '"':
-                position = quoted(position)
-            elif source[position] == '#' or source.startswith(('//', '/*'), position):
-                position = comment(position)
-            elif source.startswith('<<', position):
-                position = heredoc(position)
-            elif source[position] == '{':
-                depth += 1
-                position += 1
-            elif source[position] == '}':
-                depth -= 1
-                position += 1
-                if not depth:
-                    return position
-            else:
-                position += 1
-        raise UnsupportedForwarder('Unterminated interpolation')
-
-    tokens = []
-    position = 0
-    while position < length:
-        character = source[position]
-        if character in ' \t\r':
-            position += 1
-        elif character == '\n':
-            tokens.append(('newline', '\n'))
-            position += 1
-        elif character == '#' or source.startswith(('//', '/*'), position):
-            position = comment(position)
-        elif character == '"':
-            end = quoted(position)
-            tokens.append(('string', source[position:end]))
-            position = end
-        elif source.startswith('<<', position):
-            end = heredoc(position)
-            tokens.append(('opaque', source[position:end]))
-            position = end
-        elif character.isalpha() or character == '_':
-            end = position + 1
-            while end < length and (source[end].isalnum() or source[end] in '_-'):
-                end += 1
-            tokens.append(('word', source[position:end]))
-            position = end
-        else:
-            tokens.append(('punctuation', character))
-            position += 1
-    return tokens
 
 
-def forward_reference(tokens):
-    """Accept only transparent forwarding, never an unused conditional ref."""
-    tokens = [token for token in tokens if token[0] != 'newline']
-    position = 0
-    wrappers = {'trimspace', 'chomp', 'tostring', 'sensitive', 'nonsensitive'}
-
-    def expression():
-        nonlocal position
-        if position >= len(tokens):
-            raise UnsupportedForwarder('Missing expression')
-        kind, text = tokens[position]
-        if text == '(':
-            position += 1
-            result = expression()
-            if position >= len(tokens) or tokens[position][1] != ')':
-                raise UnsupportedForwarder('Missing parenthesis')
-            position += 1
-            return result
-        if kind == 'string':
-            position += 1
-            if not (text.startswith('"${') and text.endswith('}"')):
-                raise UnsupportedForwarder('Literal is not a reference')
-            return forward_reference(hcl_tokens(text[3:-2]))
-        if kind != 'word':
-            raise UnsupportedForwarder('Not a forwarding expression')
-        position += 1
-        if position < len(tokens) and tokens[position][1] == '(':
-            if text not in wrappers:
-                raise UnsupportedForwarder('Opaque function')
-            position += 1
-            result = expression()
-            if position >= len(tokens) or tokens[position][1] != ')':
-                raise UnsupportedForwarder('Not a unary transparent wrapper')
-            position += 1
-            return result
-        result = text
-        while position < len(tokens):
-            if tokens[position][1] == '.':
-                position += 1
-                if position >= len(tokens) or tokens[position][0] != 'word':
-                    raise UnsupportedForwarder('Invalid traversal')
-                result += '.' + tokens[position][1]
-                position += 1
-            elif tokens[position][1] == '[':
-                position += 1
-                if position >= len(tokens):
-                    raise UnsupportedForwarder('Missing lookup index')
-                if tokens[position][0] == 'string':
-                    name = json.loads(tokens[position][1])
-                    if not isinstance(name, str):
-                        raise UnsupportedForwarder('Invalid lookup name')
-                    # local["name"] and local.name name the same local; resource
-                    # instance keys stay bracketed, distinct from attributes.
-                    if result == 'local' and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]*', name):
-                        result += '.' + name
-                    else:
-                        result += '[' + json.dumps(name, ensure_ascii=False) + ']'
-                    position += 1
-                else:
-                    digits = ''
-                    while position < len(tokens) and re.fullmatch(r'[0-9]', tokens[position][1]):
-                        digits += tokens[position][1]
-                        position += 1
-                    if not digits:
-                        raise UnsupportedForwarder('Only literal instance indices are certified')
-                    result += '[' + str(int(digits)) + ']'
-                if position >= len(tokens) or tokens[position][1] != ']':
-                    raise UnsupportedForwarder('Invalid lookup')
-                position += 1
-            else:
-                break
-        return result
-
-    result = expression()
-    if position != len(tokens):
-        raise UnsupportedForwarder('Opaque expression')
-    return result
 
 
-def block_attributes(tokens):
-    attributes = {}
-    position = 0
-    while position < len(tokens):
-        if tokens[position][0] == 'newline':
-            position += 1
-            continue
-        if (position + 1 >= len(tokens) or tokens[position][0] != 'word'
-                or tokens[position + 1][1] != '='):
-            raise UnsupportedForwarder('Unsupported block declaration')
-        name = tokens[position][1]
-        position += 2
-        start = position
-        depth = 0
-        while position < len(tokens):
-            text = tokens[position][1]
-            if tokens[position][0] == 'newline' and not depth:
-                break
-            if text in ('(', '[', '{'):
-                depth += 1
-            elif text in (')', ']', '}'):
-                depth -= 1
-                if depth < 0:
-                    raise UnsupportedForwarder('Unbalanced expression')
-            position += 1
-        if name in attributes:
-            raise UnsupportedForwarder('Duplicate attribute')
-        attributes[name] = tokens[start:position]
-    return attributes
 
 
-def module_forward_definitions(directory, output_name):
-    local_values = {}
-    output = None
 
-    def add_local(name, value):
-        if name in local_values:
-            raise UnsupportedForwarder('Duplicate local definition')
-        local_values[name] = value
 
-    def json_expression(value):
-        if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
-            return hcl_tokens(value[2:-1])
-        raise UnsupportedForwarder('Not an expression template')
 
-    for path in sorted(Path(directory).iterdir()):
-        if path.name.startswith(('.', '#')) or path.name.endswith('~'):
-            continue
-        if path.name.endswith('.tf.json'):
-            data = json.loads(path.read_text())
-            blocks = data.get('locals', [])
-            blocks = [blocks] if isinstance(blocks, dict) else blocks
-            for block in blocks:
-                for name, value in block.items():
-                    try:
-                        add_local(name, json_expression(value))
-                    except UnsupportedForwarder:
-                        add_local(name, [('opaque', '')])
-            block = data.get('module', {}).get(output_name)
-            if block is not None:
-                if output is not None:
-                    raise UnsupportedForwarder('Duplicate output')
-                output = json_expression(block['region'])
-        elif path.name.endswith('.tf'):
-            tokens = hcl_tokens(path.read_text())
-            position = 0
-            while position < len(tokens):
-                if tokens[position][0] == 'newline':
-                    position += 1
-                    continue
-                start = position
-                while position < len(tokens) and tokens[position][1] != '{':
-                    position += 1
-                if position == len(tokens):
-                    raise UnsupportedForwarder('Incomplete top-level block')
-                header = [token for token in tokens[start:position] if token[0] != 'newline']
-                position += 1
-                body_start = position
-                depth = 1
-                while position < len(tokens) and depth:
-                    if tokens[position][1] == '{':
-                        depth += 1
-                    elif tokens[position][1] == '}':
-                        depth -= 1
-                    position += 1
-                if depth:
-                    raise UnsupportedForwarder('Unterminated block')
-                body = tokens[body_start:position - 1]
-                if header == [('word', 'locals')]:
-                    for name, value in block_attributes(body).items():
-                        add_local(name, value)
-                elif (len(header) == 2 and header[0] == ('word', 'module')
-                      and ((header[1][0] == 'string' and json.loads(header[1][1]) == output_name)
-                           or header[1] == ('word', output_name))):
-                    if output is not None:
-                        raise UnsupportedForwarder('Duplicate output')
-                    output = block_attributes(body)['region']
-    if output is None:
-        raise UnsupportedForwarder('Missing output definition')
-    return output, local_values
 
+
+
+from dq_check import module_forwards as _dq_forwards
 
 def module_forwards(directory, references, endpoint, output_name='station'):
-    try:
-        expression, definitions = module_forward_definitions(directory, output_name)
-        reference = forward_reference(expression)
-        known = {forward_reference(hcl_tokens(value)) for value in references if isinstance(value, str)}
-        if reference not in known:
-            return False
-        endpoint = forward_reference(hcl_tokens(endpoint))
-        seen = set()
-        while reference != endpoint:
-            if not reference.startswith('local.') or reference.count('.') != 1:
-                return False
-            name = reference.split('.', 1)[1]
-            if name in seen or name not in definitions:
-                return False
-            seen.add(name)
-            reference = forward_reference(definitions[name])
-        return True
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
+    return _dq_forwards(directory, references, endpoint, output_name, dialect='module')
 
 addresses = originals()
 plan = read_json('fanout-plan.json')
@@ -463,76 +116,19 @@ import sys
 from pathlib import Path
 
 
-def read_json(path, successful=True):
-    if not successful:
-        return None
-    try:
-        return json.loads(Path(path).read_text())
-    except (OSError, ValueError):
-        return None
+from dq_check import read_json
 
 
-def resource_records(document, section='values'):
-    if not isinstance(document, dict):
-        return []
-    values = document.get(section)
-    root = values.get('root_module') if isinstance(values, dict) else None
-    if not isinstance(root, dict):
-        return []
-    records = []
-    pending = [root]
-    while pending:
-        module = pending.pop()
-        resources = module.get('resources') or []
-        children = module.get('child_modules') or []
-        if not isinstance(resources, list) or not isinstance(children, list):
-            return []
-        for resource in resources:
-            if not isinstance(resource, dict):
-                return []
-            records.append((module.get('address'), resource))
-        if not all(isinstance(child, dict) for child in children):
-            return []
-        pending.extend(children)
-    return records
+from dq_check import resource_records
 
 
-def same_target(value, expected, existing=False):
-    if not isinstance(value, str) or not value:
-        return False
-    try:
-        expanded = os.path.expanduser(value)
-        parent, leaf = os.path.split(expanded)
-        if leaf in ('', '.', '..'):
-            return False
-        # Validate raw traversal before pathlib normalizes it: file/.. and
-        # absent/../file are not usable aliases of an existing file.
-        if not stat.S_ISDIR(os.stat(parent or '.').st_mode):
-            return False
-        target = Path(expected)
-        if existing or target.exists():
-            if not stat.S_ISREG(os.stat(expanded).st_mode):
-                return False
-            return Path(expanded).resolve(strict=True) == target.resolve(strict=True)
-        candidate = Path(parent or '.').resolve(strict=True) / leaf
-        return candidate == target.parent.resolve(strict=True) / target.name
-    except (OSError, RuntimeError, ValueError):
-        return False
+from dq_check import same_target
 
 
-def file_resources(records, filename, in_module=False):
-    found = []
-    for module, resource in records:
-        values = resource.get('values')
-        if (resource.get('mode') == 'managed' and resource.get('type') == 'local_file'
-                and isinstance(values, dict) and same_target(values.get('filename'), filename)
-                and (not in_module or isinstance(module, str) and bool(module))):
-            found.append((module, resource))
-    return found
+from dq_check import file_resources
 
 
-def number_is(value, expected):
-    return type(value) in (int, float) and value == expected
+from dq_check import number_is
 
 def originals():
     try:
@@ -583,76 +179,19 @@ import sys
 from pathlib import Path
 
 
-def read_json(path, successful=True):
-    if not successful:
-        return None
-    try:
-        return json.loads(Path(path).read_text())
-    except (OSError, ValueError):
-        return None
+from dq_check import read_json
 
 
-def resource_records(document, section='values'):
-    if not isinstance(document, dict):
-        return []
-    values = document.get(section)
-    root = values.get('root_module') if isinstance(values, dict) else None
-    if not isinstance(root, dict):
-        return []
-    records = []
-    pending = [root]
-    while pending:
-        module = pending.pop()
-        resources = module.get('resources') or []
-        children = module.get('child_modules') or []
-        if not isinstance(resources, list) or not isinstance(children, list):
-            return []
-        for resource in resources:
-            if not isinstance(resource, dict):
-                return []
-            records.append((module.get('address'), resource))
-        if not all(isinstance(child, dict) for child in children):
-            return []
-        pending.extend(children)
-    return records
+from dq_check import resource_records
 
 
-def same_target(value, expected, existing=False):
-    if not isinstance(value, str) or not value:
-        return False
-    try:
-        expanded = os.path.expanduser(value)
-        parent, leaf = os.path.split(expanded)
-        if leaf in ('', '.', '..'):
-            return False
-        # Validate raw traversal before pathlib normalizes it: file/.. and
-        # absent/../file are not usable aliases of an existing file.
-        if not stat.S_ISDIR(os.stat(parent or '.').st_mode):
-            return False
-        target = Path(expected)
-        if existing or target.exists():
-            if not stat.S_ISREG(os.stat(expanded).st_mode):
-                return False
-            return Path(expanded).resolve(strict=True) == target.resolve(strict=True)
-        candidate = Path(parent or '.').resolve(strict=True) / leaf
-        return candidate == target.parent.resolve(strict=True) / target.name
-    except (OSError, RuntimeError, ValueError):
-        return False
+from dq_check import same_target
 
 
-def file_resources(records, filename, in_module=False):
-    found = []
-    for module, resource in records:
-        values = resource.get('values')
-        if (resource.get('mode') == 'managed' and resource.get('type') == 'local_file'
-                and isinstance(values, dict) and same_target(values.get('filename'), filename)
-                and (not in_module or isinstance(module, str) and bool(module))):
-            found.append((module, resource))
-    return found
+from dq_check import file_resources
 
 
-def number_is(value, expected):
-    return type(value) in (int, float) and value == expected
+from dq_check import number_is
 
 def originals():
     try:
@@ -663,14 +202,7 @@ def originals():
 
 import subprocess
 
-def tofu_json(*arguments):
-    result = subprocess.run(['tofu', *arguments], capture_output=True, text=True)
-    if result.returncode != 0:
-        return None
-    try:
-        return json.loads(result.stdout)
-    except ValueError:
-        return None
+from dq_check import tofu_json
 
 addresses = originals()
 records = resource_records(tofu_json('show', '-json'))
@@ -714,87 +246,23 @@ import sys
 from pathlib import Path
 
 
-def read_json(path, successful=True):
-    if not successful:
-        return None
-    try:
-        return json.loads(Path(path).read_text())
-    except (OSError, ValueError):
-        return None
+from dq_check import read_json
 
 
-def resource_records(document, section='values'):
-    if not isinstance(document, dict):
-        return []
-    values = document.get(section)
-    root = values.get('root_module') if isinstance(values, dict) else None
-    if not isinstance(root, dict):
-        return []
-    records = []
-    pending = [root]
-    while pending:
-        module = pending.pop()
-        resources = module.get('resources') or []
-        children = module.get('child_modules') or []
-        if not isinstance(resources, list) or not isinstance(children, list):
-            return []
-        for resource in resources:
-            if not isinstance(resource, dict):
-                return []
-            records.append((module.get('address'), resource))
-        if not all(isinstance(child, dict) for child in children):
-            return []
-        pending.extend(children)
-    return records
+from dq_check import resource_records
 
 
-def same_target(value, expected, existing=False):
-    if not isinstance(value, str) or not value:
-        return False
-    try:
-        expanded = os.path.expanduser(value)
-        parent, leaf = os.path.split(expanded)
-        if leaf in ('', '.', '..'):
-            return False
-        # Validate raw traversal before pathlib normalizes it: file/.. and
-        # absent/../file are not usable aliases of an existing file.
-        if not stat.S_ISDIR(os.stat(parent or '.').st_mode):
-            return False
-        target = Path(expected)
-        if existing or target.exists():
-            if not stat.S_ISREG(os.stat(expanded).st_mode):
-                return False
-            return Path(expanded).resolve(strict=True) == target.resolve(strict=True)
-        candidate = Path(parent or '.').resolve(strict=True) / leaf
-        return candidate == target.parent.resolve(strict=True) / target.name
-    except (OSError, RuntimeError, ValueError):
-        return False
+from dq_check import same_target
 
 
-def file_resources(records, filename, in_module=False):
-    found = []
-    for module, resource in records:
-        values = resource.get('values')
-        if (resource.get('mode') == 'managed' and resource.get('type') == 'local_file'
-                and isinstance(values, dict) and same_target(values.get('filename'), filename)
-                and (not in_module or isinstance(module, str) and bool(module))):
-            found.append((module, resource))
-    return found
+from dq_check import file_resources
 
 
-def number_is(value, expected):
-    return type(value) in (int, float) and value == expected
+from dq_check import number_is
 
 import subprocess
 
-def tofu_json(*arguments):
-    result = subprocess.run(['tofu', *arguments], capture_output=True, text=True)
-    if result.returncode != 0:
-        return None
-    try:
-        return json.loads(result.stdout)
-    except ValueError:
-        return None
+from dq_check import tofu_json
 
 routes = tofu_json('output', '-json', 'routes')
 valid = (isinstance(routes, dict) and set(routes) == {'depot', 'junction'}
