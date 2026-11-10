@@ -20,22 +20,20 @@ def get(kind, name=None):
     args=['kubectl','get',kind]+([name] if name else [])+['-o','json']
     return json.loads(subprocess.check_output(args,stderr=subprocess.DEVNULL,timeout=3))
 
-def named(items, name):
-    found=[x for x in items or [] if isinstance(x,dict) and x.get('name')==name]
-    if len(found)!=1:raise ValueError('named identity')
-    return found[0]
+from dq_check import named as _dq_named
 
-def worker(document):return named(document['spec']['template']['spec']['containers'],'worker')
+def named(items, name):
+    return _dq_named(items, name, error="named identity")
+
+from dq_check import workload_worker as _dq_worker
+
+def worker(document):
+    return _dq_worker(document, error="named identity", ignore_non_mappings=True)
+
+from dq_check import quantity as _dq_quantity
 
 def quantity(value):
-    if isinstance(value,bool):raise ValueError('quantity')
-    match=re.fullmatch(r'([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)([numkKMGTPE]|[KMGTPE]i)?',str(value))
-    if not match:raise ValueError('quantity')
-    suffix=match[2] or ''
-    factors={'':1,'n':Decimal('1e-9'),'u':Decimal('1e-6'),'m':Decimal('1e-3'),'k':1000,'K':1000}
-    for i,s in enumerate('MGTPE',2):factors[s]=1000**i
-    for i,s in enumerate('KMGTPE',1):factors[s+'i']=1024**i
-    return Decimal(match[1])*factors[suffix]
+    return _dq_quantity(value, dialect='coerced_ascii')
 
 def require(good, marker):
     if not good:raise AssertionError(marker)

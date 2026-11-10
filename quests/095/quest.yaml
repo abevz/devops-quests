@@ -55,100 +55,25 @@ stages:
           for value in yaml.safe_load_all(text):visit(value)
           if len(found)!=1:raise ValueError('board Deployment identity')
           return found[0]
+      from dq_check import workload_worker as _dq_worker
+
       def worker(document):
-          values=[c for c in document['spec']['template']['spec']['containers'] if c.get('name')=='worker']
-          if len(values)!=1:raise ValueError('application worker identity')
-          return values[0]
+          return _dq_worker(document, error="application worker identity")
+      from dq_check import quantity as _dq_quantity
+
       def quantity(value):
-          if isinstance(value,bool):raise ValueError('quantity')
-          match=re.fullmatch(r'([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)([numkKMGTPE]|[KMGTPE]i)?',str(value))
-          if not match:raise ValueError('quantity')
-          scales={'n':Decimal('1e-9'),'u':Decimal('1e-6'),'m':Decimal('1e-3'),'k':Decimal('1e3'),'K':Decimal('1e3'),'M':Decimal('1e6'),'G':Decimal('1e9'),'T':Decimal('1e12'),'P':Decimal('1e15'),'E':Decimal('1e18')}
-          suffix=match[2] or '';factor=Decimal(2)**(10*('KMGTPE'.index(suffix[0])+1)) if suffix.endswith('i') else scales.get(suffix,Decimal(1))
-          amount=Decimal(match[1])*factor
-          if not amount.is_finite():raise ValueError('quantity')
-          return amount
+          return _dq_quantity(value, dialect='unicode_finite')
 
-      def subset(reference,current,path=(),ignore_behavior=False):
-          if path[-3:-1] in (('resources','requests'),('resources','limits')):
-              try:return quantity(reference)==quantity(current)
-              except Exception:return False
-          if isinstance(reference,dict):
-              if not isinstance(current,dict):return False
-              for key,value in reference.items():
-                  if ignore_behavior and key in ('command','args','readinessProbe','livenessProbe','startupProbe'):continue
-                  if key not in current or not subset(value,current[key],path+(key,),ignore_behavior):return False
-              return True
-          if isinstance(reference,list):
-              if not isinstance(current,list):return False
-              if path[-1:] in (('drop',),):return set(reference)<=set(current)
-              if all(isinstance(item,dict) and isinstance(item.get('name'),str) for item in reference):
-                  for item in reference:
-                      matches=[candidate for candidate in current if isinstance(candidate,dict) and candidate.get('name')==item['name']]
-                      if len(matches)!=1 or not subset(item,matches[0],path+(item['name'],),ignore_behavior):return False
-                  return True
-              return reference==current
-          return type(reference) is type(current) and reference==current
+      from dq_check import resource_subset as subset
 
-      def port(value,container):
-          if type(value) is int and 0<value<65536:return value
-          if isinstance(value,str):
-              values=[item.get('containerPort') for item in container.get('ports',[]) if item.get('name')==value]
-              if len(values)==1 and type(values[0]) is int:return values[0]
-          raise ValueError('health listener')
-      def probe(container,field='readinessProbe'):
-          value=container.get(field)
-          if value is None:return None
-          handlers=[name for name in ('httpGet','tcpSocket','exec','grpc') if value.get(name) is not None]
-          if len(handlers)!=1:raise ValueError('readiness handler')
-          kind=handlers[0];handler=value[kind]
-          if kind=='httpGet':request=(kind,handler.get('host') or '',handler.get('path') or '/',handler.get('scheme') or 'HTTP',port(handler['port'],container),tuple((h.get('name','').lower(),h.get('value','')) for h in handler.get('httpHeaders',[])))
-          elif kind=='tcpSocket':request=(kind,handler.get('host') or '',port(handler['port'],container))
-          elif kind=='exec':request=(kind,tuple(handler.get('command',[])))
-          else:request=(kind,port(handler['port'],container),handler.get('service') or '')
-          defaults={'initialDelaySeconds':0,'timeoutSeconds':1,'periodSeconds':10,'successThreshold':1,'failureThreshold':3}
-          timing=tuple(value.get(key) or default for key,default in defaults.items())
-          return request,timing
 
-      def env(values):
-          result={}
-          for entry in values or []:
-              name=entry['name']
-              if entry.get('valueFrom'):
-                  ref=entry['valueFrom']
-                  choices=[key for key in ('secretKeyRef','configMapKeyRef','fieldRef','resourceFieldRef') if ref.get(key) is not None]
-                  if len(choices)!=1:raise ValueError('environment reference')
-                  kind=choices[0];item=ref[kind]
-                  if kind in ('secretKeyRef','configMapKeyRef'):result[name]=(kind,item.get('name'),item.get('key'))
-                  elif kind=='fieldRef':result[name]=(kind,item.get('apiVersion') or 'v1',item.get('fieldPath'))
-                  else:result[name]=(kind,item.get('containerName') or '',item.get('resource'),quantity(item.get('divisor') or '1'))
-              else:result[name]=('value',entry.get('value') or '')
-          return result
+      from dq_check import health_probe as probe
 
-      def agreement(desired,live):
-          left,right=worker(desired),worker(live)
-          if left.get('image')!=right.get('image'):return False
-          if (left.get('command') or [])!=(right.get('command') or []) or (left.get('args') or [])!=(right.get('args') or []):return False
-          if env(left.get('env'))!=env(right.get('env')):return False
-          return all(probe(left,field)==probe(right,field) for field in ('readinessProbe','livenessProbe','startupProbe'))
+      from dq_check import env_values as env
 
-      def safety(reference,current):
-          old=reference['spec']['template']['spec'];new=current['spec']['template']['spec'];base=worker(reference);actual=worker(current)
-          old_pod=old.get('securityContext',{});new_pod=new.get('securityContext',{})
-          for field in ('runAsUser','runAsGroup','runAsNonRoot','seccompProfile'):
-              expected=base.get('securityContext',{}).get(field,old_pod.get(field))
-              observed=actual.get('securityContext',{}).get(field,new_pod.get(field))
-              if expected is not None and expected!=observed:return False
-          for field in ('hostNetwork','hostPID','hostIPC'):
-              if bool(new.get(field))!=bool(old.get(field)):return False
-          for container in new.get('containers',[])+new.get('initContainers',[]):
-              context=container.get('securityContext',{})
-              if context.get('privileged',False) or context.get('allowPrivilegeEscalation') is not False:return False
-              if 'ALL' not in context.get('capabilities',{}).get('drop',[]) or context.get('capabilities',{}).get('add'):return False
-              uid=context.get('runAsUser',new_pod.get('runAsUser'))
-              nonroot=context.get('runAsNonRoot',new_pod.get('runAsNonRoot'))
-              if uid==0 or not (nonroot is True or (type(uid) is int and uid>0)):return False
-          return True
+      from dq_check import workload_agreement as agreement
+
+      from dq_check import workload_safety as safety
 
       try:
           desired=deployment(execute(['git','-C','repository','show','origin/main:manifests/board.yaml']))

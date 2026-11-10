@@ -40,31 +40,24 @@ def get(kind, name=None):
     args=['kubectl','get',kind]+([name] if name else [])+['-o','json']
     return json.loads(subprocess.check_output(args,stderr=subprocess.DEVNULL,timeout=3))
 
-def named(items, name):
-    found=[x for x in items or [] if isinstance(x,dict) and x.get('name')==name]
-    if len(found)!=1:raise ValueError('named identity')
-    return found[0]
+from dq_check import named as _dq_named
 
-def worker(document):return named(document['spec']['template']['spec']['containers'],'worker')
+def named(items, name):
+    return _dq_named(items, name, error="named identity")
+
+from dq_check import workload_worker as _dq_worker
+
+def worker(document):
+    return _dq_worker(document, error="named identity", ignore_non_mappings=True)
 
 def require(good, marker):
     if not good:raise AssertionError(marker)
 
-def current_pods(deployment,replicasets,pods):
-    uid=deployment['metadata']['uid']
-    if not isinstance(uid,str) or not uid:raise ValueError('deployment identity')
-    owners={rs['metadata']['uid'] for rs in replicasets.get('items',[]) if any(ref.get('kind')=='Deployment' and ref.get('uid')==uid and ref.get('controller') is True for ref in rs.get('metadata',{}).get('ownerReferences',[]))}
-    return [pod for pod in pods.get('items',[]) if pod.get('metadata',{}).get('deletionTimestamp') is None and pod.get('status',{}).get('phase') not in ('Failed','Succeeded') and any(ref.get('kind')=='ReplicaSet' and ref.get('uid') in owners and ref.get('controller') is True for ref in pod.get('metadata',{}).get('ownerReferences',[]))]
+from dq_check import current_pods
 
 def pod_worker(pod):return named(pod.get('spec',{}).get('containers',[]),'worker')
 
-def pull_names(pod):
-    names=set()
-    for entry in pod.get('spec',{}).get('imagePullSecrets') or []:
-        value=entry.get('name')
-        if not isinstance(value,str) or not re.fullmatch(r'[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?',value):raise ValueError('pull credential identity')
-        names.add(value)
-    return names
+from dq_check import pull_secret_names as pull_names
 
 try:
     d=get('deployment','board');w=worker(d);active=current_pods(d,get('replicasets'),get('pods'))

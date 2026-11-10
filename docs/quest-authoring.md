@@ -212,6 +212,15 @@ identity rather than matching a snapshot. Named-object lookup, strict workload
 workers and optional pod workers retain their different missing/duplicate policies.
 `ready_image` / `current_pods` are snapshots and add no rollout waits.
 
+`registry_credentials` retains both Docker credential formats and rejects duplicate
+JSON fields through `credential_fields`; Secret reads and their fail-closed wrappers
+remain at the quest entrypoints. `readiness_probe` preserves the 067/102 port policy,
+which differs from `health_probe` (068/095); do not interchange them. Security policy
+helpers take the caller's pod policy, container contexts or volume mapping explicitly.
+The remaining predicates have differential tests and separate frozen definitions in
+`tests/test_check_helper_remaining.py` and
+`tests/fixtures/check-helper-remaining-reference.json`.
+
 `ansible_recap` preserves ambiguous-field refusal; `require_recaps` selects
 `by_counter`, `by_host` or `shared_marker` to retain the original diagnostic text.
 OpenTofu primitives preserve `values` vs `planned_values`, filesystem aliases,
