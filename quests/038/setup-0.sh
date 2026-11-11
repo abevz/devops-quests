@@ -1,5 +1,7 @@
 set -euo pipefail
 cd ~/quest
+mkdir -p group_vars
+printf '%s\n' '{}' > group_vars/fleet.yml
 mkdir -p roles/station/defaults
 cat > roles/station/defaults/main.yml <<'DQ_ASSET'
 route: retired
