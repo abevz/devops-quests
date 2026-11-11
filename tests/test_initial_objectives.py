@@ -20,23 +20,10 @@ from devops_quests.store import Store
 
 # Zero-based stage/objective. Each exception must be explained in the PR audit.
 INITIAL_GOAL_EXCEPTIONS = {
-    (3, 0, 3): "The unchanged baseline has a clean plan; applying the new module must restore a clean plan after the requested change.",
     (11, 0, 0): "Rollout reports completion during startup despite the supplied broken clock command; availability remains a repair goal, not a preservation constraint.",
     (14, 0, 1): "Rollout can report completion while the supplied worker still has the wrong route; restoring the service remains a genuine repair goal.",
-    (16, 0, 3): "The original managed file has a clean plan; adding the required structured output must finish with a clean plan again.",
-    (23, 0, 2): "The supplied baseline is converged; the requested configuration must also be applied and finish without pending changes.",
-    (33, 0, 3): "The original route set is converged; applying the added route must leave the expanded set converged as well.",
     (34, 0, 3): "The initial four-CPU request can fit this host, so rollout may already finish; restoring availability under the required budget remains a genuine goal.",
     (34, 0, 4): "The oversized initial workload can run on this host and already serve HTTP; the required budget is still unmet and final HTTP remains a repair postcondition.",
-    (41, 0, 1): "The old publication starts on clean main; editing and committing the required notice must restore that completion state.",
-    (41, 0, 4): "Local HEAD and origin/main initially agree on the old notice; publishing the required new result must make their new commit identities agree again.",
-    (47, 0, 5): "The original module contract starts converged; applying the upgraded output contract must restore a clean plan after the change.",
-    (50, 0, 0): "The original release starts clean and synchronized; the new release must be committed and published to reach this completion state again.",
-    (59, 0, 1): "The old state address starts converged; migrating to the required address must finish with a clean plan as well.",
-    (64, 0, 6): "The original regional contract starts converged; applying the new shared contract must restore a clean plan after replacement.",
-    (84, 0, 2): "The supplied baseline starts with a clean plan; the repaired configuration must be applied and converge again.",
-    (98, 0, 3): "The original managed configuration starts converged; the required dependency update must finish converged as well.",
-    (102, 0, 2): "A partial initial rollout can still serve the original body; recovering the required availability remains a genuine goal. This is stage 0, not the stage-1 http_v3 race in dq-83.",
 }
 
 
