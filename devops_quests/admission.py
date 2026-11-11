@@ -252,8 +252,10 @@ class Admission(Components):
         try:
             request = json.loads(result.stdout)
         except ValueError:
+            Platform(r).put(run, "webhook-agent-status.json", '{"status":"rejected"}')
             return
         if request != {"action": "restore-path"}:
+            Platform(r).put(run, "webhook-agent-status.json", '{"status":"rejected"}')
             return
         identity = json.loads(
             (r.state / "bays" / run["id"] / "webhook-identity.json").read_text()
@@ -327,3 +329,4 @@ class Admission(Components):
                     ]
                 ),
             )
+        Platform(r).put(run, "webhook-agent-status.json", '{"status":"restored"}')
