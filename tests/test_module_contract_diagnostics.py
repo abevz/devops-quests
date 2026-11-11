@@ -1,6 +1,7 @@
 """Exercise the interactive and standalone diagnostic paths for quest 003."""
 
 import os
+import re
 import subprocess
 
 import pytest
@@ -34,7 +35,7 @@ def module_probe(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("condition", ["state", "file", "output", "plan"])
-def test_each_003_failure_has_one_diagnostic_in_both_entrypoints(
+def test_each_003_failure_has_one_diagnostic_per_failed_objective(
     module_probe, monkeypatch, condition
 ):
     monkeypatch.setenv("FAIL_CONDITION", condition)
@@ -44,10 +45,15 @@ def test_each_003_failure_has_one_diagnostic_in_both_entrypoints(
     standalone = catalog.script(3, 0, "check")
     index = ("state", "file", "output", "plan").index(condition)
     objective = catalog.quests[3]["stages"][0]["objectives"][index]["check"]
-    for check in (standalone, "set -euo pipefail\ncd ~/quest\n" + objective):
+    # Missing state now also invalidates convergence of the requested module.
+    aggregate = {0, 3} if condition == "state" else {index}
+    for check, expected in ((standalone, aggregate),
+                            ("set -euo pipefail\ncd ~/quest\n" + objective, {index})):
         result = subprocess.run(["bash", "-c", check], capture_output=True, text=True)
         assert result.returncode != 0
-        assert len(result.stdout.splitlines()) == 1
+        markers = re.findall(r"\[DQ:condition_(\d+)\]", result.stdout)
+        assert set(map(int, markers)) == expected
+        assert len(result.stdout.splitlines()) == len(markers) == len(expected)
         assert result.stderr == ""
 
 

@@ -35,8 +35,8 @@ exit "$failed"
 (
 set -e
 failed=0
-if ! tofu plan -input=false -detailed-exitcode -no-color >/dev/null 2>&1; then
-  printf '%s\n' 'tofu plan -input=false -detailed-exitcode -no-color → 0: ✗ [DQ:condition_3]'
+if ! tofu state list 2>/dev/null | grep -Fx 'module.notice.local_file.notice' >/dev/null || ! tofu plan -input=false -detailed-exitcode -no-color >/dev/null 2>&1; then
+  printf '%s\n' 'module.notice.local_file.notice tracked; detailed plan → 0: ✗ [DQ:condition_3]'
   failed=1
 fi
 exit "$failed"
