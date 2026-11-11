@@ -191,6 +191,13 @@ def test_all_quests_assets_bilingual_and_no_check_leaks():
             (
                 h.get("guide") in guides
                 or h.get("url", "").startswith("https://developer.hashicorp.com/vault/")
+                or (
+                    number == 15
+                    and h.get("url") in {
+                        "https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_loops.html#iterating-over-a-simple-list",
+                        "https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_variables.html#referencing-simple-variables",
+                    }
+                )
             )
             for h in q["hints"]
         )

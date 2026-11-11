@@ -338,6 +338,19 @@ def test_quest(number):
             assert after.returncode == 0, after.stderr + "\n" + after.stdout
             assert not any(goals()), "Production objective checks did not pass"
             log[-1]["after"] = "PASS"
+            if number == 15:
+                # Reuse the unchanged learner playbook with a different data list.
+                playbook_before = runtime.exec(run, 'cd ~/quest\nsha256sum rollout.yml').stdout
+                runtime.exec(run, "cd ~/quest\nprintf '%s\\n' 'routes: [north, south, east, west]' > routes.yml")
+                expanded_before = runtime.exec(run, check, check=False, timeout=25)
+                assert expanded_before.returncode != 0, 'The added route was not checked'
+                runtime.exec(run, 'cd ~/quest\nansible-playbook rollout.yml', timeout=120)
+                expanded_after = runtime.exec(run, check, check=False, timeout=25)
+                assert expanded_after.returncode == 0, expanded_after.stdout + expanded_after.stderr
+                assert runtime.exec(run, 'cd ~/quest\nsha256sum rollout.yml').stdout == playbook_before
+                assert not any(goals()), 'Expanded route list did not satisfy live objectives'
+                log.append({'route_list_adaptation': {'added': 'west', 'before': 'FAIL as expected',
+                                                    'after': 'PASS', 'unchanged_playbook': True}})
             if number == 5:
                 identities = runtime.exec(
                     run,

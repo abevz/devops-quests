@@ -16,7 +16,6 @@ cat > rollout.yml <<'DQ_ASSET'
   - name: Prepare route folders
     ansible.builtin.file:
       path: /srv/routes/{{ item }}
-      state: file
+      state: directory
       mode: '0750'
-    loop: '{{ routes }}'
 DQ_ASSET
