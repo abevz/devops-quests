@@ -1,89 +1,82 @@
 title: Systemübergreifende Bereitstellung
 brief: |-
-  Die Version ist nicht konsistent für alle Verbraucher verfügbar.
+  Der Release-Marker existiert, doch seine Liefervereinbarung ist bei den Verbrauchern noch nicht durchgehend verfügbar.
 
-  Arbeite auf der Workstation in `~/quest` mit `main.tf`, `inventory.ini`, `ansible.cfg`, `rollout.yml`, `deployment.yaml`.
+  Arbeite auf der Workstation in `~/quest` mit `main.tf`, `modules/delivery/main.tf`, `delivery-schema.json`, `inventory.ini` und `ansible.cfg`. Spätere Phasen liefern `rollout.yml` und `deployment.yaml`.
 
   **Anforderungen:**
-  - Stufe 1:
-    - OpenTofu-State:
-      - Die bereitgestellte Release-Erzeugerdatei wird im OpenTofu-State verwaltet.
-    - Dateien auf der Workstation:
-      - `~/quest/release.txt`: `release-81`.
-    - Infrastrukturkonvergenz:
-      - Keine ausstehenden Infrastrukturänderungen; Exit-Code des detaillierten Plans `0`.
-  - Stufe 2:
-    - Datei auf jedem verwalteten Host (`app1`, `app2`, `app3`):
-      - Pfad: `/srv/site/message`.
-      - Inhalt: `release-81`.
-      - Genauer Text, optional mit einem abschließenden Zeilenumbruch.
-      - Zugriffsmodus: `0644`.
-    - HTTP auf jedem verwalteten Host (`app1`, `app2`, `app3`):
-      - Port und Endpunkt: `8080`, `/`.
-      - Antwort: `release-81`.
-  - Stufe 3:
-    - Verbraucher im Bay-Namespace:
-      - Deployment: `relay`.
-      - Rollout abgeschlossen.
-      - Im laufenden Container von Deployment `relay` liefert der bereitgestellte Umgebungsvertrag `release-81`.
+  - Die Root-Ausgabe `delivery` entspricht dem gelieferten Schema für jeden dokumentierten Eingabefall und behält die aufgezeichnete Erzeugeridentität. Die konfigurierte Erzeugerdatei bleibt als Root-Ressource im OpenTofu-State erfasst.
+  - Auf der Workstation enthält `~/quest/release.txt` den Wert `release-81`; der abschließende detaillierte Plan endet mit Code `0`.
+  - Auf jedem verwalteten Host (`app1`, `app2`, `app3`) enthält `/srv/site/message` genau `release-81`, optional mit einem Zeilenumbruch, und hat Modus `0644`. HTTP auf Port `8080` unter `/` liefert `release-81`.
+  - Auf jedem verwalteten Host hat `/srv/site/delivery.json` Modus `0644` und entspricht dessen Zieleintrag in der aktuellen Erzeugervereinbarung einschließlich der aufgezeichneten Erzeugeridentität.
+  - Deployment `relay` schließt den Rollout im Bay-Namespace ab. Im laufenden Container `worker` ist `RELEASE` gleich `release-81` und `DELIVERY_CONTRACT` entspricht der aktuellen strukturierten Erzeugervereinbarung. Erzeuger und Hosts stimmen beim Abschluss weiterhin überein.
 
-  Die Flottenprüfungen beobachten Dateiinhalte, Modi und HTTP, nicht die verwendeten Befehle; die abschließende Verbraucherprüfung liest Rollout-Status und Prozessumgebung, nicht ausgelieferte Inhalte.
-stages.0.brief: Die Versionsmarkierung auf der Workstation muss ihren Vertrag erfüllen.
-stages.1.brief: Jeder Verbraucher der Flotte muss die erforderliche Version erhalten.
-stages.2.brief: Der Kubernetes-Verbraucher muss mit der erforderlichen Version laufen.
-hints.0.text: Unabhängige Auslieferungsebenen können einen gemeinsamen Release-Vertrag haben.
+  Die Prüfungen beobachten aktuellen State, Dateien, HTTP, Rollout und Prozessumgebung; übereinstimmende Lieferdaten belegen weder den Befehlsverlauf noch den vom letzten Container ausgelieferten Inhalt.
+stages.0.brief: Der Root-Erzeuger veröffentlicht die aktuelle Vereinbarung mit seiner aufgezeichneten Identität.
+stages.1.brief: Jeder Host muss seine aktuelle Vereinbarung erhalten und das Release ausliefern.
+stages.2.brief: Der laufende Verbraucher muss dieselbe aktuelle Vereinbarung wie Erzeuger und Hosts behalten.
+hints.0.text: Unabhängige Verbraucher benötigen dieselbe aktuelle Vereinbarung; eine bekannte Release-Bezeichnung
+  allein identifiziert ihren Erzeuger nicht.
 hints.1.text: |-
-  Verfolgen Sie die Freigabe vom Zustand über fleet bis pod. Jede Stufe hat ihren eigenen Live-Check; Die Änderung eines späteren Systems kann eine frühere Stufe nicht erfüllen.
-
-  Prüfen Sie die bereitgestellte Konfiguration und aktuelle Beobachtungen auf der Workstation:
+  Vergleiche zuerst geliefertes Schema, Konfiguration und aktuellen State. Vergleiche in späteren Phasen empfangene Daten samt Zielidentität mit der aktuellen Erzeugerausgabe; eine erfolgreiche Antwort allein belegt diese Beziehung nicht.
 
   ```sh
-  cat main.tf rollout.yml deployment.yaml
-  tofu state list
+  cat main.tf modules/delivery/main.tf delivery-schema.json
+  tofu show -no-color
+  tofu output -json delivery
+  test ! -f rollout.yml || cat rollout.yml
+  test ! -f deployment.yaml || cat deployment.yaml
   ```
 hints.2.text: |-
-  Initialisiere die Markierung aus main.tf und wende sie an. Führe ansible-playbook rollout.yml mit dem Handler dq-service reload aus, um die Flotte zu beliefern und neu zu laden. Repariere deployment.yaml und aktualisiere die Umgebung RELEASE von deployment/relay.
+  Prüfe den Erzeuger vor der Lieferung, danach jeden Zielbeleg und den laufenden Verbraucher. Belege und Prozessdaten müssen der aktuellen Ausgabe entsprechen, nicht einem früheren Export. Diese Befehle prüfen Ergebnisse und führen keine Reparaturen aus.
 
-  Prüfen Sie das Ergebnis in `~/quest` auf der Workstation:
-
-  - `tofu show -no-color; cat release.txt; tofu plan -input=false -detailed-exitcode -no-color` — Stufe 1: Der State enthält `release.txt`, die Datei zeigt `release-81` und die Planung endet mit `0`.
-  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat -A /srv/site/message; ls -l /srv/site/message'; for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Stufe 2: Jeder Host zeigt `release-81` mit höchstens einer Zeilenendemarkierung, Dateimodus `-rw-r--r--` und die HTTP-Antwort `release-81`.
-  - `kubectl rollout status deployment/relay --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/relay -c worker -- printenv RELEASE` — Stufe 3: Der Rollout wird abgeschlossen und der Prozess gibt `release-81` aus.
-
-  Der State erfasst die verwaltete Quelldatei release.txt.
-debrief: Die Prüfungen bestätigten den verwalteten Marker, Flottendateien und Antworten sowie Relay-Rollout
-  und Umgebung.
+  ```sh
+  tofu output -json delivery
+  tofu plan -input=false -detailed-exitcode -no-color
+  ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat /srv/site/message /srv/site/delivery.json; stat -c %a /srv/site/message /srv/site/delivery.json'
+  for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done
+  kubectl rollout status deployment/relay --timeout=10s
+  kubectl exec --pod-running-timeout=5s deployment/relay -c worker -- printenv RELEASE DELIVERY_CONTRACT
+  ```
+debrief: Die Erzeugervereinbarung folgt nun den Eingaben, behält ihre Identität und erreicht die Host-Belege und
+  den laufenden Verbraucher. Die ursprünglichen Release-Dateien, HTTP und Umgebung bleiben korrekt.
 phrases.0: Ich habe den Betriebsstatus überprüft, bevor ich eine Änderung vorgenommen habe.
 phrases.1: Ich habe die Ursache gefunden und eine Sache nach der anderen geändert.
 phrases.2: Ich habe die Live-Ressource ID mit dem Status OpenTofu verglichen.
-diagnostics.state: |-
-  Der OpenTofu-State muss die verwaltete Quelldatei release.txt erfassen.
-
+diagnostics.state: Der OpenTofu-State muss die verwaltete Quelldatei release.txt erfassen.
 diagnostics.file: release.txt muss release-81 entsprechen.
 diagnostics.plan: Der OpenTofu-Plan muss mit Code 0 enden.
 diagnostics.rollout: Der Rollout des Deployment relay muss abgeschlossen sein.
 diagnostics.relay: RELEASE des Deployment relay muss release-81 sein.
-diagnostics.content_1: Auf app1 muss /srv/site/message genau release-81 enthalten, optional mit einem
-  Zeilenumbruch.
+diagnostics.content_1: Auf app1 muss /srv/site/message genau release-81 enthalten, optional mit einem Zeilenumbruch.
 diagnostics.mode_1: Auf app1 muss der Modus von /srv/site/message 644 sein.
 diagnostics.http_1: app1 muss auf Port 8080 release-81 liefern.
-diagnostics.content_2: Auf app2 muss /srv/site/message genau release-81 enthalten, optional mit einem
-  Zeilenumbruch.
+diagnostics.content_2: Auf app2 muss /srv/site/message genau release-81 enthalten, optional mit einem Zeilenumbruch.
 diagnostics.mode_2: Auf app2 muss der Modus von /srv/site/message 644 sein.
 diagnostics.http_2: app2 muss auf Port 8080 release-81 liefern.
-diagnostics.content_3: Auf app3 muss /srv/site/message genau release-81 enthalten, optional mit einem
-  Zeilenumbruch.
+diagnostics.content_3: Auf app3 muss /srv/site/message genau release-81 enthalten, optional mit einem Zeilenumbruch.
 diagnostics.mode_3: Auf app3 muss der Modus von /srv/site/message 644 sein.
 diagnostics.http_3: app3 muss auf Port 8080 release-81 liefern.
-stages.0.objectives.0.text: Die bereitgestellte Release-Erzeugerdatei wird im OpenTofu-State verwaltet.
+stages.0.objectives.0.text: Die Root-Ausgabe `delivery` folgt dem gelieferten Schema und den Eingaben mit der ursprünglichen
+  Erzeugeridentität.
 stages.0.objectives.1.text: 'Auf der Workstation: `release.txt` enthält `release-81`.'
 stages.0.objectives.2.text: OpenTofu meldet keine ausstehenden Infrastrukturänderungen.
-stages.1.objectives.0.text: Auf jedem verwalteten Host (`app1`, `app2`, `app3`) enthält `/srv/site/message`
-  genau `release-81`, optional mit einem abschließenden Zeilenumbruch, mit Modus `0644`.
-stages.1.objectives.1.text: HTTP auf Port `8080` liefert auf jedem verwalteten Host (`app1`, `app2`, `app3`)
+stages.1.objectives.0.text: Auf jedem verwalteten Host (`app1`, `app2`, `app3`) enthält `/srv/site/message` den
+  Wert `release-81` mit Modus `0644`; `/srv/site/delivery.json` entspricht seiner aktuellen Zielvereinbarung mit
+  Modus `0644`.
+stages.1.objectives.1.text: HTTP auf Port `8080` liefert auf jedem verwalteten Host (`app1`, `app2`, `app3`) `release-81`.
+stages.2.objectives.0.text: Deployment `relay` schließt den Rollout mit der aktuellen strukturierten Erzeugervereinbarung
+  im laufenden `worker` ab; Erzeuger und Hosts stimmen weiterhin überein.
+stages.2.objectives.1.text: Im laufenden Container von Deployment `relay` liefert der bereitgestellte Umgebungsvertrag
   `release-81`.
-stages.2.objectives.0.text: Deployment `relay` schließt seinen Rollout im Bay-Namespace ab.
-stages.2.objectives.1.text: Im laufenden Container von Deployment `relay` liefert der bereitgestellte
-  Umgebungsvertrag `release-81`.
 diagnostics.probe_0_0: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: Die bereitgestellte
   Release-Erzeugerdatei wird im OpenTofu-State verwaltet.'
+diagnostics.delivery_producer: Die Lieferausgabe muss den dokumentierten Eingabefällen folgen und die aufgezeichnete
+  Erzeugeridentität behalten.
+diagnostics.delivery_fleet: Jeder Zielbeleg muss seiner aktuellen Erzeugervereinbarung entsprechen und Modus 0644
+  haben.
+diagnostics.delivery_relay: Der laufende Verbraucher, aktuelle Erzeuger und Host-Belege müssen dieselbe aktuelle
+  Vereinbarung enthalten.
+diagnostics.probe_1_0: Die aktuellen Eingaben konnten die Host-Dateien und aktuellen Zielbelege nicht bestätigen.
+diagnostics.probe_2_0: Die aktuellen Eingaben konnten Rollout und Übereinstimmung von Erzeuger, Hosts und laufendem
+  Verbraucher nicht bestätigen.

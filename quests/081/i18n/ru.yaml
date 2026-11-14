@@ -1,88 +1,86 @@
 title: Доставка через несколько систем
 brief: |-
-  Выпуск не доступен согласованно всем своим потребителям.
+  Маркер релиза существует, но его контракт доставки ещё не согласован между потребителями.
 
-  Работайте на workstation в `~/quest` с файлами `main.tf`, `inventory.ini`, `ansible.cfg`, `rollout.yml`, `deployment.yaml`.
+  Работайте на workstation в `~/quest` с `main.tf`, `modules/delivery/main.tf`, `delivery-schema.json`, `inventory.ini` и `ansible.cfg`. На следующих этапах появятся `rollout.yml` и `deployment.yaml`.
 
   **Требования:**
-  - Этап 1:
-    - Состояние OpenTofu:
-      - Предоставленный файл производителя релиза учтён в state OpenTofu.
-    - Файлы на workstation:
-      - `~/quest/release.txt`: `release-81`.
-    - Согласованность инфраструктуры:
-      - Нет ожидающих изменений инфраструктуры; код завершения подробного плана `0`.
-  - Этап 2:
-    - Файл на каждом управляемом хосте (`app1`, `app2`, `app3`):
-      - Путь: `/srv/site/message`.
-      - Содержимое: `release-81`.
-      - Точный текст, возможно с одним переводом строки в конце.
-      - Режим доступа: `0644`.
-    - HTTP на каждом управляемом хосте (`app1`, `app2`, `app3`):
-      - Порт и путь: `8080`, `/`.
-      - Ответ: `release-81`.
-  - Этап 3:
-    - Потребитель в namespace песочницы:
-      - Deployment: `relay`.
-      - Rollout завершён.
-      - В работающем контейнере Deployment `relay` предоставленный контракт окружения передаёт `release-81`.
+  - Корневой output `delivery` соответствует поставляемой схеме для каждого описанного варианта входных данных и сохраняет записанную идентичность производителя. Настроенный файл производителя остаётся управляемым ресурсом в корне state OpenTofu.
+  - На workstation файл `~/quest/release.txt` содержит `release-81`; итоговый detailed plan завершается с кодом `0`.
+  - На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/message` содержит ровно `release-81`, возможно с одним переводом строки, и имеет режим `0644`. HTTP на порту `8080` по пути `/` возвращает `release-81`.
+  - На каждом управляемом хосте файл `/srv/site/delivery.json` имеет режим `0644` и соответствует записи этого получателя в текущем контракте производителя, включая записанную идентичность производителя.
+  - Deployment `relay` завершает rollout в namespace стенда. В его работающем контейнере `worker` значение `RELEASE` равно `release-81`, а `DELIVERY_CONTRACT` соответствует текущему структурированному контракту производителя. К завершению контракты производителя и хостов по-прежнему согласованы.
 
-  Проверки флота наблюдают значения файлов, режимы и HTTP, а не использованные команды; итоговая проверка потребителя читает статус rollout и окружение процесса, а не отдаваемое содержимое.
-stages.0.brief: Маркер выпуска на workstation должен соответствовать контракту.
-stages.1.brief: Каждый потребитель флота должен получить требуемый выпуск.
-stages.2.brief: Потребитель Kubernetes должен работать с требуемым выпуском.
-hints.0.text: Независимые уровни доставки могут разделять единый контракт релиза.
+  Проверки наблюдают текущие state, файлы, HTTP, rollout и окружение процесса; совпадение данных доставки не доказывает историю команд или содержимое, обслуживаемое последним контейнером.
+stages.0.brief: Корневой производитель публикует текущий контракт с сохранением записанной идентичности.
+stages.1.brief: Каждый хост должен получить свой текущий контракт и обслуживать релиз.
+stages.2.brief: Работающий потребитель должен сохранять тот же текущий контракт, что производитель и хосты.
+hints.0.text: Независимым потребителям нужен один текущий контракт; знакомое имя релиза само по себе не определяет
+  его производителя.
 hints.1.text: |-
-  Проследите релиз от state через fleet до pod. У каждого этапа свой live check; правка позднего звена не заменит раннее.
-
-  Изучите предоставленную конфигурацию и текущие наблюдения на workstation:
+  Сначала сравните поставляемую схему, конфигурацию и текущий state. На следующих этапах сравнивайте полученные данные с текущим output производителя, включая идентичность получателя: успешного ответа для этого недостаточно.
 
   ```sh
-  cat main.tf rollout.yml deployment.yaml
-  tofu state list
+  cat main.tf modules/delivery/main.tf delivery-schema.json
+  tofu show -no-color
+  tofu output -json delivery
+  test ! -f rollout.yml || cat rollout.yml
+  test ! -f deployment.yaml || cat deployment.yaml
   ```
 hints.2.text: |-
-  Инициализируйте и примените маркер из main.tf. Выполните ansible-playbook rollout.yml с обработчиком dq-service reload для доставки и перезагрузки флота. Исправьте deployment.yaml и обновите переменную RELEASE в deployment/relay.
+  Проверьте производителя до доставки, затем каждую квитанцию и работающий потребитель. Квитанции и данные процесса должны соответствовать текущему output, а не прошлому экспорту. Команды ниже наблюдают результат, но не выполняют исправления.
 
-  Проверьте результат из `~/quest` на workstation:
-
-  - `tofu show -no-color; cat release.txt; tofu plan -input=false -detailed-exitcode -no-color` — Этап 1: состояние содержит `release.txt`, файл показывает `release-81`, планирование завершается с кодом `0`.
-  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat -A /srv/site/message; ls -l /srv/site/message'; for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Этап 2: Каждый хост показывает `release-81` не более чем с одним маркером конца строки, режим файла `-rw-r--r--` и HTTP-ответ `release-81`.
-  - `kubectl rollout status deployment/relay --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/relay -c worker -- printenv RELEASE` — Этап 3: rollout завершается, процесс печатает `release-81`.
-
-  Состояние учитывает управляемый файл-источник release.txt.
-debrief: Проверки подтвердили управляемый маркер, файлы и ответы парка, а также rollout и окружение relay.
+  ```sh
+  tofu output -json delivery
+  tofu plan -input=false -detailed-exitcode -no-color
+  ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat /srv/site/message /srv/site/delivery.json; stat -c %a /srv/site/message /srv/site/delivery.json'
+  for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done
+  kubectl rollout status deployment/relay --timeout=10s
+  kubectl exec --pod-running-timeout=5s deployment/relay -c worker -- printenv RELEASE DELIVERY_CONTRACT
+  ```
+debrief: Контракт производителя теперь следует входным данным, сохраняет его идентичность и доходит до квитанций
+  хостов и работающего потребителя. Исходные файлы релиза, HTTP и окружение также корректны.
 phrases.0: Я проверил фактическое состояние до изменения.
 phrases.1: Я нашёл причину и менял по одному параметру.
 phrases.2: Я сравнил ID живого ресурса с state OpenTofu.
-diagnostics.state: |-
-  Состояние OpenTofu должно учитывать управляемый файл-источник release.txt.
-
+diagnostics.state: Состояние OpenTofu должно учитывать управляемый файл-источник release.txt.
 diagnostics.file: release.txt должен совпадать с release-81.
 diagnostics.plan: План OpenTofu должен завершиться с кодом 0.
 diagnostics.rollout: Выкатка Deployment relay должна завершиться.
 diagnostics.relay: RELEASE Deployment relay должен быть release-81.
-diagnostics.content_1: На app1 /srv/site/message должен содержать точно release-81, допускается один символ
-  новой строки.
+diagnostics.content_1: На app1 /srv/site/message должен содержать точно release-81, допускается один символ новой
+  строки.
 diagnostics.mode_1: На app1 права /srv/site/message должны быть 644.
 diagnostics.http_1: app1 на порту 8080 должен вернуть release-81.
-diagnostics.content_2: На app2 /srv/site/message должен содержать точно release-81, допускается один символ
-  новой строки.
+diagnostics.content_2: На app2 /srv/site/message должен содержать точно release-81, допускается один символ новой
+  строки.
 diagnostics.mode_2: На app2 права /srv/site/message должны быть 644.
 diagnostics.http_2: app2 на порту 8080 должен вернуть release-81.
-diagnostics.content_3: На app3 /srv/site/message должен содержать точно release-81, допускается один символ
-  новой строки.
+diagnostics.content_3: На app3 /srv/site/message должен содержать точно release-81, допускается один символ новой
+  строки.
 diagnostics.mode_3: На app3 права /srv/site/message должны быть 644.
 diagnostics.http_3: app3 на порту 8080 должен вернуть release-81.
-stages.0.objectives.0.text: Предоставленный файл производителя релиза учтён в state OpenTofu.
+stages.0.objectives.0.text: Корневой output `delivery` следует поставляемой схеме и входным данным, сохраняя исходную
+  идентичность производителя.
 stages.0.objectives.1.text: На workstation `release.txt` содержит `release-81`.
 stages.0.objectives.2.text: OpenTofu не сообщает об ожидающих изменениях инфраструктуры.
-stages.1.objectives.0.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/message`
-  содержит в точности `release-81`, возможно с одним переводом строки в конце, и имеет режим `0644`.
-stages.1.objectives.1.text: HTTP на порту `8080` возвращает `release-81` на каждом управляемом хосте (`app1`,
-  `app2`, `app3`).
-stages.2.objectives.0.text: Deployment `relay` завершает rollout в namespace песочницы.
-stages.2.objectives.1.text: В работающем контейнере Deployment `relay` предоставленный контракт окружения
-  передаёт `release-81`.
+stages.1.objectives.0.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/message` содержит
+  `release-81` с режимом `0644`, а `/srv/site/delivery.json` соответствует текущему контракту получателя и имеет
+  режим `0644`.
+stages.1.objectives.1.text: HTTP на порту `8080` возвращает `release-81` на каждом управляемом хосте (`app1`, `app2`,
+  `app3`).
+stages.2.objectives.0.text: Deployment `relay` завершает rollout с текущим структурированным контрактом производителя
+  в работающем `worker`; контракты производителя и хостов по-прежнему согласованы.
+stages.2.objectives.1.text: В работающем контейнере Deployment `relay` предоставленный контракт окружения передаёт
+  `release-81`.
 diagnostics.probe_0_0: 'Текущие данные не позволили проверить эту цель: Предоставленный файл производителя релиза
   учтён в state OpenTofu.'
+diagnostics.delivery_producer: Контракт доставки должен следовать описанным вариантам входных данных и сохранять
+  записанную идентичность производителя.
+diagnostics.delivery_fleet: Квитанция каждого получателя должна соответствовать его текущему контракту производителя
+  и иметь режим 0644.
+diagnostics.delivery_relay: Работающий потребитель, текущий производитель и квитанции хостов должны содержать один
+  текущий контракт.
+diagnostics.probe_1_0: Текущие данные не позволили проверить файлы хостов и текущие квитанции получателей.
+diagnostics.probe_2_0: Текущие данные не позволили проверить rollout и согласованность производителя, хостов и работающего
+  потребителя.

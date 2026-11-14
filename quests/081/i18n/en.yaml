@@ -1,89 +1,80 @@
 title: Cross-system delivery
 brief: |-
-  The release is not consistently available across its consumers.
+  The release marker exists, but its delivery agreement is not available consistently to the consumers.
 
-  Work on the workstation in `~/quest` with `main.tf`, `inventory.ini`, `ansible.cfg`, `rollout.yml`, `deployment.yaml`.
+  Work on the workstation in `~/quest` with `main.tf`, `modules/delivery/main.tf`, `delivery-schema.json`, `inventory.ini` and `ansible.cfg`. Later stages supply `rollout.yml` and `deployment.yaml`.
 
   **Requirements:**
-  - Stage 1:
-    - OpenTofu state:
-      - The supplied release producer file is tracked in OpenTofu state.
-    - Files on the workstation:
-      - `~/quest/release.txt`: `release-81`.
-    - Infrastructure convergence:
-      - No pending infrastructure changes; detailed-plan exit code `0`.
-  - Stage 2:
-    - File on every managed host (`app1`, `app2`, `app3`):
-      - Path: `/srv/site/message`.
-      - Content: `release-81`.
-      - Exact text, optionally followed by one newline.
-      - Access mode: `0644`.
-    - HTTP on every managed host (`app1`, `app2`, `app3`):
-      - Port and endpoint: `8080`, `/`.
-      - Response: `release-81`.
-  - Stage 3:
-    - Consumer in the bay namespace:
-      - Deployment: `relay`.
-      - Rollout complete.
-      - In the running container of Deployment `relay`, the supplied environment contract provides `release-81`.
+  - The root output `delivery` follows the supplied schema for every documented caller-input case and retains the recorded producer identity. The configured producer file remains tracked at the root of OpenTofu state.
+  - On the workstation, `~/quest/release.txt` contains `release-81`; the final detailed plan exits `0`.
+  - On every managed host (`app1`, `app2`, `app3`), `/srv/site/message` contains exactly `release-81`, optionally followed by one newline, with mode `0644`. HTTP on port `8080` at `/` returns `release-81`.
+  - On every managed host, `/srv/site/delivery.json` has mode `0644` and matches that target entry of the current producer agreement, including the recorded producer identity.
+  - Deployment `relay` completes its rollout in the bay namespace. Its running `worker` container has `RELEASE` equal to `release-81` and `DELIVERY_CONTRACT` equal to the current structured producer agreement. The producer and fleet agreements still match at completion.
 
-  Fleet checks observe file values, modes and HTTP, not the commands used; the final consumer check reads rollout status and process environment, not served content.
-stages.0.brief: The workstation release marker must meet its contract.
-stages.1.brief: Every fleet consumer must receive the required release.
-stages.2.brief: The Kubernetes consumer must run with the required release.
-hints.0.text: Independent delivery layers can share one release agreement.
+  Checks observe current state, files, HTTP, rollout and process environment; matching delivery data does not prove command history or served content in the final container.
+stages.0.brief: The root producer publishes the documented current agreement while retaining its recorded identity.
+stages.1.brief: Each fleet target must receive its current agreement and serve the release.
+stages.2.brief: The running consumer must retain the same current agreement as the producer and fleet.
+hints.0.text: Independent consumers need the same current agreement; a familiar release label alone does not identify
+  its producer.
 hints.1.text: |-
-  Follow the release from state through the fleet to the pod. Each stage has its own live check; changing a later system cannot satisfy an earlier stage.
-
-  Inspect the supplied configuration and live observations on the workstation:
+  Compare the supplied schema, configuration and current state first. At each later stage compare the received data with the current producer output, including target identity; a healthy response alone does not establish that correspondence.
 
   ```sh
-  cat main.tf rollout.yml deployment.yaml
-  tofu state list
+  cat main.tf modules/delivery/main.tf delivery-schema.json
+  tofu show -no-color
+  tofu output -json delivery
+  test ! -f rollout.yml || cat rollout.yml
+  test ! -f deployment.yaml || cat deployment.yaml
   ```
 hints.2.text: |-
-  Initialize and apply the marker from main.tf. Run ansible-playbook rollout.yml with its dq-service reload handler to deliver and reload the fleet. Repair deployment.yaml and update the RELEASE environment of deployment/relay.
+  Verify the producer before delivery, then inspect every target receipt and the running consumer. The receipts and process data must match the current output, not a previous export. These commands inspect results; they do not perform the repairs.
 
-  Verify the result from `~/quest` on the workstation:
-
-  - `tofu show -no-color; cat release.txt; tofu plan -input=false -detailed-exitcode -no-color` — Stage 1: state contains `release.txt`, the file reads `release-81`, and planning exits `0`.
-  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat -A /srv/site/message; ls -l /srv/site/message'; for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Stage 2: Every host shows `release-81` with at most one end-of-line marker, file mode `-rw-r--r--`, and the HTTP response `release-81`.
-  - `kubectl rollout status deployment/relay --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/relay -c worker -- printenv RELEASE` — Stage 3: rollout completes and the process prints `release-81`.
-
-  State tracks the managed release.txt producer file.
-debrief: The checks verified the managed marker, the fleet files and responses, and the relay rollout
-  and environment.
+  ```sh
+  tofu output -json delivery
+  tofu plan -input=false -detailed-exitcode -no-color
+  ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat /srv/site/message /srv/site/delivery.json; stat -c %a /srv/site/message /srv/site/delivery.json'
+  for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done
+  kubectl rollout status deployment/relay --timeout=10s
+  kubectl exec --pod-running-timeout=5s deployment/relay -c worker -- printenv RELEASE DELIVERY_CONTRACT
+  ```
+debrief: The producer agreement now follows caller input, retains its identity and reaches the fleet receipts and
+  running consumer. Legacy release files, HTTP and environment remain correct.
 phrases.0: I checked the running state before making a change.
 phrases.1: I found the cause and changed one thing at a time.
 phrases.2: I compared the live resource ID with the OpenTofu state.
-diagnostics.state: |-
-  OpenTofu state must track the managed producer file release.txt.
-
+diagnostics.state: OpenTofu state must track the managed producer file release.txt.
 diagnostics.file: release.txt must equal release-81.
 diagnostics.plan: The OpenTofu plan must exit with code 0.
 diagnostics.rollout: The relay Deployment rollout must complete.
 diagnostics.relay: Deployment relay RELEASE must equal release-81.
-diagnostics.content_1: app1 /srv/site/message must contain exactly release-81, optionally followed by
-  one newline.
+diagnostics.content_1: app1 /srv/site/message must contain exactly release-81, optionally followed by one newline.
 diagnostics.mode_1: app1 /srv/site/message mode must be 644.
 diagnostics.http_1: app1 on port 8080 must return release-81.
-diagnostics.content_2: app2 /srv/site/message must contain exactly release-81, optionally followed by
-  one newline.
+diagnostics.content_2: app2 /srv/site/message must contain exactly release-81, optionally followed by one newline.
 diagnostics.mode_2: app2 /srv/site/message mode must be 644.
 diagnostics.http_2: app2 on port 8080 must return release-81.
-diagnostics.content_3: app3 /srv/site/message must contain exactly release-81, optionally followed by
-  one newline.
+diagnostics.content_3: app3 /srv/site/message must contain exactly release-81, optionally followed by one newline.
 diagnostics.mode_3: app3 /srv/site/message mode must be 644.
 diagnostics.http_3: app3 on port 8080 must return release-81.
-stages.0.objectives.0.text: The supplied release producer file is tracked in OpenTofu state.
+stages.0.objectives.0.text: The root output `delivery` follows the supplied schema and caller input, with the original
+  producer identity.
 stages.0.objectives.1.text: On the workstation, `release.txt` contains `release-81`.
 stages.0.objectives.2.text: OpenTofu reports no pending infrastructure changes.
-stages.1.objectives.0.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/message` contains
-  exactly `release-81`, optionally followed by one newline, with mode `0644`.
-stages.1.objectives.1.text: HTTP on port `8080` returns `release-81` on every managed host (`app1`, `app2`,
-  `app3`).
-stages.2.objectives.0.text: Deployment `relay` completes its rollout in the bay namespace.
-stages.2.objectives.1.text: In the running container of Deployment `relay`, the supplied environment contract
-  provides `release-81`.
+stages.1.objectives.0.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/message` contains `release-81`
+  with mode `0644`, and `/srv/site/delivery.json` matches its current target agreement with mode `0644`.
+stages.1.objectives.1.text: HTTP on port `8080` returns `release-81` on every managed host (`app1`, `app2`, `app3`).
+stages.2.objectives.0.text: Deployment `relay` completes its rollout with the current structured producer agreement
+  in its running `worker`; the producer and fleet still match.
+stages.2.objectives.1.text: In the running container of Deployment `relay`, the supplied environment contract provides
+  `release-81`.
 diagnostics.probe_0_0: 'The current inputs could not verify this objective: The supplied release producer file is
   tracked in OpenTofu state.'
+diagnostics.delivery_producer: The delivery output must follow the documented caller-input cases and retain the
+  recorded producer identity.
+diagnostics.delivery_fleet: Every target receipt must match its current producer agreement with mode 0644.
+diagnostics.delivery_relay: The running consumer, current producer and fleet receipts must carry the same current
+  agreement.
+diagnostics.probe_1_0: Current inputs could not verify the fleet files and current target receipts.
+diagnostics.probe_2_0: Current inputs could not verify the rollout and agreement across the producer, fleet and
+  running consumer.
