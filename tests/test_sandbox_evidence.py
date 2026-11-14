@@ -42,13 +42,15 @@ def test_control_reader_uses_a_nonblocking_regular_file(tmp_path, kind):
     )
 
 
+@pytest.mark.parametrize("level", [77, 85])
+@pytest.mark.parametrize("known", [False, True])
 @pytest.mark.parametrize("reason", ["DeletionByPodGC", "EvictionByEvictionAPI"])
-def test_only_actual_eviction_condition_creates_receipt(tmp_path, reason):
-    run = {"id": "a" * 24, "level": 77}
+def test_only_actual_eviction_condition_creates_receipt(tmp_path, reason, level, known):
+    run = {"id": "a" * 24, "level": level}
     client = tmp_path / "bays" / run["id"] / "client"
     initial = client / "facts/0/original-pod-uids.json"
     initial.parent.mkdir(parents=True)
-    initial.write_text('["original-uid"]')
+    initial.write_text('["original-uid"]' if known else '["other-uid"]')
 
     class Runtime:
         state = tmp_path
@@ -57,6 +59,10 @@ def test_only_actual_eviction_condition_creates_receipt(tmp_path, reason):
             return "dq-" + run["id"]
 
         def kube(self, *a, **k):
+            assert a[:4] == ("-n", self.namespace(run), "get", "pods")
+            assert ("-l" in a) == (level == 77)
+            if level == 77:
+                assert a[a.index("-l") + 1] == "app=board"
             pods = {
                 "items": [
                     {
@@ -77,7 +83,7 @@ def test_only_actual_eviction_condition_creates_receipt(tmp_path, reason):
 
     observe(Runtime(), run)
     receipt = client / "observations/evictions.json"
-    if reason == "EvictionByEvictionAPI":
+    if known and reason == "EvictionByEvictionAPI":
         assert json.loads(receipt.read_text()) == ["original-uid"]
         assert receipt.stat().st_mode & 0o777 == 0o444
     else:

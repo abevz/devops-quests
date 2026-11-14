@@ -789,6 +789,12 @@ kubectl create secret generic route-secret --from-literal=value="$value" --dry-r
                 "clusterResourceWhitelist": [],
             },
         }
+        if run["level"] == 85:
+            # The Git-managed budget is independently reconciled; its source
+            # cannot grant status/RBAC authority to forge eviction receipts.
+            project["spec"]["namespaceResourceWhitelist"] = [
+                {"group": "policy", "kind": "PodDisruptionBudget"}
+            ]
         repository = {
             "apiVersion": "v1",
             "kind": "Secret",

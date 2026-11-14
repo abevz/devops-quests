@@ -31,7 +31,7 @@ def test_curriculum_additions():
         for r in release
         if set(r["dependencies"]) & {"gitea", "argocd", "registry", "vault"}
     ]
-    assert [r["id"] for r in platform] == [27, 54, 83]
+    assert [r["id"] for r in platform] == [27, 54, 83, 85]
     assert set(rows[99]["dependencies"]) == {
         "gitea",
         "registry",

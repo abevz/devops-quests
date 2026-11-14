@@ -1,63 +1,61 @@
-title: Bezpieczeństwo przed zakłóceniami PDB
-brief: 'Zestaw replik potrzebuje zapasu na dobrowolną konserwację z zachowaniem dostępności. Wspólny węzeł
-  ma pozostać uruchomiony.
+title: Konserwacja przy różnych właścicielach polityk
+brief: |
+  Dobrowolna konserwacja jest zablokowana, choć obie usługi są zdrowe. Przywróć bezpieczną konserwację z zachowaniem obecnych odpowiedzialności, bez opróżniania wspólnego węzła.
 
-
-  Pracuj w `~/quest` na workstation. Dostarczone pliki wejściowe: `deployment.yaml`, `budget.yaml`.
-
+  Pracuj w `~/quest` na stacji roboczej. Dostępne pliki: `relay.yaml`, `companion.yaml`, `companion-budget.yaml`, `repository/policies/budget.yaml`, `application.yaml` i `maintenance-baseline.json`. Zamrożona kopia danych początkowych jest też w `/run/dq/facts/0/`.
 
   **Wymagania:**
 
-  - PDB `relay` wymaga co najmniej jednego zdrowego Poda.
+  - Zachowaj pierwotne kontrolery, usługi i budżety; każda pula chroni co najmniej jeden zdrowy Pod własną polityką, a polityka z Git pozostaje zsynchronizowana.
+  - Obie pule zwracają pierwotne odpowiedzi HTTP i mają dokładnie dwie gotowe repliki; pierwotny główny budżet zgłasza co najmniej dwa zdrowe Pody.
+  - Wykonaj po jednej zaobserwowanej eviction z kontrolą UID na pierwotną pulę, zachowaj po jednym pierwotnym sąsiednim Podzie i przywróć co najmniej jedno dozwolone przerwanie w każdym budżecie.
 
-  - PDB `relay` zgłasza co najmniej dwa zdrowe Pody.
-
-  - PDB `relay` pozwala na co najmniej jedno dobrowolne zakłócenie.
-
-  '
-stages.0.brief: Zachowaj zdrowe minimum, dopuszczając dobrowolne zakłócenie.
-stages.0.objectives.0.text: PDB `relay` wymaga co najmniej jednego zdrowego Poda.
-stages.0.objectives.1.text: PDB `relay` zgłasza co najmniej dwa zdrowe Pody.
-stages.0.objectives.2.text: PDB `relay` pozwala na co najmniej jedno dobrowolne zakłócenie.
-hints.0.text: Dobrowolna konserwacja wymaga zapasu w budżecie dostępności.
-hints.1.text: 'Przeczytaj currentHealthy i disruptionsAllowed na PDB.
-
-
-  Dzięki dwóm replikom minAvailable=2 nie pozostawia żadnego budżetu na zakłócenia.
-
-
-  Sprawdź dostarczone definicje, bieżące zasoby i zdarzenia.
-
-
-  ```sh
-
-  kubectl get pdb relay -o yaml
-
-  kubectl describe deployment relay
-
-  ```'
-hints.2.text: 'Zachowaj minAvailable=1 i zweryfikuj dwie sprawne repliki oraz jedną dozwoloną przerwę; nie
-  opróżniaj węzła współdzielonego.
-
-
-  Sprawdź obserwowany wynik:
-
-
-  ```sh
-
-  kubectl get pdb relay
-
-  kubectl get pods -l app=relay
-
-  ```
-
-
-  Oczekuj co najmniej dwóch zdrowych Podów, jednej dozwolonej przerwy i minimum jednego; nie wykonuj drain
-  współdzielonego węzła.'
-debrief: minAvailable dorównał pełnej liczbie replik i zablokował wszelkie zakłócenia. Zachowałeś jedną wymaganą
-  replikę i zweryfikowałeś, że jedna pozwala na zakłócenie dwóch zdrowych kapsuł.
+  Zapisz dwa żądania policy/v1 Eviction jako tablicę w `~/quest/evictions.json` na stacji roboczej. Każde żądanie zawiera nazwę pierwotnego Poda, ten namespace i `deleteOptions.preconditions.uid`. Pierwotne tożsamości są w danych początkowych. Zachowaj dostarczone okno obserwacji podczas kończenia; `/run/dq/observations/evictions.json` zapisuje pierwotne UID, dla których serwer zaobserwował Eviction API. Plik żądania ani bezpośrednie usunięcie Poda nie dowodzą eviction. Zachowaj automatyczne samonaprawianie, istniejące źródło i cel; patch statusu Poda pozostaje niedostępny dla gracza.
+stages.0.brief: Przywróć zbieżność polityk i zakończ bezpieczną konserwację obu pierwotnych pul.
+stages.0.objectives.0.text: Zachowaj pierwotne kontrolery, usługi i budżety; każda pula chroni co najmniej
+  jeden zdrowy Pod własną polityką, a polityka z Git pozostaje zsynchronizowana.
+stages.0.objectives.1.text: Obie pule zwracają pierwotne odpowiedzi HTTP i mają dokładnie dwie gotowe
+  repliki; pierwotny główny budżet zgłasza co najmniej dwa zdrowe Pody.
+stages.0.objectives.2.text: Wykonaj po jednej zaobserwowanej eviction z kontrolą UID na pierwotną pulę,
+  zachowaj po jednym pierwotnym sąsiednim Podzie i przywróć co najmniej jedno dozwolone przerwanie w każdym
+  budżecie.
+hints.0.text: Budżet dostępności, jego właściciel i faktyczna decyzja eviction opisują różne części tej
+  samej operacji. Zdrowa usługa sama nie dowodzi możliwości dobrowolnej konserwacji.
+hints.1.text: Porównaj `kubectl get pdb -o yaml`, `kubectl get applications -o yaml`, opublikowaną politykę
+  Git oraz etykiety z `kubectl get pods --show-labels`. Sprawdź cały błąd Eviction API i conditions aplikacji;
+  zestaw oba selektory z obiema pulami i odróżnij zmiany lokalne od źródła kontrolera.
+hints.2.text: Sprawdź zgodność opublikowanej i aktywnej polityki przy zachowanym automatycznym samonaprawianiu.
+  Przed każdym żądaniem sprawdź `kubectl get pdb` i wybierz pierwotną nazwę/UID z zamrożonych danych.
+  Po każdej prawdziwej eviction poczekaj na gotowość zastępstwa; sprawdź `cat evictions.json`, `cat /run/dq/observations/evictions.json`
+  i `kubectl get pods -o wide`. Oczekuj po jednym zaobserwowanym pierwotnym UID i zachowanym pierwotnym
+  sąsiedzie na pulę, dwóch gotowych replik i odzyskanej możliwości przerwania. Sprawdź obie odpowiedzi
+  HTTP z Poda aplikacji.
+debrief: Minimum zarządzane przez Git i niezależnie zarządzany selektor wymagały różnych poprawek. Dodatni
+  zapas przerwań nie usuwał nakładania się polityk. Zachowane tożsamości, eviction zaobserwowane przez
+  serwer oraz przywrócone usługi potwierdzają wynik konserwacji.
 phrases.0: Przed dokonaniem zmiany sprawdziłem stan działania.
 phrases.1: Znalazłem przyczynę i zmieniałem jedną rzecz na raz.
 phrases.2: Sprawdziłem stan workload i jego gotowość po zmianie.
-diagnostics.probe_0_0: 'Bieżące dane nie pozwalają potwierdzić tego celu: PDB `relay` wymaga co najmniej jednego
-  zdrowego Poda.'
+diagnostics.probe_0_0: 'Bieżące dane nie pozwoliły zweryfikować tego celu: Zachowaj pierwotne kontrolery,
+  usługi i budżety; każda pula chroni co najmniej jeden zdrowy Pod własną polityką, a polityka z Git pozostaje
+  zsynchronizowana.'
+diagnostics.probe_0_1: 'Bieżące dane nie pozwoliły zweryfikować tego celu: Obie pule zwracają pierwotne
+  odpowiedzi HTTP i mają dokładnie dwie gotowe repliki; pierwotny główny budżet zgłasza co najmniej dwa
+  zdrowe Pody.'
+diagnostics.probe_0_2: 'Bieżące dane nie pozwoliły zweryfikować tego celu: Wykonaj po jednej zaobserwowanej
+  eviction z kontrolą UID na pierwotną pulę, zachowaj po jednym pierwotnym sąsiednim Podzie i przywróć
+  co najmniej jedno dozwolone przerwanie w każdym budżecie.'
+diagnostics.maintenance_policy: Każdy oddzielny budżet musi zachować co najmniej jeden zdrowy Pod.
+diagnostics.maintenance_evictions: Serwer musi zaobserwować Eviction API dla każdego wybranego pierwotnego
+  UID; bezpośrednie usunięcie i pliki żądań nie wystarczą.
+diagnostics.maintenance_source: Opublikuj politykę w pierwotnym źródle i poczekaj na synchronizację tej
+  samej rewizji z automatycznym samonaprawianiem.
+diagnostics.maintenance_identity: Zachowaj pierwotne kontrolery, usługi, budżety i tożsamości niewybranych
+  pierwotnych Podów.
+diagnostics.maintenance_scope: Każda polityka musi wybierać własną pierwotną pulę bez obejmowania drugiej.
+diagnostics.maintenance_health: Przywróć dwie gotowe repliki i pierwotną odpowiedź HTTP w każdej puli.
+diagnostics.maintenance_authority: Gracz nie może mieć prawa do patch statusu Poda.
+diagnostics.maintenance_requests: Zapisz dwa żądania policy/v1 dla różnych pierwotnych Podów z tym namespace,
+  pasującymi nazwami i warunkami UID.
+diagnostics.maintenance_allowance: Poczekaj, aż oba budżety zaobserwują poprawioną generację i pozwolą
+  na kolejne dobrowolne przerwanie.

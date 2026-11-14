@@ -1,63 +1,63 @@
-title: Seguridad contra interrupciones PDB
-brief: 'El conjunto de réplicas necesita margen para mantenimiento voluntario sin perder disponibilidad. Mantén
-  en funcionamiento el nodo compartido.
+title: Mantenimiento con responsables de políticas distintos
+brief: |
+  El mantenimiento voluntario está bloqueado aunque ambos servicios están sanos. Recupera el mantenimiento seguro respetando las responsabilidades existentes, sin drenar el nodo compartido.
 
-
-  Trabaja en `~/quest` en la workstation. Archivos de entrada suministrados: `deployment.yaml`, `budget.yaml`.
-
+  Trabaja en `~/quest` en la estación. Entradas: `relay.yaml`, `companion.yaml`, `companion-budget.yaml`, `repository/policies/budget.yaml`, `application.yaml` y `maintenance-baseline.json`. La referencia también está congelada en `/run/dq/facts/0/`.
 
   **Requisitos:**
 
-  - El PDB `relay` requiere al menos un Pod sano.
+  - Conserva los controladores, servicios y presupuestos originales; cada pool protege al menos un Pod sano con su propia política, y la política de Git permanece sincronizada.
+  - Ambos pools sirven sus respuestas HTTP originales con exactamente dos réplicas listas; el presupuesto primario original indica al menos dos Pods sanos.
+  - Completa una eviction observada y protegida por UID por pool original, conserva un Pod vecino original por pool y recupera al menos una interrupción permitida en cada presupuesto.
 
-  - El PDB `relay` indica al menos dos Pods sanos.
-
-  - El PDB `relay` permite al menos una interrupción voluntaria.
-
-  '
-stages.0.brief: Conserva un mínimo sano y permite una interrupción voluntaria.
-stages.0.objectives.0.text: El PDB `relay` requiere al menos un Pod sano.
-stages.0.objectives.1.text: El PDB `relay` indica al menos dos Pods sanos.
-stages.0.objectives.2.text: El PDB `relay` permite al menos una interrupción voluntaria.
-hints.0.text: El mantenimiento voluntario necesita margen en el presupuesto de disponibilidad.
-hints.1.text: 'Lea currentHealthy y disruptionsAllowed en PDB.
-
-
-  Con dos réplicas, minAvailable=2 no deja ningún presupuesto de interrupción.
-
-
-  Inspecciona las definiciones suministradas, los recursos actuales y los eventos.
-
-
-  ```sh
-
-  kubectl get pdb relay -o yaml
-
-  kubectl describe deployment relay
-
-  ```'
-hints.2.text: 'Mantenga minAvailable=1 y verifique dos réplicas en buen estado más una interrupción permitida;
-  no drene el nodo compartido.
-
-
-  Verifica el resultado observado:
-
-
-  ```sh
-
-  kubectl get pdb relay
-
-  kubectl get pods -l app=relay
-
-  ```
-
-
-  Se esperan al menos dos Pods sanos, al menos una interrupción permitida y un mínimo sano de uno; no drenes
-  el nodo compartido.'
-debrief: minAvailable igualó el recuento completo de réplicas y bloqueó todas las interrupciones. Conservó
-  una réplica requerida y verificó una interrupción permitida con dos pods en buen estado.
+  Guarda las dos solicitudes policy/v1 Eviction como un array en `~/quest/evictions.json` en la estación. Cada solicitud identifica el nombre de un Pod original, este namespace y `deleteOptions.preconditions.uid`. Las identidades originales están en la referencia. Conserva la ventana de observación al terminar; `/run/dq/observations/evictions.json` registra los UID originales cuya eviction observó el servidor mediante Eviction API. Un archivo de solicitud o borrar directamente el Pod no prueba una eviction. Conserva la autocorrección automática, la fuente y su destino existentes; el jugador sigue sin poder aplicar patch al estado de Pods.
+stages.0.brief: Recupera la convergencia de políticas y completa el mantenimiento seguro de ambos pools
+  originales.
+stages.0.objectives.0.text: Conserva los controladores, servicios y presupuestos originales; cada pool
+  protege al menos un Pod sano con su propia política, y la política de Git permanece sincronizada.
+stages.0.objectives.1.text: Ambos pools sirven sus respuestas HTTP originales con exactamente dos réplicas
+  listas; el presupuesto primario original indica al menos dos Pods sanos.
+stages.0.objectives.2.text: Completa una eviction observada y protegida por UID por pool original, conserva
+  un Pod vecino original por pool y recupera al menos una interrupción permitida en cada presupuesto.
+hints.0.text: El presupuesto de disponibilidad, su responsable y la decisión real de eviction describen
+  partes distintas de una misma operación. La salud local no demuestra por sí sola que pueda realizarse
+  mantenimiento voluntario.
+hints.1.text: Compara `kubectl get pdb -o yaml`, `kubectl get applications -o yaml`, la política publicada
+  en Git y las etiquetas de `kubectl get pods --show-labels`. Revisa el error completo de Eviction API
+  y las condiciones de la aplicación; compara ambos selectores con ambos pools y distingue cambios locales
+  de la fuente del controlador.
+hints.2.text: Verifica que la política publicada y la activa coincidan, conservando la autocorrección
+  automática. Antes de cada solicitud, consulta `kubectl get pdb` y selecciona nombre/UID originales de
+  la referencia congelada. Tras cada eviction real, espera las réplicas de reemplazo listas; revisa `cat
+  evictions.json`, `cat /run/dq/observations/evictions.json` y `kubectl get pods -o wide`. Debe haber
+  un UID original observado y un vecino original conservado por pool, dos réplicas listas y capacidad
+  de interrupción recuperada. Prueba ambas respuestas HTTP desde un Pod de carga.
+debrief: El mínimo gestionado por Git y el selector gestionado de forma independiente necesitaron reparaciones
+  distintas. Un margen positivo de interrupciones no anulaba las políticas superpuestas. Las identidades
+  conservadas, las evictions observadas por el servidor y los servicios recuperados demuestran el resultado.
 phrases.0: Verifiqué el estado de ejecución antes de realizar un cambio.
 phrases.1: Encontré la causa y cambié una cosa a la vez.
 phrases.2: Verifiqué el estado de workload y su preparación después del cambio.
-diagnostics.probe_0_0: 'Los datos actuales no permiten verificar este objetivo: El PDB `relay` requiere al menos
-  un Pod sano.'
+diagnostics.probe_0_0: 'Las entradas actuales no permitieron verificar este objetivo: Conserva los controladores,
+  servicios y presupuestos originales; cada pool protege al menos un Pod sano con su propia política,
+  y la política de Git permanece sincronizada.'
+diagnostics.probe_0_1: 'Las entradas actuales no permitieron verificar este objetivo: Ambos pools sirven
+  sus respuestas HTTP originales con exactamente dos réplicas listas; el presupuesto primario original
+  indica al menos dos Pods sanos.'
+diagnostics.probe_0_2: 'Las entradas actuales no permitieron verificar este objetivo: Completa una eviction
+  observada y protegida por UID por pool original, conserva un Pod vecino original por pool y recupera
+  al menos una interrupción permitida en cada presupuesto.'
+diagnostics.maintenance_policy: Cada presupuesto separado debe conservar al menos un Pod sano.
+diagnostics.maintenance_evictions: El servidor debe observar Eviction API para cada UID original seleccionado;
+  el borrado directo y los archivos de solicitud son insuficientes.
+diagnostics.maintenance_source: Publica la política en la fuente original y espera la sincronización de
+  la misma revisión con autocorrección automática.
+diagnostics.maintenance_identity: Conserva los controladores, servicios, presupuestos e identidades de
+  Pods originales no seleccionados.
+diagnostics.maintenance_scope: Cada política debe seleccionar su propio pool original sin cubrir el otro.
+diagnostics.maintenance_health: Recupera dos réplicas listas y la respuesta HTTP original en cada pool.
+diagnostics.maintenance_authority: El jugador no debe poder aplicar patch al estado de Pods.
+diagnostics.maintenance_requests: Guarda dos solicitudes policy/v1 para distintos Pods originales con
+  este namespace, nombres correspondientes y precondiciones UID.
+diagnostics.maintenance_allowance: Espera a que ambos presupuestos observen la generación reparada y permitan
+  otra interrupción voluntaria.

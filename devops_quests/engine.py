@@ -133,7 +133,7 @@ class Engine:
             quest = self.catalog.quests[run["level"]]
             if run["level"] in {78, 93, 121, 123}:
                 await asyncio.to_thread(self.runtime.game_controls, run)
-            if run["level"] in {75, 77, 116, 117}:
+            if run["level"] in {75, 77, 85, 116, 117}:
                 await asyncio.to_thread(self.runtime.observe, run)
             stage = quest["stages"][run["stage"]]
             goals = []

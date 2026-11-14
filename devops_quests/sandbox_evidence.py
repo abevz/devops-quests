@@ -122,7 +122,7 @@ def observe(runtime, run):
                     "authenticated": True,
                 },
             )
-    elif run["level"] == 77:
+    elif run["level"] in {77, 85}:
         initial = (
             runtime.state / "bays" / run["id"] / "client/facts/0/original-pod-uids.json"
         )
@@ -134,8 +134,7 @@ def observe(runtime, run):
             runtime.namespace(run),
             "get",
             "pods",
-            "-l",
-            "app=board",
+            *(["-l", "app=board"] if run["level"] == 77 else []),
             "-o",
             "json",
             timeout=5,

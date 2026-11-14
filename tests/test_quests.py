@@ -14,6 +14,8 @@ import pytest
 
 from devops_quests.catalog import RELEASED, ROOT, Catalog
 from devops_quests.runtime import Runtime
+from devops_quests.engine import Engine
+from devops_quests.store import Store
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("DQ_INTEGRATION") != "1",
@@ -108,11 +110,17 @@ def wait_098_convergence(runtime, run, check, old_pods, old_sets):
 
 
 @pytest.mark.parametrize("number", RELEASED)
-def test_quest(number):
+def test_quest(number, tmp_path):
     catalog = Catalog()
     assert number in catalog.quests, f"Quest {number} is missing"
     runtime = Runtime(ROOT / ".state/runtime")
     run = {"id": secrets.token_hex(12), "level": number}
+    production_engine = None
+    if number == 85:
+        store = Store(tmp_path / "maintenance-progress.db")
+        token = store.login("admin", store.bootstrap().read_text().strip(), "fixture")
+        run = store.create_run(store.session(token)["user_id"], number, "free")
+        production_engine = Engine(store, catalog, runtime)
     evidence = ROOT / "artifacts/quests"
     evidence.mkdir(parents=True, exist_ok=True)
     log = [
@@ -287,7 +295,11 @@ def test_quest(number):
             def observer(stop=stop, errors=observation_errors):
                 while not stop.wait(2.5):
                     try:
-                        if number in {121, 123}:
+                        if production_engine is not None:
+                            # Exercise the actual application polling entrypoint:
+                            # a harness-only observe call can hide a missing phase.
+                            asyncio.run(production_engine.poll(run))
+                        elif number in {121, 123}:
                             runtime.game_controls(run)
                         else:
                             runtime.observe(run)
@@ -305,7 +317,7 @@ def test_quest(number):
             # condition, rather than inventing a post-deletion status fixture.
             thread = (
                 threading.Thread(target=observer, daemon=True)
-                if number in {77, 116, 117, 121, 123}
+                if number in {77, 85, 116, 117, 121, 123}
                 else None
             )
             if thread:
@@ -328,7 +340,11 @@ def test_quest(number):
             )
             if number in {78, 93, 121, 123}:
                 runtime.game_controls(run)
-            if number in {75, 77, 116, 117}:
+            if production_engine is not None:
+                polled = asyncio.run(production_engine.poll(run))
+                assert all(polled["goals"]), polled
+                log[-1]["production_poll"] = "PASS"
+            elif number in {75, 77, 116, 117}:
                 runtime.observe(run)
             after = (
                 wait_098_convergence(runtime, run, check, old_pods, old_sets)
@@ -337,6 +353,16 @@ def test_quest(number):
             )
             assert after.returncode == 0, after.stderr + "\n" + after.stdout
             assert not any(goals()), "Production objective checks did not pass"
+            if number == 85:
+                runtime.exec(run, "cd ~/quest\ncp evictions.json /tmp/verified-requests.json\n"
+                             "jq '.[0].deleteOptions.preconditions.uid=\"stale-uid\"' evictions.json >/tmp/stale-requests.json\n"
+                             "cp /tmp/stale-requests.json evictions.json\n")
+                wrong_uid = runtime.exec(run, "cd ~/quest\n" + objectives[2]["check"], check=False)
+                assert wrong_uid.returncode != 0 and "[DQ:maintenance_requests]" in wrong_uid.stdout
+                runtime.exec(run, "cd ~/quest\ncp /tmp/verified-requests.json evictions.json\n")
+                denied_receipt = runtime.exec(run, "if printf '[]' > /run/dq/observations/evictions.json; then exit 1; fi\n")
+                assert denied_receipt.returncode == 0
+                log[-1]["stale_uid_and_receipt_rewrite"] = "rejected"
             log[-1]["after"] = "PASS"
             if number == 15:
                 # Reuse the unchanged learner playbook with a different data list.
