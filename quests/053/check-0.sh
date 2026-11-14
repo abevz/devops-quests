@@ -35,8 +35,29 @@ import subprocess
 
 from dq_check import tofu_json
 
-matched = file_resources(resource_records(tofu_json("show", "-json")), 'north.txt', in_module=True)
+records = resource_records(tofu_json("show", "-json"))
+matched = file_resources(records, 'north.txt', in_module=True)
 if not matched:
+    sys.exit(1)
+
+delivered = file_resources(records, 'delivered.txt', in_module=True)
+expected = Path('/run/dq/facts/0/original-consumer-id').read_text().strip()
+valid = False
+for producer_module, producer in matched:
+    for consumer_module, consumer in delivered:
+        content = consumer['values'].get('content')
+        if producer_module == consumer_module or not isinstance(content, str) or content.rstrip('\n') != 'north-ready':
+            continue
+        if not isinstance(producer['values'].get('content'), str) or producer['values']['content'].rstrip('\n') != 'north-ready':
+            continue
+        valid = any(module == consumer_module and record.get('mode') == 'managed' and record.get('type') == 'terraform_data'
+                    and isinstance(record.get('values'), dict) and record['values'].get('id') == expected and expected
+                    and record.get('values', {}).get('output') == content for module, record in records)
+        if valid:
+            break
+    if valid:
+        break
+if not valid:
     sys.exit(1)
 DQ_PROPERTY
 ) >"$dq_probe_output" 2>/dev/null
@@ -53,7 +74,47 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 test "$(tofu output -raw message)" = north-ready
+python3 -I - <<'DQ_MODULE_CONTRACT'
+import json,subprocess,sys,tempfile
+from pathlib import Path
+from dq_check import tofu_json,resource_records,file_resources
+contract=json.loads(Path('/run/dq/facts/0/module-contract.json').read_text())
+with tempfile.TemporaryDirectory() as directory:
+    for station in contract['station_cases']:
+        plan=Path(directory)/'contract.tfplan'
+        result=subprocess.run(['tofu','plan','-input=false','-no-color','-refresh=false','-out='+str(plan),'-var=station='+station],capture_output=True,text=True)
+        if result.returncode:
+            print('The caller contract must produce a valid plan: ✗ [DQ:module_contract]')
+            sys.exit(1)
+        document=tofu_json('show','-json',str(plan))
+        records=resource_records(document,section='planned_values')
+        expected=station+'-ready'
+        wanted=[station+'.txt',contract['consumer']['filename']]
+        groups=[file_resources(records,name,in_module=True) for name in wanted]
+        message=(document or {}).get('planned_values',{}).get('outputs',{}).get('message',{}).get('value')
+        valid=isinstance(message,str) and message.rstrip('\n')==expected
+        for group in groups:
+            valid=valid and any(isinstance(record.get('values',{}).get('content'),str) and record['values']['content'].rstrip('\n')==expected for _,record in group)
+        if not valid:
+            print('The message must propagate through both module boundaries: ✗ [DQ:module_contract]')
+            sys.exit(1)
+DQ_MODULE_CONTRACT
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
