@@ -60,6 +60,15 @@ import subprocess
 from dq_check import tofu_json
 
 records = resource_records(tofu_json('show', '-json'))
+try:
+    identities=json.loads(Path('/run/dq/facts/0/state-identities.json').read_text())['bindings']
+    companions=[r for _,r in records if r.get('mode')=='managed' and r.get('type')=='terraform_data' and r.get('address') in identities]
+    if len(records)!=4 or len(companions)!=2 or {r['address'] for r in companions}!=set(identities) or not all(r.get('values',{}).get('id')==identities[r['address']] for r in companions):
+        raise ValueError('identity companions')
+    records=[(module,r) for module,r in records if r not in companions]
+except (OSError,KeyError,ValueError,TypeError,AttributeError):
+    print('Recover the missing binding while retaining both recorded operation identities: ✗ [DQ:recovery_bindings]')
+    sys.exit(1)
 if len(records) != 2 or not all(len(file_resources(records, name)) == 1 for name in ('north.txt', 'south.txt')):
     print('State must track exactly both configured route files: ✗ [DQ:condition_3]')
     sys.exit(1)
@@ -107,6 +116,16 @@ from dq_check import number_is
 
 plan = read_json('recovery-plan.json')
 changes = plan.get('resource_changes') if isinstance(plan, dict) else None
+try:
+    identities=json.loads(Path('/run/dq/facts/0/state-identities.json').read_text())['bindings']
+    if not isinstance(changes,list) or len(changes)!=4:raise ValueError('plan inventory')
+    companions=[r for r in changes if r.get('address') in identities and r.get('mode')=='managed' and r.get('type')=='terraform_data']
+    if len(companions)!=2 or {r['address'] for r in companions}!=set(identities):raise ValueError('binding inventory')
+    if not all(r['change']['actions']==['no-op'] and r['change']['before']['id']==r['change']['after']['id']==identities[r['address']] for r in companions):raise ValueError('binding replacement')
+    changes=[r for r in changes if r not in companions]
+except (OSError,KeyError,ValueError,TypeError,AttributeError):
+    print('The recovery plan must keep both operation identities unchanged and contain only the two route entries plus their companions: ✗ [DQ:recovery_binding_plan]')
+    sys.exit(1)
 failed = False
 if not isinstance(changes, list) or len(changes) != 2:
     print('Saved recovery plan must contain two resource entries: ✗ [DQ:condition_4]')
@@ -133,6 +152,21 @@ if not south:
     failed = True
 sys.exit(int(failed))
 DQ_PROPERTY
+python3 -I - <<'DQ_RECOVERY_BACKUP'
+import hashlib,json,sys
+from pathlib import Path
+try:
+    facts=json.loads(Path('/run/dq/facts/0/state-identities.json').read_text())
+    assert hashlib.sha256(Path('recovery-checkpoint.tfstate').read_bytes()).hexdigest()==facts['checkpoint_sha256']
+    backup=json.loads(Path('before-recovery.tfstate').read_text());expected=facts['partial']
+    assert backup['lineage']==expected['lineage'] and backup['serial']==expected['serial']
+    records=backup['resources'];assert len(records)==2
+    actual={r['type']+'.'+r['name']:r['instances'][0]['attributes']['id'] for r in records if r.get('mode')=='managed'}
+    assert actual==expected['identities']
+except (AssertionError,KeyError,TypeError,ValueError,AttributeError,OSError):
+    print('Retain the trusted checkpoint and a backup of the newer partial state before recovery: ✗ [DQ:recovery_backup]')
+    sys.exit(1)
+DQ_RECOVERY_BACKUP
 ) >"$dq_probe_output" 2>/dev/null
 dq_probe_status=$?
 set -e

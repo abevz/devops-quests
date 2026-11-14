@@ -89,6 +89,31 @@ shared_input = bool(labels) and all(
 
 sys.exit(0 if addresses and matched == addresses and shared_input else 1)
 DQ_PROPERTY
+python3 -I - <<'DQ_FANOUT_CONTRACT'
+import json,subprocess,sys,tempfile
+from pathlib import Path
+from dq_check import resource_records,file_resources,tofu_json
+try:
+    contract=json.loads(Path('/run/dq/facts/0/region-cases.json').read_text())
+    identities=json.loads(Path('/run/dq/facts/0/station-identities.json').read_text())
+    originals=set(Path('/run/dq/facts/0/original-addresses').read_text().splitlines())
+    with tempfile.TemporaryDirectory() as directory:
+        for region in contract['values']:
+            plan=Path(directory)/'fanout.tfplan'
+            subprocess.run(['tofu','plan','-input=false','-refresh=false','-no-color','-out='+str(plan),'-var='+contract['variable']+'='+region],capture_output=True,text=True,timeout=30,check=True)
+            document=tofu_json('show','-json',str(plan));records=resource_records(document,'planned_values')
+            actual=set()
+            for station in contract['stations']:
+                group=file_resources(records,station+'.txt',in_module=True);assert len(group)==1
+                record=group[0][1];assert record['values']['content'].rstrip('\n')==region+':'+station
+                actual.add(record['address'])
+            assert actual==originals
+            changes={r['address']:r for r in document['resource_changes']}
+            assert all(changes[address]['change']['actions']==['no-op'] and changes[address]['change']['before']['id']==identity for address,identity in identities.items())
+except (AssertionError,KeyError,TypeError,ValueError,AttributeError,OSError,subprocess.SubprocessError):
+    print('Reconstruct the nested module contract so every supplied caller value reaches both stations without replacing their identity companions: ✗ [DQ:fanout_contract]')
+    sys.exit(1)
+DQ_FANOUT_CONTRACT
 ) >"$dq_probe_output" 2>/dev/null
 dq_probe_status=$?
 set -e
@@ -209,6 +234,23 @@ records = resource_records(tofu_json('show', '-json'))
 current = {r.get('address') for _, r in records}
 sys.exit(0 if addresses and addresses <= current else 1)
 DQ_PROPERTY
+python3 -I - <<'DQ_FANOUT_IDENTITIES'
+import json,sys
+from pathlib import Path
+from dq_check import resource_records,tofu_json
+try:
+    original=Path('/run/dq/facts/0/original-addresses').read_text()
+    assert Path('original-addresses').read_text()==original
+    identities=json.loads(Path('/run/dq/facts/0/station-identities.json').read_text())
+    records=[(module,r) for module,r in resource_records(tofu_json('show','-json')) if r.get('mode')=='managed']
+    actual={r['address']:r for _,r in records}
+    assert len(records)==len(actual)==4
+    assert set(actual)==set(original.splitlines())|set(identities)
+    assert all(actual[address]['mode']=='managed' and actual[address]['type']=='terraform_data' and actual[address]['values']['id']==identity for address,identity in identities.items())
+except (AssertionError,KeyError,TypeError,ValueError,AttributeError,OSError):
+    print('Retain the frozen original file addresses and each station identity, with no unrelated managed objects: ✗ [DQ:fanout_identity]')
+    sys.exit(1)
+DQ_FANOUT_IDENTITIES
 ) >"$dq_probe_output" 2>/dev/null
 dq_probe_status=$?
 set -e

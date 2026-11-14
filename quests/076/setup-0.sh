@@ -21,7 +21,11 @@ terraform {
   local = { source = "registry.terraform.io/hashicorp/local", version = "2.9.0" }
  }
 }
-locals { hub = "dispatch" }
+variable "hub" {
+ type = string
+ default = "dispatch"
+}
+locals { hub = var.hub }
 module "north" {
  source = "./modules/station"
  name = "north"
@@ -41,7 +45,11 @@ terraform {
   local = { source = "registry.terraform.io/hashicorp/local", version = "2.9.0" }
  }
 }
-locals { hub = "dispatch" }
+variable "hub" {
+ type = string
+ default = "dispatch"
+}
+locals { hub = var.hub }
 module "north" {
  source = "./modules/station"
  name = "north"
@@ -53,5 +61,44 @@ module "south" {
  upstream = module.north.route
 }
 output "routes" { value = { north = module.north.route, south = module.south.route } }
+DQ_ASSET
+cat > delivery.tf <<'DQ_ASSET'
+output "delivery_routes" {
+ value = { east = module.east.route, archive = module.archive.route }
+}
+DQ_ASSET
+cat > route-cases.json <<'DQ_ASSET'
+{
+  "variable": "hub",
+  "cases": [
+    {
+      "input": "dispatch",
+      "files": {
+        "north.txt": "dispatch:north",
+        "south.txt": "dispatch:north:south",
+        "east.txt": "dispatch:east",
+        "archive.txt": "dispatch:north:south|dispatch:east:archive"
+      }
+    },
+    {
+      "input": "relay",
+      "files": {
+        "north.txt": "relay:north",
+        "south.txt": "relay:north:south",
+        "east.txt": "relay:east",
+        "archive.txt": "relay:north:south|relay:east:archive"
+      }
+    }
+  ],
+  "dependencies": {
+    "south.txt": [
+      "north.txt"
+    ],
+    "archive.txt": [
+      "south.txt",
+      "east.txt"
+    ]
+  }
+}
 DQ_ASSET
 sha256sum modules/station/main.tf > original-module.sha256
