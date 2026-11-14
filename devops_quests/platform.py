@@ -795,6 +795,12 @@ kubectl create secret generic route-secret --from-literal=value="$value" --dry-r
             project["spec"]["namespaceResourceWhitelist"] = [
                 {"group": "policy", "kind": "PodDisruptionBudget"}
             ]
+        if run["level"] == 97:
+            # Release delivery cannot grant authority to fabricate execution.
+            project["spec"]["namespaceResourceWhitelist"] = [
+                {"group": "apps", "kind": "Deployment"},
+                {"group": "", "kind": "Service"},
+            ]
         repository = {
             "apiVersion": "v1",
             "kind": "Secret",

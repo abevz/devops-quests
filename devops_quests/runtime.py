@@ -604,9 +604,9 @@ nodes:
                         }
                     ],
                 }
-                if run["level"] == 85:
-                    # Eviction receipts must remain server-owned. This bay needs
-                    # policy edits, but no RBAC mutation/escalate/bind authority.
+                if run["level"] in {85, 97}:
+                    # Trusted eviction/execution evidence needs server-owned
+                    # status. Workload/policy edits need no RBAC escalation.
                     role["rules"][0]["resources"] = [
                         resource for resource in role["rules"][0]["resources"]
                         if resource not in {"roles", "rolebindings"}

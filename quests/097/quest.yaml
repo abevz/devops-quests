@@ -11,6 +11,13 @@ stages:
     check: test "$(sha256sum recovery-image.tar | cut -d' ' -f1)" = "$(cat /run/dq/facts/0/archive.sha256)"
   - text: stages.0.objectives.1.text
     check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
+      set -E
+      trap 'printf "%s\n" "Recover the exact release and protected artifact manifest/config/layer bytes through verified TLS: ✗ [DQ:recovery_registry]"; exit 1' ERR
       source platform.env
       image=$(cat /run/dq/facts/0/release-image);digest=${image##*@}
       curl -fsS --cacert /run/dq/facts/0/registry-ca.crt -u "$REGISTRY_USER:$REGISTRY_PASSWORD" -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' "https://$REGISTRY/v2/parcel/manifests/$digest" > /tmp/restored-manifest.json
@@ -19,6 +26,101 @@ stages:
       cmp /tmp/restored-manifest.json /tmp/restored-tag.json
       config=$(jq -er .config.digest /tmp/restored-manifest.json)
       curl -fsS --cacert /run/dq/facts/0/registry-ca.crt -u "$REGISTRY_USER:$REGISTRY_PASSWORD" "https://$REGISTRY/v2/parcel/blobs/$config" >/dev/null
+      verify_blobs() {
+       manifest=$1
+       repository=$2
+       jq -r '[.config]+.layers|.[]|[.digest,.size]|@tsv' "$manifest" | while IFS=$'\t' read -r blob size; do
+        curl -fsS --cacert /run/dq/facts/0/registry-ca.crt -u "$REGISTRY_USER:$REGISTRY_PASSWORD" "https://$REGISTRY/v2/$repository/blobs/$blob" > /tmp/recovered-blob
+        test "sha256:$(sha256sum /tmp/recovered-blob | cut -d' ' -f1)" = "$blob"
+        test "$(wc -c </tmp/recovered-blob)" -eq "$size"
+       done
+      }
+      verify_blobs /tmp/restored-manifest.json parcel
+      protected=$(jq -er .protected_image /run/dq/facts/0/recovery-baseline.json)
+      protected_digest=${protected##*@}
+      protected_tag=$(jq -er .protected_tag /run/dq/facts/0/recovery-baseline.json)
+      curl -fsS --cacert /run/dq/facts/0/registry-ca.crt -u "$REGISTRY_USER:$REGISTRY_PASSWORD" -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' "https://$REGISTRY/v2/protected/manifests/$protected_tag" > /tmp/protected-manifest.json
+      test "sha256:$(sha256sum /tmp/protected-manifest.json | cut -d' ' -f1)" = "$protected_digest"
+      verify_blobs /tmp/protected-manifest.json protected
+      trap - ERR
+
+      # Read the published definition as well as the actual controller/consumer state.
+      git -C repository fetch origin main >/dev/null 2>&1
+      head=$(git -C repository rev-parse origin/main)
+      published=$(git -C repository show "$head:manifests/web.yaml")
+      resources=$(kubectl get deployment,service,cronjob,job,application,pods,replicasets -o json)
+      python3 -I - /dev/fd/3 /dev/fd/4 "$head" 3<<<"$published" 4<<<"$resources" <<'DQ_RECOVERY_CONSUMERS'
+      import json,re,subprocess,sys,yaml
+      from pathlib import Path
+      from dq_check import read_argument,workload_worker,pod_worker,current_pods,ready_image
+      messages={
+       'recovery_identity':'Retain the original delivery controllers, service and suspended batch definition.',
+       'recovery_source':'Publish the recovered immutable image in the existing Git source and wait for that revision to synchronize with automatic self-healing.',
+       'recovery_web':'The retained web consumer must run the archived immutable image and serve its original HTTP response.',
+       'recovery_batch':'Repair the suspended batch template and retain one new completed execution with a real Pod using the archived immutable image.',
+      }
+      failure='recovery_identity'
+      try:
+          baseline=json.loads(Path('/run/dq/facts/0/recovery-baseline.json').read_text())
+          image=Path('/run/dq/facts/0/release-image').read_text().strip();repository,digest=image.rsplit('@',1)
+          def pinned(value):
+              return isinstance(value,str) and re.fullmatch(re.escape(repository)+r'(?::[a-zA-Z0-9_.-]+)?@'+re.escape(digest),value) is not None
+          items=json.loads(read_argument(sys.argv[2]))['items'];objects={o['kind']+'/'+o['metadata']['name']:o for o in items}
+          assert all(objects[key]['metadata']['uid']==uid for key,uid in baseline['identities'].items())
+          cron=objects['CronJob/archive-scan'];assert cron['spec']['suspend'] is True
+          failure='recovery_source'
+          app=objects['Application/release'];spec=app['spec'];auto=spec['syncPolicy']['automated']
+          assert spec['source']==baseline['source'] and spec['project']=='station'
+          assert spec['destination']=={'server':'https://kubernetes.default.svc','namespace':app['metadata']['namespace']}
+          assert auto.get('enabled') is not False and auto['selfHeal'] is True and auto['prune'] is True
+          assert app['status']['sync']['status']=='Synced' and app['status']['sync']['revision']==sys.argv[3]
+          documents=list(yaml.safe_load_all(read_argument(sys.argv[1])))
+          source=next(o for o in documents if isinstance(o,dict) and o.get('kind')=='Deployment' and o['metadata']['name']=='archive-web')
+          declared=workload_worker(source)['image'];assert pinned(declared)
+          deployment=objects['Deployment/archive-web'];assert workload_worker(deployment)['image']==declared
+          failure='recovery_web'
+          replicas=deployment['spec']['replicas']
+          assert type(replicas) is int and replicas>0 and deployment['status']['readyReplicas']==replicas
+          assert deployment['status']['observedGeneration']==deployment['metadata']['generation']
+          pods={'items':[o for o in items if o['kind']=='Pod']};sets={'items':[o for o in items if o['kind']=='ReplicaSet']}
+          live=current_pods(deployment,sets,pods);assert len(live)==replicas and all(ready_image(p,declared) for p in live)
+          response=subprocess.run(['kubectl','exec','deployment/archive-web','-c','worker','--','wget','-qO-','-T','3','http://archive-web:8080'],capture_output=True,text=True,timeout=8,check=True).stdout.strip()
+          assert response==baseline['http_response']
+          failure='recovery_batch'
+          template=cron['spec']['jobTemplate']['spec']['template']['spec']
+          batch_worker=next(c for c in template['containers'] if c['name']=='worker');assert pinned(batch_worker['image'])
+          jobs=[o for o in items if o['kind']=='Job' and o['metadata']['uid'] not in baseline['previous_jobs'] and any(c['type']=='Complete' and c['status']=='True' for c in o.get('status',{}).get('conditions',[]))]
+          assert len(jobs)==1
+          job=jobs[0];assert job['spec']['template']['spec']==template
+          owned=[p for p in pods['items'] if any(o.get('kind')=='Job' and o.get('controller') is True and o.get('uid')==job['metadata']['uid'] for o in p['metadata'].get('ownerReferences',[]))]
+          successful=[p for p in owned if p.get('status',{}).get('phase')=='Succeeded'];assert successful
+          for pod in successful:
+              worker=pod_worker(pod);assert worker['image']==batch_worker['image']
+              status=next(c for c in pod['status']['containerStatuses'] if c['name']=='worker')
+              assert status['state']['terminated']['exitCode']==0
+              actual=re.search(r'(?:^|[@/])(sha256:[0-9a-f]{64})$',status.get('imageID',''))
+              assert actual and actual.group(1)==digest
+          logs=subprocess.run(['kubectl','logs',successful[0]['metadata']['name'],'-c','worker'],capture_output=True,text=True,timeout=8,check=True).stdout.strip()
+          assert logs==baseline['batch_response']
+      except (AssertionError,KeyError,ValueError,TypeError,AttributeError,OSError,StopIteration,yaml.YAMLError,subprocess.SubprocessError):
+          print(messages[failure]+' ✗ [DQ:'+failure+']')
+          sys.exit(1)
+      DQ_RECOVERY_CONSUMERS
+      if [ "$(kubectl auth can-i patch pods --subresource=status)" != no ] || [ "$(kubectl auth can-i patch jobs --subresource=status)" != no ]; then
+       printf '%s\n' 'Player patches must not fabricate Pod or Job execution status: ✗ [DQ:recovery_authority]'
+       exit 1
+      fi
+
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+      printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
 hints:
 - text: hints.0.text
   guide: gitops-delivery
@@ -46,9 +148,16 @@ facts:
   - recovery-image.tar
   - release-image
   - registry-ca.crt
+  - archive.sha256
+  - protected-image
+  - application.yaml
+  - repository/manifests/web.yaml
+  - batch.yaml
+  - recovery-baseline.json
   services: []
 immutable:
   0:
   - archive.sha256
   - release-image
   - registry-ca.crt
+  - recovery-baseline.json

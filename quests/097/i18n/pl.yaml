@@ -1,47 +1,59 @@
-title: Przywrócenie rejestru
+title: Odtworzenie i aktywacja wydania
 brief: |-
-  Odbiorcy docierają do prywatnego rejestru, ale nie mogą pobrać obrazu wydania. Odtwórz jego pierwotną zawartość z dostarczonego archiwum.
+  Prywatny rejestr jest dostępny, ale dostarczanie wydania i odbiorca wsadowy nie mogą go pobrać. Odtwórz zarchiwizowane wydanie przez obie istniejące ścieżki dostarczania.
 
-  Pracuj na workstation w `~/quest` z plikami `platform.env`, `recovery-image.tar`, `release-image`, `registry-ca.crt`.
+  Pracuj w `~/quest` na stacji roboczej. Dane: `platform.env`, `recovery-image.tar`, `archive.sha256`, `release-image`, `registry-ca.crt`, `protected-image`, `repository/manifests/web.yaml`, `batch.yaml`, `application.yaml`. Zamrożone dane są w `/run/dq/facts/0/`.
 
-  **Requirements:**
+  **Wymagania:**
 
-  - Plik `~/quest/recovery-image.tar` na workstation zachowuje dostarczoną sumę kontrolną.
-  - Dostarczony prywatny rejestr udostępnia pierwotne wydanie pod tagiem zapisanym w archiwum odzyskiwania i jego niezmiennym digestem; blob konfiguracji jest dostępny przez zweryfikowany TLS.
+  - Plik stacji roboczej `~/quest/recovery-image.tar` zachowuje dostarczoną sumę kontrolną.
+  - Rejestr udostępnia pierwotne bajty wydania przez zweryfikowany TLS; obaj zachowani odbiorcy wykonują to niezmienne wydanie, a niezależny chroniony artefakt pozostaje nienaruszony.
+    - Zachowaj pierwotny manifest pod tagiem z archiwum i digest, ze wszystkimi bajtami config/warstw oraz zadeklarowanymi rozmiarami.
+    - Chroniony artefakt zachowuje zapisane tag, digest i wszystkie bloby.
+    - Zachowaj tożsamości pierwotnych Application, Deployment, Service i CronJob, istniejące źródło Git, project, destination oraz automatyczne pruning i samonaprawianie.
+    - Opublikowana definicja web pozostaje pod dostarczoną ścieżką repozytorium, a obserwowana rewizja aplikacji odpowiada opublikowanej zdalnej rewizji.
+    - Obrazy zadeklarowane u obu odbiorców muszą wskazywać niezmienny digest z archiwum, a rzeczywiste image ID muszą mu odpowiadać.
+    - Usługa web zwraca dostarczoną odpowiedź.
+    - Pozostaw zwykły harmonogram wsadowy zawieszony; zachowaj dokładnie jeden nowy ukończony Job z naprawionego szablonu (lub równoważny poprawny Job), jego rzeczywisty ukończony Pod, kod wyjścia zero i dostarczony wynik wsadowy.
+    - Zapisana poprzednia próba się nie liczy.
+    - Patch statusu Podów i Jobów pozostaje niedostępny dla gracza.
 
-  Ćwiczenie przywraca zawartość obrazu, a nie host rejestru ani dowolny magazyn.
-debrief: Niezmienna wersja została odzyskana z zachowanej zawartości obrazu i zweryfikowana za pomocą
-  rejestru API.
-stages.0.brief: Zachowaj dostarczone archiwum odzyskiwania bez zmian.
-hints.0.text: Dostępność procesu nie oznacza dostępności treści obrazu.
-hints.1.text: |-
-  Sprawdź dostarczone odwołanie do obrazu i listę obrazów prywatnego Docker daemon.
-
-  ```bash
-  cat release-image
-  docker image ls
-  ```
-hints.2.text: |-
-  Załaduj zatwierdzone archiwum, wypchnij oryginalne odniesienie i sprawdź rzeczywiste bajty manifest. Użyj zamrożonego digest i zarchiwizuj checksum jako osobne kontrole.
-
-  Sprawdź z `~/quest` na workstation:
-
-  - `sha256sum recovery-image.tar`
-  - `cat /run/dq/facts/0/archive.sha256`
-
-  Wartości SHA-256 są zgodne.
-
-  - `source platform.env`
-  - `curl -fsS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' -I "https://$REGISTRY/v2/parcel/manifests/1"`
-  - `config=$(curl -fsS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' "https://$REGISTRY/v2/parcel/manifests/1" | jq -r .config.digest)`
-  - `curl -fsS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") -I "https://$REGISTRY/v2/parcel/blobs/$config"`
-
-  HTTP `200`; `Docker-Content-Digest` odpowiada digestowi z `release-image`. Blob konfiguracji również zwraca HTTP `200`.
+  Kontrole obserwują bieżący stan zawartości i dostarczania oraz zachowane dowody wykonania; nie dowodzą nieprzerwanej dostępności ani odtworzenia hosta rejestru lub pamięci masowej.
+debrief: Archiwum odtworzyło pierwotny artefakt, ale dostarczenie wymagało świadomej publikacji i aktywacji
+  u dwóch niezależnych właścicieli. Bajty rejestru, rzeczywiste image ID, zakończenie zadania i zachowane
+  tożsamości potwierdzają odtworzenie.
+stages.0.brief: Zachowaj archiwum i odtwórz to samo wydanie w rejestrze i u obu odbiorców.
+hints.0.text: Dostępność artefaktu i aktywacja odbiorcy to oddzielne granice. Przywrócony tag sam nie
+  dowodzi, że niezależnie zarządzani odbiorcy wykonują właściwe bajty.
+hints.1.text: Porównaj `tar tf recovery-image.tar`, `cat release-image` i `docker image ls` z odpowiedziami
+  rejestru. Zbadaj `kubectl get applications,deployments,cronjobs,jobs,pods -o yaml`, zdarzenia pobierania
+  obrazów Podów oraz definicje Git/batch. Ustal właściciela każdego zadeklarowanego obrazu; zamrożone
+  dane odróżniają poprzednią próbę od nowego wykonania.
+hints.2.text: Sprawdź sumę archiwum przed załadowaniem go do prywatnego demona. Przywróć pierwotne odwołanie
+  rejestru i porównaj rzeczywiste bajty manifestu/config/warstw, także chronionego artefaktu. Opublikuj
+  odzyskany niezmienny obraz w Git, napraw niezależny szablon wsadowy i uruchom nowe wykonanie, zachowując
+  zawieszony harmonogram. Sprawdź `git -C repository log -1`, `kubectl get applications,jobs,pods -o wide`
+  i `kubectl logs <completed-pod> -c worker`. Oczekuj opublikowanej rewizji, pierwotnego digest w obu
+  szablonach i rzeczywistych kontenerach, dostarczonych odpowiedzi HTTP/batch oraz faktycznie ukończonego
+  nowego Joba. Zachowaj Job i Pod do weryfikacji.
 phrases.0: Oddzieliłem dostępność usługi od utraty artifact.
 phrases.1: Odzyskałem oryginalną, niezmienną wersję ze zweryfikowanego archiwum.
 phrases.2: Zweryfikowałem manifest i config poprzez uwierzytelnione TLS.
-stages.0.objectives.0.text: Plik `~/quest/recovery-image.tar` na workstation zachowuje dostarczoną sumę
+stages.0.objectives.0.text: Plik stacji roboczej `~/quest/recovery-image.tar` zachowuje dostarczoną sumę
   kontrolną.
-stages.0.objectives.1.text: Dostarczony prywatny rejestr udostępnia pierwotne wydanie pod tagiem zapisanym
-  w archiwum odzyskiwania i jego niezmiennym digestem; blob konfiguracji jest dostępny przez zweryfikowany
-  TLS.
+stages.0.objectives.1.text: Rejestr udostępnia pierwotne bajty wydania przez zweryfikowany TLS; obaj zachowani
+  odbiorcy wykonują to niezmienne wydanie, a niezależny chroniony artefakt pozostaje nienaruszony.
+diagnostics.recovery_identity: Zachowaj pierwotne kontrolery dostarczania, usługę i zawieszoną definicję
+  wsadową.
+diagnostics.recovery_source: Opublikuj odzyskany niezmienny obraz w istniejącym źródle Git i poczekaj
+  na synchronizację tej rewizji z automatycznym samonaprawianiem.
+diagnostics.recovery_web: Zachowany odbiorca web musi wykonywać niezmienny obraz z archiwum i zwracać
+  pierwotną odpowiedź HTTP.
+diagnostics.recovery_batch: Napraw zawieszony szablon wsadowy i zachowaj nowe ukończone wykonanie z rzeczywistym
+  Podem używającym niezmiennego obrazu z archiwum.
+diagnostics.recovery_registry: Odtwórz dokładne bajty manifestu/config/warstw wydania i chronionego artefaktu
+  przez zweryfikowany TLS.
+diagnostics.recovery_authority: Patch gracza nie może fałszować statusu wykonania Podów ani Jobów.
+diagnostics.probe_0_1: 'Bieżące dane nie pozwoliły zweryfikować tego celu: Rejestr udostępnia pierwotne
+  bajty wydania przez zweryfikowany TLS; obaj zachowani odbiorcy wykonują to niezmienne wydanie, a niezależny
+  chroniony artefakt pozostaje nienaruszony.'

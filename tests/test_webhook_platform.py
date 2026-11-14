@@ -10,7 +10,7 @@ from devops_quests.catalog import ROOT
 from devops_quests.platform import Platform
 
 
-@pytest.mark.parametrize("level", [54, 75, 85, 123])
+@pytest.mark.parametrize("level", [54, 75, 85, 97, 123])
 def test_webhook_receiver_is_on_demand_and_uses_pinned_image(level, monkeypatch):
     objects, files = [], {}
 
@@ -62,6 +62,12 @@ def test_webhook_receiver_is_on_demand_and_uses_pinned_image(level, monkeypatch)
     if level == 85:
         assert project["spec"]["namespaceResourceWhitelist"] == [
             {"group": "policy", "kind": "PodDisruptionBudget"}
+        ]
+        assert project["spec"]["clusterResourceWhitelist"] == []
+    elif level == 97:
+        assert project["spec"]["namespaceResourceWhitelist"] == [
+            {"group": "apps", "kind": "Deployment"},
+            {"group": "", "kind": "Service"},
         ]
         assert project["spec"]["clusterResourceWhitelist"] == []
     else:
