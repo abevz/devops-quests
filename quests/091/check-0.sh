@@ -39,8 +39,16 @@ set +e
 (
 set -euo pipefail
 source platform.env
-image=$(jq -er .image /run/dq/facts/0/release-evidence.json)
-commit=$(jq -er .commit /run/dq/facts/0/release-evidence.json)
+image=$(jq -er .image provenance.json)
+commit=$(jq -er .commit provenance.json)
+python3 -I - /run/dq/facts/0/release-evidence.json provenance.json <<'DQ_PROVENANCE_COMMITMENT'
+import hashlib,json,sys
+from pathlib import Path
+expected=json.loads(Path(sys.argv[1]).read_text())
+report=json.loads(Path(sys.argv[2]).read_text())
+actual=hashlib.sha256(json.dumps(report,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+sys.exit(expected != {'sha256':actual})
+DQ_PROVENANCE_COMMITMENT
 test "$commit" != "$(cat release-commit)"
 git -C repository merge-base --is-ancestor "$commit" origin/main
 test "$(git -C repository show "$commit:site/index.html")" = north-91
@@ -97,6 +105,47 @@ try:
 except Exception:
     sys.exit(1)
 DQ_PRIVATE_IMAGE
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_5]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
+# Deliver the verified record through the existing source and live consumer.
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+cd ~/quest
+published=$(git -C repository show origin/main:manifests/provenance.yaml)
+live=$(kubectl get configmap build-record -o json)
+served=$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080/provenance.json)
+if ! python3 -I - provenance.json /dev/fd/3 /dev/fd/4 /dev/fd/5 3<<<"$published" 4<<<"$live" 5<<<"$served" <<'DQ_PROVENANCE_DELIVERY'
+import json,sys,yaml
+from pathlib import Path
+try:
+    report=json.loads(Path(sys.argv[1]).read_text())
+    published=yaml.safe_load(Path(sys.argv[2]).read_text())
+    live=json.loads(Path(sys.argv[3]).read_text())
+    served=json.loads(Path(sys.argv[4]).read_text())
+    assert set(report)=={'image','commit','repo'}
+    assert all(isinstance(value,str) and value for value in report.values())
+    assert published['kind']=='ConfigMap' and published['metadata']['name']=='build-record'
+    assert json.loads(published['data']['provenance.json'])==report
+    assert json.loads(live['data']['provenance.json'])==report
+    assert served==report
+except (AssertionError,ValueError,TypeError,KeyError,OSError):
+    sys.exit(1)
+DQ_PROVENANCE_DELIVERY
+then
+ printf '%s\n' 'Published and served source records must match the verified report: ✗ [DQ:provenance_delivery]'
+ exit 1
+fi
 ) >"$dq_probe_output" 2>/dev/null
 dq_probe_status=$?
 set -e

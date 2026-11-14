@@ -100,6 +100,17 @@ python3 - <<'IMAGE'
 from pathlib import Path
 p=Path('repository/manifests/board.yaml');p.write_text(p.read_text().replace('__RELEASE_IMAGE__',Path('image-ref').read_text().strip()))
 IMAGE
+python3 - <<'PROVENANCE_CONSUMER'
+import yaml,json
+from pathlib import Path
+p=Path('repository/manifests/board.yaml');deployment=yaml.safe_load(p.read_text())
+worker=deployment['spec']['template']['spec']['containers'][0]
+worker['volumeMounts']=[{'name':'provenance','mountPath':'/opt/station/provenance.json','subPath':'provenance.json','readOnly':True}]
+deployment['spec']['template']['spec']['volumes']=[{'name':'provenance','configMap':{'name':'build-record'}}]
+p.write_text(yaml.safe_dump(deployment,sort_keys=False))
+record={'apiVersion':'v1','kind':'ConfigMap','metadata':{'name':'build-record'},'data':{'provenance.json':'{}'}}
+Path('repository/manifests/provenance.yaml').write_text(yaml.safe_dump(record,sort_keys=False))
+PROVENANCE_CONSUMER
 git -C repository add .
 git -C repository commit -m 'Deploy immutable source artifact'
 git -C repository push origin main
@@ -138,3 +149,13 @@ kubectl rollout status deployment/board --timeout=60s
 cat > provenance.json <<'DQ_ASSET'
 {}
 DQ_ASSET
+# Retain an immutable commitment for validation, never a copyable answer tuple.
+python3 - <<'COMMITMENT'
+import hashlib,json
+from pathlib import Path
+p=Path('release-evidence.json');value=json.loads(p.read_text())
+digest=hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+p.write_text(json.dumps({'sha256':digest})+'\n')
+COMMITMENT
+rm -rf image-context
+rm source-commit image-ref

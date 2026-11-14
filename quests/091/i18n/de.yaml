@@ -1,8 +1,8 @@
-title: Git-Herkunft
+title: Quellnachweis des Images
 brief: |-
-  Board bedient Anfragen, aber dem Release fehlt ein prüfbarer Herkunftsnachweis. Ermitteln Sie die Quelle des laufenden unveränderlichen Images getrennt von der Deployment-Revision.
+  Board bedient Anfragen, doch die Quellnachweise auf der Workstation und in der Veröffentlichung sind unvollständig. Verfolge das laufende unveränderliche Image zu seiner tatsächlichen Quelle und liefere den Nachweis an den laufenden Verbraucher.
 
-  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `release-evidence.json`, `provenance.json`, `release-commit`, `repository/`.
+  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `provenance.json`, `release-commit`, `repository/`.
 
   Sofern nicht anders angegeben, liegen Kubernetes-Ressourcen im Bay-Namespace (`DQ_NAMESPACE`); Pfade unter `~/quest` liegen auf der Workstation.
 
@@ -15,41 +15,41 @@ brief: |-
   - In einem Pod von Deployment `board` liefert `http://board:8080` den Wert `north-91`.
   - Die Workstation-Datei `~/quest/provenance.json` verknüpft das laufende Image, seine tatsächlichen Registry-Bytes und den Quell-Commit korrekt mit der privaten Git-Quellhistorie.
 
-    - Die Workstation-Datei `provenance.json` enthält genau `image`, `commit` und `repo`. Die Image-Quelle unterscheidet sich von `release-commit`, geht dem veröffentlichten Release in der Git-Historie voraus und enthält im Repository `site/index.html` mit `north-91`. Bericht, laufender Digest, tatsächliche Registry-Bytes, Registry-Quellmetadaten und bereitgestellter Release-Nachweis stimmen überein.
+    - Die Workstation-Datei `provenance.json` enthält genau `image`, `commit` und `repo`. Die Image-Quelle unterscheidet sich von `release-commit`, geht dem veröffentlichten Release in der Git-Historie voraus und enthält im Repository `site/index.html` mit `north-91`. Der Bericht stimmt mit dem laufenden Digest, den tatsächlichen Registry-Bytes und den Registry-Quellmetadaten überein.
+
+  - Der Quellnachweis im veröffentlichten `repository/manifests/provenance.yaml`, in der laufenden ConfigMap `build-record` und unter `http://board:8080/provenance.json` entspricht jeweils `~/quest/provenance.json` auf der Workstation. Veröffentliche die Konfiguration über die vorgegebene GitOps-Quelle; erhalte das unveränderliche Image und die Verfügbarkeit des Hauptendpunkts.
 
   Dies sind Rückverfolgbarkeitsmetadaten, keine Signatur und kein Nachweis eines vertrauenswürdigen Builds.
-debrief: Der Vorfall verknüpft nun laufende Bytes mit der Quellrevision, während die Build-Vertrauensstellung
-  eine separate Frage bleibt.
+debrief: Verfolge das laufende Artefakt zu seiner Quelle und übertrage den verifizierten Nachweis über
+  den bestehenden GitOps-Verbraucher; unsignierte Metadaten sind kein Nachweis eines vertrauenswürdigen
+  Builds.
 stages.0.brief: Trennen Sie die Herkunft des Image-Quellcodes von der Deployment-Historie.
 hints.0.text: Ein Manifest-Commit kann auf ein Image verweisen, das aus einem früheren Commit erstellt
   wurde.
 hints.1.text: |-
-  Prüfen Sie Quellhistorie und Bericht; verfolgen Sie das unveränderliche Image über Registry-Metadaten.
+  Vergleiche den bereitgestellten Digest, Manifest-/Config-Metadaten der Registry und die Git-Abstammung. Vergleiche danach Workstation-Nachweis, veröffentlichte Konfiguration und die im laufenden Pod eingebundene Datei.
 
   ```bash
   git -C repository log --oneline -5
+  kubectl get deployment board -o yaml
+  kubectl get configmap -o yaml
   cat provenance.json
   ```
 hints.2.text: |-
-  Zeichnen Sie das Image digest, das Quell-Commit und das private Repo URL auf, ohne ein label als Signatur zu behandeln. Das genaue OCI-Label ist `org.opencontainers.image.revision`; ermitteln Sie es über Manifest und Konfiguration des laufenden unveränderlichen Images. Auflösen manifest → config blob → OCI revision label; Vergleiche Git ancestry.
+  Lies das OCI-Revisionslabel aus dem Config-Blob des Manifests und vergleiche es mit der Git-Historie; verwechsle die Image-Quelle nicht mit dem Deployment-Commit. Veröffentliche den ermittelten Nachweis im vorgegebenen ConfigMap-Manifest und pushe das bestehende Arbeitslastverzeichnis. Warte auf den Controller. Eine über `subPath` eingebundene ConfigMap-Datei wird in einem bestehenden Pod nicht aktualisiert: erneuere den Verbraucher, ohne die Image-Identität zu ändern.
 
-  Prüfen Sie in `~/quest` auf der Workstation:
+  Prüfe nach der Übertragung Bericht, veröffentlichten Commit, Controller-Revision, unveränderlichen laufenden Digest und den per HTTP bereitgestellten Nachweis.
 
-  - `source platform.env`
-  - `git -C repository ls-remote origin refs/heads/main`
-  - `cat release-commit`
-  - `jq -e 'keys==["commit","image","repo"]' provenance.json; cat provenance.json`
-
-  Der Hash von Remote-`main` entspricht `release-commit`. Der Bericht enthält genau `image`, `commit` und `repo`; `commit` bezeichnet die Image-Quelle und unterscheidet sich von `release-commit`.
-
-  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
-
-  `Synced`, `Healthy` und die Revision aus `release-commit`. Die Quelle ist das bereitgestellte private Repository, `manifests`, `main`.
-
-  - `kubectl rollout status deployment/board --timeout=3s`
-  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`
-
-  Der Rollout ist abgeschlossen; `north-91`.
+  ```sh
+  source platform.env
+  git -C repository ls-remote origin refs/heads/main
+  cat release-commit
+  cat provenance.json
+  kubectl get application board -o yaml
+  kubectl rollout status deployment/board --timeout=3s
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/provenance.json
+  ```
 phrases.0: Ich habe die Quellrevision von der Bereitstellungsrevision unterschieden.
 phrases.1: Ich habe den manifest digest und das Bild config im registry überprüft.
 phrases.2: Ich habe die nicht unterschriebene Provenienz als Rückverfolgbarkeit und nicht als Bescheinigung
@@ -71,6 +71,11 @@ stages.0.objectives.3.text: Deployment `board` schließt seinen Rollout im Bay-N
 stages.0.objectives.4.text: In einem Pod von Deployment `board` liefert `http://board:8080` den Wert `north-91`.
 stages.0.objectives.5.text: Die Workstation-Datei `~/quest/provenance.json` verknüpft das laufende Image,
   seine tatsächlichen Registry-Bytes und den Quell-Commit korrekt mit der privaten Git-Quellhistorie.
+  Die veröffentlichte Konfiguration und der laufende Verbraucher zeigen beide den verifizierten Quellnachweis
+  der Workstation.
 diagnostics.probe_0_5: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: Die Workstation-Datei
   `~/quest/provenance.json` verknüpft das laufende Image, seine tatsächlichen Registry-Bytes und den Quell-Commit
   korrekt mit der privaten Git-Quellhistorie.'
+diagnostics.provenance_delivery: Der veröffentlichte und per HTTP gelieferte Quellnachweis muss dem verifizierten
+  Bericht entsprechen. Vergleiche Git, ConfigMap-Daten und den laufenden Verbraucher; ein subPath-Mount
+  kann eine ältere Datei behalten.

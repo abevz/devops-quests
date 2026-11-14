@@ -1,8 +1,8 @@
-title: Происхождение Git-релиза
+title: Прослеживаемость исходников образа
 brief: |-
-  Board обслуживает запросы, но релизу нужна проверяемая запись об исходном коде. Определите источник работающего неизменяемого образа, не смешивая его с ревизией развёртывания.
+  Board обслуживает запросы, но записи об исходниках на рабочей станции и в публикации не заполнены. Проследите работающий неизменяемый образ до его настоящих исходников и доставьте запись работающему потребителю.
 
-  Работайте на workstation в `~/quest` с файлами `platform.env`, `release-evidence.json`, `provenance.json`, `release-commit`, `repository/`.
+  Работайте на workstation в `~/quest` с файлами `platform.env`, `provenance.json`, `release-commit`, `repository/`.
 
   Если не указано иное, ресурсы Kubernetes находятся в namespace песочницы (`DQ_NAMESPACE`); пути в `~/quest` — на workstation.
 
@@ -15,39 +15,39 @@ brief: |-
   - Внутри Pod Deployment `board` адрес `http://board:8080` возвращает `north-91`.
   - Файл `~/quest/provenance.json` на workstation верно связывает работающий образ, его реальные байты в реестре и исходный коммит с историей приватного Git.
 
-    - Файл `provenance.json` на workstation содержит ровно `image`, `commit` и `repo`. Исходный коммит образа отличается от `release-commit`, предшествует опубликованному релизу в истории Git и содержит в репозитории `site/index.html` со значением `north-91`. Отчёт, работающий digest, реальные байты реестра, метаданные источника реестра и предоставленное подтверждение релиза согласованы.
+    - Файл `provenance.json` на workstation содержит ровно `image`, `commit` и `repo`. Исходный коммит образа отличается от `release-commit`, предшествует опубликованному релизу в истории Git и содержит в репозитории `site/index.html` со значением `north-91`. Отчёт согласован с работающим digest, реальными байтами реестра и метаданными источника реестра.
+
+  - Запись об исходниках в опубликованном `repository/manifests/provenance.yaml`, работающем ConfigMap `build-record` и `http://board:8080/provenance.json` совпадает с `~/quest/provenance.json` на рабочей станции. Публикуйте конфигурацию через выданный GitOps-источник; сохраните неизменяемый образ и доступность основного endpoint.
 
   Это метаданные прослеживаемости, а не подпись или доказательство доверенной сборки.
-debrief: Инцидент связывает работающие байты с ревизией исходников, отделяя вопрос доверия сборке.
+debrief: Проследите работающий артефакт до исходников и доставьте подтверждённую запись через существующего
+  GitOps-потребителя; неподписанные metadata не подтверждают доверенную сборку.
 stages.0.brief: Различайте происхождение исходного кода образа и историю развёртывания.
 hints.0.text: Коммит манифеста может ссылаться на образ из более раннего коммита.
 hints.1.text: |-
-  Изучите историю исходного кода и отчёт; проследите неизменяемый образ по метаданным реестра.
+  Сравните digest работающего образа, metadata манифеста и config в registry и происхождение коммитов Git. Затем сравните запись на рабочей станции, опубликованную конфигурацию и файл, смонтированный в работающем Pod.
 
   ```bash
   git -C repository log --oneline -5
+  kubectl get deployment board -o yaml
+  kubectl get configmap -o yaml
   cat provenance.json
   ```
 hints.2.text: |-
-  Запишите digest, коммит исходников и URL приватного репозитория; label не заменяет подпись. Точная OCI-метка — `org.opencontainers.image.revision`; найдите её через манифест и конфигурацию работающего неизменяемого образа. Пройдите manifest → config blob → OCI revision label; проверьте ancestry Git.
+  Прочитайте метку OCI revision из config blob манифеста и сравните её с историей Git; не путайте исходный коммит образа с коммитом развёртывания. Опубликуйте найденную запись в выданном манифесте ConfigMap и отправьте существующий каталог приложения в Git. Дождитесь контроллера. Файл ConfigMap, смонтированный через `subPath`, не обновляется внутри существующего Pod: обновите потребителя, сохранив идентичность образа.
 
-  Проверьте из `~/quest` на workstation:
+  После доставки проверьте отчёт, опубликованный коммит, revision контроллера, неизменяемый digest работающего образа и опубликованную через HTTP запись.
 
-  - `source platform.env`
-  - `git -C repository ls-remote origin refs/heads/main`
-  - `cat release-commit`
-  - `jq -e 'keys==["commit","image","repo"]' provenance.json; cat provenance.json`
-
-  Хеш удалённой `main` совпадает с `release-commit`. Отчёт содержит ровно `image`, `commit` и `repo`; `commit` определяет исходный код образа и отличается от `release-commit`.
-
-  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
-
-  `Synced`, `Healthy` и ревизия из `release-commit`. Источник — предоставленный приватный репозиторий, `manifests`, `main`.
-
-  - `kubectl rollout status deployment/board --timeout=3s`
-  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`
-
-  Rollout завершён; `north-91`.
+  ```sh
+  source platform.env
+  git -C repository ls-remote origin refs/heads/main
+  cat release-commit
+  cat provenance.json
+  kubectl get application board -o yaml
+  kubectl rollout status deployment/board --timeout=3s
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/provenance.json
+  ```
 phrases.0: Я различил ревизию исходников и ревизию выкатки.
 phrases.1: Я проверил digest manifest и config образа в registry.
 phrases.2: Я использовал неподписанные метаданные для трассировки, а не аттестации.
@@ -66,6 +66,10 @@ stages.0.objectives.2.text: Application `board` сообщает `Synced` и `He
 stages.0.objectives.3.text: Deployment `board` завершает rollout в namespace песочницы.
 stages.0.objectives.4.text: Внутри Pod Deployment `board` адрес `http://board:8080` возвращает `north-91`.
 stages.0.objectives.5.text: Файл `~/quest/provenance.json` на workstation верно связывает работающий образ,
-  его реальные байты в реестре и исходный коммит с историей приватного Git.
+  его реальные байты в реестре и исходный коммит с историей приватного Git. Опубликованная конфигурация
+  и работающий потребитель показывают подтверждённую запись об исходниках с рабочей станции.
 diagnostics.probe_0_5: 'Текущие данные не позволили проверить эту цель: Файл `~/quest/provenance.json` на workstation
   верно связывает работающий образ, его реальные байты в реестре и исходный коммит с историей приватного Git.'
+diagnostics.provenance_delivery: Опубликованная и обслуживаемая записи об исходниках должны совпадать
+  с подтверждённым отчётом. Сравните Git, данные ConfigMap и работающего потребителя; subPath может сохранять
+  старый файл.

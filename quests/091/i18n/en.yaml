@@ -1,8 +1,8 @@
-title: Git provenance
+title: Image-source traceability
 brief: |-
-  The board is serving traffic, but its release needs a verifiable source record. Identify the source of the running immutable image without confusing it with the deployment revision.
+  The board serves traffic, but its workstation and published source records are incomplete. Trace the running immutable image back to its real source and deliver that record to the live consumer.
 
-  Work on the workstation in `~/quest` with `platform.env`, `release-evidence.json`, `provenance.json`, `release-commit`, `repository/`.
+  Work on the workstation in `~/quest` with `platform.env`, `provenance.json`, `release-commit`, `repository/`.
 
   Unless stated otherwise, Kubernetes resources live in the bay namespace (`DQ_NAMESPACE`); `~/quest` paths are on the workstation.
 
@@ -15,40 +15,39 @@ brief: |-
   - Inside a Pod of Deployment `board`, `http://board:8080` returns `north-91`.
   - Workstation `~/quest/provenance.json` correctly links the running image, its actual registry bytes and source commit, and the private Git source history.
 
-    - Workstation `provenance.json` contains exactly `image`, `commit` and `repo`. The image source differs from `release-commit`, precedes the published release in Git history, and contains `site/index.html` with `north-91` in the repository. The report, running digest, actual registry bytes, registry source metadata and supplied release evidence agree.
+    - Workstation `provenance.json` contains exactly `image`, `commit` and `repo`. The image source differs from `release-commit`, precedes the published release in Git history, and contains `site/index.html` with `north-91` in the repository. The report agrees with the running digest, actual registry bytes and registry source metadata.
+
+  - The source record in the published `repository/manifests/provenance.yaml`, the live ConfigMap `build-record`, and `http://board:8080/provenance.json` all equal workstation `~/quest/provenance.json`. Publish configuration through the supplied GitOps source; keep the running immutable image and the main endpoint available.
 
   This is traceability metadata, not a signature or proof of a trusted build.
-debrief: The incident now links running bytes to the source revision while keeping build trust a separate
-  question.
+debrief: Trace the running artifact to its source and propagate the verified record through the existing
+  GitOps consumer; unsigned metadata is not a trusted-build attestation.
 stages.0.brief: Keep image-source provenance distinct from deployment history.
 hints.0.text: A manifest commit can reference an image built from an earlier commit.
 hints.1.text: |-
-  Inspect the source history and the report; trace the immutable image through registry metadata.
+  Compare the deployed digest, registry manifest/config metadata and Git ancestry. Then compare the workstation record, published configuration and the file mounted by the running Pod.
 
   ```bash
   git -C repository log --oneline -5
+  kubectl get deployment board -o yaml
+  kubectl get configmap -o yaml
   cat provenance.json
   ```
 hints.2.text: |-
-  Record the image digest, source commit and private repo URL, without treating a label as a signature. The exact OCI label is `org.opencontainers.image.revision`; follow the running immutable image’s manifest and config to find it. Resolve manifest → config blob → OCI revision label; compare Git ancestry.
+  Read the OCI revision label from the manifest's config blob and compare it with Git history; do not confuse the image source with the deployment commit. Publish the discovered record in the supplied ConfigMap manifest and push the existing workload directory. Wait for the controller. A ConfigMap file mounted using `subPath` is not updated inside an existing Pod: refresh that consumer without changing the image identity.
 
-  Verify from `~/quest` on the workstation:
+  Verify the report, the published commit, controller revision, immutable running digest and served record after propagation.
 
-  - `source platform.env`
-  - `git -C repository ls-remote origin refs/heads/main`
-  - `cat release-commit`
-  - `jq -e 'keys==["commit","image","repo"]' provenance.json; cat provenance.json`
-
-  The remote `main` hash equals `release-commit`. The report contains exactly `image`, `commit` and `repo`; `commit` identifies the image source, distinct from `release-commit`.
-
-  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
-
-  `Synced`, `Healthy`, and the revision from `release-commit`. The source is the supplied private repository, `manifests`, `main`.
-
-  - `kubectl rollout status deployment/board --timeout=3s`
-  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`
-
-  The rollout completes; `north-91`.
+  ```sh
+  source platform.env
+  git -C repository ls-remote origin refs/heads/main
+  cat release-commit
+  cat provenance.json
+  kubectl get application board -o yaml
+  kubectl rollout status deployment/board --timeout=3s
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/provenance.json
+  ```
 phrases.0: I distinguished source revision from deployment revision.
 phrases.1: I verified the manifest digest and image config in the registry.
 phrases.2: I treated unsigned provenance as traceability, not attestation.
@@ -66,6 +65,9 @@ stages.0.objectives.2.text: Application `board` reports `Synced` and `Healthy` a
 stages.0.objectives.3.text: Deployment `board` completes its rollout in the bay namespace.
 stages.0.objectives.4.text: Inside a Pod of Deployment `board`, `http://board:8080` returns `north-91`.
 stages.0.objectives.5.text: Workstation `~/quest/provenance.json` correctly links the running image, its
-  actual registry bytes and source commit, and the private Git source history.
+  actual registry bytes and source commit, and the private Git source history. The published configuration
+  and the running consumer both expose the verified workstation source record.
 diagnostics.probe_0_5: 'The current inputs could not verify this objective: Workstation `~/quest/provenance.json`
   correctly links the running image, its actual registry bytes and source commit, and the private Git source history.'
+diagnostics.provenance_delivery: The published and served source records must match the verified report.
+  Compare Git, ConfigMap data and the running consumer; a subPath mount can retain an older file.
