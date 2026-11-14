@@ -1,50 +1,46 @@
 title: Recuperación parcial del estado
 brief: |-
-  La entrega solicitada está incompleta.
+  La entrega está incompleta y los checkpoints conservados describen distintos conjuntos de trabajo completado. Completa la recuperación sin descartar progreso más reciente.
 
-  Trabaja en la workstation en `~/quest` con `main.tf`.
+  Trabaja en `~/quest` en la estación con `main.tf` y `recovery-checkpoint.tfstate`.
 
   **Requisitos:**
-  - Salidas raíz:
-    - Nombre de salida: `north_id`.
-    - La salida `north_id` conserva el ID del recurso asignado originalmente por el proveedor.
-  - Archivos en la workstation:
-    - `~/quest/north.txt`: `north-71`.
-    - `~/quest/south.txt`: `south-71`.
-  - Estado de OpenTofu:
-    - OpenTofu registra exactamente los dos archivos gestionados definidos en la configuración suministrada.
-  - Plan de recuperación guardado en la workstation:
-    - Ruta: `~/quest/recovery-plan.json`.
-    - El archivo `recovery-plan.json` de la workstation registra exactamente dos entradas de recurso: el archivo gestionado existente no cambia y solo se crea el archivo gestionado que falta.
-  - Convergencia de infraestructura:
-    - Sin cambios de infraestructura pendientes; código de salida del plan detallado `0`.
 
-  La comprobación examina el estado actual y los datos del plan guardado; no demuestra que se aplicara ese plan exacto.
-debrief: El ID registrado de north, los archivos, las direcciones de estado y el plan de recuperación
-  guardado coinciden con las comprobaciones, y el plan final no tiene cambios.
-stages.0.brief: Completa la entrega conservando la identidad registrada.
-hints.0.text: Un apply interrumpido puede dejar recursos válidos ya registrados en el estado.
+  - El output `north_id` conserva su ID original del proveedor.
+  - En la estación, `north.txt` y `south.txt` coinciden con la configuración suministrada.
+  - State registra exactamente ambos archivos de rutas y conserva las dos identidades de operaciones registradas.
+  - `recovery-plan.json` conserva identidades existentes y crea solo el archivo ausente; el checkpoint y la copia previa siguen siendo válidos.
+  - OpenTofu no indica cambios de infraestructura pendientes.
+  - Conserva el checkpoint sin cambios y todas las operaciones completadas registradas en el state parcial más reciente.
+  - `~/quest/before-recovery.tfstate` en la estación representa el state parcial suministrado antes de recuperar, con el mismo lineage, serial e ID de objetos completados.
+  - `~/quest/recovery-plan.json` en la estación contiene dos entradas de archivos de rutas: el existente no cambia y solo se crea el ausente. Ambos acompañantes de operaciones tienen entradas no-op con sus ID registrados. No se permiten entradas ajenas.
+  - Los archivos administrados están en `~/quest/north.txt` y `~/quest/south.txt` en la estación. Conserva el contenido existente y completa el ausente según la configuración.
+
+  Las comprobaciones inspeccionan state actual, artefactos conservados y planes sin aplicar; no demuestran qué plan exacto se aplicó ni todo el historial de comandos.
+debrief: El checkpoint antiguo contenía el binding ausente, pero no una operación posterior completada.
+  Recuperar solo ese binding conservó ambas identidades y la ruta original; el plan guardado creó la ruta
+  ausente sin sustituir trabajo existente.
+stages.0.brief: Recupera el binding incompleto conservando trabajo posterior completado.
+hints.0.text: La configuración, un checkpoint completo antiguo y un state parcial nuevo pueden ser válidos
+  por separado y describir trabajos diferentes. Reintentar a ciegas o restaurar todo el checkpoint puede
+  cambiar una identidad.
 hints.1.text: |-
-  El apply interrumpido ya registró north; aún debe crearse south.
-
-  Inspecciona la configuración suministrada y las observaciones actuales en la workstation:
+  Compara la configuración con los inventarios de state actual y conservado. Revisa las acciones propuestas e identifica qué existe solo en el checkpoint antiguo y qué solo en el state nuevo.
 
   ```sh
-  cat main.tf
   tofu state list
-  ls -l north.txt south.txt
+  tofu state list -state=recovery-checkpoint.tfstate
+  tofu plan -input=false -no-color
   ```
 hints.2.text: |-
-  Aplica el plan guardado con north no-op y south create.
-  Guarda el plan binario y expórtalo con tofu show -json al artefacto JSON solicitado.
+  Captura el state parcial actual antes de modificarlo y trabaja con una copia del checkpoint de confianza. Restaura solo el binding ausente en el state local existente sin sobrescribir registros posteriores. Guarda y exporta un plan que conserve las identidades y cree solo la ruta ausente. Verifica la entrada, lineage/serial de la copia, acciones y convergencia final.
 
-  Verifica el resultado desde `~/quest` en la workstation:
-
-  - `cat north.txt south.txt` — Muestra `north-71` y `south-71`, respectivamente.
-  - `tofu output -raw north_id; printf '\n'; cat /run/dq/facts/0/original-north-id; tofu show -no-color` — Los ID coinciden; el estado contiene exactamente `north.txt` y `south.txt`.
-  - `jq -r '.resource_changes[] | .address + " " + (.change.actions | join(","))' recovery-plan.json; tofu plan -input=false -detailed-exitcode -no-color` — El plan guardado tiene dos entradas: `no-op` para `north.txt`, `create` para `south.txt`; el plan actual termina con `0`.
-
-  El estado registra exactamente north.txt y south.txt. El plan guardado conserva el ID original con no-op y crea solo el archivo que falta.
+  ```sh
+  tofu state list
+  tofu output -raw north_id
+  cat recovery-plan.json
+  tofu plan -input=false -detailed-exitcode -no-color
+  ```
 phrases.0: Inspeccioné el estado parcial antes de volver a intentar un apply.
 phrases.1: Conservé el recurso que ya estaba administrado correctamente.
 phrases.2: Verifiqué el recovery plan guardado y el plan vacío final.
@@ -52,28 +48,30 @@ diagnostics.condition_0: /run/dq/facts/0/original-north-id no debe estar vacío 
   debe ser igual a su contenido.
 diagnostics.condition_1: north.txt debe ser igual a north-71.
 diagnostics.condition_2: south.txt debe ser igual a south-71.
-diagnostics.condition_3: |-
-  El estado de OpenTofu debe registrar exactamente los archivos configurados north.txt y south.txt.
-
-diagnostics.condition_4: recovery-plan.json resource_changes length debe ser igual a 2.
-diagnostics.condition_5: |-
-  recovery-plan.json debe dejar sin cambios el recurso north.txt original con su ID original del proveedor.
-
-diagnostics.condition_6: |-
-  recovery-plan.json debe crear el recurso south.txt que falta.
-
+diagnostics.condition_3: State registra exactamente ambos archivos de rutas y conserva las dos identidades
+  de operaciones registradas.
+diagnostics.condition_4: '`~/quest/recovery-plan.json` en la estación contiene dos entradas de archivos
+  de rutas: el existente no cambia y solo se crea el ausente. Ambos acompañantes de operaciones tienen
+  entradas no-op con sus ID registrados. No se permiten entradas ajenas.'
+diagnostics.condition_5: recovery-plan.json debe dejar sin cambios el recurso north.txt original con su
+  ID original del proveedor.
+diagnostics.condition_6: recovery-plan.json debe crear el recurso south.txt que falta.
 diagnostics.condition_7: El plan de OpenTofu con detailed-exitcode debe terminar con código 0.
-stages.0.objectives.0.text: La salida `north_id` conserva el ID del recurso asignado originalmente por
-  el proveedor.
-stages.0.objectives.1.text: En la workstation, `north.txt` contiene `north-71`; `south.txt` contiene `south-71`.
-stages.0.objectives.2.text: OpenTofu registra exactamente los dos archivos gestionados definidos en la
-  configuración suministrada.
-stages.0.objectives.3.text: 'El archivo `recovery-plan.json` de la workstation registra exactamente dos
-  entradas de recurso: el archivo gestionado existente no cambia y solo se crea el archivo gestionado
-  que falta.'
-stages.0.objectives.4.text: OpenTofu no informa cambios de infraestructura pendientes.
-diagnostics.probe_0_2: 'Los datos actuales no permiten verificar este objetivo: OpenTofu registra exactamente los
-  dos archivos gestionados definidos en la configuración suministrada.'
-diagnostics.probe_0_3: 'Los datos actuales no permiten verificar este objetivo: El archivo `recovery-plan.json`
-  de la workstation registra exactamente dos entradas de recurso: el archivo gestionado existente no cambia y solo
-  se crea el archivo gestionado que falta.'
+stages.0.objectives.0.text: El output `north_id` conserva su ID original del proveedor.
+stages.0.objectives.1.text: En la estación, `north.txt` y `south.txt` coinciden con la configuración suministrada.
+stages.0.objectives.2.text: State registra exactamente ambos archivos de rutas y conserva las dos identidades
+  de operaciones registradas.
+stages.0.objectives.3.text: '`recovery-plan.json` conserva identidades existentes y crea solo el archivo
+  ausente; el checkpoint y la copia previa siguen siendo válidos.'
+stages.0.objectives.4.text: OpenTofu no indica cambios de infraestructura pendientes.
+diagnostics.probe_0_2: 'Las entradas actuales no permitieron verificar este objetivo: State registra exactamente
+  ambos archivos de rutas y conserva las dos identidades de operaciones registradas.'
+diagnostics.probe_0_3: 'Las entradas actuales no permitieron verificar este objetivo: `recovery-plan.json`
+  conserva identidades existentes y crea solo el archivo ausente; el checkpoint y la copia previa siguen
+  siendo válidos.'
+diagnostics.recovery_bindings: Recupera el binding ausente conservando ambas identidades de operaciones
+  registradas.
+diagnostics.recovery_binding_plan: El plan debe conservar ambas identidades y contener solo las dos entradas
+  de rutas y sus acompañantes.
+diagnostics.recovery_backup: Conserva el checkpoint de confianza y una copia del state parcial más reciente
+  anterior a recuperar.

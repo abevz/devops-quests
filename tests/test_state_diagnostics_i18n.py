@@ -23,7 +23,8 @@ def catalog():
         (29, 4),
         (33, 10),
         (47, 11),
-        (71, 8),
+        # Missing operation facts now fail before the route inventory/plan probes.
+        (71, 6),
         (84, 5),
         (87, 3),
         (92, 8),
@@ -56,6 +57,11 @@ def test_missing_contracts_have_translated_diagnostics(
     assert len(markers) == len(result.stdout.splitlines()) == expected, (
         result.stdout + result.stderr
     )
+    if number == 71:
+        assert set(markers) == {
+            "condition_0", "condition_1", "condition_2", "recovery_bindings",
+            "recovery_binding_plan", "condition_7",
+        }
     assert len(result.stdout.encode()) <= 2000
     for marker in markers:
         assert set(catalog.public(number)["diagnostics"][marker]) >= {

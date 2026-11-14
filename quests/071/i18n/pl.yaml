@@ -1,50 +1,45 @@
 title: Częściowe odzyskiwanie state
 brief: |-
-  Wymagane dostarczenie jest niekompletne.
+  Dostarczenie jest niepełne, a zachowane checkpointy opisują różne zestawy ukończonej pracy. Zakończ odtwarzanie bez utraty nowszego postępu.
 
-  Pracuj na workstation w `~/quest` z plikami `main.tf`.
+  Pracuj w `~/quest` na stacji roboczej z `main.tf` i `recovery-checkpoint.tfstate`.
 
   **Wymagania:**
-  - Wyjścia główne:
-    - Nazwa wyjścia: `north_id`.
-    - Wyjście `north_id` zachowuje ID zasobu pierwotnie nadany przez dostawcę.
-  - Pliki na workstation:
-    - `~/quest/north.txt`: `north-71`.
-    - `~/quest/south.txt`: `south-71`.
-  - Stan OpenTofu:
-    - OpenTofu zarządza dokładnie dwoma plikami zdefiniowanymi w dostarczonej konfiguracji.
-  - Zapisany plan odzyskiwania na workstation:
-    - Ścieżka: `~/quest/recovery-plan.json`.
-    - Plik `recovery-plan.json` na workstation zapisuje dokładnie dwa zasoby: istniejący zarządzany plik pozostaje bez zmian, a tworzony jest tylko brakujący zarządzany plik.
-  - Zbieżność infrastruktury:
-    - Brak oczekujących zmian infrastruktury; kod zakończenia szczegółowego planu `0`.
 
-  Sprawdzenie bada bieżący stan i zapisane dane planu; nie dowodzi zastosowania dokładnie tego planu.
-debrief: Zapisany ID north, zawartość plików, adresy stanu i zapisany plan odzyskiwania odpowiadają kontrolom,
-  a końcowy plan nie zawiera zmian.
-stages.0.brief: Dokończ dostarczenie, zachowując zapisaną tożsamość.
-hints.0.text: Przerwane apply może pozostawić ważne zasoby już zapisane w state.
+  - Output `north_id` zachowuje pierwotne ID dostawcy.
+  - Na stacji roboczej `north.txt` i `south.txt` odpowiadają dostarczonej konfiguracji.
+  - State śledzi dokładnie oba pliki tras i zachowuje dwie zapisane tożsamości operacji.
+  - `recovery-plan.json` zachowuje istniejące tożsamości i tworzy tylko brakujący plik; checkpoint i kopia sprzed odtwarzania pozostają poprawne.
+  - OpenTofu nie zgłasza oczekujących zmian infrastruktury.
+  - Zachowaj checkpoint bez zmian i wszystkie zapisane ukończone operacje nowszego częściowego state.
+  - `~/quest/before-recovery.tfstate` na stacji roboczej przedstawia dostarczony częściowy state przed odtworzeniem z tym samym lineage, serial i ID ukończonych obiektów.
+  - `~/quest/recovery-plan.json` na stacji roboczej zawiera dwa wpisy plików tras: istniejący plik nie zmienia się, powstaje tylko brakujący. Oba obiekty tożsamości operacji mają wpisy no-op z zapisanymi ID. Obce wpisy są niedozwolone.
+  - Zarządzane pliki znajdują się w `~/quest/north.txt` i `~/quest/south.txt` na stacji roboczej. Zachowaj istniejącą zawartość i uzupełnij brakujący plik zgodnie z konfiguracją.
+
+  Kontrole badają bieżący state, zachowane artefakty i plany bez zastosowania; nie dowodzą zastosowania konkretnego planu ani pełnej historii poleceń.
+debrief: Starszy checkpoint zawierał brakujące powiązanie, lecz nie późniejszą ukończoną operację. Przywrócenie
+  tylko powiązania zachowało obie tożsamości i pierwotną trasę; zapisany plan utworzył brakującą trasę
+  bez zastępowania istniejącej pracy.
+stages.0.brief: Odtwórz niekompletne powiązanie, zachowując nowszą ukończoną pracę.
+hints.0.text: Konfiguracja, starszy pełny checkpoint i nowszy częściowy state mogą osobno być poprawne
+  i opisywać różną pracę. Ślepe ponowienie lub pełny rollback może zmienić tożsamość.
 hints.1.text: |-
-  Przerwany apply zapisał już north; south wymaga jeszcze utworzenia.
-
-  Sprawdź dostarczoną konfigurację i bieżące obserwacje na workstation:
+  Porównaj konfigurację z bieżącym i zachowanym inwentarzem state. Zbadaj proponowane działania: co jest tylko w starszym checkpoincie, a co wyłącznie w nowszym state?
 
   ```sh
-  cat main.tf
   tofu state list
-  ls -l north.txt south.txt
+  tofu state list -state=recovery-checkpoint.tfstate
+  tofu plan -input=false -no-color
   ```
 hints.2.text: |-
-  Zastosuj zapisany plan z north no-op i south create.
-  Zapisz plan binarny i wyeksportuj go przez tofu show -json do wymaganego artefaktu JSON.
+  Przed zmianami zapisz bieżący częściowy state i pracuj na kopii zaufanego checkpointu. Przywróć wyłącznie brakujące powiązanie do istniejącego lokalnego state bez nadpisania nowszych wpisów. Zapisz i wyeksportuj plan zachowujący tożsamości i tworzący tylko brakującą trasę. Sprawdź wejście, lineage/serial kopii, działania planu i końcową zbieżność.
 
-  Sprawdź wynik z `~/quest` na workstation:
-
-  - `cat north.txt south.txt` — Pokazuje odpowiednio `north-71` i `south-71`.
-  - `tofu output -raw north_id; printf '\n'; cat /run/dq/facts/0/original-north-id; tofu show -no-color` — ID są zgodne; stan zawiera dokładnie `north.txt` i `south.txt`.
-  - `jq -r '.resource_changes[] | .address + " " + (.change.actions | join(","))' recovery-plan.json; tofu plan -input=false -detailed-exitcode -no-color` — Zapisany plan ma dwa wpisy: `no-op` dla `north.txt`, `create` dla `south.txt`; bieżący plan kończy się kodem `0`.
-
-  Stan śledzi dokładnie north.txt i south.txt. Zapisany plan zachowuje pierwotne ID pliku z no-op i tworzy tylko brakujący plik.
+  ```sh
+  tofu state list
+  tofu output -raw north_id
+  cat recovery-plan.json
+  tofu plan -input=false -detailed-exitcode -no-color
+  ```
 phrases.0: Przed ponowną próbą apply sprawdziłem częściowy state.
 phrases.1: Zachowałem zasób, który był już poprawnie zarządzany.
 phrases.2: Sprawdziłem zapisany recovery plan i końcowy pusty plan.
@@ -52,25 +47,27 @@ diagnostics.condition_0: /run/dq/facts/0/original-north-id musi być niepuste, a
   musi mu odpowiadać.
 diagnostics.condition_1: north.txt musi być równe north-71.
 diagnostics.condition_2: south.txt musi być równe south-71.
-diagnostics.condition_3: |-
-  Stan OpenTofu musi śledzić dokładnie skonfigurowane pliki north.txt i south.txt.
-
-diagnostics.condition_4: recovery-plan.json resource_changes length musi być równe 2.
-diagnostics.condition_5: |-
-  recovery-plan.json musi pozostawić pierwotny zasób north.txt bez zmian z pierwotnym ID dostawcy.
-
-diagnostics.condition_6: |-
-  recovery-plan.json musi tworzyć brakujący zasób south.txt.
-
+diagnostics.condition_3: State śledzi dokładnie oba pliki tras i zachowuje dwie zapisane tożsamości operacji.
+diagnostics.condition_4: '`~/quest/recovery-plan.json` na stacji roboczej zawiera dwa wpisy plików tras:
+  istniejący plik nie zmienia się, powstaje tylko brakujący. Oba obiekty tożsamości operacji mają wpisy
+  no-op z zapisanymi ID. Obce wpisy są niedozwolone.'
+diagnostics.condition_5: recovery-plan.json musi pozostawić pierwotny zasób north.txt bez zmian z pierwotnym
+  ID dostawcy.
+diagnostics.condition_6: recovery-plan.json musi tworzyć brakujący zasób south.txt.
 diagnostics.condition_7: Plan OpenTofu z detailed-exitcode musi zakończyć się kodem 0.
-stages.0.objectives.0.text: Wyjście `north_id` zachowuje ID zasobu pierwotnie nadany przez dostawcę.
-stages.0.objectives.1.text: Na workstation `north.txt` zawiera `north-71`; `south.txt` zawiera `south-71`.
-stages.0.objectives.2.text: OpenTofu zarządza dokładnie dwoma plikami zdefiniowanymi w dostarczonej konfiguracji.
-stages.0.objectives.3.text: 'Plik `recovery-plan.json` na workstation zapisuje dokładnie dwa zasoby: istniejący
-  zarządzany plik pozostaje bez zmian, a tworzony jest tylko brakujący zarządzany plik.'
+stages.0.objectives.0.text: Output `north_id` zachowuje pierwotne ID dostawcy.
+stages.0.objectives.1.text: Na stacji roboczej `north.txt` i `south.txt` odpowiadają dostarczonej konfiguracji.
+stages.0.objectives.2.text: State śledzi dokładnie oba pliki tras i zachowuje dwie zapisane tożsamości
+  operacji.
+stages.0.objectives.3.text: '`recovery-plan.json` zachowuje istniejące tożsamości i tworzy tylko brakujący
+  plik; checkpoint i kopia sprzed odtwarzania pozostają poprawne.'
 stages.0.objectives.4.text: OpenTofu nie zgłasza oczekujących zmian infrastruktury.
-diagnostics.probe_0_2: 'Bieżące dane nie pozwalają potwierdzić tego celu: OpenTofu zarządza dokładnie dwoma plikami
-  zdefiniowanymi w dostarczonej konfiguracji.'
-diagnostics.probe_0_3: 'Bieżące dane nie pozwalają potwierdzić tego celu: Plik `recovery-plan.json` na workstation
-  zapisuje dokładnie dwa zasoby: istniejący zarządzany plik pozostaje bez zmian, a tworzony jest tylko brakujący
-  zarządzany plik.'
+diagnostics.probe_0_2: 'Bieżące dane nie pozwoliły zweryfikować tego celu: State śledzi dokładnie oba
+  pliki tras i zachowuje dwie zapisane tożsamości operacji.'
+diagnostics.probe_0_3: 'Bieżące dane nie pozwoliły zweryfikować tego celu: `recovery-plan.json` zachowuje
+  istniejące tożsamości i tworzy tylko brakujący plik; checkpoint i kopia sprzed odtwarzania pozostają
+  poprawne.'
+diagnostics.recovery_bindings: Odtwórz brakujące powiązanie, zachowując obie zapisane tożsamości operacji.
+diagnostics.recovery_binding_plan: Plan musi zachować obie tożsamości operacji i zawierać tylko dwa wpisy
+  tras wraz z obiektami tożsamości.
+diagnostics.recovery_backup: Zachowaj zaufany checkpoint i kopię nowszego częściowego state sprzed odtwarzania.

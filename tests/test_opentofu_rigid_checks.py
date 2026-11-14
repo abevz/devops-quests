@@ -47,6 +47,14 @@ def run_python(monkeypatch, tmp_path, quest, index=0, *, document=None, graph=''
     def read(path, *args, **kwargs):
         if str(path) == '/run/dq/facts/0/original-north-id':
             return 'original\n'
+        if str(path) == '/run/dq/facts/0/original-addresses':
+            return original_read(tmp_path / 'frozen-original-addresses', *args, **kwargs)
+        if str(path) == '/run/dq/facts/0/station-identities.json':
+            return original_read(tmp_path / 'station-identities.json', *args, **kwargs)
+        if str(path) == '/run/dq/facts/0/state-identities.json':
+            if (tmp_path / 'state-identities.json').exists():
+                return original_read(tmp_path / 'state-identities.json', *args, **kwargs)
+            return json.dumps({'bindings': {'terraform_data.guardian': 'guardian-original', 'terraform_data.progress': 'progress-original'}})
         if str(path) == '/run/dq/facts/0/original-consumer-id':
             return 'consumer-original\n'
         return original_read(path, *args, **kwargs)
@@ -123,6 +131,16 @@ def test_route_inventory_properties(monkeypatch, tmp_path, quest, names, index, 
         if variant == 'equivalent' and filename == name:
             filename = str(tmp_path / name)
         records.append((module, resource(filename, f'{module + "." if module else ""}local_file.route[{i}]')))
+    if quest == '071':
+        # These are required identity companions in the actual recovery fixture.
+        # All original file/mode/address/extra-resource mutations remain unchanged.
+        for name in ['guardian', 'progress']:
+            records.append((None, {'address': 'terraform_data.' + name, 'mode': 'managed', 'type': 'terraform_data', 'values': {'id': name + '-original'}}))
+    if quest == '076':
+        # The constructed DAG now also contains the independent/joined consumers.
+        for name in ['east', 'archive']:
+            (tmp_path / (name + '.txt')).write_text('route')
+            records.append(('module.' + name, resource(name + '.txt', 'module.' + name + '.local_file.route')))
     if variant == 'extra-resource':
         records.append((None, resource('unrelated.txt')))
     valid = variant in ('reference', 'equivalent') or (variant == 'extra-resource' and quest == '023') or (variant == 'same-instance' and quest == '071')
@@ -277,6 +295,9 @@ def test_071_saved_recovery_property(monkeypatch, tmp_path, variant):
         changes.append({'change': {'actions': ['no-op']}})
     elif variant == 'wrong-action':
         changes[0]['change']['actions'] = ['delete', 'create']
+    # The saved plan retains both actual operation bindings without changes.
+    for name in ['guardian', 'progress']:
+        changes.append({'address': 'terraform_data.' + name, 'mode': 'managed', 'type': 'terraform_data', 'change': {'actions': ['no-op'], 'before': {'id': name + '-original'}, 'after': {'id': name + '-original'}}})
     (tmp_path / 'recovery-plan.json').write_text(json.dumps({'resource_changes': changes}))
     assert run_python(monkeypatch, tmp_path, '071', 3) == (0 if variant in ('reference', 'equivalent') else 1)
 
