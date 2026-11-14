@@ -1,8 +1,8 @@
-title: procedencia de git
+title: Trazabilidad del origen de la imagen
 brief: |-
-  Board atiende tráfico, pero la versión necesita un registro verificable de su origen. Identifica el origen de la imagen inmutable en ejecución sin confundirlo con la revisión del despliegue.
+  Board atiende solicitudes, pero sus registros de origen en la estación y en la publicación están incompletos. Rastrea la imagen inmutable activa hasta su origen real y entrega ese registro al consumidor activo.
 
-  Trabaja en la workstation en `~/quest` con `platform.env`, `release-evidence.json`, `provenance.json`, `release-commit`, `repository/`.
+  Trabaja en la workstation en `~/quest` con `platform.env`, `provenance.json`, `release-commit`, `repository/`.
 
   Salvo indicación contraria, los recursos Kubernetes están en el namespace de la bahía (`DQ_NAMESPACE`); las rutas bajo `~/quest` están en la workstation.
 
@@ -15,41 +15,40 @@ brief: |-
   - Dentro de un Pod del Deployment `board`, `http://board:8080` devuelve `north-91`.
   - El archivo `~/quest/provenance.json` en la workstation vincula correctamente la imagen activa, sus bytes reales en el registro y el commit fuente con el historial Git privado.
 
-    - El archivo `provenance.json` en la workstation contiene exactamente `image`, `commit` y `repo`. El origen de la imagen difiere de `release-commit`, precede a la versión publicada en el historial Git y contiene `site/index.html` con `north-91` en el repositorio. El informe, el digest activo, los bytes reales del registro, sus metadatos de origen y la evidencia suministrada de la versión coinciden.
+    - El archivo `provenance.json` en la workstation contiene exactamente `image`, `commit` y `repo`. El origen de la imagen difiere de `release-commit`, precede a la versión publicada en el historial Git y contiene `site/index.html` con `north-91` en el repositorio. El informe coincide con el digest activo, los bytes reales del registro y sus metadatos de origen.
+
+  - El registro de origen en el `repository/manifests/provenance.yaml` publicado, el ConfigMap `build-record` activo y `http://board:8080/provenance.json` coincide con `~/quest/provenance.json` de la estación. Publica la configuración mediante el origen GitOps suministrado; conserva la imagen inmutable y la disponibilidad del endpoint principal.
 
   Son metadatos de trazabilidad, no una firma ni una prueba de compilación fiable.
-debrief: El incidente ahora vincula los bytes en ejecución con la revisión de la fuente y mantiene la
-  confianza como una pregunta separada.
+debrief: Rastrea el artefacto activo hasta su origen y propaga el registro verificado mediante el consumidor
+  GitOps existente; los metadatos sin firma no certifican una compilación confiable.
 stages.0.brief: Distingue el origen del código de la imagen del historial del despliegue.
 hints.0.text: Una confirmación de manifiesto puede hacer referencia a una imagen creada a partir de una
   confirmación anterior.
 hints.1.text: |-
-  Inspecciona el historial fuente y el informe; rastrea la imagen inmutable mediante metadatos del registro.
+  Compara el digest desplegado, los metadatos del manifiesto y config del registro y la ascendencia Git. Después compara el registro local, la configuración publicada y el archivo montado en el Pod activo.
 
   ```bash
   git -C repository log --oneline -5
+  kubectl get deployment board -o yaml
+  kubectl get configmap -o yaml
   cat provenance.json
   ```
 hints.2.text: |-
-  Registre la imagen digest, la confirmación de origen y el repositorio privado URL, sin tratar un label como una firma. La etiqueta OCI exacta es `org.opencontainers.image.revision`; localízala mediante el manifiesto y la configuración de la imagen inmutable en ejecución. Resuelva manifest → config blob → OCI revision label; comparar Git ancestry.
+  Lee la etiqueta OCI revision del blob config del manifiesto y compárala con el historial Git; no confundas el origen de la imagen con el commit del despliegue. Publica el registro descubierto en el manifiesto ConfigMap suministrado y envía el directorio de trabajo existente a Git. Espera al controlador. Un archivo ConfigMap montado mediante `subPath` no se actualiza en un Pod existente: actualiza el consumidor sin cambiar la identidad de la imagen.
 
-  Verifica desde `~/quest` en la workstation:
+  Tras la propagación, verifica el informe, el commit publicado, la revisión del controlador, el digest inmutable activo y el registro servido.
 
-  - `source platform.env`
-  - `git -C repository ls-remote origin refs/heads/main`
-  - `cat release-commit`
-  - `jq -e 'keys==["commit","image","repo"]' provenance.json; cat provenance.json`
-
-  El hash de `main` remoto coincide con `release-commit`. El informe contiene exactamente `image`, `commit` y `repo`; `commit` identifica el origen de la imagen, distinto de `release-commit`.
-
-  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
-
-  `Synced`, `Healthy` y la revisión de `release-commit`. La fuente es el repositorio privado suministrado, `manifests`, `main`.
-
-  - `kubectl rollout status deployment/board --timeout=3s`
-  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`
-
-  El rollout termina; `north-91`.
+  ```sh
+  source platform.env
+  git -C repository ls-remote origin refs/heads/main
+  cat release-commit
+  cat provenance.json
+  kubectl get application board -o yaml
+  kubectl rollout status deployment/board --timeout=3s
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/provenance.json
+  ```
 phrases.0: Distinguí la revisión de la fuente de la revisión de la implementación.
 phrases.1: Verifiqué el manifest digest y la imagen config en el registry.
 phrases.2: Traté la procedencia sin firmar como trazabilidad, no como certificación.
@@ -69,7 +68,11 @@ stages.0.objectives.2.text: La Application `board` informa `Synced` y `Healthy` 
 stages.0.objectives.3.text: El Deployment `board` completa su rollout en el namespace de la bahía.
 stages.0.objectives.4.text: Dentro de un Pod del Deployment `board`, `http://board:8080` devuelve `north-91`.
 stages.0.objectives.5.text: El archivo `~/quest/provenance.json` en la workstation vincula correctamente
-  la imagen activa, sus bytes reales en el registro y el commit fuente con el historial Git privado.
+  la imagen activa, sus bytes reales en el registro y el commit fuente con el historial Git privado. La
+  configuración publicada y el consumidor activo exponen el registro de origen verificado de la estación.
 diagnostics.probe_0_5: 'Los datos actuales no permiten verificar este objetivo: El archivo `~/quest/provenance.json`
   en la workstation vincula correctamente la imagen activa, sus bytes reales en el registro y el commit fuente con
   el historial Git privado.'
+diagnostics.provenance_delivery: Los registros de origen publicado y servido deben coincidir con el informe
+  verificado. Compara Git, los datos ConfigMap y el consumidor activo; un montaje subPath puede conservar
+  un archivo anterior.
