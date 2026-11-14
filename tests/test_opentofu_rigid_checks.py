@@ -47,6 +47,8 @@ def run_python(monkeypatch, tmp_path, quest, index=0, *, document=None, graph=''
     def read(path, *args, **kwargs):
         if str(path) == '/run/dq/facts/0/original-north-id':
             return 'original\n'
+        if str(path) == '/run/dq/facts/0/original-consumer-id':
+            return 'consumer-original\n'
         return original_read(path, *args, **kwargs)
 
     def cli(argv, **kwargs):
@@ -93,7 +95,17 @@ def test_managed_producer_by_file(monkeypatch, tmp_path, quest, filename, module
         record['values']['filename'] = str(tmp_path / filename)
     if variant == 'data-only':
         record['mode'] = 'data'
-    result = run_python(monkeypatch, tmp_path, quest, 1 if quest == '087' else 0, document=state((module, record)), returncode=1 if variant == 'cli-failed' else 0)
+    records = [(module, record)]
+    if quest == '053':
+        # The real bay now retains an independently managed consumer identity.
+        (tmp_path / 'delivered.txt').write_text('north-ready')
+        records += [
+            ('module.dispatch', resource('delivered.txt', 'module.dispatch.local_file.receipt')),
+            ('module.dispatch', {'address': 'module.dispatch.terraform_data.receipt', 'mode': 'managed',
+                                 'type': 'terraform_data', 'values': {'id': 'consumer-original',
+                                                                    'output': 'north-ready'}}),
+        ]
+    result = run_python(monkeypatch, tmp_path, quest, 1 if quest == '087' else 0, document=state(*records), returncode=1 if variant == 'cli-failed' else 0)
     assert result == (0 if variant in ('reference', 'equivalent') else 1)
 
 

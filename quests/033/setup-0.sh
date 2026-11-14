@@ -20,3 +20,4 @@ routes = { north = "open", south = "held" }
 DQ_ASSET
 tofu apply -auto-approve -input=false -no-color
 tofu output -json routes > original-ids.json
+sed -i 's/each.value/each.key/g' main.tf

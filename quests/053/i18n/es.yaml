@@ -2,7 +2,7 @@ title: Contrato de módulo roto
 brief: |-
   El módulo compartido de avisos no proporciona el mensaje de estación a su consumidor. Recupera un aviso gestionado utilizable y una salida del módulo raíz.
 
-  Trabaja en `~/quest` en la workstation. Archivos de entrada suministrados: `main.tf`, `modules/notice/main.tf`.
+  Trabaja en `~/quest` en la workstation. Archivos de entrada suministrados: `main.tf`, `terraform.tfvars`, `module-contract.json`, `modules/notice/main.tf`, `modules/dispatch/main.tf`.
 
   **Requisitos:**
   - El estado de OpenTofu contiene:
@@ -11,35 +11,48 @@ brief: |-
     - `message`: `north-ready`
   - OpenTofu informa de que no hay cambios de infraestructura pendientes.
 
+  - `module-contract.json` define el comportamiento. Ambos módulos deben conservar el mensaje derivado del caller y no debe reemplazarse la identidad existente del consumer.
+
   La comprobación observa los resultados actuales; no establece todo el historial de ejecución.
 stages.0.brief: El módulo compartido debe proporcionar el mensaje de estación gestionado requerido.
-stages.0.objectives.0.text: El archivo de aviso del módulo suministrado está registrado en el estado de
-  OpenTofu.
-stages.0.objectives.1.text: El output `message` devuelve `north-ready`.
+stages.0.objectives.0.text: Los archivos producer y consumer siguen administrados en sus módulos respectivos
+  y se conserva la identidad original del consumer.
+stages.0.objectives.1.text: El mensaje raíz sigue el contrato del caller para cada caso station suministrado;
+  su valor actual es `north-ready`.
 stages.0.objectives.2.text: OpenTofu informa de que no hay cambios de infraestructura pendientes.
-hints.0.text: Un módulo hijo publica un contrato que consume la configuración raíz.
+hints.0.text: Las interfaces de módulos conectan caller, producer y consumer; un output local correcto
+  no prueba todo el contrato.
 hints.1.text: |-
-  Lea los errores validate en el límite del módulo secundario. El módulo hace referencia a station sin declararlo y exporta un recurso faltante.
-
-  Inspecciona la configuración suministrada y las observaciones actuales en la workstation:
+  Compara las llamadas raíz, ambos módulos hijos y los errores de validación. Lee el state existente antes de aceptar un plan que reemplace al consumer.
 
   ```sh
+  cat main.tf terraform.tfvars module-contract.json
   tofu validate
-  cat main.tf modules/notice/main.tf
+  tofu show -no-color
   ```
 hints.2.text: |-
-  Declare station como una cadena y exporte local_file.notice.content como message, luego apply y vuelva a planificar.
+  Construye las declaraciones producer que faltan y reconcilia el contrato input/output tipado del módulo posterior. Verifica el ID consumer conservado, cada caso caller y el plan final vacío.
 
-  Verifica el resultado desde `~/quest` en la workstation:
+  - `tofu output -raw message`
+  - `tofu plan -input=false -detailed-exitcode -no-color`
 
-  Ejecuta estos comandos de observación desde `~/quest` en la workstation.
-  - `tofu state list` — Se esperan las direcciones de estado indicadas en Requisitos.
-  - `tofu output -raw message` — Se espera que el consumidor reciba `north-ready`.
-  - `tofu plan -input=false -detailed-exitcode -no-color` — Se esperan ausencia de cambios y código de salida `0`.
-debrief: El módulo secundario carecía de su declaración de entrada y hacía referencia a un recurso de
-  salida faltante. Reparó el contrato y verificó el valor exportado y el plan vacío.
+  ```sh
+  cat module-contract.json
+  tofu state list
+  cat original-consumer-id
+  tofu output -raw message
+  tofu plan -input=false -var=station=south -no-color
+  tofu plan -input=false -detailed-exitcode -no-color
+  ```
+debrief: Los archivos producer y consumer siguen administrados en sus módulos respectivos y se conserva
+  la identidad original del consumer. El mensaje raíz sigue el contrato del caller para cada caso station
+  suministrado; su valor actual es `north-ready`.
 phrases.0: Verifiqué el estado de ejecución antes de realizar un cambio.
 phrases.1: Encontré la causa y cambié una cosa a la vez.
 phrases.2: Comparé el recurso en vivo ID con el estado OpenTofu.
-diagnostics.probe_0_0: 'Los datos actuales no permiten verificar este objetivo: El archivo de aviso del módulo suministrado
-  está registrado en el estado de OpenTofu.'
+diagnostics.probe_0_0: Los archivos producer y consumer siguen administrados en sus módulos respectivos
+  y se conserva la identidad original del consumer.
+diagnostics.module_contract: Ambas fronteras de módulos deben propagar el mensaje derivado del caller
+  en un plan válido.
+diagnostics.probe_0_1: El mensaje raíz sigue el contrato del caller para cada caso station suministrado;
+  su valor actual es `north-ready`.
