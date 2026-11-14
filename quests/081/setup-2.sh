@@ -43,6 +43,8 @@ spec:
         env:
         - name: RELEASE
           value: retired
+        - name: DELIVERY_CONTRACT
+          value: '{}'
         readinessProbe:
           exec:
             command:

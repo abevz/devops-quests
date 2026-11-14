@@ -1,88 +1,85 @@
 title: Dostawa międzysystemowa
 brief: |-
-  Wydanie nie jest spójnie dostępne dla wszystkich odbiorców.
+  Znacznik wydania istnieje, ale jego kontrakt dostarczania nie jest jeszcze spójnie dostępny u odbiorców.
 
-  Pracuj na workstation w `~/quest` z plikami `main.tf`, `inventory.ini`, `ansible.cfg`, `rollout.yml`, `deployment.yaml`.
+  Pracuj na workstation w `~/quest` z `main.tf`, `modules/delivery/main.tf`, `delivery-schema.json`, `inventory.ini` i `ansible.cfg`. Późniejsze etapy dostarczą `rollout.yml` i `deployment.yaml`.
 
   **Wymagania:**
-  - Etap 1:
-    - Stan OpenTofu:
-      - Dostarczony plik producenta wydania jest zarządzany w stanie OpenTofu.
-    - Pliki na workstation:
-      - `~/quest/release.txt`: `release-81`.
-    - Zbieżność infrastruktury:
-      - Brak oczekujących zmian infrastruktury; kod zakończenia szczegółowego planu `0`.
-  - Etap 2:
-    - Plik na każdym zarządzanym hoście (`app1`, `app2`, `app3`):
-      - Ścieżka: `/srv/site/message`.
-      - Treść: `release-81`.
-      - Dokładny tekst, opcjonalnie z jednym końcowym znakiem nowego wiersza.
-      - Tryb dostępu: `0644`.
-    - HTTP na każdym zarządzanym hoście (`app1`, `app2`, `app3`):
-      - Port i ścieżka: `8080`, `/`.
-      - Odpowiedź: `release-81`.
-  - Etap 3:
-    - Odbiorca w przestrzeni nazw zatoki:
-      - Deployment: `relay`.
-      - Rollout zakończony.
-      - W działającym kontenerze Deployment `relay` dostarczony kontrakt środowiska przekazuje `release-81`.
+  - Wyjście główne `delivery` odpowiada dostarczonemu schematowi dla każdego opisanego przypadku wejściowego i zachowuje zapisaną tożsamość producenta. Skonfigurowany plik producenta pozostaje zarządzanym zasobem w katalogu głównym stanu OpenTofu.
+  - Na workstation plik `~/quest/release.txt` zawiera `release-81`; końcowy plan szczegółowy kończy się kodem `0`.
+  - Na każdym zarządzanym hoście (`app1`, `app2`, `app3`) plik `/srv/site/message` zawiera dokładnie `release-81`, opcjonalnie z jednym końcem wiersza, i ma tryb `0644`. HTTP na porcie `8080` pod ścieżką `/` zwraca `release-81`.
+  - Na każdym zarządzanym hoście plik `/srv/site/delivery.json` ma tryb `0644` i odpowiada wpisowi tego odbiorcy w bieżącym kontrakcie producenta, łącznie z zapisaną tożsamością producenta.
+  - Deployment `relay` kończy rollout w namespace środowiska. W jego działającym kontenerze `worker` zmienna `RELEASE` ma wartość `release-81`, a `DELIVERY_CONTRACT` odpowiada bieżącemu strukturalnemu kontraktowi producenta. Przy zakończeniu kontrakty producenta i hostów nadal są zgodne.
 
-  Sprawdzenia floty obserwują wartości plików, tryby i HTTP, a nie użyte polecenia; końcowe sprawdzenie odbiorcy odczytuje status rollout i środowisko procesu, a nie udostępnianą treść.
-stages.0.brief: Znacznik wydania na workstation musi spełniać kontrakt.
-stages.1.brief: Każdy odbiorca floty musi otrzymać wymagane wydanie.
-stages.2.brief: Odbiorca Kubernetes musi działać z wymaganym wydaniem.
-hints.0.text: Niezależne warstwy dostarczania mogą współdzielić jeden kontrakt wydania.
+  Sprawdzenia obserwują bieżący stan, pliki, HTTP, rollout i środowisko procesu; zgodne dane nie dowodzą historii poleceń ani treści obsługiwanej przez ostatni kontener.
+stages.0.brief: Producent główny publikuje bieżący kontrakt z zachowaniem zapisanej tożsamości.
+stages.1.brief: Każdy host musi otrzymać swój bieżący kontrakt i obsługiwać wydanie.
+stages.2.brief: Działający odbiorca musi zachować ten sam bieżący kontrakt co producent i hosty.
+hints.0.text: Niezależni odbiorcy potrzebują tego samego bieżącego kontraktu; sama znajoma nazwa wydania nie identyfikuje
+  producenta.
 hints.1.text: |-
-  Śledź wydanie od state przez fleet do pod. Każdy stopień ma swój własny live check; zmiana późniejszego systemu nie może zaspokoić wcześniejszego etapu.
-
-  Sprawdź dostarczoną konfigurację i bieżące obserwacje na workstation:
+  Najpierw porównaj dostarczony schemat, konfigurację i bieżący stan. W późniejszych etapach porównuj odebrane dane wraz z tożsamością odbiorcy z bieżącym wyjściem producenta; poprawna odpowiedź sama nie potwierdza tej relacji.
 
   ```sh
-  cat main.tf rollout.yml deployment.yaml
-  tofu state list
+  cat main.tf modules/delivery/main.tf delivery-schema.json
+  tofu show -no-color
+  tofu output -json delivery
+  test ! -f rollout.yml || cat rollout.yml
+  test ! -f deployment.yaml || cat deployment.yaml
   ```
 hints.2.text: |-
-  Zainicjalizuj i zastosuj znacznik z main.tf. Uruchom ansible-playbook rollout.yml z handlerem dq-service reload, aby dostarczyć i przeładować flotę. Napraw deployment.yaml i zaktualizuj środowisko RELEASE w deployment/relay.
+  Zweryfikuj producenta przed dostarczeniem, a następnie każde potwierdzenie i działającego odbiorcę. Potwierdzenia i dane procesu muszą odpowiadać bieżącemu wyjściu, a nie wcześniejszemu eksportowi. Te polecenia obserwują wyniki i nie wykonują napraw.
 
-  Sprawdź wynik z `~/quest` na workstation:
-
-  - `tofu show -no-color; cat release.txt; tofu plan -input=false -detailed-exitcode -no-color` — Etap 1: stan zawiera `release.txt`, plik pokazuje `release-81`, a plan kończy się kodem `0`.
-  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat -A /srv/site/message; ls -l /srv/site/message'; for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done` — Etap 2: Każdy host pokazuje `release-81` z najwyżej jednym znacznikiem końca wiersza, tryb pliku `-rw-r--r--` i odpowiedź HTTP `release-81`.
-  - `kubectl rollout status deployment/relay --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/relay -c worker -- printenv RELEASE` — Etap 3: rollout się kończy, a proces wypisuje `release-81`.
-
-  Stan śledzi zarządzany plik źródłowy release.txt.
-debrief: Kontrole sprawdziły zarządzany znacznik, pliki i odpowiedzi floty oraz rollout i środowisko relay.
+  ```sh
+  tofu output -json delivery
+  tofu plan -input=false -detailed-exitcode -no-color
+  ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'cat /srv/site/message /srv/site/delivery.json; stat -c %a /srv/site/message /srv/site/delivery.json'
+  for h in app1 app2 app3; do curl -fsS --max-time 3 "http://$h-${DQ_NAMESPACE#dq-}:8080"; printf "\n"; done
+  kubectl rollout status deployment/relay --timeout=10s
+  kubectl exec --pod-running-timeout=5s deployment/relay -c worker -- printenv RELEASE DELIVERY_CONTRACT
+  ```
+debrief: Kontrakt producenta podąża teraz za wejściami, zachowuje jego tożsamość i dociera do potwierdzeń hostów
+  oraz działającego odbiorcy. Pierwotne pliki wydania, HTTP i środowisko nadal są poprawne.
 phrases.0: Przed dokonaniem zmiany sprawdziłem stan działania.
 phrases.1: Znalazłem przyczynę i zmieniałem jedną rzecz na raz.
 phrases.2: Porównałem aktywny zasób ID ze stanem OpenTofu.
-diagnostics.state: |-
-  Stan OpenTofu musi śledzić zarządzany plik źródłowy release.txt.
-
+diagnostics.state: Stan OpenTofu musi śledzić zarządzany plik źródłowy release.txt.
 diagnostics.file: release.txt musi być równy release-81.
 diagnostics.plan: Plan OpenTofu musi zakończyć się kodem 0.
 diagnostics.rollout: Wdrożenie Deployment relay musi się zakończyć.
 diagnostics.relay: RELEASE Deployment relay musi wynosić release-81.
-diagnostics.content_1: Na hoście app1 /srv/site/message musi zawierać dokładnie release-81, opcjonalnie
-  z jednym znakiem nowej linii.
+diagnostics.content_1: Na hoście app1 /srv/site/message musi zawierać dokładnie release-81, opcjonalnie z jednym
+  znakiem nowej linii.
 diagnostics.mode_1: Na hoście app1 uprawnienia /srv/site/message muszą wynosić 644.
 diagnostics.http_1: Host app1 na porcie 8080 musi zwrócić release-81.
-diagnostics.content_2: Na hoście app2 /srv/site/message musi zawierać dokładnie release-81, opcjonalnie
-  z jednym znakiem nowej linii.
+diagnostics.content_2: Na hoście app2 /srv/site/message musi zawierać dokładnie release-81, opcjonalnie z jednym
+  znakiem nowej linii.
 diagnostics.mode_2: Na hoście app2 uprawnienia /srv/site/message muszą wynosić 644.
 diagnostics.http_2: Host app2 na porcie 8080 musi zwrócić release-81.
-diagnostics.content_3: Na hoście app3 /srv/site/message musi zawierać dokładnie release-81, opcjonalnie
-  z jednym znakiem nowej linii.
+diagnostics.content_3: Na hoście app3 /srv/site/message musi zawierać dokładnie release-81, opcjonalnie z jednym
+  znakiem nowej linii.
 diagnostics.mode_3: Na hoście app3 uprawnienia /srv/site/message muszą wynosić 644.
 diagnostics.http_3: Host app3 na porcie 8080 musi zwrócić release-81.
-stages.0.objectives.0.text: Dostarczony plik producenta wydania jest zarządzany w stanie OpenTofu.
+stages.0.objectives.0.text: Wyjście główne `delivery` podąża za dostarczonym schematem i wejściami z pierwotną tożsamością
+  producenta.
 stages.0.objectives.1.text: Na workstation `release.txt` zawiera `release-81`.
 stages.0.objectives.2.text: OpenTofu nie zgłasza oczekujących zmian infrastruktury.
-stages.1.objectives.0.text: Na każdym zarządzanym hoście (`app1`, `app2`, `app3`) plik `/srv/site/message`
-  zawiera dokładnie `release-81`, opcjonalnie z jednym końcowym znakiem nowego wiersza, i ma tryb `0644`.
-stages.1.objectives.1.text: HTTP na porcie `8080` zwraca `release-81` na każdym zarządzanym hoście (`app1`,
-  `app2`, `app3`).
-stages.2.objectives.0.text: Deployment `relay` kończy rollout w przestrzeni nazw zatoki.
-stages.2.objectives.1.text: W działającym kontenerze Deployment `relay` dostarczony kontrakt środowiska
-  przekazuje `release-81`.
+stages.1.objectives.0.text: Na każdym zarządzanym hoście (`app1`, `app2`, `app3`) plik `/srv/site/message` zawiera
+  `release-81` z trybem `0644`, a `/srv/site/delivery.json` odpowiada bieżącemu kontraktowi odbiorcy i ma tryb `0644`.
+stages.1.objectives.1.text: HTTP na porcie `8080` zwraca `release-81` na każdym zarządzanym hoście (`app1`, `app2`,
+  `app3`).
+stages.2.objectives.0.text: Deployment `relay` kończy rollout z bieżącym strukturalnym kontraktem producenta w działającym
+  `worker`; producent i hosty nadal są zgodne.
+stages.2.objectives.1.text: W działającym kontenerze Deployment `relay` dostarczony kontrakt środowiska przekazuje
+  `release-81`.
 diagnostics.probe_0_0: 'Bieżące dane nie pozwalają potwierdzić tego celu: Dostarczony plik producenta wydania jest
   zarządzany w stanie OpenTofu.'
+diagnostics.delivery_producer: Wyjście dostarczania musi podążać za opisanymi przypadkami wejściowymi i zachować
+  zapisaną tożsamość producenta.
+diagnostics.delivery_fleet: Każde potwierdzenie odbiorcy musi odpowiadać jego bieżącemu kontraktowi producenta i
+  mieć tryb 0644.
+diagnostics.delivery_relay: Działający odbiorca, bieżący producent i potwierdzenia hostów muszą zawierać ten sam
+  bieżący kontrakt.
+diagnostics.probe_1_0: Bieżące dane nie pozwoliły potwierdzić plików hostów i aktualnych potwierdzeń odbiorców.
+diagnostics.probe_2_0: Bieżące dane nie pozwoliły potwierdzić rolloutu i zgodności producenta, hostów oraz działającego
+  odbiorcy.

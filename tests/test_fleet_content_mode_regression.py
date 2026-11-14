@@ -1,5 +1,6 @@
 """Fleet content cannot impersonate its separately checked file mode."""
 
+import json
 import os
 import re
 import subprocess
@@ -58,7 +59,7 @@ def test_fleet_checks_separate_actual_content_and_mode(
     binaries.mkdir()
     ssh = binaries / "ssh"
     ssh.write_text(
-        "#!/usr/bin/python3\nimport os,subprocess,sys\ncommand=sys.argv[-1].replace('/srv/site/message',os.environ['TEST_MESSAGE'])\nsys.exit(subprocess.run(command,shell=True).returncode)\n"
+        "#!/usr/bin/python3\nimport os,subprocess,sys\ncommand=sys.argv[-1].replace('/srv/site/message',os.environ['TEST_MESSAGE'])\nif 'TEST_RECEIPTS' in os.environ:\n target=sys.argv[-2].split('@')[-1].split('-')[0]\n command=command.replace('/srv/site/delivery.json',os.path.join(os.environ['TEST_RECEIPTS'],target+'.json'))\nsys.exit(subprocess.run(command,shell=True).returncode)\n"
     )
     ssh.chmod(0o755)
     curl = binaries / "curl"
@@ -78,6 +79,37 @@ def test_fleet_checks_separate_actual_content_and_mode(
     }
     source = (ROOT / f"quests/{number:03}/check-{stage}.sh").read_text()
     assert_stage_matches_objectives(source, catalog.quests[number]["stages"][stage]["objectives"])
+    if number == 81:
+        # Supply the actual new producer/receipt context. The original message
+        # bytes, modes and every expected negative outcome stay unchanged.
+        identity = "producer-original"
+        contract = {"release": expected, "producer_id": identity, "targets": {
+            host: {"target": host, "release": expected, "producer_id": identity}
+            for host in ("app1", "app2", "app3")}}
+        receipts = tmp_path / "receipts"
+        receipts.mkdir()
+        for host, entry in contract["targets"].items():
+            receipt = receipts / (host + ".json")
+            receipt.write_text(json.dumps(entry))
+            receipt.chmod(0o644)
+        environment["TEST_RECEIPTS"] = str(receipts)
+        fact = tmp_path / "producer-identity.json"
+        fact.write_text(json.dumps(identity))
+        source = source.replace("/run/dq/facts/0/producer-identity.json", str(fact))
+        state = {"values": {"root_module": {"resources": [
+            {"address": "local_file.release", "type": "local_file", "mode": "managed",
+             "values": {"filename": "release.txt", "content": expected + "\n"}},
+            {"address": "terraform_data.producer", "type": "terraform_data", "mode": "managed",
+             "values": {"id": identity}},
+        ]}}}
+        (tmp_path / "state.json").write_text(json.dumps(state))
+        (tmp_path / "contract.json").write_text(json.dumps(contract))
+        environment["TEST_STATE"] = str(tmp_path / "state.json")
+        environment["TEST_CONTRACT"] = str(tmp_path / "contract.json")
+        (binaries / "tofu").write_text(
+            '#!/usr/bin/python3\nimport os,sys\nfrom pathlib import Path\n'
+            'print(Path(os.environ["TEST_CONTRACT" if sys.argv[1]=="output" else "TEST_STATE"]).read_text())\n'
+        )
     result = subprocess.run(
         ["bash", "-c", source],
         text=True,
