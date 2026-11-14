@@ -1,43 +1,24 @@
 title: PDB Wartung
-brief: 'Der Dienst benötigt ein freiwilliges Wartungsfenster bei fortgesetzter Verfügbarkeit. Erhalten Sie
-  das mitgelieferte Beobachtungsfenster für die Beendigung.
+brief: |
+  Ein Anwendungsreplikat ist nicht verfügbar und die Wartung ist blockiert. Stelle die bestehende Anwendung wieder her und führe dann einen freiwilligen Ersatz ohne Dienstausfall durch.
 
-
-  Arbeiten Sie in `~/quest` auf der Workstation. Bereitgestellte Eingabedateien: `board.yaml`, `service.yaml`,
-  `client.yaml`, `pdb.yaml`, `evict-one.sh`.
-
+  Arbeiten Sie in `~/quest` auf der Workstation. Bereitgestellte Eingabedateien: `board.yaml`, `service.yaml`, `client.yaml`, `pdb.yaml`.
 
   Die Anfragedatei liegt unter `~/quest` auf der Workstation.
 
-
   **Anforderungen:**
 
-  - Das bestehende Unterbrechungsbudget schützt die Anwendungs-Pods und verlangt mindestens einen gesunden
-  Pod.
-
+  - Die bestehenden Pods müssen vor der freiwilligen Wartung wieder bereit sein; genau ein ursprünglicher Pod darf ersetzt werden. Erstelle die Eviction-API-Anfrage selbst.
+  - Das bestehende Unterbrechungsbudget schützt die Anwendungs-Pods und verlangt mindestens einen gesunden Pod.
   - Deployment `board` hat genau zwei Repliken, beide bereit.
-
-  - Das Unterbrechungsbudget der Anwendung meldet zwei gesunde Pods, ein gesundes Minimum von einem und eine
-  erlaubte Unterbrechung.
-
+  - Das Unterbrechungsbudget der Anwendung meldet zwei gesunde Pods, ein gesundes Minimum von einem und eine erlaubte Unterbrechung.
   - HTTP von Deployment `client` an `http://board:8080` liefert `north-77`.
-
-  - `eviction.json` dokumentiert eine durch die Pod-UID abgesicherte Eviction-API-Anfrage für einen ursprünglichen
-  board-Pod in dieser Umgebung.
-
-  - Der zur Eviction ausgewählte board-Pod ist nicht mehr vorhanden, und genau ein ursprünglicher board-Pod
-  bleibt.
-
-  - Der Server bestätigt, dass der in `eviction.json` ausgewählte ursprüngliche Pod über die Eviction API entfernt
-  wurde.
-
+  - `eviction.json` dokumentiert eine durch die Pod-UID abgesicherte Eviction-API-Anfrage für einen ursprünglichen board-Pod in dieser Umgebung.
+  - Der zur Eviction ausgewählte board-Pod ist nicht mehr vorhanden, und genau ein ursprünglicher board-Pod bleibt.
+  - Der Server bestätigt, dass der in `eviction.json` ausgewählte ursprüngliche Pod über die Eviction API entfernt wurde.
   - Das Konto der Umgebung darf den Pod-Status nicht per Patch ändern.
 
-
-  Ein PDB regelt freiwillige Verdrängung; es verhindert weder Knotenausfall, direktes Pod-Löschen noch einen
-  Deployment-Rollout, und eine bearbeitete Anfragedatei belegt keine vom Server beobachtete Verdrängung.
-
-  '
+  Ein PDB regelt freiwillige Verdrängung; es verhindert weder Knotenausfall, direktes Pod-Löschen noch einen Deployment-Rollout, und eine bearbeitete Anfragedatei belegt keine vom Server beobachtete Verdrängung.
 debrief: Die Wartung hat jetzt ein explizites, fehlerfreies Minimum, das durch einen echten eviction und Service-Probes
   überprüft wird.
 stages.0.brief: Schließen Sie die beobachtbare freiwillige Wartung ab und stellen Sie beide gesunden Replikate
@@ -55,40 +36,29 @@ stages.0.objectives.5.text: Der zur Eviction ausgewählte board-Pod ist nicht me
 stages.0.objectives.6.text: Der Server bestätigt, dass der in `eviction.json` ausgewählte ursprüngliche Pod
   über die Eviction API entfernt wurde.
 stages.0.objectives.7.text: Das Konto der Umgebung darf den Pod-Status nicht per Patch ändern.
-hints.0.text: Ein Unterbrechungsbudget bringt freiwillige Wartung und Anwendungsverfügbarkeit in Einklang.
+hints.0.text: Ein Disruption Budget berücksichtigt die tatsächliche Bereitschaft, nicht nur die gewünschte
+  Replikazahl. Die Anwendung muss während der Bereitschaft ihrer Ersetzung verfügbar bleiben.
 hints.1.text: |-
-  Ein Zwei-von-Zwei-Budget lässt keinen Spielraum für freiwillige Wartung.
-
-  Halten Sie den selector und die Replikate fest; Ändern Sie nur das gesunde Minimum.
-
-  Prüfen Sie die mitgelieferten Definitionen, aktuellen Ressourcen und Ereignisse.
+  Vergleiche die Readiness-Probe des Pods, ihre Fehlerereignisse und den PDB-Status, bevor du entscheidest, ob eine Eviction sicher ist.
 
   ```sh
-  cat pdb.yaml
-  kubectl get pdb board-budget -o yaml
-  kubectl describe deployment board
+  kubectl describe pods -l app=board
+  kubectl get pdb -o yaml
   kubectl get pods -l app=board -o yaml
   ```
 hints.2.text: |-
-  Warten Sie auf disruptionsAllowed=1; dann sendet bash evict-one.sh eine UID-gesicherte Eviction-API-Anfrage und prüft HTTP während des Ersatzes. Prüfen Sie die Wiederherstellung. Das Backend beobachtet DisruptionTarget mit Grund EvictionByEvictionAPI während der Beendigung; direktes Löschen oder eine bearbeitete JSON-Datei erzeugen diesen Nachweis nicht. Der vorgegebene 10-sekündige preStop-Hook macht die Beendigung bei Abfragen alle 2.5 Sekunden beobachtbar; behalten Sie ihn bei.
+  Stelle die fehlschlagende Readiness-Bedingung im bestehenden Pod wieder her, ohne ihn zu ersetzen. Wenn das Budget Wartung erlaubt, erstelle selbst eine policy/v1 Eviction in `eviction.json` mit dem ursprünglichen Pod-Namen, `$DQ_NAMESPACE` und `deleteOptions.preconditions.uid`; sende sie an die Eviction-Unterressource dieses Pods. Behalte das vorgegebene Beendigungsfenster.
 
-  Prüfen Sie das beobachtete Ergebnis:
+  Prüfe zwei bereite Replikate, das gesunde Minimum und die Freigabe, durchgängiges HTTP, genau eine verbleibende ursprüngliche UID sowie den Servernachweis für die verdrängte UID.
 
   ```sh
   kubectl get deployment board
-  kubectl get pdb board-budget
-  bash evict-one.sh
+  kubectl get pdb
   cat eviction.json
   cat /run/dq/observations/evictions.json
-  kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
   kubectl auth can-i patch pods --subresource=status
   ```
-
-  Erwartet werden zwei bereite Replikate, zwei gesunde Pods, ein gesundes Minimum von einem und eine erlaubte Unterbrechung; HTTP liefert north-77, die Berechtigungsauskunft no. Der ausgewählte ursprüngliche Pod fehlt, genau ein ursprünglicher bleibt und der Serverbeleg bestätigt die Eviction der gewählten UID.
-
-  Mitgelieferte Einschränkungen und Details: PDB `board-budget` schützt Pods mit dem Label `app=board` und verlangt mindestens einen gesunden Pod. PDB `board-budget` meldet zwei gesunde Pods, ein Minimum von einem gesunden Pod und eine erlaubte Unterbrechung.
-
-  In ~/quest auf der Workstation muss eviction.json eine policy/v1 Eviction in $DQ_NAMESPACE mit ursprünglicher Pod-UID als Vorbedingung benennen. Den mitgelieferten 10-Sekunden-preStop-Hook beibehalten; er ermöglicht die serverseitige Beobachtung der Beendigung.
 phrases.0: Ich habe den disruption budget mit der verfügbaren Replikatkapazität abgeglichen.
 phrases.1: Ich habe Eviction API anstelle der direkten Löschung verwendet.
 phrases.2: Ich habe den freiwilligen Wartungsschutz vom Ausfallwiederherstellungsschutz unterschieden.

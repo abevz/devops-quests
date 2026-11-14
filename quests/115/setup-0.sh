@@ -5,6 +5,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: blue
+  labels:
+    release: board
 spec:
   replicas: 1
   selector:
@@ -55,6 +57,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: green
+  labels:
+    release: board
 spec:
   replicas: 1
   selector:
@@ -79,7 +83,7 @@ spec:
         command:
         - sh
         - -c
-        - mkdir -p /tmp/site; printf "%s\n" "green-115" > /tmp/site/index.html; exec httpd -f -p 8080
+        - mkdir -p /tmp/site; printf "%s\n" "green-115" > /tmp/site/index.html; exec httpd -f -p 8099
           -h /tmp/site
         resources:
           requests:

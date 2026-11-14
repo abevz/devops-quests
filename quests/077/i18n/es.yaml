@@ -1,40 +1,24 @@
 title: Mantenimiento PDB
-brief: 'El servicio necesita una ventana de mantenimiento voluntario sin perder disponibilidad. Conserva la
-  ventana de observación de terminación suministrada.
+brief: |
+  Una réplica de la aplicación no está disponible y el mantenimiento está bloqueado. Recupera la aplicación existente y realiza un reemplazo voluntario sin perder el servicio.
 
-
-  Trabaja en `~/quest` en la workstation. Archivos de entrada suministrados: `board.yaml`, `service.yaml`,
-  `client.yaml`, `pdb.yaml`, `evict-one.sh`.
-
+  Trabaja en `~/quest` en la workstation. Archivos de entrada suministrados: `board.yaml`, `service.yaml`, `client.yaml`, `pdb.yaml`.
 
   El archivo de petición está en `~/quest` en la estación de trabajo.
 
-
   **Requisitos:**
 
+  - Los Pods existentes deben recuperar su disponibilidad antes del mantenimiento voluntario; solo puede reemplazarse un Pod original. Construye tú la solicitud Eviction API.
   - El presupuesto de interrupciones existente protege los Pods de la aplicación y exige al menos un Pod sano.
-
   - El Deployment `board` tiene exactamente dos réplicas, ambas listas.
-
-  - El presupuesto de interrupciones de la aplicación informa dos Pods sanos, un mínimo sano de uno y una interrupción
-  permitida.
-
+  - El presupuesto de interrupciones de la aplicación informa dos Pods sanos, un mínimo sano de uno y una interrupción permitida.
   - HTTP desde Deployment `client` a `http://board:8080` devuelve `north-77`.
-
-  - `eviction.json` registra una solicitud de Eviction API para un Pod board original de este entorno, protegida
-  por el UID de ese Pod.
-
+  - `eviction.json` registra una solicitud de Eviction API para un Pod board original de este entorno, protegida por el UID de ese Pod.
   - El Pod board elegido para la expulsión ya no está y queda exactamente un Pod board original.
-
   - El servidor confirma que el Pod original elegido en `eviction.json` fue expulsado mediante Eviction API.
-
   - La cuenta del entorno no puede modificar el estado de los Pods mediante patch.
 
-
-  Un PDB regula la expulsión voluntaria; no evita la pérdida de nodos, el borrado directo de Pods ni un rollout
-  del Deployment, y un archivo de solicitud editado no demuestra una expulsión observada por el servidor.
-
-  '
+  Un PDB regula la expulsión voluntaria; no evita la pérdida de nodos, el borrado directo de Pods ni un rollout del Deployment, y un archivo de solicitud editado no demuestra una expulsión observada por el servidor.
 debrief: El mantenimiento ahora tiene un mínimo saludable explícito, verificado por un eviction real y sondas
   de servicio.
 stages.0.brief: Completa el mantenimiento voluntario observable y recupera ambas réplicas sanas.
@@ -51,41 +35,29 @@ stages.0.objectives.5.text: El Pod board elegido para la expulsión ya no está 
 stages.0.objectives.6.text: El servidor confirma que el Pod original elegido en `eviction.json` fue expulsado
   mediante Eviction API.
 stages.0.objectives.7.text: La cuenta del entorno no puede modificar el estado de los Pods mediante patch.
-hints.0.text: Un presupuesto de interrupciones equilibra el mantenimiento voluntario y la disponibilidad de
-  la aplicación.
+hints.0.text: Un presupuesto de interrupción usa la disponibilidad real, no solo el número deseado de
+  réplicas. La aplicación debe seguir disponible mientras se prepara el reemplazo.
 hints.1.text: |-
-  Un presupuesto de dos de dos no deja espacio para el mantenimiento voluntario.
-
-  Mantenga fijo el selector y las réplicas; cambie sólo el mínimo saludable.
-
-  Inspecciona las definiciones suministradas, los recursos actuales y los eventos.
+  Compara la sonda de disponibilidad del Pod, sus eventos de fallo y el estado del PDB antes de decidir si una expulsión es segura.
 
   ```sh
-  cat pdb.yaml
-  kubectl get pdb board-budget -o yaml
-  kubectl describe deployment board
+  kubectl describe pods -l app=board
+  kubectl get pdb -o yaml
   kubectl get pods -l app=board -o yaml
   ```
 hints.2.text: |-
-  Espera disruptionsAllowed=1; después bash evict-one.sh envía una solicitud de Eviction API protegida por UID y prueba HTTP durante la sustitución. Verifica la recuperación. El backend observa DisruptionTarget con motivo EvictionByEvictionAPI durante la terminación; el borrado directo o editar JSON no generan este comprobante. El hook preStop de 10 segundos suministrado mantiene la terminación observable durante el sondeo cada 2.5 segundos; consérvalo.
+  Restaura la condición de disponibilidad que falla dentro del Pod existente sin reemplazarlo. Cuando el presupuesto permita mantenimiento, construye una Eviction policy/v1 en `eviction.json` con el nombre del Pod original, `$DQ_NAMESPACE` y `deleteOptions.preconditions.uid`; envíala al subrecurso eviction de ese Pod. Conserva la ventana de terminación suministrada.
 
-  Verifica el resultado observado:
+  Verifica dos réplicas listas, el mínimo sano y el permiso, continuidad HTTP, exactamente un UID original restante y el recibo del servidor para el UID expulsado.
 
   ```sh
   kubectl get deployment board
-  kubectl get pdb board-budget
-  bash evict-one.sh
+  kubectl get pdb
   cat eviction.json
   cat /run/dq/observations/evictions.json
-  kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
   kubectl auth can-i patch pods --subresource=status
   ```
-
-  Se esperan dos réplicas listas, dos Pods sanos, un mínimo sano de uno y una interrupción permitida; HTTP devuelve north-77 y la autorización no. El Pod original seleccionado ya no está, queda exactamente uno original y el recibo del servidor confirma la eviction del UID seleccionado.
-
-  Restricciones y detalles suministrados: El PDB `board-budget` protege Pods con la etiqueta `app=board` y requiere al menos un Pod sano. El PDB `board-budget` indica dos Pods sanos, un mínimo de un Pod sano y una interrupción permitida.
-
-  En ~/quest de la estación de trabajo, eviction.json debe nombrar una Eviction policy/v1 en $DQ_NAMESPACE con la condición previa del UID de un Pod original. Conserva el hook preStop de 10 segundos suministrado; permite al servidor observar la terminación.
 phrases.0: Alineé el disruption budget con la capacidad de réplica disponible.
 phrases.1: Utilicé Eviction API en lugar de la eliminación directa.
 phrases.2: Distinguí la protección de mantenimiento voluntario de la recuperación de fallas.
