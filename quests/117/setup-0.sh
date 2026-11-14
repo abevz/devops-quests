@@ -112,3 +112,15 @@ from pathlib import Path
 p=Path(sys.argv[1]);p.write_text(p.read_text().replace('__DQ_APP_IMAGE__',os.environ['DQ_APP_IMAGE']))
 DQ_IMAGE
 sed -i "s/__NAMESPACE__/$DQ_NAMESPACE/g" static-pod.yaml
+python3 - <<'API_SHADOW'
+import os,yaml
+from pathlib import Path
+pod=yaml.safe_load(Path('static-pod.yaml').read_text())
+pod['metadata']['name']='static-board-'+os.environ['DQ_NODE_NAME']
+pod['metadata']['labels']={'app':'legacy-board'}
+pod['spec']['containers'][0]['command'][-1]=pod['spec']['containers'][0]['command'][-1].replace('north-117','legacy-117').replace('-p 8099','-p 8080')
+Path('api-pod.yaml').write_text(yaml.safe_dump(pod,sort_keys=False))
+API_SHADOW
+kubectl apply -f api-pod.yaml
+kubectl wait --for=condition=Ready "pod/static-board-$DQ_NODE_NAME" --timeout=90s
+rm api-pod.yaml
