@@ -21,6 +21,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 OLD_FIXES = {
+    (85, 0): """kubectl patch pdb relay --type=merge -p '{"spec":{"minAvailable":1}}'
+sleep 3
+""",
     (77, 0): '''kubectl patch pdb board-budget --type=merge -p '{"spec":{"minAvailable":1}}'
 # This is the first precondition of the old supplied evict-one.sh helper.
 kubectl get pdb board-budget -o json | jq -e '.status.currentHealthy==2 and .status.disruptionsAllowed==1' >/dev/null

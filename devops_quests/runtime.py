@@ -604,6 +604,18 @@ nodes:
                         }
                     ],
                 }
+                if run["level"] == 85:
+                    # Eviction receipts must remain server-owned. This bay needs
+                    # policy edits, but no RBAC mutation/escalate/bind authority.
+                    role["rules"][0]["resources"] = [
+                        resource for resource in role["rules"][0]["resources"]
+                        if resource not in {"roles", "rolebindings"}
+                    ]
+                    role["rules"].append({
+                        "apiGroups": ["rbac.authorization.k8s.io"],
+                        "resources": ["roles", "rolebindings"],
+                        "verbs": ["get", "list", "watch"],
+                    })
                 role["rules"].append(
                     {
                         "apiGroups": ["discovery.k8s.io"],
