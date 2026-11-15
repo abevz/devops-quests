@@ -1,59 +1,69 @@
 title: Admission webhook recovery
-brief: |-
-  Route updates are not reaching the workload. Restore the private admission contract and the expected allowed and rejected results.
+brief: 'Route updates are not reaching the workload. Restore the private admission contract and the expected allowed
+  and rejected results.
+
 
   Work on the workstation in `~/quest` with the supplied files:
+
   - `board.yaml`, `service.yaml`, `client.yaml`, `route.yaml`, `webhook-repair.json`, `admission-ca.pem`, `admission-target.json`.
+
 
   The control interface is documented in `~/quest/control/README.md`.
 
+
   **Requirements:**
 
-  - The bay-scoped admission callback retains the supplied identity, private CA, namespace boundary and fail-closed timeout contract, and reaches its intended private endpoint.
+
+  - The bay-scoped admission callback retains the supplied identity, private CA, namespace boundary and fail-closed
+  timeout contract, and reaches its intended private endpoint.
+
   - The existing route configuration contains `north-121`, and its server-side admission dry-run succeeds.
-  - A server-side admission dry-run of the closed route is rejected with the private webhook’s route validation error.
+
+  - A server-side admission dry-run of the closed route is rejected with the private webhook’s route validation
+  error.
+
   - Deployment `board` has one ready replica, and `http://board:8080` returns `north-121` to Deployment `client`.
+  Both consumers described in `adoption-contract.json` use the policy-validated record and key in desired configuration
+  and current ready Pods, read and serve the admitted route, and retain their supplied startup programs, workload
+  identities and images. The staged record remains unchanged; the file input stays read-only.
+
 
   Checks observe current callback configuration and admission decisions, not the complete recovery history.
-debrief: The current webhook configuration, route, response and valid and invalid dry-runs matched the
-  checks.
-stages.0.brief: The admission configuration stays read-only; recovery stays within the supplied adapter.
-hints.0.text: Fail-closed distinguishes an unreachable webhook from a rejected object. The supplied callback
-  URL refers to a retired path, so fail-closed admission blocks the route ConfigMap before it reaches
-  the workload.
-hints.1.text: |-
-  The configuration is read-only; the repair request cannot change namespace scope, CA or server.
 
-  Inspect the supplied inputs and live observations:
+
+  Consumer roles, input paths and preservation constraints are described in `adoption-contract.json`.'
+debrief: The protected callback, both admission outcomes and current consumer adoption matched the checks. Configuration
+  snapshots and responses describe current operation, not the complete recovery history.
+stages.0.brief: The admission configuration stays read-only; recovery stays within the supplied adapter.
+hints.0.text: Fail-closed transport failure and a policy rejection are different outcomes. Admission governs an
+  API write; it does not update an environment captured at startup or a file bound through subPath. Follow publication
+  and both consumer generations as separate boundaries.
+hints.1.text: 'Compare the callback, admission decisions, consumer input sources and current Pods. The supplied
+  contract describes input lifetimes and preserved controls; a receipt describes only the control request.
+
 
   ```sh
+
+  cd ~/quest
+
+  cat adoption-contract.json webhook-agent-status.json admission-target.json
+
   name="dq-webhook-${DQ_NAMESPACE#dq-}"
-    kubectl get validatingwebhookconfiguration "$name" -o yaml
-    kubectl get namespace "$DQ_NAMESPACE" -o yaml
-    kubectl get deployment board -o yaml
-    cat admission-target.json admission-ca.pem webhook-agent-status.json
-  ```
-hints.2.text: |-
-  Request restore-path, repair data.route, then test both admission outcomes. Write `{"action":"restore-path"}` to `webhook-repair.json` and wait for the bounded agent; it can restore only the supplied server path.
 
-  Verify the result from `~/quest` on the workstation:
+  kubectl get validatingwebhookconfiguration "$name" -o yaml
 
-  - The current route is admitted without persisting a change; the consumer receives `north-121`.
+  kubectl get deployment,replicaset,pods,configmap -o yaml
 
-    ```sh
-    kubectl get configmap route -o json |
-      jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' |
-      kubectl apply --dry-run=server -f -
-    kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
-    ```
-
-  - The dry-run fails with `Station route must be north-121` and changes no stored object.
-
-    ```sh
-    kubectl get configmap route -o json |
-      jq '.data.route="closed" | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' |
-      kubectl apply --dry-run=server -f -
-    ```
+  ```'
+hints.2.text: "Verify successful and rejected server dry-runs, the application response and both consumers. Desired\
+  \ source references and running Pod inputs must agree with the policy-validated record; healthy HTTP alone does\
+  \ not establish adoption.\n\n```sh\ncd ~/quest\nkubectl get configmap route -o json |\n  jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)'\
+  \ |\n  kubectl apply --dry-run=server -f -\nkubectl get configmap route -o json |\n  jq '.data.route=\"closed\"\
+  \ | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' |\n  kubectl\
+  \ apply --dry-run=server -f -\nkubectl exec deployment/client -- wget -qO- -T 3 http://board:8080\nkubectl exec\
+  \ deployment/route-env -- printenv ROUTE\nkubectl exec deployment/route-file -- cat /config/route\nfor name in\
+  \ route-env route-file; do\n  kubectl exec \"deployment/$name\" -- wget -qO- -T 3 http://127.0.0.1:8080\ndone\n\
+  kubectl get deployment,replicaset,pods -o yaml\n```"
 phrases.0: I distinguished webhook transport failure from policy denial.
 phrases.1: I preserved fail-closed validation and namespace scope.
 phrases.2: I tested both admitted and denied API requests.
@@ -67,11 +77,11 @@ diagnostics.count: webhook configuration webhooks length must equal 1.
 diagnostics.name: webhook name must equal route.training.devops-quests.local.
 diagnostics.failure_policy: webhook failurePolicy must equal Fail.
 diagnostics.timeout: webhook timeoutSeconds must equal 2.
-diagnostics.url: webhook clientConfig.url must equal `https://dq-webhook-<bay>:8443/validate` for this
-  bay.
-diagnostics.ca: webhook caBundle must contain the same single certificate as admission-ca.pem, regardless of PEM formatting.
-diagnostics.namespace: The bay installation label must be nonempty, and webhook namespaceSelector must
-  exactly match its installation and run labels.
+diagnostics.url: webhook clientConfig.url must equal `https://dq-webhook-<bay>:8443/validate` for this bay.
+diagnostics.ca: webhook caBundle must contain the same single certificate as admission-ca.pem, regardless of PEM
+  formatting.
+diagnostics.namespace: The bay installation label must be nonempty, and webhook namespaceSelector must exactly match
+  its installation and run labels.
 diagnostics.route: configmap/route data.route must equal north-121.
 diagnostics.ready: deployment/board readyReplicas must equal 1.
 diagnostics.http: The request to board:8080 must return north-121.
@@ -79,14 +89,36 @@ diagnostics.valid: Preparing the route input and its server dry-run must succeed
 diagnostics.invalid_input: Preparing the closed route dry-run input must succeed.
 diagnostics.denial: The server dry-run must reject route closed.
 diagnostics.denial_text: The denial must contain Station route must be north-121.
-stages.0.objectives.0.text: The bay-scoped admission callback retains the supplied identity, private CA,
-  namespace boundary and fail-closed timeout contract, and reaches its intended private endpoint.
-stages.0.objectives.1.text: The existing route configuration contains `north-121`, and its server-side
-  admission dry-run succeeds.
-stages.0.objectives.2.text: A server-side admission dry-run of the closed route is rejected with the private
-  webhook’s route validation error.
-stages.0.objectives.3.text: Deployment `board` has one ready replica, and `http://board:8080` returns
-  `north-121` to Deployment `client`.
+stages.0.objectives.0.text: The bay-scoped admission callback retains the supplied identity, private CA, namespace
+  boundary and fail-closed timeout contract, and reaches its intended private endpoint.
+stages.0.objectives.1.text: The existing route configuration contains `north-121`, and its server-side admission
+  dry-run succeeds.
+stages.0.objectives.2.text: A server-side admission dry-run of the closed route is rejected with the private webhook’s
+  route validation error.
+stages.0.objectives.3.text: Deployment `board` has one ready replica, and `http://board:8080` returns `north-121`
+  to Deployment `client`. Both consumers described in `adoption-contract.json` use the policy-validated record and
+  key in desired configuration and current ready Pods, read and serve the admitted route, and retain their supplied
+  startup programs, workload identities and images. The staged record remains unchanged; the file input stays read-only.
 diagnostics.probe_0_0: 'The current inputs could not verify this objective: The bay-scoped admission callback retains
   the supplied identity, private CA, namespace boundary and fail-closed timeout contract, and reaches its intended
   private endpoint.'
+diagnostics.adoption_identity: An original workload identity or supplied image differs. Recreating a Deployment
+  or changing its template/current Pod image does not preserve the existing topology.
+diagnostics.adoption_staging: The staged record identity or data changed. It is a retained control; editing a copy
+  does not adopt the policy-validated source.
+diagnostics.adoption_record: The policy-protected record does not contain the admitted route. Callback restoration
+  alone does not publish admissible data.
+diagnostics.adoption_current: A consumer lacks exactly one current ready owned Pod. A pending rollout or unrelated
+  Pod cannot establish current adoption.
+diagnostics.adoption_program: A consumer startup command or arguments changed. Preserve the provided program so
+  input and response observations refer to its declared behavior.
+diagnostics.adoption_source: A desired or current consumer input does not reference the policy-validated record
+  and key. A copied literal or an unvalidated key does not establish adoption.
+diagnostics.adoption_input: A running consumer still reads a different route. Environment and subPath inputs can
+  retain their startup state after the source changes.
+diagnostics.adoption_output: A consumer response differs from the admitted route. Its startup snapshot may still
+  contain older data even when the API object is correct.
+diagnostics.adoption_observation: Current adoption could not be observed within the bounded check. Wait for the
+  workload to become available and compare the live objects and inputs.
+diagnostics.probe_0_3: Current adoption could not be observed within the bounded check. Wait for the workload to
+  become available and compare the live objects and inputs.

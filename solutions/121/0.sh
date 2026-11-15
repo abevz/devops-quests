@@ -16,3 +16,16 @@ DQ_YAML_FIX_121
 cp /tmp/fixed-route.yaml route.yaml
 kubectl apply -f route.yaml
 kubectl rollout status deployment/board --timeout=90s
+
+python3 -I - <<'DQ_ADOPT_REFERENCE'
+import json,subprocess
+for name in ['route-env','route-file']:
+ obj=json.loads(subprocess.check_output(['kubectl','get','deployment',name,'-o','json'],text=True))
+ spec=obj['spec']['template']['spec'];worker=next(c for c in spec['containers'] if c['name']=='worker')
+ if name=='route-env':
+  next(e for e in worker['env'] if e['name']=='ROUTE')['valueFrom']['configMapKeyRef']={'name':'route','key':'route'}
+ else:
+  next(v for v in spec['volumes'] if v['name']=='input')['configMap']['name']='route'
+ subprocess.run(['kubectl','apply','-f','-'],input=json.dumps(obj),text=True,check=True)
+ subprocess.run(['kubectl','rollout','status','deployment/'+name,'--timeout=90s'],check=True)
+DQ_ADOPT_REFERENCE

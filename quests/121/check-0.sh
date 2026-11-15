@@ -141,6 +141,12 @@ exit "$failed"
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_ADOPTION_121'
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -154,6 +160,192 @@ if ! test "$(kubectl exec --pod-running-timeout=2s deployment/client -- wget -qO
 fi
 exit "$failed"
 
+DQ_LEGACY_ADOPTION_121
+python3 -I - <<'DQ_ADOPTION_CURRENT'
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from dq_check import current_pods, pod_worker, selector_matches, workload_worker
+
+failed = False
+deadline = time.monotonic() + 10
+namespace = os.environ['DQ_NAMESPACE']
+
+
+def require(value, marker):
+    global failed
+    if not value:
+        print('Network condition is unmet: ✗ [DQ:' + marker + ']')
+        failed = True
+
+
+def command(arguments):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ValueError('Observation budget exhausted')
+    result = subprocess.run(arguments, capture_output=True, text=True,
+                            timeout=min(6, remaining))
+    if result.returncode:
+        raise ValueError('Observation unavailable')
+    return result.stdout
+
+
+def get(kind, name=None):
+    args = ['kubectl', 'get', kind]
+    if name is not None:
+        args.append(name)
+    return json.loads(command(args + ['-o', 'json']))
+
+
+def resource(items, name):
+    matches = [item for item in items if item.get('metadata', {}).get('name') == name]
+    if len(matches) != 1:
+        raise ValueError('Resource identity')
+    return matches[0]
+
+
+def same_image(actual, expected):
+    digest = expected.partition('@')[2]
+    return actual == expected or (bool(digest) and isinstance(actual, str)
+                                  and actual.partition('@')[2] == digest)
+
+
+def preserved(facts, deployments, replicasets=None, pods=None):
+    for name, identity in facts['deployments'].items():
+        deployment = resource(deployments['items'], name)
+        if deployment['metadata']['uid'] != identity['uid'] or not same_image(workload_worker(deployment).get('image'), identity['image']):
+            return False
+        if replicasets is not None and pods is not None:
+            if any(not same_image(pod_worker(pod).get('image'), identity['image'])
+                   for pod in current_pods(deployment, replicasets, pods)):
+                return False
+    return True
+
+
+def ready(pod):
+    return pod.get('status', {}).get('phase') == 'Running' and any(
+        condition.get('type') == 'Ready' and condition.get('status') == 'True'
+        for condition in pod.get('status', {}).get('conditions', []))
+from pathlib import PurePosixPath
+from dq_check import named, readonly_mount
+
+facts = json.loads(Path('/run/dq/facts/0/adoption-identities.json').read_text())
+
+def safe_path(value):
+    path = PurePosixPath(value)
+    if not isinstance(value, str) or '..' in path.parts:
+        raise ValueError('Input path')
+    return path
+
+
+def admitted_file(policy, worker, path):
+    target = safe_path(path)
+    volumes = {item['name']: item for item in policy.get('volumes', [])}
+    matches = []
+    for mount in worker.get('volumeMounts', []):
+        root = safe_path(mount['mountPath'])
+        if not root.is_absolute():
+            continue
+        try:
+            relative = target.relative_to(root)
+        except ValueError:
+            continue
+        matches.append((len(root.parts), mount, str(relative)))
+    if not matches:
+        return False
+    matches.sort(key=lambda item: item[0], reverse=True)
+    if len(matches) > 1 and matches[0][0] == matches[1][0]:
+        return False
+    _, mount, relative = matches[0]
+    if not readonly_mount(mount, volumes):
+        return False
+    if mount.get('subPath') and mount.get('subPathExpr'):
+        return False
+    prefix = mount.get('subPath', mount.get('subPathExpr', ''))
+    if '$' in prefix or safe_path(prefix).is_absolute():
+        return False
+    projected_path = str(safe_path(prefix) / relative)
+    source = volumes[mount['name']]
+    records = []
+    if 'configMap' in source:
+        records.append(source['configMap'])
+    projections = source.get('projected', {}).get('sources', [])
+    for item in projections:
+        if 'configMap' in item:
+            records.append(item['configMap'])
+        else:
+            # Another projected provider can shadow this path after ConfigMap expansion.
+            for provider in item.values():
+                if not isinstance(provider, dict) or 'items' not in provider:
+                    return False
+                if any(str(safe_path(entry['path'])) == projected_path for entry in provider['items']):
+                    return False
+    matches = []
+    for record in records:
+        for item in record.get('items', [{'key': 'route', 'path': 'route'}]):
+            if str(safe_path(item['path'])) == projected_path:
+                matches.append((record.get('name'), item['key']))
+    return matches == [('route', 'route')]
+
+
+def admitted_environment(worker):
+    entries = [item for item in worker.get('env', []) if item.get('name') == 'ROUTE']
+    if len(entries) != 1 or 'value' in entries[0]:
+        return False
+    source = entries[0].get('valueFrom', {}).get('configMapKeyRef', {})
+    return source.get('name') == 'route' and source.get('key') == 'route'
+
+
+def input_source(role, policy, worker):
+    if role['mode'] == 'environment':
+        return admitted_environment(worker)
+    return admitted_file(policy, worker, role['input'])
+
+
+try:
+    deployments = get('deployments')
+    sets = get('replicasets')
+    pods = get('pods')
+    require(preserved(facts, deployments, sets, pods), 'adoption_identity')
+    staged = get('configmap', 'staged-route')
+    require(staged['metadata']['uid'] == facts['staging']['metadata']['uid'] and staged.get('data') == facts['staging'].get('data') and staged.get('binaryData', {}) == facts['staging'].get('binaryData', {}), 'adoption_staging')
+    require(get('configmap', 'route').get('data', {}).get('route') == 'north-121', 'adoption_record')
+    for role in facts['contract']['consumers']:
+        name = role['deployment']
+        dep = resource(deployments['items'], name)
+        identity = facts['deployments'][name]
+        active = current_pods(dep, sets, pods)
+        require(len(active) == 1 and ready(active[0]), 'adoption_current')
+        if len(active) != 1 or not ready(active[0]):
+            continue
+        pod = active[0]
+        desired = dep['spec']['template']['spec']
+        for policy in [desired, pod['spec']]:
+            worker = named(policy['containers'], 'worker')
+            require(worker.get('command', []) == identity['command'] and worker.get('args', []) == identity['args'], 'adoption_program')
+            require(input_source(role, policy, worker), 'adoption_source')
+        base = ['kubectl', 'exec', '--pod-running-timeout=2s', pod['metadata']['name'], '-c', 'worker', '--']
+        read = ['printenv', role['input']] if role['mode'] == 'environment' else ['cat', role['input']]
+        require(command(base + read).strip() == 'north-121', 'adoption_input')
+        require(command(base + ['wget', '-qO-', '-T', '2', role['output']]).strip() == 'north-121', 'adoption_output')
+except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError):
+    require(False, 'adoption_observation')
+sys.exit(int(failed))
+DQ_ADOPTION_CURRENT
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_3]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

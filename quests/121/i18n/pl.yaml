@@ -1,59 +1,69 @@
 title: Odzyskiwanie webhooka dostępu
-brief: |-
-  Aktualizacje trasy nie docierają do obciążenia. Przywróć prywatny kontrakt admission i oczekiwane wyniki dopuszczonych oraz odrzuconych żądań.
+brief: 'Aktualizacje trasy nie docierają do obciążenia. Przywróć prywatny kontrakt admission i oczekiwane wyniki
+  dopuszczonych oraz odrzuconych żądań.
+
 
   Pracuj na workstation w `~/quest` z dostarczonymi plikami:
+
   - `board.yaml`, `service.yaml`, `client.yaml`, `route.yaml`, `webhook-repair.json`, `admission-ca.pem`, `admission-target.json`.
+
 
   Interfejs sterowania stacją opisano w `~/quest/control/README.md`.
 
+
   **Requirements:**
 
-  - Callback admission ograniczony do bay zachowuje dostarczoną tożsamość, prywatne CA, granicę namespace i kontrakt limitu czasu z blokowaniem przy awarii oraz dociera do zamierzonego prywatnego endpointu.
+
+  - Callback admission ograniczony do bay zachowuje dostarczoną tożsamość, prywatne CA, granicę namespace i kontrakt
+  limitu czasu z blokowaniem przy awarii oraz dociera do zamierzonego prywatnego endpointu.
+
   - Istniejąca konfiguracja trasy zawiera `north-121`, a jej próbne admission po stronie serwera kończy się powodzeniem.
-  - Próbne admission zamkniętej trasy po stronie serwera zostaje odrzucone z błędem walidacji trasy z prywatnego webhooka.
+
+  - Próbne admission zamkniętej trasy po stronie serwera zostaje odrzucone z błędem walidacji trasy z prywatnego
+  webhooka.
+
   - Deployment `board` ma jedną gotową replikę, a `http://board:8080` zwraca `north-121` do Deployment `client`.
+  Obaj odbiorcy opisani w `adoption-contract.json` korzystają z rekordu i klucza sprawdzanych przez politykę w żądanej
+  konfiguracji i bieżących gotowych Podach, odczytują i udostępniają dopuszczoną trasę oraz zachowują programy startowe,
+  tożsamości obciążeń i obrazy. Rekord przejściowy pozostaje niezmieniony; wejście plikowe jest tylko do odczytu.
+
 
   Kontrole obserwują bieżącą konfigurację callbacku i decyzje admission, nie pełną historię odzyskiwania.
-debrief: Bieżąca konfiguracja webhooka, trasa, odpowiedź oraz poprawna i błędna próby dry-run odpowiadały
-  kontrolom.
-stages.0.brief: Konfiguracja admission pozostaje tylko do odczytu; odzyskiwanie mieści się w dostarczonym
-  adapterze.
-hints.0.text: Fail-closed odróżnia nieosiągalny webhook od obiektu odrzuconego. Dostarczony URL callbacku
-  wskazuje wycofaną ścieżkę, więc admission fail-closed blokuje ConfigMap trasy przed dotarciem do obciążenia.
-hints.1.text: |-
-  Konfiguracja jest tylko do odczytu; żądanie naprawy nie może zmienić zakresu namespace, CA ani serwera.
 
-  Sprawdź dostarczone dane i bieżące obserwacje:
+
+  Role odbiorców, ścieżki wejść i wymagania zachowania opisano w `adoption-contract.json`.'
+debrief: Chroniony callback, oba wyniki admission i bieżące przyjęcie danych przez odbiorców przeszły kontrole.
+  Migawki konfiguracji i odpowiedzi opisują bieżącą pracę, a nie pełną historię odtwarzania.
+stages.0.brief: Konfiguracja admission pozostaje tylko do odczytu; odzyskiwanie mieści się w dostarczonym adapterze.
+hints.0.text: Błąd transportu przy fail-closed i odrzucenie przez politykę to różne wyniki. Admission kontroluje
+  zapis API, ale nie aktualizuje środowiska przechwyconego przy starcie ani pliku powiązanego przez subPath. Śledź
+  publikację i generacje obu odbiorców jako oddzielne granice.
+hints.1.text: 'Porównaj callback, decyzje admission, źródła wejść odbiorców i bieżące Pody. Kontrakt opisuje czas
+  życia wejść i zachowywane obiekty kontrolne; potwierdzenie dotyczy tylko żądania sterowania.
+
 
   ```sh
+
+  cd ~/quest
+
+  cat adoption-contract.json webhook-agent-status.json admission-target.json
+
   name="dq-webhook-${DQ_NAMESPACE#dq-}"
-    kubectl get validatingwebhookconfiguration "$name" -o yaml
-    kubectl get namespace "$DQ_NAMESPACE" -o yaml
-    kubectl get deployment board -o yaml
-    cat admission-target.json admission-ca.pem webhook-agent-status.json
-  ```
-hints.2.text: |-
-  Poproś o restore-path, napraw data.route, a następnie przetestuj oba wyniki przyjęcia. Zapisz `{"action":"restore-path"}` w `webhook-repair.json` i poczekaj na ograniczonego agenta; przywraca on tylko dostarczoną ścieżkę serwera.
 
-  Sprawdź wynik z `~/quest` na workstation:
+  kubectl get validatingwebhookconfiguration "$name" -o yaml
 
-  - Bieżąca trasa jest dopuszczona bez zapisu zmiany; odbiorca otrzymuje `north-121`.
+  kubectl get deployment,replicaset,pods,configmap -o yaml
 
-    ```sh
-    kubectl get configmap route -o json |
-      jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' |
-      kubectl apply --dry-run=server -f -
-    kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
-    ```
-
-  - Próba jest odrzucana z `Station route must be north-121` i nie zmienia zapisanego obiektu (dry-run).
-
-    ```sh
-    kubectl get configmap route -o json |
-      jq '.data.route="closed" | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' |
-      kubectl apply --dry-run=server -f -
-    ```
+  ```'
+hints.2.text: "Sprawdź zaakceptowane i odrzucone serwerowe dry-runs, odpowiedź aplikacji i obu odbiorców. Żądane\
+  \ referencje źródeł i wejścia działających Podów muszą odpowiadać rekordowi sprawdzanemu przez politykę; poprawny\
+  \ HTTP sam nie dowodzi przyjęcia danych.\n\n```sh\ncd ~/quest\nkubectl get configmap route -o json |\n  jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)'\
+  \ |\n  kubectl apply --dry-run=server -f -\nkubectl get configmap route -o json |\n  jq '.data.route=\"closed\"\
+  \ | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' |\n  kubectl\
+  \ apply --dry-run=server -f -\nkubectl exec deployment/client -- wget -qO- -T 3 http://board:8080\nkubectl exec\
+  \ deployment/route-env -- printenv ROUTE\nkubectl exec deployment/route-file -- cat /config/route\nfor name in\
+  \ route-env route-file; do\n  kubectl exec \"deployment/$name\" -- wget -qO- -T 3 http://127.0.0.1:8080\ndone\n\
+  kubectl get deployment,replicaset,pods -o yaml\n```"
 phrases.0: Rozróżniłem błąd transportu webhook od odmowy policy.
 phrases.1: Zachowałem walidację fail-closed i zakres namespace.
 phrases.2: Przetestowałem zarówno przyjęte, jak i odrzucone żądania API.
@@ -67,11 +77,11 @@ diagnostics.count: webhook configuration webhooks length musi być równe 1.
 diagnostics.name: webhook name musi być równe route.training.devops-quests.local.
 diagnostics.failure_policy: webhook failurePolicy musi być równe Fail.
 diagnostics.timeout: webhook timeoutSeconds musi być równe 2.
-diagnostics.url: webhook clientConfig.url musi być równy `https://dq-webhook-<bay>:8443/validate` dla
-  tej zatoki.
-diagnostics.ca: webhook caBundle musi zawierać ten sam pojedynczy certyfikat co admission-ca.pem, niezależnie od formatowania PEM.
-diagnostics.namespace: Etykieta instalacji zatoki musi być niepusta, a webhook namespaceSelector musi
-  dokładnie odpowiadać jej etykietom instalacji i uruchomienia.
+diagnostics.url: webhook clientConfig.url musi być równy `https://dq-webhook-<bay>:8443/validate` dla tej zatoki.
+diagnostics.ca: webhook caBundle musi zawierać ten sam pojedynczy certyfikat co admission-ca.pem, niezależnie od
+  formatowania PEM.
+diagnostics.namespace: Etykieta instalacji zatoki musi być niepusta, a webhook namespaceSelector musi dokładnie
+  odpowiadać jej etykietom instalacji i uruchomienia.
 diagnostics.route: configmap/route data.route musi być równe north-121.
 diagnostics.ready: deployment/board readyReplicas musi być równe 1.
 diagnostics.http: Żądanie do board:8080 musi zwrócić north-121.
@@ -79,15 +89,37 @@ diagnostics.valid: Przygotowanie danych route i jego serwerowy dry-run muszą si
 diagnostics.invalid_input: Przygotowanie danych dry-run dla route closed musi się powieść.
 diagnostics.denial: Serwerowy dry-run musi odrzucić route closed.
 diagnostics.denial_text: Odmowa musi zawierać Station route must be north-121.
-stages.0.objectives.0.text: Callback admission ograniczony do bay zachowuje dostarczoną tożsamość, prywatne
-  CA, granicę namespace i kontrakt limitu czasu z blokowaniem przy awarii oraz dociera do zamierzonego
-  prywatnego endpointu.
-stages.0.objectives.1.text: Istniejąca konfiguracja trasy zawiera `north-121`, a jej próbne admission
-  po stronie serwera kończy się powodzeniem.
-stages.0.objectives.2.text: Próbne admission zamkniętej trasy po stronie serwera zostaje odrzucone z błędem
-  walidacji trasy z prywatnego webhooka.
+stages.0.objectives.0.text: Callback admission ograniczony do bay zachowuje dostarczoną tożsamość, prywatne CA,
+  granicę namespace i kontrakt limitu czasu z blokowaniem przy awarii oraz dociera do zamierzonego prywatnego endpointu.
+stages.0.objectives.1.text: Istniejąca konfiguracja trasy zawiera `north-121`, a jej próbne admission po stronie
+  serwera kończy się powodzeniem.
+stages.0.objectives.2.text: Próbne admission zamkniętej trasy po stronie serwera zostaje odrzucone z błędem walidacji
+  trasy z prywatnego webhooka.
 stages.0.objectives.3.text: Deployment `board` ma jedną gotową replikę, a `http://board:8080` zwraca `north-121`
-  do Deployment `client`.
+  do Deployment `client`. Obaj odbiorcy opisani w `adoption-contract.json` korzystają z rekordu i klucza sprawdzanych
+  przez politykę w żądanej konfiguracji i bieżących gotowych Podach, odczytują i udostępniają dopuszczoną trasę
+  oraz zachowują programy startowe, tożsamości obciążeń i obrazy. Rekord przejściowy pozostaje niezmieniony; wejście
+  plikowe jest tylko do odczytu.
 diagnostics.probe_0_0: 'Bieżące dane nie pozwalają potwierdzić tego celu: Callback admission ograniczony do bay
   zachowuje dostarczoną tożsamość, prywatne CA, granicę namespace i kontrakt limitu czasu z blokowaniem przy awarii
   oraz dociera do zamierzonego prywatnego endpointu.'
+diagnostics.adoption_identity: Pierwotna tożsamość obciążenia lub dostarczony obraz różni się. Odtworzenie Deploymentu
+  lub zmiana obrazu szablonu/bieżącego Poda nie zachowuje istniejącej topologii.
+diagnostics.adoption_staging: Zmieniono tożsamość lub dane rekordu przejściowego. To zachowywana kontrola; edycja
+  kopii nie oznacza przyjęcia sprawdzanego źródła.
+diagnostics.adoption_record: Chroniony rekord nie zawiera dopuszczonej trasy. Przywrócenie callback samo nie publikuje
+  dopuszczalnych danych.
+diagnostics.adoption_current: Odbiorca nie ma dokładnie jednego bieżącego gotowego należącego do niego Poda. Trwający
+  rollout lub obcy Pod nie potwierdza bieżącego przyjęcia danych.
+diagnostics.adoption_program: Zmieniono polecenie lub argumenty startowe odbiorcy. Zachowaj dostarczony program,
+  aby wejścia i odpowiedzi odpowiadały opisanemu zachowaniu.
+diagnostics.adoption_source: Żądane lub bieżące wejście nie wskazuje sprawdzanego rekordu i klucza. Skopiowana wartość
+  lub niesprawdzany klucz nie potwierdza przyjęcia danych.
+diagnostics.adoption_input: Działający odbiorca nadal odczytuje inną trasę. Środowisko i subPath mogą zachować stan
+  startowy po zmianie źródła.
+diagnostics.adoption_output: Odpowiedź odbiorcy różni się od dopuszczonej trasy. Migawka startowa może nadal zawierać
+  stare dane mimo poprawnego obiektu API.
+diagnostics.adoption_observation: Nie udało się zaobserwować bieżącego przyjęcia danych w ograniczonym czasie. Poczekaj
+  na dostępność obciążeń i porównaj żywe obiekty oraz wejścia.
+diagnostics.probe_0_3: Nie udało się zaobserwować bieżącego przyjęcia danych w ograniczonym czasie. Poczekaj na
+  dostępność obciążeń i porównaj żywe obiekty oraz wejścia.
