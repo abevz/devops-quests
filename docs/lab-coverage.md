@@ -73,3 +73,5 @@ The English guide text in the repository is the source of truth. Re-hashing it
 before release.
 
 The Helm values and lifecycle lessons also distinguish parameter propagation, resource identity and application responses. Their existing Labs cover values and release operations; they do not rehearse arbitrary chart reconstruction or prove uninterrupted service.
+
+The Helm lessons distinguish computed values, effective process inputs and cached application records. Publication migration across independently cached consumers is explained conceptually; the existing values and lifecycle experiments do not rehearse that complete transition.
