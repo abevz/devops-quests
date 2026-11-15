@@ -1,53 +1,38 @@
 title: Обновления Helm
-brief: 'Установленный релиз Helm не обеспечивает готовую HTTP-нагрузку. Сохраните исходную идентичность Deployment
-  и предоставленный закреплённый образ.
+brief: |-
+  Установленный release нездоров, а рабочий пакет не соответствует предоставленному контракту values. Восстановите тот же release, сохранив исходные ресурсы и закреплённый образ.
 
-
-  Работайте на рабочей станции в `~/quest` с `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/board.yaml`.
-
+  Работайте в `~/quest` на рабочей станции с `chart/Chart.yaml`, `chart/values.yaml`, `chart/values.schema.json`, `chart/templates/board.yaml` и `helm-contract.json`.
 
   **Требования:**
+  - Values Helm release `board`, manifest релиза и рабочий chart согласованы с заданным контрактом приложения.
+  - У Helm release `board` не менее 3 revisions, последняя имеет статус `deployed`.
+  - Сохраните исходные UID Deployment, ConfigMap и Service и предоставленный неизменяемый образ приложения.
+  - Установленный release и рабочий chart реализуют объявленный контракт values: readiness, проекция набора данных, сообщение маршрута, идентичность release и маршрутизация Service согласованы. Все объявленные профили render работают детерминированно.
+  - Deployment `board` завершает rollout; HTTP внутри контейнера приложения по `http://127.0.0.1:8080` возвращает `north-67`.
+  - Сохранённый публичный Service возвращает тот же ответ и объявленную запись метаданных с исходной идентичностью release.
 
-  - Исправление применено через значения Helm-релиза `board`, а не путём редактирования Deployment.
-
-  - Helm release `board` имеет не менее 3 ревизий, последняя — в статусе `deployed`.
-
-  - Исходный Deployment `board` сохранён.
-
-  - Работающий workload `board` и отрендеренный релиз согласованы с работающим HTTP-эндпоинтом.
-
-  - Deployment `board` завершает rollout.
-
-  - HTTP-запрос из Deployment `board` к `http://127.0.0.1:8080` возвращает `north-67`.
-
-
-  Эталоны подготовки в `/run/dq/facts/0/` на workstation авторитетны и доступны только для чтения; соответствующие
-  файлы в `~/quest` — рабочие копии.
-
-  '
-debrief: Состояние релиза и готовность workload согласованы без замены Deployment.
+  Защищённые setup facts фиксируют исходные идентичности. Проверки сравнивают текущие values, render chart, manifests release, live-объекты и HTTP; непрерывную доступность и все возможные входные профили они не доказывают.
+debrief: Сохранённый release принимает работающий контракт chart. Проекция источника и публичная маршрутизация согласованы
+  с текущими values, а альтернативные render проверяют передачу исправленных параметров.
 stages.0.brief: Сохраните исходную нагрузку при восстановлении релиза Helm и HTTP-адреса.
-stages.0.objectives.0.text: Исправление применено через значения Helm-релиза `board`, а не путём редактирования
-  Deployment.
+stages.0.objectives.0.text: Сохранённый release принимает контракт values, а рабочий chart корректно рендерит каждый
+  объявленный профиль.
 stages.0.objectives.1.text: Helm release `board` имеет не менее 3 ревизий, последняя — в статусе `deployed`.
-stages.0.objectives.2.text: Исходный Deployment `board` сохранён.
-stages.0.objectives.3.text: Работающий workload `board` и отрендеренный релиз согласованы с работающим HTTP-эндпоинтом.
+stages.0.objectives.2.text: Сохранены исходные Deployment, ConfigMap источника, публичный Service и закреплённый
+  образ.
+stages.0.objectives.3.text: Live workload, manifest release и публичный набор данных согласованы с рабочим HTTP-контрактом.
 stages.0.objectives.4.text: Deployment `board` завершает rollout.
 stages.0.objectives.5.text: HTTP-запрос из Deployment `board` к `http://127.0.0.1:8080` возвращает `north-67`.
-hints.0.text: Ревизия Helm со статусом deployed может содержать неисправный workload.
-hints.1.text: 'Сравните входные данные релиза, отрендеренный workload и текущее состояние:
-
-
-  ```sh
-
-  helm get values board
-
-  helm template board chart
-
-  kubectl get deployment board -o yaml
-
-  ```'
-hints.2.text: "Обновление изменило readinessPort с 8080 на 9090, а приложение продолжает слушать 8080. Проверьте историю релиза, итоговые values и отрендеренный chart. Обновите тот же релиз с readinessPort=8080 и дождитесь готовности; не заменяйте релиз и не ограничивайтесь правкой живого probe.\n\nПроверьте наблюдаемый результат:\n\n- `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080` — Внутри контейнера приложения ответ — `north-67`.\n\n- `helm history board` — Не менее `3` ревизий; последний статус — `deployed`.\n\n- Rollout завершается, а UID работающего Deployment совпадает с защищённым исходным эталоном.\n\n  ```sh\n  kubectl rollout status deployment/board --timeout=3s\n  kubectl get deployment board -o custom-columns=NAME:.metadata.name,UID:.metadata.uid\n  cat /run/dq/facts/0/original-deployment-uid\n  ```\n\n- Три проверки выводят `true`: values задают `8080`, а readiness probe контейнера `worker` обращается к порту приложения `8080` в работающем Deployment и отрендеренном манифесте Helm. HTTP- или TCP-probe может использовать число либо имя порта, соответствующее ему.\n\n  ```sh\n  helm get values board -o json | jq -e '(.readinessPort|tonumber)==8080'\n  kubectl get deployment board -o json | jq -e '(.spec.template.spec.containers[] | select(.name==\"worker\")) as $c | ($c.readinessProbe.httpGet.port // $c.readinessProbe.tcpSocket.port) as $p | (if ($p|type)==\"number\" then $p else first($c.ports[]? | select(.name==$p) | .containerPort) end)==8080'\n  helm get manifest board | python3 -I -c 'import json,sys,yaml; docs=[d for d in yaml.safe_load_all(sys.stdin) if isinstance(d,dict) and d.get(\"kind\")==\"Deployment\" and d.get(\"metadata\",{}).get(\"name\")==\"board\"]; assert len(docs)==1; json.dump(docs[0],sys.stdout)' | jq -e '(.spec.template.spec.containers[] | select(.name==\"worker\")) as $c | ($c.readinessProbe.httpGet.port // $c.readinessProbe.tcpSocket.port) as $p | (if ($p|type)==\"number\" then $p else first($c.ports[]? | select(.name==$p) | .containerPort) end)==8080'\n  ```\n"
+hints.0.text: Сохранённые overrides, defaults chart, результат render и live-ресурсы — разные представления. Статус
+  deployed описывает операцию, а не доказывает здоровье consumer.
+hints.1.text: Сопоставьте `helm get values board`, `helm get values board --all`, `helm get manifest board`, `helm
+  history board`, рабочий пакет/schema и события Pod. По контракту определите связи ресурсов и входов, которые должны
+  пережить upgrade.
+hints.2.text: Восстановите необходимые ресурсы chart и передачу входов, изучите объявленные профили render, затем
+  обновите тот же release с нужным слоем values. Проверьте `helm get values board -o json`, `helm history board`,
+  `helm template board chart`, rollout и оба HTTP-пути. Ожидаются сохранённая readiness `8080`, ответ `north-67`,
+  исходные идентичности объектов и образа и метаданные с активным сообщением и сохранённым ID release.
 phrases.0: Я сравнил историю Helm, действующие values и отрендеренные manifests.
 phrases.1: Я исправил контракт релиза вместо сокрытия live drift.
 phrases.2: Я проверил readiness отдельно от статуса ревизии Helm.
@@ -59,5 +44,18 @@ questions.1.points.0: Следующий upgrade снова отрендерит
 questions.1.points.1: Live patch может оставить неверный контракт релиза.
 questions.1.points.2: Сравнить отрендеренные ресурсы и наблюдаемое поведение.
 questions.1.prompt: Почему нужно исправить values, а не только Deployment?
-diagnostics.probe_0_3: 'Текущие данные не позволили проверить эту цель: Работающий workload `board` и отрендеренный
-  релиз согласованы с работающим HTTP-эндпоинтом.'
+diagnostics.probe_0_3: Live workload, manifest release и публичный набор данных согласованы с рабочим HTTP-контрактом.
+diagnostics.probe_0_0: Сохранённый release принимает контракт values, а рабочий chart корректно рендерит каждый
+  объявленный профиль.
+diagnostics.probe_0_2: Сохранены исходные Deployment, ConfigMap источника, публичный Service и закреплённый образ.
+diagnostics.helm_values_contract: Текущие values release и рабочий chart должны детерминированно реализовывать каждый
+  объявленный профиль render.
+diagnostics.helm_image: Сохраните предоставленный неизменяемый образ в live и rendered workloads.
+diagnostics.helm_projection: Workload должен проецировать ConfigMap источника release.
+diagnostics.helm_bundle: Rendered и live набор данных должны совпадать с заданным сообщением и исходной идентичностью
+  release.
+diagnostics.helm_service: Сохранённый публичный Service должен выбирать нужный workload и предоставлять объявленный
+  HTTP-интерфейс.
+diagnostics.helm_publication: Фактические публичные метаданные должны совпадать с исходной идентичностью release
+  и текущим сообщением.
+diagnostics.helm_identity: Сохраните исходные UID Deployment, ConfigMap источника и публичного Service release.

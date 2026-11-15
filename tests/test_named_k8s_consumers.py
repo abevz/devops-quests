@@ -29,6 +29,11 @@ def test_route_getter_reads_the_application_worker(
     source = yaml.safe_load((ROOT / f"quests/{number:03}/quest.yaml").read_text())[
         "stages"
     ][stage]["objectives"][goal]["check"]
+    if number == 51:
+        # The full objective now also requires publication objects. This matrix
+        # isolates the original named-worker predicate without weakening its
+        # decoy/default-container negative cases; publication has its own tests.
+        source = source.split("if ! (\n", 1)[1].split("\n); then", 1)[0]
     executable = tmp_path / "kubectl"
     executable.write_text("""#!/usr/bin/env python3
 import json,os,sys

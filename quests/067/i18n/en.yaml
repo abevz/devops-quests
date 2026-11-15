@@ -1,52 +1,38 @@
 title: Helm upgrades
-brief: 'The installed Helm release is not providing a ready HTTP workload. Keep the original Deployment identity
-  and the supplied pinned image.
+brief: |-
+  The installed release is unhealthy and the working package does not meet its supplied values contract. Recover the same release while retaining its original resources and pinned image.
 
-
-  Work on the workstation in `~/quest` with `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/board.yaml`.
-
+  Work on the workstation in `~/quest` with `chart/Chart.yaml`, `chart/values.yaml`, `chart/values.schema.json`, `chart/templates/board.yaml` and `helm-contract.json`.
 
   **Requirements:**
-
-  - The fix is applied through Helm release `board` values, not by editing the Deployment.
-
+  - Helm release `board` values, its released manifest and the working chart agree on the supplied application contract.
   - Helm release `board` has at least 3 revisions and its latest status is `deployed`.
+  - Retain the original Deployment, ConfigMap and Service identities and the supplied immutable application image.
+  - The installed release and working chart implement the declared values contract: readiness, projected source bundle, route message, release identity and Service routing agree. All declared input profiles render deterministically with their specified parameter values.
+  - Deployment `board` completes its rollout; HTTP inside its application container at `http://127.0.0.1:8080` returns `north-67`.
+  - The retained public Service serves the same response and its declared metadata record with the original release identity.
 
-  - The original Deployment `board` is kept.
-
-  - The live `board` workload and the rendered release agree on the working HTTP endpoint.
-
-  - Deployment `board` completes its rollout.
-
-  - HTTP from Deployment `board` to `http://127.0.0.1:8080` returns `north-67`.
-
-
-  Setup evidence under `/run/dq/facts/0/` on the workstation is authoritative and read-only; matching files
-  in `~/quest` are working copies.
-
-  '
-debrief: Release intent and live readiness now agree without replacing the managed Deployment.
+  Protected setup facts record original identities. Checks compare current values, chart renders, release manifests, live objects and HTTP; they do not prove continuous availability or every possible input profile.
+debrief: The retained release now adopts a functioning chart contract. Source projection and public routing agree
+  with current values, and alternative renders exercise the repaired parameter propagation.
 stages.0.brief: Keep the original workload while the Helm release and HTTP endpoint recover.
-stages.0.objectives.0.text: The fix is applied through Helm release `board` values, not by editing the Deployment.
+stages.0.objectives.0.text: The retained release adopts the values contract and the working chart renders each declared
+  input profile correctly.
 stages.0.objectives.1.text: Helm release `board` has at least 3 revisions and its latest status is `deployed`.
-stages.0.objectives.2.text: The original Deployment `board` is kept.
-stages.0.objectives.3.text: The live `board` workload and the rendered release agree on the working HTTP endpoint.
+stages.0.objectives.2.text: The original Deployment, source ConfigMap, public Service and pinned image are kept.
+stages.0.objectives.3.text: The live workload, released manifest and public bundle agree on the working HTTP contract.
 stages.0.objectives.4.text: Deployment `board` completes its rollout.
 stages.0.objectives.5.text: HTTP from Deployment `board` to `http://127.0.0.1:8080` returns `north-67`.
-hints.0.text: A deployed Helm revision can still contain an unhealthy workload.
-hints.1.text: 'Compare the release inputs, rendered workload and live state:
-
-
-  ```sh
-
-  helm get values board
-
-  helm template board chart
-
-  kubectl get deployment board -o yaml
-
-  ```'
-hints.2.text: "The upgrade changed readinessPort from 8080 to 9090 while the application still listens on 8080. Inspect release history, effective values and the rendered chart. Upgrade the same release with readinessPort=8080 and wait for readiness; do not replace the release or merely patch the live probe.\n\nVerify the observed result:\n\n- `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080` — Inside the application container, the response is `north-67`.\n\n- `helm history board` — At least `3` revisions; the latest status is `deployed`.\n\n- The rollout completes and the live Deployment UID matches the protected original reference.\n\n  ```sh\n  kubectl rollout status deployment/board --timeout=3s\n  kubectl get deployment board -o custom-columns=NAME:.metadata.name,UID:.metadata.uid\n  cat /run/dq/facts/0/original-deployment-uid\n  ```\n\n- The three predicates print `true`: the values specify `8080`, and the named `worker` readiness probe targets the application listener `8080` in both the live Deployment and the rendered Helm manifest. An HTTP or TCP probe may use the number or a port name resolving to it.\n\n  ```sh\n  helm get values board -o json | jq -e '(.readinessPort|tonumber)==8080'\n  kubectl get deployment board -o json | jq -e '(.spec.template.spec.containers[] | select(.name==\"worker\")) as $c | ($c.readinessProbe.httpGet.port // $c.readinessProbe.tcpSocket.port) as $p | (if ($p|type)==\"number\" then $p else first($c.ports[]? | select(.name==$p) | .containerPort) end)==8080'\n  helm get manifest board | python3 -I -c 'import json,sys,yaml; docs=[d for d in yaml.safe_load_all(sys.stdin) if isinstance(d,dict) and d.get(\"kind\")==\"Deployment\" and d.get(\"metadata\",{}).get(\"name\")==\"board\"]; assert len(docs)==1; json.dump(docs[0],sys.stdout)' | jq -e '(.spec.template.spec.containers[] | select(.name==\"worker\")) as $c | ($c.readinessProbe.httpGet.port // $c.readinessProbe.tcpSocket.port) as $p | (if ($p|type)==\"number\" then $p else first($c.ports[]? | select(.name==$p) | .containerPort) end)==8080'\n  ```\n"
+hints.0.text: Stored overrides, chart defaults, rendered intent and live resources are distinct views. A deployed
+  revision is an operation result rather than proof of a healthy consumer.
+hints.1.text: Compare `helm get values board`, `helm get values board --all`, `helm get manifest board`, `helm history
+  board`, the working package/schema and Pod events. Use the supplied contract to identify which resource and input
+  relationships must survive the upgrade.
+hints.2.text: Reconstruct the required chart resources and their input propagation, inspect the declared render
+  profiles, then upgrade the same release with the intended values layer. Verify `helm get values board -o json`,
+  `helm history board`, `helm template board chart`, rollout and both HTTP paths. Expect recorded readiness `8080`,
+  the supplied response `north-67`, original object/image identities and a metadata record matching the active message
+  and retained release ID.
 phrases.0: I compared Helm history, effective values and rendered manifests.
 phrases.1: I corrected the release contract rather than hiding live drift.
 phrases.2: I verified readiness independently of the Helm revision status.
@@ -58,5 +44,18 @@ questions.1.points.0: The next upgrade renders values again.
 questions.1.points.1: A live patch can leave release intent incorrect.
 questions.1.points.2: Compare the rendered resources and observed behavior.
 questions.1.prompt: Why repair values instead of only patching the Deployment?
-diagnostics.probe_0_3: 'The current inputs could not verify this objective: The live `board` workload and the rendered
-  release agree on the working HTTP endpoint.'
+diagnostics.probe_0_3: The live workload, released manifest and public bundle agree on the working HTTP contract.
+diagnostics.probe_0_0: The retained release adopts the values contract and the working chart renders each declared
+  input profile correctly.
+diagnostics.probe_0_2: The original Deployment, source ConfigMap, public Service and pinned image are kept.
+diagnostics.helm_values_contract: The current release values and working chart must implement every declared render
+  profile deterministically.
+diagnostics.helm_image: Keep the supplied immutable application image in live and rendered workloads.
+diagnostics.helm_projection: The workload must project the release source ConfigMap.
+diagnostics.helm_bundle: The rendered and live source bundle must match the configured message and original release
+  identity.
+diagnostics.helm_service: The retained public Service must select the intended workload and expose the declared
+  HTTP interface.
+diagnostics.helm_publication: The actual public metadata response must match the original release identity and current
+  message.
+diagnostics.helm_identity: Keep the original release Deployment, source ConfigMap and public Service UIDs.
