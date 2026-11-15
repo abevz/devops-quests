@@ -64,6 +64,20 @@ print(Path(os.environ['DQ_TEST_DOCUMENT']).read_text())
     source = yaml.safe_load((ROOT / f"quests/{number:03}/quest.yaml").read_text())[
         "stages"
     ][0]["objectives"][goal]["check"]
+    if number == 88:
+        # This fixture represents only the original worker property. Keep the
+        # complete trusted shell entrypoint (including -I and fd transport),
+        # while the new multi-workload API is covered by resource/runtime tests.
+        start = source.index("python3 -I - <<'DQ_MEMORY_BUDGET'\n")
+        end = source.index("\nDQ_MEMORY_BUDGET\n", start) + len("\nDQ_MEMORY_BUDGET\n")
+        source = source[:start] + source[end:]
+        original = (
+            (ROOT / "tests/fixtures/deepen-startup-memory/088-legacy-check.sh")
+            .read_text()
+            .split("(\nset -e\n")[goal + 1]
+            .split("\n)\n[ $? -eq 0 ] || failed=1\n", 1)[0]
+        )
+        assert source.rstrip() == original.rstrip()
     return subprocess.run(
         ["bash", "-euo", "pipefail", "-c", source],
         cwd=tmp_path,

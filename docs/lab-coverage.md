@@ -75,3 +75,5 @@ before release.
 The Helm values and lifecycle lessons also distinguish parameter propagation, resource identity and application responses. Their existing Labs cover values and release operations; they do not rehearse arbitrary chart reconstruction or prove uninterrupted service.
 
 The Helm lessons distinguish computed values, effective process inputs and cached application records. Publication migration across independently cached consumers is explained conceptually; the existing values and lifecycle experiments do not rehearse that complete transition.
+
+The resource and diagnosis lessons explain phase-specific memory, memory-backed payload lifetime and real consumer demand. Existing Labs exercise resource limits, CFS observations and diagnostic tools; they do not rehearse the complete multi-phase resident dataset or two-consumer capacity recovery. These extensions are conceptual, and observations are bounded rather than production latency SLOs.

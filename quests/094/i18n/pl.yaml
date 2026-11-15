@@ -1,86 +1,39 @@
 title: Wydajność
-brief: 'Obciążenie HTTP wykazuje dławienie CPU nawet w spokojnym przedziale. Przywróć wymagane działanie usługi
-  w istniejącym budżecie zasobów.
+brief: |-
+  Workload serwera przekracza próg ograniczonego pomiaru CPU, gdy odbiorcy pozostają aktywni. Przywróć wymaganą odpowiedź i aktualną pracę odbiorców w pierwotnym budżecie serwera.
 
-
-  Pracuj w `~/quest` na workstation. Dostarczone pliki wejściowe: `board.yaml`, `service.yaml`, `measure.sh`.
-
+  Pracuj na stacji w `~/quest` z `performance-contract.json`. Wymagany plik pomiarowy stacji to `~/quest/measure.sh`; sprawdź żywe workloady i dostarczoną politykę odpytywania w namespace.
 
   **Wymagania:**
+  - Zachowaj początkową próbkę co najmniej dziesięciu okresów throttlingu, dokładnie jedną gotową replikę Deploymentu `board`, jego CPU request/limit `50m`, memory request `8Mi` i memory limit `32Mi`.
+  - Rzeczywisty pomiar kontenera serwera spełnia kontrakt, a HTTP z Deploymentu `board` do `http://board:8080` zwraca `north-94`.
+  - Plik pomiarowy stacji raportuje najwyżej `5` nowych okresów throttlingu w świeżej dwusekundowej próbce. Obaj odbiorcy mają po jednej aktualnej gotowej replice, używają bieżących wejść polityki i nadal zwiększają postęp trasy przez własne Service ClusterIP z selektorami.
+  - Zachowaj pierwotne tożsamości workloadów, Service i polityki, wszystkie dostarczone dane polityki i niezmienne obrazy aplikacji.
 
-  - Zapisana próbka początkowa zawiera co najmniej dziesięć okresów throttlingu.
-
-  - Deployment `board` zachowuje dokładnie jedną replikę.
-
-  - Kontener board zachowuje żądanie i limit CPU `50m`, żądanie pamięci `8Mi` i limit pamięci `32Mi`.
-
-  - Obciążenie obsługujące żądania zwraca `north-94` bez niepowiązanej pracy CPU.
-
-  - Deployment `board` ma jedną gotową replikę.
-
-  - Świeży dwusekundowy pomiar na stacji roboczej rejestruje najwyżej `5` nowych okresów throttlingu.
-
-  - HTTP z Deployment `board` do `http://board:8080` zwraca `north-94`.
-
-
-  To mierzy dławienie CPU, a nie ogólne opóźnienia; skrypt pomiarowy i sondy stanu mogą nadal zużywać limit
-  CPU.
-
-  '
-debrief: Usunięcie zmarnowanej pracy zmniejszyło throttling w ramach pierwotnego budżetu zasobów. Próbnik i
-  health checks zużywają również quota; ten ograniczony pomiar uczenia nie jest opóźnieniem produkcyjnym SLO.
-stages.0.brief: Zachowaj jedną gotową replikę i oryginalny budżet zasobów, ograniczając zmierzone dławienie.
+  Testy obserwują bieżący stan, aktywny postęp odbiorców i ograniczone próbki CFS. Samplery i health probes zużywają kwotę; obserwacje nie dowodzą produkcyjnego SLO opóźnienia ani nieprzerwanej dostępności.
+debrief: Usunięcie pracy serwera pozostawiło rzeczywisty popyt odbiorców zużywający kwotę. Aktualna polityka dociera
+  teraz do obu aktywnych procesów; obsługa i postęp mieszczą się w pierwotnym budżecie.
+stages.0.brief: Świeża próbka stacji spełnia próg; obaj pierwotni odbiorcy używają aktualnego rytmu i nadal zwiększają
+  postęp trasy.
 stages.0.objectives.0.text: Zapisana próbka początkowa zawiera co najmniej dziesięć okresów throttlingu.
 stages.0.objectives.1.text: Deployment `board` zachowuje dokładnie jedną replikę.
-stages.0.objectives.2.text: Kontener board zachowuje żądanie i limit CPU `50m`, żądanie pamięci `8Mi` i limit
-  pamięci `32Mi`.
-stages.0.objectives.3.text: Obciążenie obsługujące żądania zwraca `north-94` bez niepowiązanej pracy CPU.
+stages.0.objectives.2.text: Kontener board zachowuje żądanie i limit CPU `50m`, żądanie pamięci `8Mi` i limit pamięci
+  `32Mi`.
+stages.0.objectives.3.text: Rzeczywisty pomiar i odpowiedź serwera spełniają kontrakt przy zachowaniu pierwotnych
+  zasobów, obrazów i bieżących danych polityki.
 stages.0.objectives.4.text: Deployment `board` ma jedną gotową replikę.
-stages.0.objectives.5.text: Świeży dwusekundowy pomiar na stacji roboczej rejestruje najwyżej `5` nowych okresów
-  throttlingu.
+stages.0.objectives.5.text: Świeża próbka stacji spełnia próg; obaj pierwotni odbiorcy używają aktualnego rytmu
+  i nadal zwiększają postęp trasy.
 stages.0.objectives.6.text: HTTP z Deployment `board` do `http://board:8080` zwraca `north-94`.
-hints.0.text: CPU limits może ograniczyć wykonalną pracę, nawet jeśli węzeł ma zapasowe CPU.
-hints.1.text: 'Oddziel użyteczną pracę związaną z obsługą od przypadkowego procesu w tle.
-
-
-  Sprawdź dostarczone definicje, bieżące zasoby i zdarzenia.
-
-
-  ```sh
-
-  cat board.yaml
-
-  kubectl get deployment board -o yaml
-
-  kubectl exec deployment/board -c worker -- cat /sys/fs/cgroup/cpu.stat
-
-  ```'
-hints.2.text: 'Sprawdź polecenie Deployment i /sys/fs/cgroup/cpu.stat wewnątrz kontenera worker Deployment
-  board. Usuń tylko przypadkową aktywną pętlę w tle bez zmiany replik ani limitów; porównaj nowy przedział
-  cpu.stat. Dostarczony measure.sh odczytuje oba liczniki w jednym exec, aby oddzielne procesy pomiarowe nie
-  zużywały dodatkowego limitu między odczytami.
-
-
-  Sprawdź obserwowany wynik:
-
-
-  ```sh
-
-  bash measure.sh
-
-  kubectl get deployment board
-
-  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
-
-  ```
-
-
-  Oczekuj najwyżej 5 nowych okresów throttlingu, jednej gotowej repliki i odpowiedzi HTTP north-94 bez zwiększania
-  dostarczonego budżetu zasobów.
-
-
-  Dostarczone ograniczenia i szczegóły: Polecenie kontenera board nadal serwuje `north-94`, bez pętli busy
-  loop działającej w tle. Dwusekundowa próbka `bash measure.sh` pokazuje najwyżej 5 nowych okresów throttlingu.'
+hints.0.text: Kwotę może wyczerpać praca wewnątrz serwera lub rzeczywisty napływ żądań. Cichy serwer po zatrzymaniu
+  wymaganego odbiorcy nie dowodzi całego kontraktu obsługi.
+hints.1.text: Porównaj `performance-contract.json`, aktywne polecenia i zasoby, politykę i skuteczne wejścia odbiorców,
+  `/sys/fs/cgroup/cpu.stat` kontenera worker serwera, zdarzenia, logi i rekordy postępu. Oddziel narzut pomiaru,
+  użyteczne żądania i inną pracę.
+hints.2.text: Zbuduj plik pomiarowy z zadeklarowanego licznika cgroup i interwału, przywróć użyteczną obsługę i
+  przekaż aktualne wejścia obu aktywnym odbiorcom. Sprawdź `bash measure.sh`, niezależny wynik serwera, rollout
+  i każdy interfejs postępu. Oczekuj najwyżej `5` nowych okresów throttlingu, `north-94`, zachowanych tożsamości
+  i budżetu oraz rosnących rekordów przy bieżącym rytmie polityki.
 phrases.0: Zmierzyłem CPU throttling przed zmianą wydajności.
 phrases.1: Zamiast skalować objaw, usunąłem niepotrzebną pracę.
 phrases.2: Zachowałem zasób limits i zweryfikowałem przydatne zachowanie HTTP.
@@ -92,3 +45,19 @@ questions.1.points.1: Sprawdź przydatną pracę i ograniczony interwał pomiaro
 questions.1.prompt: Po co diagnozować przed dodaniem replik?
 diagnostics.probe_0_2: 'Bieżące dane nie pozwalają potwierdzić tego celu: Kontener board zachowuje żądanie i limit
   CPU `50m`, żądanie pamięci `8Mi` i limit pamięci `32Mi`.'
+diagnostics.probe_0_3: Rzeczywisty pomiar i odpowiedź serwera spełniają kontrakt przy zachowaniu pierwotnych zasobów,
+  obrazów i bieżących danych polityki.
+diagnostics.probe_0_5: Świeża próbka stacji spełnia próg; obaj pierwotni odbiorcy używają aktualnego rytmu i nadal
+  zwiększają postęp trasy.
+diagnostics.performance_sample: Pierwotna próbka lub rzeczywisty wynik obsługi nie spełnia ograniczonego kontraktu.
+diagnostics.performance_identity: Zachowaj pierwotne UID workloadów, Service i polityki.
+diagnostics.performance_image: Zachowaj dostarczone niezmienne obrazy aplikacji.
+diagnostics.performance_policy: Zachowaj wszystkie bieżące dane polityki.
+diagnostics.performance_consumer_scan_a: 'scan-a: pierwotny odbiorca musi zakończyć rollout na swoim Service z bieżącymi
+  skutecznymi wejściami polityki.'
+diagnostics.performance_consumer_scan_b: 'scan-b: pierwotny odbiorca musi zakończyć rollout na swoim Service z bieżącymi
+  skutecznymi wejściami polityki.'
+diagnostics.performance_progress_scan_a: 'scan-a: rzeczywisty rekord postępu musi odpowiadać bieżącej polityce i
+  trasie oraz nadal rosnąć.'
+diagnostics.performance_progress_scan_b: 'scan-b: rzeczywisty rekord postępu musi odpowiadać bieżącej polityce i
+  trasie oraz nadal rosnąć.'

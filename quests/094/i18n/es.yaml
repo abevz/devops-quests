@@ -1,94 +1,39 @@
 title: Actuación
-brief: 'La carga HTTP sufre throttling de CPU incluso durante un intervalo tranquilo. Recupera el servicio
-  requerido dentro del presupuesto de recursos existente.
+brief: |-
+  El workload servidor supera el objetivo de muestreo CPU acotado mientras sus consumidores siguen activos. Restablece la respuesta requerida y el funcionamiento actual de consumidores dentro del presupuesto original.
 
-
-  Trabaja en `~/quest` en la workstation. Archivos de entrada suministrados: `board.yaml`, `service.yaml`,
-  `measure.sh`.
-
+  Trabaja en la estación en `~/quest` con `performance-contract.json`. El archivo de medición a producir es `~/quest/measure.sh`; inspecciona workloads activos y la política de sondeo suministrada en el namespace.
 
   **Requisitos:**
+  - Conserva la muestra inicial de al menos diez períodos throttled, exactamente una réplica lista del Deployment `board`, su CPU request/limit `50m`, memory request `8Mi` y memory limit `32Mi`.
+  - La medición real del contenedor servidor cumple el contrato, y HTTP desde Deployment `board` a `http://board:8080` devuelve `north-94`.
+  - El archivo de medición de la estación informa como máximo `5` nuevos períodos throttled en una muestra reciente de dos segundos. Ambos consumidores tienen una réplica actualizada lista, usan las entradas actuales de la política y continúan avanzando el progreso de la ruta mediante sus propios Services ClusterIP con selector.
+  - Conserva identidades originales de workloads, Services y política, cada dato suministrado y las imágenes inmutables.
 
-  - La muestra inicial registrada contiene al menos diez periodos de throttling.
-
-  - El Deployment `board` mantiene exactamente una réplica.
-
-  - El contenedor board conserva la solicitud y el límite de CPU en `50m`, la solicitud de memoria en `8Mi`
-  y el límite de memoria en `32Mi`.
-
-  - La carga que atiende peticiones entrega `north-94` sin trabajo de CPU ajeno al servicio.
-
-  - El Deployment `board` tiene una réplica lista.
-
-  - Una medición nueva de dos segundos en la estación de trabajo registra como máximo `5` periodos nuevos de
-  throttling.
-
-  - HTTP desde Deployment `board` a `http://board:8080` devuelve `north-94`.
-
-
-  Esto mide throttling de CPU, no latencia general; el muestreador y las sondas de salud aún pueden consumir
-  cuota de CPU.
-
-  '
-debrief: La eliminación del trabajo desperdiciado redujo throttling dentro del presupuesto de recursos original.
-  Un muestreador y health checks también consumen quota; esta medida de enseñanza acotada no es una latencia
-  production SLO.
-stages.0.brief: Conserva una réplica lista y el presupuesto de recursos original, reduciendo el throttling
-  medido.
+  Las comprobaciones observan estado actual, progreso activo y muestras CFS acotadas. Los muestreadores y health probes consumen cuota; estas observaciones no establecen un SLO de latencia de producción ni disponibilidad ininterrumpida.
+debrief: Eliminar trabajo del servidor dejó demanda real de consumidores consumiendo cuota. La política actual llega
+  ahora a ambos procesos activos; el servicio y el progreso se mantienen dentro del presupuesto original.
+stages.0.brief: La muestra reciente de la estación cumple el umbral; ambos consumidores originales usan la cadencia
+  actual y continúan avanzando el progreso de ruta.
 stages.0.objectives.0.text: La muestra inicial registrada contiene al menos diez periodos de throttling.
 stages.0.objectives.1.text: El Deployment `board` mantiene exactamente una réplica.
 stages.0.objectives.2.text: El contenedor board conserva la solicitud y el límite de CPU en `50m`, la solicitud
   de memoria en `8Mi` y el límite de memoria en `32Mi`.
-stages.0.objectives.3.text: La carga que atiende peticiones entrega `north-94` sin trabajo de CPU ajeno al
-  servicio.
+stages.0.objectives.3.text: La medición y respuesta reales del servidor cumplen el contrato conservando recursos,
+  imágenes y datos actuales de política.
 stages.0.objectives.4.text: El Deployment `board` tiene una réplica lista.
-stages.0.objectives.5.text: Una medición nueva de dos segundos en la estación de trabajo registra como máximo
-  `5` periodos nuevos de throttling.
+stages.0.objectives.5.text: La muestra reciente de la estación cumple el umbral; ambos consumidores originales usan
+  la cadencia actual y continúan avanzando el progreso de ruta.
 stages.0.objectives.6.text: HTTP desde Deployment `board` a `http://board:8080` devuelve `north-94`.
-hints.0.text: Los límites de CPU pueden restringir la ejecución del trabajo listo para ejecutarse (throttling),
-  incluso cuando el nodo tiene CPU disponible.
-hints.1.text: 'Separe el trabajo de publicación útil del proceso accidental en segundo plano.
-
-
-  Inspecciona las definiciones suministradas, los recursos actuales y los eventos.
-
-
-  ```sh
-
-  cat board.yaml
-
-  kubectl get deployment board -o yaml
-
-  kubectl exec deployment/board -c worker -- cat /sys/fs/cgroup/cpu.stat
-
-  ```'
-hints.2.text: 'Inspecciona el comando del Deployment y /sys/fs/cgroup/cpu.stat dentro del contenedor worker
-  del Deployment board. Elimina solo el bucle activo accidental en segundo plano sin cambiar réplicas ni límites;
-  compara un intervalo nuevo de cpu.stat. El measure.sh suministrado lee ambos contadores en un exec para que
-  procesos de muestreo separados no gasten cuota adicional entre lecturas.
-
-
-  Verifica el resultado observado:
-
-
-  ```sh
-
-  bash measure.sh
-
-  kubectl get deployment board
-
-  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
-
-  ```
-
-
-  Se esperan como máximo 5 periodos nuevos de throttling, una réplica lista y la respuesta HTTP north-94 sin
-  aumentar el presupuesto de recursos suministrado.
-
-
-  Restricciones y detalles suministrados: El comando del contenedor board sigue sirviendo `north-94`, sin el
-  busy loop en segundo plano. La muestra de dos segundos de `bash measure.sh` registra como máximo 5 nuevos
-  periodos de throttling.'
+hints.0.text: La cuota puede agotarse por trabajo dentro del servidor o por demanda entrante real. Un servidor tranquilo
+  obtenido deteniendo un consumidor requerido no demuestra el contrato completo.
+hints.1.text: Compara `performance-contract.json`, comandos y recursos activos, política y entradas efectivas, `/sys/fs/cgroup/cpu.stat`
+  del worker servidor, eventos, logs y registros de progreso. Separa el coste de medir, las peticiones útiles y
+  otro trabajo.
+hints.2.text: Construye el archivo de medición desde el contador cgroup e intervalo declarados, recupera el servicio
+  útil y propaga las entradas actuales a ambos consumidores activos. Verifica `bash measure.sh`, el resultado independiente
+  del servidor, rollout y cada interfaz de progreso. Espera como máximo `5` nuevos períodos throttled, `north-94`,
+  identidades y presupuesto conservados y registros crecientes con la cadencia actual.
 phrases.0: Medí CPU throttling antes de cambiar la capacidad.
 phrases.1: Eliminé el trabajo innecesario en lugar de escalar el síntoma.
 phrases.2: Conservé el recurso limits y verifiqué el comportamiento útil de HTTP.
@@ -100,3 +45,19 @@ questions.1.points.1: Verificar trabajo útil y un intervalo de medición acotad
 questions.1.prompt: ¿Por qué diagnosticar antes de agregar réplicas?
 diagnostics.probe_0_2: 'Los datos actuales no permiten verificar este objetivo: El contenedor board conserva la
   solicitud y el límite de CPU en `50m`, la solicitud de memoria en `8Mi` y el límite de memoria en `32Mi`.'
+diagnostics.probe_0_3: La medición y respuesta reales del servidor cumplen el contrato conservando recursos, imágenes
+  y datos actuales de política.
+diagnostics.probe_0_5: La muestra reciente de la estación cumple el umbral; ambos consumidores originales usan la
+  cadencia actual y continúan avanzando el progreso de ruta.
+diagnostics.performance_sample: La muestra original o el resultado real de servicio incumple el contrato acotado.
+diagnostics.performance_identity: Conserva los UID originales de workloads, Services y política.
+diagnostics.performance_image: Conserva las imágenes de aplicación inmutables suministradas.
+diagnostics.performance_policy: Conserva todos los datos actuales de la política.
+diagnostics.performance_consumer_scan_a: 'scan-a: el consumidor original debe completar rollout en su propio Service
+  con las entradas efectivas actuales.'
+diagnostics.performance_consumer_scan_b: 'scan-b: el consumidor original debe completar rollout en su propio Service
+  con las entradas efectivas actuales.'
+diagnostics.performance_progress_scan_a: 'scan-a: el registro real debe coincidir con política y ruta actuales y
+  continuar avanzando.'
+diagnostics.performance_progress_scan_b: 'scan-b: el registro real debe coincidir con política y ruta actuales y
+  continuar avanzando.'
