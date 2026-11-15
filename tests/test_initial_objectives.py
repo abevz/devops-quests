@@ -22,8 +22,6 @@ from devops_quests.store import Store
 INITIAL_GOAL_EXCEPTIONS = {
     (11, 0, 0): "Rollout reports completion during startup despite the supplied broken clock command; availability remains a repair goal, not a preservation constraint.",
     (14, 0, 1): "Rollout can report completion while the supplied worker still has the wrong route; restoring the service remains a genuine repair goal.",
-    (34, 0, 3): "The initial four-CPU request can fit this host, so rollout may already finish; restoring availability under the required budget remains a genuine goal.",
-    (34, 0, 4): "The oversized initial workload can run on this host and already serve HTTP; the required budget is still unmet and final HTTP remains a repair postcondition.",
 }
 
 

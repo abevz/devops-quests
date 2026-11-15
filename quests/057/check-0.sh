@@ -4,12 +4,209 @@ failed=0
 set +e
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_STORAGE_0'
 test "$(kubectl get pvc spool -o jsonpath='{.status.phase}')" = Bound
+DQ_LEGACY_STORAGE_0
+python3 -I - <<'DQ_STORAGE_POLICY'
+import json
+import posixpath
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from dq_check import current_pods, named, pod_worker, readonly_mount, workload_worker
+
+failed = False
+deadline = time.monotonic() + 10
+
+def require(value, marker):
+    global failed
+    if not value:
+        print('Storage recovery condition is unmet: ✗ [DQ:' + marker + ']')
+        failed = True
+
+def command(args, marker):
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError('Storage observation budget exhausted')
+        result = subprocess.run(args, capture_output=True, text=True, timeout=min(6, remaining))
+        if result.returncode:
+            raise ValueError('Storage observation failed')
+        return result.stdout
+    except (OSError, ValueError, subprocess.SubprocessError):
+        print('Current storage observation is unavailable: ✗ [DQ:' + marker + ']')
+        sys.exit(1)
+
+def get(kind, name, marker):
+    return json.loads(command(['kubectl', 'get', kind] + ([name] if name else []) + ['-o', 'json'], marker))
+
+def same_image(actual, expected):
+    digest = expected.partition('@')[2]
+    return actual == expected or bool(digest) and isinstance(actual, str) and actual.partition('@')[2] == digest
+
+def mounted_claim(spec, role, readonly=False):
+    try:
+        worker = named(spec.get('containers', []), role['container'])
+        mounts = [m for m in worker.get('volumeMounts', []) if m.get('mountPath') == role['mountPath']]
+        if len(mounts) != 1:
+            return False
+        volume = named(spec.get('volumes', []), mounts[0]['name'])
+        claim = volume.get('persistentVolumeClaim', {})
+        paths = [posixpath.normpath(role['mountPath'] + '/' + item['path']) for item in contract['dataset']]
+        for mount in worker.get('volumeMounts', []):
+            if mount is mounts[0]:
+                continue
+            path = posixpath.normpath(mount['mountPath'])
+            under_dataset_root = path.startswith(posixpath.normpath(role['mountPath']).rstrip('/') + '/')
+            if under_dataset_root and any(value == path or value.startswith(path.rstrip('/') + '/') for value in paths):
+                return False
+        return claim.get('claimName') == role['claim'] and (not readonly or readonly_mount(mounts[0], {mounts[0]['name']: volume}))
+    except (KeyError, ValueError, TypeError, AttributeError):
+        return False
+
+facts = json.loads(Path('/run/dq/facts/0/storage-identities.json').read_text())
+contract = facts['contract']
+observed = {}
+for resource, uid in facts['identities'].items():
+    kind, name = resource.split('/')
+    observed[resource] = get(kind, name, 'storage_identity')
+    require(observed[resource].get('metadata', {}).get('uid') == uid, 'storage_identity')
+require(observed['pvc/' + contract['source']['claim']].get('status', {}).get('phase') == 'Bound', 'storage_source')
+for label in ('source', 'target'):
+    role = contract[label]
+    deployment = observed['deployment/' + role['deployment']]
+    require(same_image(workload_worker(deployment).get('image'), facts['image']), 'storage_image')
+    require(mounted_claim(deployment['spec']['template']['spec'], role, readonly=label == 'source'), 'storage_mount_' + role['deployment'])
+sys.exit(int(failed))
+DQ_STORAGE_POLICY
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+timeout --kill-after=1s 4s bash -euo pipefail <<'DQ_LEGACY_STORAGE_1'
 kubectl rollout status deployment/relay --timeout=3s >/dev/null
+DQ_LEGACY_STORAGE_1
+python3 -I - <<'DQ_STORAGE_DATA'
+import json
+import posixpath
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from dq_check import current_pods, named, pod_worker, readonly_mount, workload_worker
+
+failed = False
+deadline = time.monotonic() + 15
+
+def require(value, marker):
+    global failed
+    if not value:
+        print('Storage recovery condition is unmet: ✗ [DQ:' + marker + ']')
+        failed = True
+
+def command(args, marker):
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError('Storage observation budget exhausted')
+        result = subprocess.run(args, capture_output=True, text=True, timeout=min(6, remaining))
+        if result.returncode:
+            raise ValueError('Storage observation failed')
+        return result.stdout
+    except (OSError, ValueError, subprocess.SubprocessError):
+        print('Current storage observation is unavailable: ✗ [DQ:' + marker + ']')
+        sys.exit(1)
+
+def get(kind, name, marker):
+    return json.loads(command(['kubectl', 'get', kind] + ([name] if name else []) + ['-o', 'json'], marker))
+
+def same_image(actual, expected):
+    digest = expected.partition('@')[2]
+    return actual == expected or bool(digest) and isinstance(actual, str) and actual.partition('@')[2] == digest
+
+def mounted_claim(spec, role, readonly=False):
+    try:
+        worker = named(spec.get('containers', []), role['container'])
+        mounts = [m for m in worker.get('volumeMounts', []) if m.get('mountPath') == role['mountPath']]
+        if len(mounts) != 1:
+            return False
+        volume = named(spec.get('volumes', []), mounts[0]['name'])
+        claim = volume.get('persistentVolumeClaim', {})
+        paths = [posixpath.normpath(role['mountPath'] + '/' + item['path']) for item in contract['dataset']]
+        for mount in worker.get('volumeMounts', []):
+            if mount is mounts[0]:
+                continue
+            path = posixpath.normpath(mount['mountPath'])
+            under_dataset_root = path.startswith(posixpath.normpath(role['mountPath']).rstrip('/') + '/')
+            if under_dataset_root and any(value == path or value.startswith(path.rstrip('/') + '/') for value in paths):
+                return False
+        return claim.get('claimName') == role['claim'] and (not readonly or readonly_mount(mounts[0], {mounts[0]['name']: volume}))
+    except (KeyError, ValueError, TypeError, AttributeError):
+        return False
+
+facts = json.loads(Path('/run/dq/facts/0/storage-identities.json').read_text())
+contract = facts['contract']
+deployments = {label: get('deployment', contract[label]['deployment'], 'storage_ready_' + contract[label]['deployment']) for label in ('source', 'target')}
+pods = get('pods', '', 'storage_source')
+replicasets = get('replicasets', '', 'storage_source')
+for label, deployment in deployments.items():
+    role = contract[label]
+    name = role['deployment']
+    ready_marker = 'storage_ready_' + name
+    data_marker = 'storage_data_' + name
+    publication_marker = 'storage_publication_' + name
+    require(deployment.get('spec', {}).get('replicas') == role['replicas'] and deployment.get('status', {}).get('readyReplicas') == role['replicas'], ready_marker)
+    command(['kubectl', 'rollout', 'status', 'deployment/' + name, '--timeout=3s'], ready_marker)
+    current = current_pods(deployment, replicasets, pods)
+    require(bool(current) and all(any(c.get('type') == 'Ready' and c.get('status') == 'True' for c in p.get('status', {}).get('conditions', [])) for p in current), ready_marker)
+    for pod in current:
+        require(mounted_claim(pod.get('spec', {}), role, readonly=label == 'source'), 'storage_mount_' + name)
+        require(same_image(pod_worker(pod).get('image'), facts['image']), 'storage_image')
+        prefix = ['kubectl', 'exec', pod['metadata']['name'], '-c', role['container'], '--']
+        paths = [role['mountPath'].rstrip('/') + '/' + item['path'] for item in contract['dataset']]
+        sizes = command(prefix + ['stat', '-c', '%F:%s'] + paths, data_marker).splitlines()
+        if sizes != ['regular file:' + str(item['bytes']) for item in contract['dataset']]:
+            require(False, data_marker)
+            continue
+        digests = [line.split()[0] for line in command(prefix + ['sha256sum'] + paths, data_marker).splitlines()]
+        require(digests == [item['sha256'] for item in contract['dataset']], data_marker)
+        uri = 'http://127.0.0.1:' + str(contract['interface']['port']) + contract['interface']['path']
+        require(command(prefix + ['wget', '-qO-', '-T', '3', uri], publication_marker) == contract['interface']['body'], publication_marker)
+sys.exit(int(failed))
+DQ_STORAGE_DATA
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

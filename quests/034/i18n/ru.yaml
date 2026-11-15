@@ -1,47 +1,36 @@
 title: Запросы ресурсов
 brief: |-
-  Табло отправлений недоступно.
+  Workload маршрута не завершает запуск. Восстановите доступность в рамках предоставленного бюджета ресурсов.
 
-  Работайте на workstation в `~/quest` с предоставленными файлами:
-  - `board.yaml`.
+  Работайте на рабочей станции в `~/quest` с `cpu-contract.json`; изучите предоставленные ресурсы в namespace.
 
   **Требования:**
+  - Deployment `board` сохраняет одну реплику, идентичности workload и исходного ConfigMap, а также образы worker и init-контейнера. Запрос памяти worker остаётся `16Mi`, лимит — `64Mi`.
+  - Сохраните все предоставленные записи исходных данных. CPU-бюджет worker и эффективные запросы планирования фаз приложения и запуска соответствуют контракту.
+  - Предоставленный обычный init-контейнер успешно завершается до текущего worker; Deployment завершает rollout.
+  - Из Pod `app=board` HTTP по адресу `http://127.0.0.1:8080` возвращает `north`.
 
-  - Deployment `board` сохраняет ровно `1` реплику и завершает rollout.
-  - Его контейнер `worker` имеет фиксированный бюджет ресурсов:
-    - CPU request `100m`, CPU limit `300m`.
-    - Memory request `16Mi`, memory limit `64Mi`.
-  - Внутри Pod `app=board` HTTP по адресу `http://127.0.0.1:8080` возвращает `north`.
-
-  Эти проверки не доказывают производительность или пропускную способность под нагрузкой.
-debrief: Планирование использует запрошенные ресурсы, а не мгновенную загрузку узла.
-stages.0.brief: Сохраните фиксированный бюджет ресурсов и требуемый ответ HTTP.
+  Проверяются текущие запросы, завершение инициализации, идентичности ресурсов и HTTP. Производительность и ёмкость под нагрузкой не устанавливаются.
+debrief: На планирование влияли запросы приложения и инициализации. Исходная подготовка маршрута теперь завершается
+  в рамках бюджета, и worker обслуживает её результат.
+stages.0.brief: Deployment завершает rollout, а предоставленный init-контейнер успешно завершается до текущего worker.
 stages.0.objectives.0.text: Deployment `board` сохраняет ровно одну реплику.
-stages.0.objectives.1.text: Контейнер board запрашивает `100m` CPU и имеет лимит CPU `300m`.
+stages.0.objectives.1.text: Исходные ресурсы, данные и образы сохранены; CPU-настройки worker и эффективные запросы
+  запуска соответствуют предоставленному бюджету.
 stages.0.objectives.2.text: Контейнер board сохраняет запрос памяти `16Mi` и лимит памяти `64Mi`.
-stages.0.objectives.3.text: Deployment `board` завершает rollout.
+stages.0.objectives.3.text: Deployment завершает rollout, а предоставленный init-контейнер успешно завершается до
+  текущего worker.
 stages.0.objectives.4.text: HTTP-запрос из Pod `app=board` к `http://127.0.0.1:8080` возвращает `north`.
-hints.0.text: Requests влияют на размещение, limits — на потребление.
-hints.1.text: |-
-  Pending отличается от падения процесса. Выданный board.yaml запрашивает 4 CPU на узле с пределом 2; изучите события планирования.
+hints.0.text: Планировщик учитывает фазы запуска наряду с контейнерами приложения. Низкое фактическое потребление
+  CPU не означает, что запрошенный резерв можно разместить.
+hints.1.text: Сопоставьте `cpu-contract.json`, `kubectl get deployment board -o yaml` и `kubectl describe pod -l
+  app=board`. Изучите все участвующие запросы и события планирования Pod; нужные свидетельства доступны в namespace.
+hints.2.text: |-
+  Проверьте rollout, завершение инициализации и фактический интерфейс:
 
-  Изучите предоставленные файлы и живые наблюдения:
-
-  ```sh
-  kubectl get nodes
-  kubectl describe pod -l app=board
-  ```
-hints.2.text: 'Проверьте размещение и фактический HTTP-ответ.
-
-
-  Проверьте результат из `~/quest` на workstation:
-
-
-  - `kubectl get deployment board -o json` — показывает `replicas=1`, запрос/лимит CPU `100m`/`300m` и запрос/лимит памяти `16Mi`/`64Mi`.
-
-  - `kubectl rollout status deployment/board --timeout=3s` — завершается с кодом `0` и сообщает о завершённом rollout.
-
-  - `kubectl exec deployment/board -c worker -- wget -qO- http://127.0.0.1:8080` — выводит `north` от HTTP-сервиса внутри Pod.'
+  - `kubectl rollout status deployment/board` — rollout завершён.
+  - `kubectl get pods -l app=board -o jsonpath='{.items[*].status.initContainerStatuses}'` — обычный init-контейнер завершился с exit code 0.
+  - `kubectl exec deployment/board -c worker -- wget -qO- http://127.0.0.1:8080` — ответ — north.
 phrases.0: Я различил CPU requests и CPU limits.
 phrases.1: Я восстановил допустимый для планирования request в заданном бюджете.
 phrases.2: Я проверил фактические настройки ресурсов и ответ приложения.
@@ -53,7 +42,14 @@ questions.1.points.0: Проверьте throttling и узкие места з�
 questions.1.points.1: Убедитесь, что дополнительные реплики можно разместить.
 questions.1.points.2: Опирайтесь на замеры и обоснованный запас.
 questions.1.prompt: Что проверить перед добавлением реплик медленного сервиса?
-diagnostics.probe_0_1: 'Текущие данные не позволили проверить эту цель: Контейнер board запрашивает `100m` CPU и
-  имеет лимит CPU `300m`.'
+diagnostics.probe_0_1: Исходные ресурсы, данные и образы сохранены; CPU-настройки worker и эффективные запросы запуска
+  соответствуют предоставленному бюджету.
 diagnostics.probe_0_2: 'Текущие данные не позволили проверить эту цель: Контейнер board сохраняет запрос памяти
   `16Mi` и лимит памяти `64Mi`.'
+diagnostics.cpu_identity: Сохраните исходные UID Deployment и ConfigMap-источника.
+diagnostics.cpu_image: Сохраните предоставленные образы worker и init-контейнера.
+diagnostics.cpu_phase: Эффективные CPU-запросы всех фаз запуска и приложения должны укладываться в объявленный бюджет.
+diagnostics.cpu_initializer: Сохраните обычный init-контейнер и его успешное завершение до worker.
+diagnostics.cpu_source: Сохраните все предоставленные записи исходного ConfigMap.
+diagnostics.probe_0_3: Deployment завершает rollout, а предоставленный init-контейнер успешно завершается до текущего
+  worker.

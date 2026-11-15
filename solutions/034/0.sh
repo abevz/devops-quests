@@ -1,6 +1,6 @@
 set -euo pipefail
 cd ~/quest
-cat > board.yaml <<'DQ_ASSET'
+cat > board-fixed.yaml <<'DQ_ASSET'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -27,9 +27,12 @@ spec:
         image: __DQ_APP_IMAGE__
         imagePullPolicy: Never
         command:
-        - sh
-        - -c
-        - mkdir -p /tmp/site; printf "%s\n" "north" > /tmp/site/index.html; exec httpd -f -p 8080 -h /tmp/site
+        - httpd
+        - -f
+        - -p
+        - '8080'
+        - -h
+        - /site
         resources:
           requests:
             cpu: 100m
@@ -42,11 +45,47 @@ spec:
           capabilities:
             drop:
             - ALL
+        volumeMounts:
+        - name: route
+          mountPath: /site
+          readOnly: true
+      terminationGracePeriodSeconds: 1
+      volumes:
+      - name: route
+        emptyDir: {}
+      - name: source
+        configMap:
+          name: route-source
+      initContainers:
+      - name: prepare-route
+        image: __DQ_APP_IMAGE__
+        imagePullPolicy: Never
+        command:
+        - sh
+        - -c
+        - cp /source/index.html /site/index.html
+        resources:
+          requests:
+            cpu: 10m
+            memory: 8Mi
+          limits:
+            memory: 16Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: source
+          mountPath: /source
+          readOnly: true
+        - name: route
+          mountPath: /site
 DQ_ASSET
-python3 - board.yaml <<'DQ_IMAGE'
-import os,sys
+python3 -I - <<'DQ_CPU_REFERENCE'
+import os
 from pathlib import Path
-p=Path(sys.argv[1]);p.write_text(p.read_text().replace('__DQ_APP_IMAGE__',os.environ['DQ_APP_IMAGE']))
-DQ_IMAGE
-kubectl apply -f board.yaml
-kubectl rollout status deployment/board --timeout=60s
+p=Path('board-fixed.yaml');p.write_text(p.read_text().replace('__DQ_APP_IMAGE__',os.environ['DQ_APP_IMAGE']))
+DQ_CPU_REFERENCE
+kubectl apply -f board-fixed.yaml
+kubectl rollout status deployment/board --timeout=90s

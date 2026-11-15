@@ -1,48 +1,39 @@
 title: Solicitudes de recursos
 brief: |-
-  El panel de salidas no está disponible.
+  El workload de ruta no completa el arranque. Recupera su disponibilidad dentro del presupuesto de recursos proporcionado.
 
-  Trabaja en la workstation en `~/quest` con los archivos suministrados:
-  - `board.yaml`.
+  Trabaja en la estación en `~/quest` con `cpu-contract.json`; inspecciona los recursos proporcionados en el namespace.
 
   **Requisitos:**
+  - Deployment `board` conserva una réplica, las identidades originales del workload y ConfigMap fuente y las imágenes proporcionadas del worker e inicializador. La solicitud de memoria del worker sigue en `16Mi` y el límite en `64Mi`.
+  - Conserva todas las entradas de datos proporcionadas. El presupuesto CPU del worker y las solicitudes efectivas de planificación de las fases de aplicación y arranque cumplen el contrato.
+  - El inicializador normal proporcionado termina correctamente antes del worker actual; el Deployment completa el rollout.
+  - Desde el Pod `app=board`, HTTP en `http://127.0.0.1:8080` devuelve `north`.
 
-  - El Deployment `board` mantiene exactamente `1` réplica y completa su rollout.
-  - Su contenedor `worker` tiene el presupuesto fijo de recursos:
-    - Solicitud CPU `100m`, límite CPU `300m`.
-    - Solicitud de memoria `16Mi`, límite de memoria `64Mi`.
-  - Dentro del Pod `app=board`, HTTP en `http://127.0.0.1:8080` devuelve `north`.
-
-  Estas comprobaciones no demuestran rendimiento ni capacidad bajo carga.
-debrief: La programación utiliza los recursos solicitados, no la utilización instantánea del nodo.
-stages.0.brief: Conserva el presupuesto fijo de recursos y la respuesta HTTP requerida.
+  Se observan solicitudes actuales, finalización de init, identidad de recursos y HTTP. No se establece rendimiento ni capacidad bajo carga.
+debrief: Las solicitudes de aplicación e inicialización influían en la planificación. La preparación original de
+  la ruta ahora termina dentro del presupuesto y el worker sirve su resultado.
+stages.0.brief: El Deployment completa el rollout y el inicializador proporcionado termina correctamente antes del
+  worker actual.
 stages.0.objectives.0.text: El Deployment `board` mantiene exactamente una réplica.
-stages.0.objectives.1.text: El contenedor board solicita `100m` de CPU y tiene un límite de CPU de `300m`.
-stages.0.objectives.2.text: El contenedor board conserva su solicitud de memoria de `16Mi` y su límite
-  de memoria de `64Mi`.
-stages.0.objectives.3.text: El Deployment `board` completa su rollout.
+stages.0.objectives.1.text: Se conservan recursos, datos fuente e imágenes originales; la CPU del worker y las solicitudes
+  efectivas de arranque cumplen el presupuesto proporcionado.
+stages.0.objectives.2.text: El contenedor board conserva su solicitud de memoria de `16Mi` y su límite de memoria
+  de `64Mi`.
+stages.0.objectives.3.text: El Deployment completa el rollout y el inicializador proporcionado termina correctamente
+  antes del worker actual.
 stages.0.objectives.4.text: HTTP desde Pod `app=board` a `http://127.0.0.1:8080` devuelve `north`.
-hints.0.text: Requests afecta la programación; Uso del tiempo de ejecución vinculado a limits.
-hints.1.text: |-
-  Pending es diferente de una falla del proceso. El archivo board.yaml suministrado solicita 4 CPU en un nodo limitado a 2; revisa los eventos de planificación.
+hints.0.text: El planificador considera las fases de arranque además de los contenedores de aplicación. Un consumo
+  CPU observado bajo no vuelve planificable una reserva.
+hints.1.text: Compara `cpu-contract.json`, `kubectl get deployment board -o yaml` y `kubectl describe pod -l app=board`.
+  Inspecciona todas las solicitudes que contribuyen y los eventos de planificación; las observaciones necesarias
+  están disponibles en el namespace.
+hints.2.text: |-
+  Verifica rollout, inicialización terminada e interfaz real:
 
-  Inspecciona los datos suministrados y las observaciones activas:
-
-  ```sh
-  kubectl get nodes
-  kubectl describe pod -l app=board
-  ```
-hints.2.text: 'Verifique la ubicación y la respuesta real de HTTP.
-
-
-  Verifica el resultado desde `~/quest` en la workstation:
-
-
-  - `kubectl get deployment board -o json` — muestra `replicas=1`, solicitud/límite de CPU `100m`/`300m` y solicitud/límite de memoria `16Mi`/`64Mi`.
-
-  - `kubectl rollout status deployment/board --timeout=3s` — termina con código `0` e informa de un rollout completado.
-
-  - `kubectl exec deployment/board -c worker -- wget -qO- http://127.0.0.1:8080` — imprime `north` del servicio HTTP dentro del Pod.'
+  - `kubectl rollout status deployment/board` — rollout completo.
+  - `kubectl get pods -l app=board -o jsonpath='{.items[*].status.initContainerStatuses}'` — el inicializador normal terminó con código 0.
+  - `kubectl exec deployment/board -c worker -- wget -qO- http://127.0.0.1:8080` — la respuesta es north.
 phrases.0: Distinguí CPU requests de CPU limits.
 phrases.1: Restauré un request programable dentro del presupuesto previsto.
 phrases.2: Verifiqué la configuración de los recursos en vivo y la respuesta de la aplicación.
@@ -54,7 +45,15 @@ questions.1.points.0: Verifique throttling y los cuellos de botella posteriores.
 questions.1.points.1: Asegúrese de que se puedan programar réplicas adicionales.
 questions.1.points.2: Base las solicitudes en las medidas y el espacio libre indicado.
 questions.1.prompt: ¿Qué se debe comprobar antes de agregar réplicas a un servicio lento?
-diagnostics.probe_0_1: 'Los datos actuales no permiten verificar este objetivo: El contenedor board solicita `100m`
-  de CPU y tiene un límite de CPU de `300m`.'
+diagnostics.probe_0_1: Se conservan recursos, datos fuente e imágenes originales; la CPU del worker y las solicitudes
+  efectivas de arranque cumplen el presupuesto proporcionado.
 diagnostics.probe_0_2: 'Los datos actuales no permiten verificar este objetivo: El contenedor board conserva su
   solicitud de memoria de `16Mi` y su límite de memoria de `64Mi`.'
+diagnostics.cpu_identity: Conserva los UID originales del Deployment y ConfigMap fuente.
+diagnostics.cpu_image: Conserva las imágenes proporcionadas del worker e inicializador.
+diagnostics.cpu_phase: Las solicitudes CPU efectivas de cada fase de arranque y aplicación deben caber en el techo
+  declarado.
+diagnostics.cpu_initializer: Conserva el inicializador normal y su finalización correcta antes del worker.
+diagnostics.cpu_source: Conserva todas las entradas de datos fuente proporcionadas.
+diagnostics.probe_0_3: El Deployment completa el rollout y el inicializador proporcionado termina correctamente
+  antes del worker actual.

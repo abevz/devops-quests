@@ -1,47 +1,36 @@
 title: Żądania zasobów
 brief: |-
-  Tablica odjazdów jest niedostępna.
+  Workload trasy nie kończy uruchamiania. Przywróć dostępność w udostępnionym budżecie zasobów.
 
-  Pracuj na workstation w `~/quest` z dostarczonymi plikami:
-  - `board.yaml`.
+  Pracuj na stacji roboczej w `~/quest` z `cpu-contract.json`; sprawdź udostępnione zasoby w namespace.
 
   **Wymagania:**
+  - Deployment `board` zachowuje jedną replikę, pierwotne tożsamości workload i źródłowego ConfigMap oraz dostarczone obrazy worker i inicjalizatora. Żądanie pamięci worker pozostaje `16Mi`, a limit `64Mi`.
+  - Zachowaj wszystkie dostarczone wpisy danych źródłowych. Budżet CPU worker oraz efektywne żądania planowania faz aplikacji i startu spełniają kontrakt.
+  - Dostarczony zwykły inicjalizator kończy się poprawnie przed bieżącym worker; Deployment kończy rollout.
+  - Z Poda `app=board` HTTP pod `http://127.0.0.1:8080` zwraca `north`.
 
-  - Deployment `board` zachowuje dokładnie `1` replikę i kończy rollout.
-  - Jego kontener `worker` ma stały budżet zasobów:
-    - Żądanie CPU `100m`, limit CPU `300m`.
-    - Żądanie pamięci `16Mi`, limit pamięci `64Mi`.
-  - W Podzie `app=board` HTTP pod `http://127.0.0.1:8080` zwraca `north`.
-
-  Te sprawdzenia nie dowodzą wydajności ani pojemności pod obciążeniem.
-debrief: Planowanie wykorzystuje żądane zasoby, a nie chwilowe wykorzystanie węzła.
-stages.0.brief: Zachowaj stały budżet zasobów i wymagany wynik HTTP.
+  Testy obserwują bieżące żądania, ukończenie init, tożsamość zasobów i HTTP. Nie potwierdzają wydajności ani pojemności pod obciążeniem.
+debrief: Żądania aplikacji i inicjalizacji wpływały na planowanie. Pierwotne przygotowanie trasy kończy się teraz
+  w budżecie, a worker udostępnia jego wynik.
+stages.0.brief: Deployment kończy rollout, a dostarczony inicjalizator kończy się poprawnie przed bieżącym worker.
 stages.0.objectives.0.text: Deployment `board` zachowuje dokładnie jedną replikę.
-stages.0.objectives.1.text: Kontener board żąda `100m` CPU i ma limit CPU `300m`.
+stages.0.objectives.1.text: Pierwotne zasoby, dane źródłowe i obrazy pozostają zachowane; ustawienia CPU worker
+  i efektywne żądania startu spełniają udostępniony budżet.
 stages.0.objectives.2.text: Kontener board zachowuje żądanie pamięci `16Mi` i limit pamięci `64Mi`.
-stages.0.objectives.3.text: Deployment `board` kończy rollout.
+stages.0.objectives.3.text: Deployment kończy rollout, a dostarczony inicjalizator kończy się poprawnie przed bieżącym
+  worker.
 stages.0.objectives.4.text: HTTP z Pod `app=board` do `http://127.0.0.1:8080` zwraca `north`.
-hints.0.text: Requests wpływa na planowanie; limits powiązane użycie środowiska wykonawczego.
-hints.1.text: |-
-  Pending różni się od awarii procesu. Dostarczony board.yaml żąda 4 CPU na węźle ograniczonym do 2; sprawdź zdarzenia planowania.
+hints.0.text: Scheduler uwzględnia fazy startu obok kontenerów aplikacji. Niskie obserwowane użycie CPU nie oznacza,
+  że rezerwację da się zaplanować.
+hints.1.text: Porównaj `cpu-contract.json`, `kubectl get deployment board -o yaml` i `kubectl describe pod -l app=board`.
+  Sprawdź wszystkie składowe żądania i zdarzenia planowania Poda; potrzebne obserwacje są dostępne w namespace.
+hints.2.text: |-
+  Sprawdź rollout, ukończoną inicjalizację i rzeczywisty interfejs:
 
-  Sprawdź dostarczone dane i bieżące obserwacje:
-
-  ```sh
-  kubectl get nodes
-  kubectl describe pod -l app=board
-  ```
-hints.2.text: 'Sprawdź położenie i rzeczywistą odpowiedź HTTP.
-
-
-  Sprawdź wynik z `~/quest` na workstation:
-
-
-  - `kubectl get deployment board -o json` — pokazuje `replicas=1`, żądanie/limit CPU `100m`/`300m` oraz żądanie/limit pamięci `16Mi`/`64Mi`.
-
-  - `kubectl rollout status deployment/board --timeout=3s` — kończy się kodem `0` i zgłasza zakończony rollout.
-
-  - `kubectl exec deployment/board -c worker -- wget -qO- http://127.0.0.1:8080` — wypisuje `north` z usługi HTTP wewnątrz Poda.'
+  - `kubectl rollout status deployment/board` — rollout ukończony.
+  - `kubectl get pods -l app=board -o jsonpath='{.items[*].status.initContainerStatuses}'` — zwykły inicjalizator zakończył się kodem 0.
+  - `kubectl exec deployment/board -c worker -- wget -qO- http://127.0.0.1:8080` — odpowiedź to north.
 phrases.0: Odróżniłem CPU requests od CPU limits.
 phrases.1: Przywróciłem planowany request w ramach zamierzonego budżetu.
 phrases.2: Sprawdziłem ustawienia zasobów na żywo i reakcję aplikacji.
@@ -53,7 +42,15 @@ questions.1.points.0: Sprawdź throttling i wąskie gardła poniżej.
 questions.1.points.1: Upewnij się, że można zaplanować dodatkowe repliki.
 questions.1.points.2: Opieraj żądania na pomiarach i podanej wysokości nadproża.
 questions.1.prompt: Co należy sprawdzić przed dodaniem replik do powolnego serwisu?
-diagnostics.probe_0_1: 'Bieżące dane nie pozwalają potwierdzić tego celu: Kontener board żąda `100m` CPU i ma limit
-  CPU `300m`.'
+diagnostics.probe_0_1: Pierwotne zasoby, dane źródłowe i obrazy pozostają zachowane; ustawienia CPU worker i efektywne
+  żądania startu spełniają udostępniony budżet.
 diagnostics.probe_0_2: 'Bieżące dane nie pozwalają potwierdzić tego celu: Kontener board zachowuje żądanie pamięci
   `16Mi` i limit pamięci `64Mi`.'
+diagnostics.cpu_identity: Zachowaj pierwotne UID Deployment i źródłowego ConfigMap.
+diagnostics.cpu_image: Zachowaj dostarczone obrazy worker i inicjalizatora.
+diagnostics.cpu_phase: Efektywne żądania CPU wszystkich faz startu i aplikacji muszą mieścić się w zadeklarowanej
+  granicy.
+diagnostics.cpu_initializer: Zachowaj zwykły inicjalizator i jego poprawne zakończenie przed worker.
+diagnostics.cpu_source: Zachowaj wszystkie dostarczone wpisy źródłowego ConfigMap.
+diagnostics.probe_0_3: Deployment kończy rollout, a dostarczony inicjalizator kończy się poprawnie przed bieżącym
+  worker.
