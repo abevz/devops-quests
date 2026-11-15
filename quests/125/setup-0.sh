@@ -244,3 +244,34 @@ kubectl rollout status deployment/controller --timeout=90s
 kubectl rollout status deployment/observer --timeout=90s
 kubectl config view --minify --raw -o json | jq -r '.clusters[0].cluster["certificate-authority-data"]' | base64 -d > api-ca.pem
 kubectl config view --minify -o json | jq -r '.clusters[0].cluster.server' > api-endpoint
+python3 -I - <<'DQ_AUTHORITY_SEED'
+import copy,json,os,secrets,subprocess
+from pathlib import Path
+def get(kind,name):
+    return json.loads(subprocess.check_output(['kubectl','get',kind,name,'-o','json'],text=True))
+def apply(value):
+    subprocess.run(['kubectl','apply','-f','-'],input=json.dumps(value),text=True,check=True)
+controller=get('deployment','controller')
+consumers=[]
+for name,record,prefix in [('publisher','release-plan','release'),('sampler','sampling','sample')]:
+    response=prefix+'-'+secrets.token_hex(8)
+    apply({'apiVersion':'v1','kind':'ConfigMap','metadata':{'name':record},'data':{'route':response}})
+    value=copy.deepcopy(controller);value['metadata']={'name':name};value.pop('status',None)
+    value['spec']['selector']['matchLabels']={'app':name}
+    value['spec']['template']['metadata']={'labels':{'app':name}}
+    value['spec']['revisionHistoryLimit']=0
+    apply(value)
+    subprocess.run(['kubectl','rollout','status','deployment/'+name,'--timeout=90s'],check=True)
+    consumers.append({'deployment':name,'configMap':record,'key':'route','response':response})
+contract={'schema':1,'control':{'deployment':'controller','serviceAccount':'controller','configMap':'route','response':'north-125'},'observer':{'deployment':'observer','serviceAccount':'observer'},'consumers':consumers,'credential':{'container':'worker','path':'/credential/token'},'reservedServiceAccounts':['controller','observer','default','player'],'distinctConsumerIdentities':True,'namespaceRolesOnly':True,'preserveProvidedWorkloadsAndControlIdentities':True}
+Path('authority-contract.json').write_text(json.dumps(contract,indent=2)+'\n')
+identities={};images={};accounts={}
+for name in ['controller','observer']+[c['deployment'] for c in consumers]:
+    value=get('deployment',name);identities['deployment/'+name]=value['metadata']['uid']
+    images[name]=next(c['image'] for c in value['spec']['template']['spec']['containers'] if c['name']=='worker')
+    if name in ('controller','observer'):
+        accounts[name]=value['spec']['template']['spec']['serviceAccountName']
+        identities['serviceaccount/'+accounts[name]]=get('serviceaccount',accounts[name])['metadata']['uid']
+Path('authority-identities.json').write_text(json.dumps({'contract':contract,'identities':identities,'images':images,'originalAccounts':accounts})+'\n')
+DQ_AUTHORITY_SEED
+rm -f controller-sa.yaml observer-sa.yaml controller.yaml observer.yaml role.yaml binding.yaml route.yaml offlimits.yaml secret.yaml

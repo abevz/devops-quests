@@ -1,6 +1,6 @@
 # Бюджеты admission и метрики
 
-Используйте только офлайн-песочницу. LimitRange может задать запросы и лимиты ресурсов нового контейнера по умолчанию; ResourceQuota ограничивает общий бюджет namespace. Admission применяет значения по умолчанию к новым Pod, а не к существующим. В задании 126 изучите выданные quota, defaults и шаблон Deployment без ресурсов, а также события ReplicaSet. Исправьте значения CPU, пересоздайте Pod через Deployment и проверьте CPU и память фактически допущенного Pod. Quota не гарантирует ёмкость узла, а эта проверка не изучает текущие значения памяти LimitRange.
+ResourceQuota учитывает всех admitted-потребителей namespace. LimitRange задаёт defaults при admission; его изменение не переписывает существующие Pod. Замена Deployment или surge может потребовать бюджет, пока старые Pod его занимают. Сопоставляйте использование квоты, оба шаблона, admitted-ресурсы и сообщения условий ReplicaSet. Согласуйте поколения ресурсов в фиксированном бюджете. CPU defaults и текущая admitted-память — отдельные наблюдения, не доказательство истории или node capacity.
 
 В задании 127 Service сопоставляет свой порт с целевым портом подходящих Pod. Prometheus периодически опрашивает настроенный endpoint и сохраняет временные ряды, различаемые метками. Gauge — текущее значение: используйте `sum` и `count` для `station_queue_depth{job="board",route="north"}`, а не `rate`. Изучите `metrics.yaml`, Service и `prometheus-target.json`, исправьте порт и дождитесь опроса. Запросите `up`, сумму и число gauge и состояние цели по приватному URL. Один готовый Pod не доказывает опрос или сохранённую метрику. Текущие результаты не доказывают, какая правка сделана.
 
@@ -10,26 +10,10 @@
 
 ```sh
 cd ~/quest
-kubectl describe resourcequota station
+cat admission-contract.json
+kubectl get resourcequota station -o yaml
 kubectl get limitrange defaults -o yaml
-kubectl describe rs
-kubectl get pods -l app=board -o yaml
-```
-
-После исправления значений CPU масштабируйте board до нуля. Дождитесь отсутствия Pod board и нуля желаемых реплик в его ReplicaSet; это освободит фиксированную quota и ненадолго прервёт сервис. Затем перезапустите Deployment и верните одну реплику:
-
-```sh
-kubectl scale deployment/board --replicas=0
-kubectl get pods -l app=board
-kubectl get replicasets -l app=board
-```
-
-Повторяйте обе команды `kubectl get`, пока не останется Pod board, а столбец DESIRED не станет равен нулю у каждого ReplicaSet board. Только после этого выполните следующие команды:
-
-```sh
-kubectl rollout restart deployment/board
-kubectl scale deployment/board --replicas=1
-kubectl rollout status deployment/board --timeout=90s
+kubectl get deployment,replicaset,pods -o yaml
 ```
 
 В задании 127 изучите Service и запросите up у приватного Prometheus:

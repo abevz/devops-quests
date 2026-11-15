@@ -1,60 +1,47 @@
 title: Umowy RBAC o najniższych uprawnieniach
 brief: |-
-  Czytnik trasy musi mieć wąsko ograniczony dostęp. Przywróć zamierzoną odpowiedź controller, a inne żądania i żądania observer mają pozostać zabronione.
+  Autoryzacja obciążeń nie odpowiada zadeklarowanym intencjom dostępu. Przywróć wąskie uprawnienia i bieżące odczyty odbiorców, zachowując dostęp sterujący.
 
-  Pracuj na workstation w `~/quest` z dostarczonymi plikami:
-  - `controller-sa.yaml`, `observer-sa.yaml`, `controller.yaml`, `observer.yaml`, `role.yaml`, `binding.yaml`, `route.yaml`, `offlimits.yaml`, `secret.yaml`, `api-ca.pem`, `api-endpoint`.
+  Pracuj na workstation w `~/quest` z podanymi danymi połączenia/wyniku: `authority-contract.json`, `api-ca.pem`, `api-endpoint`. Definicje obciążeń są dostępne w bieżących obiektach klastra.
 
-  **Requirements:**
+  **Wymagania:**
 
-  - Dostarczony Role w namespace przyznaje tylko odczyt istniejącej konfiguracji trasy po nazwie, a jego binding przyznaje ten dostęp tylko dostarczonej tożsamości controller.
+  - Dostarczony Role w namespace przyznaje tylko odczyt istniejącej konfiguracji trasy po nazwie, a jego binding przyznaje ten dostęp tylko dostarczonej tożsamości controller. Zachowaj tożsamości i obrazy wszystkich podanych obciążeń oraz pierwotne sterujące ServiceAccount. Każdy zależny odbiorca ma osobną, unikalną dedykowaną tożsamość, wyłączone automatyczne montowanie poświadczeń i wyłącznie namespaced grant odczytu własnego rekordu po nazwie.
   - GET API z weryfikacją CA i zamontowanym poświadczeniem controller zwraca HTTP `200` i trasę `north-125` z istniejącej konfiguracji.
-  - Żądania controller dotyczące list ConfigMap lub Secret, odczytu oddzielnej chronionej konfiguracji lub kontrolnego Secret oraz żądanie observer odczytu trasy otrzymują HTTP `403`.
+  - Żądania controller dotyczące list ConfigMap lub Secret, odczytu oddzielnej chronionej konfiguracji lub kontrolnego Secret oraz żądanie observer odczytu trasy otrzymują HTTP `403`. Poświadczenie związane z bieżącym Podem każdego odbiorcy odczytuje własny rekord z HTTP 200 i zadeklarowaną wartością. Trasa, chronione dane, rekordy innego odbiorcy i listy zwracają HTTP 403; pierwotne tożsamości sterująca i obserwująca nie odczytują rekordów zależnych.
 
-  Kontrole obejmują wskazane żądania i obiekty, nie wszystkie możliwe uprawnienia ani autora poleceń; nigdy nie wyświetlaj tokenów.
-debrief: Zweryfikowano najniższe uprawnienia dla obu operacji i identities, w tym dla rzeczywistych negatywnych
-  żądań API.
+  Testy obserwują bieżące role namespace, tożsamości i podane żądania API, nie wszystkie możliwe prawa ani historię. Nie wyświetlaj tokenów.
+debrief: Least privilege to efektywny graf tożsamości, grantów i bieżących poświadczeń. Propagacja osobnych principals
+  przywraca zależności bez szerokiego wspólnego grantu.
 stages.0.brief: Zachowaj poufność obu poświadczeń oraz odmowy dostępu.
-hints.0.text: Powiązanie wybiera identities; a Role definiuje dozwolone operacje. Dostarczona Role pozwala
-  na dodatkowe listy ConfigMap i odczyty Secret, a binding obejmuje observer. Oba obciążenia mają już
-  krótkotrwałe projektowane tokeny.
+hints.0.text: Prawa należą do tożsamości, nie etykiet obciążeń. Ograniczenie wspólnego grantu może przerwać zależne
+  odczyty; zmiana szablonu nie zastępuje poświadczeń istniejącego Poda.
 hints.1.text: |-
-  get by resourceName jest węższy niż list, nawet dla tego samego rodzaju zasobu.
-
-  Sprawdź dostarczone dane i bieżące obserwacje:
+  Porównaj kontrakt intencji z bieżącymi ServiceAccount, RoleBinding i tożsamościami Podów. Dekoduj tylko metadane tożsamości, nigdy nie wyświetlaj poświadczeń bearer.
 
   ```sh
-  kubectl get role station-reader -o yaml
-    kubectl get rolebinding station-reader -o yaml
+  cat authority-contract.json
+  kubectl get deployment,serviceaccount,role,rolebinding -o yaml
+  kubectl get pods -o yaml
+  kubectl exec deployment/publisher -c worker -- cat /credential/token |
+    python3 -I -c 'import base64,json,sys; token=sys.stdin.read().strip(); c=json.loads(base64.urlsafe_b64decode(token.split(".")[1]+"===")); print(json.dumps({"sub":c.get("sub"),"podUID":c.get("kubernetes.io",{}).get("pod",{}).get("uid")}))'
+
   ```
 hints.2.text: |-
-  Ogranicz reguły Role i subjects, a następnie przetestuj jawnie zabronione ścieżki.
+  Sprawdź każdy dozwolony odczyt po nazwie i każde zabronione żądanie zgodnie z intencjami poświadczeniem obciążenia. Odrzucaj wszystkie ciała zabronionych odpowiedzi.
 
-  Sprawdź wynik z `~/quest` na workstation:
-
-  - Wskazana trasa zwraca `north-125` z HTTP `200`; pozostałe cztery żądania zwracają HTTP `403`. Nie wyświetlaj ani nie zapisuj tokena.
-
-    ```sh
-    api=$(cat api-endpoint)
-    token=$(kubectl exec deployment/controller -- cat /credential/token)
-    for path in configmaps/route configmaps configmaps/offlimits secrets secrets/control; do
+  ```sh
+  api=$(cat api-endpoint)
+  for actor in controller observer publisher sampler; do
+    token=$(kubectl exec "deployment/$actor" -c worker -- cat /credential/token)
+    for path in configmaps/route configmaps/release-plan configmaps/sampling configmaps secrets secrets/control configmaps/offlimits; do
+      printf '%s %s ' "$actor" "$path"
       printf 'header = "Authorization: Bearer %s"\n' "$token" |
-        curl --config - --cacert api-ca.pem -sS -w '\nHTTP %{http_code}\n' \
-        "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
+        curl --config - --cacert api-ca.pem -sS -o /dev/null -w 'HTTP %{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
     done
     unset token
-    ```
-
-  - Żądanie observer zwraca HTTP `403` bez ujawnienia poświadczeń.
-
-    ```sh
-    api=$(cat api-endpoint)
-    token=$(kubectl exec deployment/observer -- cat /credential/token)
-    printf 'header = "Authorization: Bearer %s"\n' "$token" |
-      curl --config - --cacert api-ca.pem -sS -o /dev/null -w 'HTTP %{http_code}\n' \
-      "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route"
-    unset token
-    ```
+  done
+  ```
 phrases.0: Ograniczyłem dostęp do odczytu do jednego nazwanego obiektu.
 phrases.1: Usunąłem niezamierzony temat RoleBinding.
 phrases.2: Sprawdziłem odrzucone operacje przy użyciu rzeczywistego identities.
@@ -73,9 +60,31 @@ diagnostics.denied_configmaps: controller GET configmaps musi zwrócić HTTP 403
 diagnostics.denied_configmaps_offlimits: controller GET configmaps/offlimits musi zwrócić HTTP 403.
 diagnostics.denied_secrets: controller GET secrets musi zwrócić HTTP 403.
 diagnostics.denied_secrets_control: controller GET secrets/control musi zwrócić HTTP 403.
-stages.0.objectives.0.text: Dostarczony Role w namespace przyznaje tylko odczyt istniejącej konfiguracji
-  trasy po nazwie, a jego binding przyznaje ten dostęp tylko dostarczonej tożsamości controller.
-stages.0.objectives.1.text: GET API z weryfikacją CA i zamontowanym poświadczeniem controller zwraca HTTP
-  `200` i trasę `north-125` z istniejącej konfiguracji.
-stages.0.objectives.2.text: Żądania controller dotyczące list ConfigMap lub Secret, odczytu oddzielnej
-  chronionej konfiguracji lub kontrolnego Secret oraz żądanie observer odczytu trasy otrzymują HTTP `403`.
+stages.0.objectives.0.text: Dostarczony Role w namespace przyznaje tylko odczyt istniejącej konfiguracji trasy po
+  nazwie, a jego binding przyznaje ten dostęp tylko dostarczonej tożsamości controller. Zachowaj tożsamości i obrazy
+  wszystkich podanych obciążeń oraz pierwotne sterujące ServiceAccount. Każdy zależny odbiorca ma osobną, unikalną
+  dedykowaną tożsamość, wyłączone automatyczne montowanie poświadczeń i wyłącznie namespaced grant odczytu własnego
+  rekordu po nazwie.
+stages.0.objectives.1.text: GET API z weryfikacją CA i zamontowanym poświadczeniem controller zwraca HTTP `200`
+  i trasę `north-125` z istniejącej konfiguracji.
+stages.0.objectives.2.text: Żądania controller dotyczące list ConfigMap lub Secret, odczytu oddzielnej chronionej
+  konfiguracji lub kontrolnego Secret oraz żądanie observer odczytu trasy otrzymują HTTP `403`. Poświadczenie związane
+  z bieżącym Podem każdego odbiorcy odczytuje własny rekord z HTTP 200 i zadeklarowaną wartością. Trasa, chronione
+  dane, rekordy innego odbiorcy i listy zwracają HTTP 403; pierwotne tożsamości sterująca i obserwująca nie odczytują
+  rekordów zależnych.
+diagnostics.authority_actors: Podane obciążenia i obiekty tożsamości muszą być dostępne przez API bieżącego namespace.
+diagnostics.authority_identity: Zmieniono pierwotne obciążenie, tożsamość sterującą lub obraz; zachowaj podane komponenty.
+diagnostics.authority_split: Odbiorcy wymagają odrębnych dedykowanych ServiceAccount, różnych od zarezerwowanych
+  tożsamości sterujących, default i workstation.
+diagnostics.authority_projection: Używaj poświadczenia bieżącego własnego Poda dla zadeklarowanego ServiceAccount;
+  automatyczne montowanie u odbiorców pozostaje wyłączone.
+diagnostics.authority_grants: Efektywne powiązania namespace pozwalają tylko na get własnej konfiguracji po nazwie;
+  wspólne lub dodatkowe granty naruszają intencję.
+diagnostics.authority_live: Obserwuj bieżące własne gotowe Pody i związane tożsamości poświadczeń, nie kończące
+  się Pody ani cudze tokeny.
+diagnostics.authority_allowed: Każde bieżące poświadczenie odbiorcy musi uzyskać HTTP 200 i zadeklarowaną wartość
+  własnego rekordu.
+diagnostics.authority_denied: Żądania danych innego odbiorcy, trasy, chronionych danych i list poza intencją muszą
+  zwracać HTTP 403.
+diagnostics.probe_0_0: Bieżące dane nie potwierdzają tego warunku; sprawdź stan obiektów i kontrakt.
+diagnostics.probe_0_2: Bieżące dane nie potwierdzają tego warunku; sprawdź stan obiektów i kontrakt.

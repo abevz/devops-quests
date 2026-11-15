@@ -1,44 +1,40 @@
 title: StatefulSet identity and headless DNS
 brief: |-
-  The shelf endpoint is unavailable. Restore service while retaining the existing storage identity.
+  The endpoint is unavailable, and an independent consumer needs the preserved stateful data.
 
-  Work on the workstation in `~/quest` with the supplied files:
-  - `shelf.yaml`, `service.yaml`.
+  Work on the workstation in `~/quest` with the supplied connection/result inputs: `discovery-contract.json`. Existing cluster objects provide the workload definitions.
 
   **Requirements:**
 
   - The existing StatefulSet and data claim keep their identities; its replacement Pod uses the original governing Service and only the existing data volume at `/data` in its application container.
   - StatefulSet `shelf` has one ready replica.
   - The governing Service provides stable ordinal discovery for only the supplied shelf workload, without a virtual IP.
-  - Inside Pod `shelf-0`, ordinal DNS `shelf-0.shelf` resolves and `http://shelf-0.shelf:8080` returns `ledger-111`.
+  - Inside Pod `shelf-0`, ordinal DNS `shelf-0.shelf` resolves and `http://shelf-0.shelf:8080` returns `ledger-111`. Construct the independent consumer Deployment described in the contract, with one ready Pod and the supplied image. From its application container, ordinal DNS and the original source interface work, and its local HTTP interface returns the declared source response. The consumer does not mount the original data claim.
 
-  Checks cover identity, mount configuration and response, not all ledger contents or edit history; the local practice volume is not an off-host backup.
-debrief: The checks observed the original StatefulSet and PVC UIDs, replacement Pod, ordinal lookup and
-  response.
+  Checks observe current identity, mounts, DNS and responses, not request history or off-host durability.
+debrief: A stable ordinal connects discovery to a stateful identity. Repairing a source listener does not construct
+  an independent consumer; recreating a process does not recreate its retained data.
 stages.0.brief: Keep the original storage and controller identities while the Pod is replaced.
-hints.0.text: Pod identity and claim identity have different lifetimes.
+hints.0.text: Stable storage identity, a ready process and a working listener are different observations. Ordinal
+  discovery also has to work from an independent consumer.
 hints.1.text: |-
-  The headless Service provides stable ordinal DNS.
-
-  Inspect the supplied inputs and live observations:
+  Inspect the existing stateful workload, its governing Service, data claim and resolver configuration. The contract describes the consumer to construct; it is not present initially.
 
   ```sh
-  kubectl get statefulset shelf -o yaml
-    kubectl get pvc ledger-shelf-0 -o yaml
-    kubectl get pod shelf-0 -o yaml
-    cat original-statefulset-uid original-pvc-uid original-pod-uid
-    kubectl get service shelf -o yaml
+  cat discovery-contract.json
+  kubectl get statefulset,pvc,service,pods -o yaml
+  kubectl describe pod shelf-0
+  kubectl exec shelf-0 -c worker -- cat /etc/resolv.conf
   ```
-hints.2.text: 'Repair the template listener and wait for the StatefulSet rollout. Repair the listener to port `8080` and wait for replacement; the StatefulSet and claim keep their identities while the Pod changes.
+hints.2.text: |-
+  Verify the preserved source identities and readiness, then ordinal A resolution, remote response and local publication from the consumer.
 
-
-  Verify the result from `~/quest` on the workstation:
-
-
-  - `kubectl exec shelf-0 -c worker -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."` — The ordinal DNS name resolves inside `shelf-0`.
-
-
-  - `kubectl exec shelf-0 -c worker -- wget -qO- -T 3 http://shelf-0.shelf:8080` — The shelf consumer receives `ledger-111`.'
+  ```sh
+  fqdn="shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."
+  kubectl exec deployment/inspector -c worker -- nslookup -type=A "$fqdn"
+  kubectl exec deployment/inspector -c worker -- wget -qO- -T 3 "http://$fqdn:8080"
+  kubectl exec deployment/inspector -c worker -- wget -qO- -T 3 http://127.0.0.1:8080
+  ```
 phrases.0: I preserved the ordinal claim during replacement.
 phrases.1: I checked ordinal DNS and the HTTP response.
 phrases.2: I separated persistence from backup.
@@ -58,13 +54,26 @@ diagnostics.clusterip: service/shelf clusterIP must equal None.
 diagnostics.selector: Service shelf must select the whole supplied shelf workload and no other workload.
 diagnostics.http: shelf-0.shelf:8080 must equal ledger-111.
 diagnostics.dns: nslookup shelf-0.shelf must succeed.
-stages.0.objectives.0.text: The existing StatefulSet and data claim keep their identities; its replacement
-  Pod uses the original governing Service and only the existing data volume at `/data` in its application
-  container.
+stages.0.objectives.0.text: The existing StatefulSet and data claim keep their identities; its replacement Pod uses
+  the original governing Service and only the existing data volume at `/data` in its application container.
 stages.0.objectives.1.text: StatefulSet `shelf` has one ready replica.
-stages.0.objectives.2.text: The governing Service provides stable ordinal discovery for only the supplied
-  shelf workload, without a virtual IP.
+stages.0.objectives.2.text: The governing Service provides stable ordinal discovery for only the supplied shelf
+  workload, without a virtual IP.
 stages.0.objectives.3.text: Inside Pod `shelf-0`, ordinal DNS `shelf-0.shelf` resolves and `http://shelf-0.shelf:8080`
-  returns `ledger-111`.
+  returns `ledger-111`. Construct the independent consumer Deployment described in the contract, with one ready
+  Pod and the supplied image. From its application container, ordinal DNS and the original source interface work,
+  and its local HTTP interface returns the declared source response. The consumer does not mount the original data
+  claim.
 diagnostics.probe_0_2: 'The current inputs could not verify this objective: The governing Service provides stable
   ordinal discovery for only the supplied shelf workload, without a virtual IP.'
+diagnostics.discovery_consumer: The independent consumer needs one owned current ready Pod with the supplied image.
+diagnostics.discovery_network: The network consumer must not mount the original data claim, including through an
+  initializer or another container.
+diagnostics.discovery_dns: Ordinal A discovery must work from the consumer in the current namespace; inspect the
+  governing Service and resolver suffix.
+diagnostics.discovery_source: The preserved ordinal source must return the declared response when requested from
+  the consumer.
+diagnostics.discovery_publication: The consumer local HTTP publication must match the source response; readiness
+  alone is insufficient.
+diagnostics.probe_0_3: Current inputs could not verify this condition; inspect the live object status and supplied
+  contract.

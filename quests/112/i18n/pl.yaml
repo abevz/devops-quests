@@ -1,40 +1,41 @@
 title: Poziomy autoskaler Pod
 brief: |-
-  Obciążenie board nie osiąga wymaganej wydajności. Przywróć obserwowalne autoskalowanie w uzgodnionym budżecie zasobów.
+  Usługa nie osiąga wymaganej autoskalowanej pojemności. Przywróć model zasobów i rzeczywiste zapotrzebowanie na przetwarzanie żądań.
 
-  Pracuj na workstation w `~/quest` z dostarczonymi plikami:
-  - `board.yaml`, `service.yaml`, `hpa.yaml`, `client.yaml`.
+  Pracuj na workstation w `~/quest` z podanymi danymi połączenia/wyniku: `autoscaling-contract.json`. Definicje obciążeń są dostępne w bieżących obiektach klastra.
 
-  **Requirements:**
+  **Wymagania:**
 
-  - Zachowaj uzgodniony budżet zasobów:
-    - Worker `board` żąda `100m` CPU i zachowuje limit CPU `200m`.
-    - HPA `board` dopuszcza `1`–`2` repliki z docelowym wykorzystaniem `50` procent.
-  - HPA `board` ma `ScalingActive=True`, zgłasza bieżącą i żądaną liczbę replik `2` przy wykorzystaniu ponad `50` procent, obie są gotowe; metryki Podów pokazują CPU w millicore.
+  - Worker `board` żąda `100m` CPU i zachowuje limit CPU `200m`. Zachowaj tożsamości pierwotnych obciążeń i ConfigMap przetwarzania oraz podane obrazy.
+  - HPA `board` dopuszcza `1`–`2` repliki z docelowym wykorzystaniem `50` procent.
+  - HPA `board` ma `ScalingActive=True`, zgłasza bieżącą i żądaną liczbę replik `2` przy wykorzystaniu ponad `50` procent, obie są gotowe; metryki Podów pokazują CPU w millicore. Istniejący HPA wskazuje podany serwer, a niezmieniony handler zapisuje nowe ukończenia podczas obserwacji.
   - Z Deployment `client` adres `http://board:8080` zwraca `north-112`.
 
-  Zbieranie metryk i uzgadnianie mogą potrwać trzy minuty; kontrole nie dowodzą, że pierwszy cel lub bieżąca metryka to CPU ani co spowodowało skalowanie. Złagodzenia TLS dotyczą tylko tego jednorazowego adaptera kind.
-debrief: Działający metrics API i ważny requests stanowią oddzielne wymagania wstępne dla automatycznego
-  skalowania CPU utilization.
+  Próbkowanie może trwać trzy minuty. Testy obserwują bieżącą politykę, gotowe Pody i postęp, nie historię zmian, ciągłą dostępność ani produkcyjne SLO.
+debrief: Cel skalowania, mianownik metryki i rzeczywista praca to osobne ogniwa. Ograniczone przetwarzanie pokazuje
+  prawdziwe zapotrzebowanie zamiast stałej bezużytecznej pętli CPU.
 stages.0.brief: Pojemność pozostaje w dostarczonych budżetach autoskalowania i zasobów.
-hints.0.text: Utilization dzieli obserwowane CPU przez zasób request.
+hints.0.text: Skalowanie wymaga właściwego celu, użytecznych metryk wykorzystania i napływającej pracy. Sam budżet
+  CPU nie tworzy zapotrzebowania.
 hints.1.text: |-
-  Zero request nie definiuje użytecznego mianownika utilization.
-
-  Sprawdź dostarczone dane i bieżące obserwacje:
+  Sprawdź referencje i warunki HPA, model zasobów kontenera serwera, bieżące metryki i podany interfejs przetwarzania.
 
   ```sh
-  kubectl get deployment board -o yaml
-    kubectl get hpa board -o yaml
+  cat autoscaling-contract.json
+  kubectl get hpa,deployments,service -o yaml
+  kubectl describe hpa board
+  kubectl get configmap work-handler -o yaml
+  kubectl top pods -l app=board
   ```
 hints.2.text: |-
-  Napraw request, a następnie sprawdź currentMetrics i ScalingActive w oczekiwaniu na zwiększenie skali.
+  Sprawdź bieżącą i docelową liczbę dwa, wykorzystanie CPU powyżej celu, dwa gotowe Pody serwera i rosnące liczniki ukończeń. Odpowiedź główna pozostaje bez zmian.
 
-  Sprawdź wynik z `~/quest` na workstation:
-
-  - `kubectl top pods -l app=board --no-headers` — Bieżące metryki CPU zawierają wartości w millicore.
-
-  - `kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080` — Odbiorca otrzymuje `north-112`.
+  ```sh
+  kubectl get hpa board
+  kubectl get pods -l app=board
+  kubectl top pods -l app=board
+  kubectl exec deployment/board -c worker -- wc -l /tmp/work-completions
+  ```
 phrases.0: Sprawdziłem potok metryk przed zmianą HPA.
 phrases.1: Dostarczyłem sensowny CPU request.
 phrases.2: Zweryfikowałem zaobserwowane metryki i ograniczone skalowanie.
@@ -56,10 +57,20 @@ diagnostics.metric: HPA musi zgłaszać wykorzystanie CPU powyżej 50%.
 diagnostics.active: HPA ScalingActive musi mieć wartość True.
 diagnostics.top: kubectl top pods musi pokazywać CPU w milicore.
 diagnostics.http: board:8080 musi zwrócić north-112.
-stages.0.objectives.0.text: Worker `board` żąda `100m` CPU i zachowuje limit CPU `200m`.
+stages.0.objectives.0.text: Worker `board` żąda `100m` CPU i zachowuje limit CPU `200m`. Zachowaj tożsamości pierwotnych
+  obciążeń i ConfigMap przetwarzania oraz podane obrazy.
 stages.0.objectives.1.text: HPA `board` dopuszcza `1`–`2` repliki z docelowym wykorzystaniem `50` procent.
-stages.0.objectives.2.text: HPA `board` ma `ScalingActive=True`, zgłasza bieżącą i żądaną liczbę replik
-  `2` przy wykorzystaniu ponad `50` procent, obie są gotowe; metryki Podów pokazują CPU w millicore.
+stages.0.objectives.2.text: HPA `board` ma `ScalingActive=True`, zgłasza bieżącą i żądaną liczbę replik `2` przy
+  wykorzystaniu ponad `50` procent, obie są gotowe; metryki Podów pokazują CPU w millicore. Istniejący HPA wskazuje
+  podany serwer, a niezmieniony handler zapisuje nowe ukończenia podczas obserwacji.
 stages.0.objectives.3.text: Z Deployment `client` adres `http://board:8080` zwraca `north-112`.
-diagnostics.probe_0_0: 'Bieżące dane nie pozwalają potwierdzić tego celu: Worker `board` żąda `100m` CPU i zachowuje
-  limit CPU `200m`.'
+diagnostics.probe_0_0: Bieżące dane nie potwierdzają tego warunku; sprawdź stan obiektów i kontrakt.
+diagnostics.load_identity: Zmieniono pierwotne obciążenie, tożsamość sterującą lub obraz; zachowaj podane komponenty.
+diagnostics.load_implementation: Zachowaj podane obrazy i bajty handlera w ConfigMap oraz bieżących plikach aplikacji.
+diagnostics.load_target: Pierwotny HPA musi wskazywać właściwy Deployment; poprawny cel wykorzystania nie wybiera
+  obciążenia.
+diagnostics.load_workers: Dwa bieżące gotowe Pody aplikacji muszą należeć do zachowanego Deployment serwera i używać
+  jego obrazu.
+diagnostics.load_progress: Liczba rzeczywistych ukończeń musi rosnąć podczas obserwacji; gotowe lub bezczynne repliki
+  nie dowodzą zapotrzebowania.
+diagnostics.probe_0_2: Bieżące dane nie potwierdzają tego warunku; sprawdź stan obiektów i kontrakt.

@@ -1,60 +1,47 @@
 title: Контракты RBAC с минимальными правами
 brief: |-
-  Читающий маршрут компонент должен иметь строго ограниченный доступ. Восстановите требуемый ответ controller, сохранив запрет на посторонние запросы и запросы observer.
+  Авторизация нагрузок не соответствует заданным намерениям доступа. Восстановите узкие права и чтение потребителей, сохранив доступ управляющей нагрузки.
 
-  Работайте на workstation в `~/quest` с предоставленными файлами:
-  - `controller-sa.yaml`, `observer-sa.yaml`, `controller.yaml`, `observer.yaml`, `role.yaml`, `binding.yaml`, `route.yaml`, `offlimits.yaml`, `secret.yaml`, `api-ca.pem`, `api-endpoint`.
+  Работайте на workstation в `~/quest` с заданными входами подключения/результата: `authority-contract.json`, `api-ca.pem`, `api-endpoint`. Определения нагрузок доступны в текущих объектах кластера.
 
-  **Requirements:**
+  **Требования:**
 
-  - Предоставленный Role в namespace разрешает только чтение по имени существующей конфигурации маршрута, а его привязка предоставляет этот доступ только предоставленной идентичности controller.
+  - Предоставленный Role в namespace разрешает только чтение по имени существующей конфигурации маршрута, а его привязка предоставляет этот доступ только предоставленной идентичности controller. Сохраните идентичности и образы всех заданных нагрузок и исходные управляющие ServiceAccount. У каждого зависимого потребителя своя отдельная выделенная идентичность, автоматическое монтирование credential выключено, а namespaced grants разрешают только чтение его записи по имени.
   - API GET с проверкой CA и смонтированной учётной информацией controller возвращает HTTP `200` и маршрут `north-125` из существующей конфигурации маршрута.
-  - Запросы controller на списки ConfigMap или Secret, чтение отдельной защищённой конфигурации или контрольного Secret, а также запрос observer на чтение маршрута получают HTTP `403`.
+  - Запросы controller на списки ConfigMap или Secret, чтение отдельной защищённой конфигурации или контрольного Secret, а также запрос observer на чтение маршрута получают HTTP `403`. Credential текущего Pod каждого зависимого потребителя читает его объявленную запись с HTTP 200 и заданным значением. Маршрут, защищённые данные, записи другого потребителя и списки запрещены с HTTP 403; исходные управляющая и наблюдающая идентичности не читают зависимые записи.
 
-  Проверки охватывают указанные запросы и объекты, а не все возможные права или автора команд; никогда не выводите токены.
-debrief: Минимальные права проверены и для операций, и для identities, включая реальные отрицательные
-  API-запросы.
+  Проверки наблюдают текущие namespace-роли, идентичности и указанные API-запросы, а не все возможные права или историю команд. Не выводите токены.
+debrief: Least privilege — эффективный граф идентичностей, grants и текущих credentials. Разделение principals и
+  перенос их через потребителей восстанавливают зависимости без возврата широкого общего grant.
 stages.0.brief: Сохраняйте обе учётные записи в тайне и запреты доступа.
-hints.0.text: Binding выбирает identities; Role задаёт допустимые операции. Предоставленная Role разрешает
-  лишние списки ConfigMap и чтение Secret, а привязка включает observer. Обе нагрузки уже имеют короткоживущие
-  проецируемые токены.
+hints.0.text: Права привязаны к идентичностям, а не к меткам нагрузок. Сужение общего grant может нарушить зависимые
+  чтения; изменение шаблона не заменяет credential существующего Pod.
 hints.1.text: |-
-  get по resourceName уже, чем list, даже для одного вида ресурсов.
-
-  Изучите предоставленные файлы и живые наблюдения:
+  Сопоставьте контракт намерений с текущими ServiceAccount, RoleBinding и идентичностями Pod. Декодируйте только метаданные идентичности, не выводите bearer credentials.
 
   ```sh
-  kubectl get role station-reader -o yaml
-    kubectl get rolebinding station-reader -o yaml
+  cat authority-contract.json
+  kubectl get deployment,serviceaccount,role,rolebinding -o yaml
+  kubectl get pods -o yaml
+  kubectl exec deployment/publisher -c worker -- cat /credential/token |
+    python3 -I -c 'import base64,json,sys; token=sys.stdin.read().strip(); c=json.loads(base64.urlsafe_b64decode(token.split(".")[1]+"===")); print(json.dumps({"sub":c.get("sub"),"podUID":c.get("kubernetes.io",{}).get("pod",{}).get("uid")}))'
+
   ```
 hints.2.text: |-
-  Ограничьте и rules Role, и subjects, затем проверьте явные запрещённые пути.
+  Проверьте каждое разрешённое чтение по имени и каждый запрет по карте намерений с фактическим credential нагрузки. Тела всех запрещённых ответов отбрасывайте.
 
-  Проверьте результат из `~/quest` на workstation:
-
-  - Указанный маршрут возвращает `north-125` с HTTP `200`; остальные четыре запроса возвращают HTTP `403`. Не выводите и не сохраняйте токен.
-
-    ```sh
-    api=$(cat api-endpoint)
-    token=$(kubectl exec deployment/controller -- cat /credential/token)
-    for path in configmaps/route configmaps configmaps/offlimits secrets secrets/control; do
+  ```sh
+  api=$(cat api-endpoint)
+  for actor in controller observer publisher sampler; do
+    token=$(kubectl exec "deployment/$actor" -c worker -- cat /credential/token)
+    for path in configmaps/route configmaps/release-plan configmaps/sampling configmaps secrets secrets/control configmaps/offlimits; do
+      printf '%s %s ' "$actor" "$path"
       printf 'header = "Authorization: Bearer %s"\n' "$token" |
-        curl --config - --cacert api-ca.pem -sS -w '\nHTTP %{http_code}\n' \
-        "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
+        curl --config - --cacert api-ca.pem -sS -o /dev/null -w 'HTTP %{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
     done
     unset token
-    ```
-
-  - Запрос observer возвращает HTTP `403` без раскрытия учётных данных.
-
-    ```sh
-    api=$(cat api-endpoint)
-    token=$(kubectl exec deployment/observer -- cat /credential/token)
-    printf 'header = "Authorization: Bearer %s"\n' "$token" |
-      curl --config - --cacert api-ca.pem -sS -o /dev/null -w 'HTTP %{http_code}\n' \
-      "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route"
-    unset token
-    ```
+  done
+  ```
 phrases.0: Я ограничил чтение одним именованным объектом.
 phrases.1: Я убрал лишний subject RoleBinding.
 phrases.2: Я проверил запреты от имени реальных identities.
@@ -73,10 +60,32 @@ diagnostics.denied_configmaps: controller GET configmaps должен верну
 diagnostics.denied_configmaps_offlimits: controller GET configmaps/offlimits должен вернуть HTTP 403.
 diagnostics.denied_secrets: controller GET secrets должен вернуть HTTP 403.
 diagnostics.denied_secrets_control: controller GET secrets/control должен вернуть HTTP 403.
-stages.0.objectives.0.text: Предоставленный Role в namespace разрешает только чтение по имени существующей
-  конфигурации маршрута, а его привязка предоставляет этот доступ только предоставленной идентичности
-  controller.
-stages.0.objectives.1.text: API GET с проверкой CA и смонтированной учётной информацией controller возвращает
-  HTTP `200` и маршрут `north-125` из существующей конфигурации маршрута.
-stages.0.objectives.2.text: Запросы controller на списки ConfigMap или Secret, чтение отдельной защищённой
-  конфигурации или контрольного Secret, а также запрос observer на чтение маршрута получают HTTP `403`.
+stages.0.objectives.0.text: Предоставленный Role в namespace разрешает только чтение по имени существующей конфигурации
+  маршрута, а его привязка предоставляет этот доступ только предоставленной идентичности controller. Сохраните идентичности
+  и образы всех заданных нагрузок и исходные управляющие ServiceAccount. У каждого зависимого потребителя своя отдельная
+  выделенная идентичность, автоматическое монтирование credential выключено, а namespaced grants разрешают только
+  чтение его записи по имени.
+stages.0.objectives.1.text: API GET с проверкой CA и смонтированной учётной информацией controller возвращает HTTP
+  `200` и маршрут `north-125` из существующей конфигурации маршрута.
+stages.0.objectives.2.text: Запросы controller на списки ConfigMap или Secret, чтение отдельной защищённой конфигурации
+  или контрольного Secret, а также запрос observer на чтение маршрута получают HTTP `403`. Credential текущего Pod
+  каждого зависимого потребителя читает его объявленную запись с HTTP 200 и заданным значением. Маршрут, защищённые
+  данные, записи другого потребителя и списки запрещены с HTTP 403; исходные управляющая и наблюдающая идентичности
+  не читают зависимые записи.
+diagnostics.authority_actors: Заданные нагрузки и объекты идентичности должны быть доступны через API текущего namespace.
+diagnostics.authority_identity: Изменена исходная нагрузка, управляющая идентичность или заданный образ; сохраните
+  предоставленные компоненты.
+diagnostics.authority_split: Зависимым потребителям нужны разные выделенные ServiceAccount, отличные от зарезервированных
+  управляющих, default и workstation-идентичностей.
+diagnostics.authority_projection: Используйте credential текущего Pod с правильным владельцем и объявленным ServiceAccount;
+  автоматическое монтирование у зависимых потребителей выключено.
+diagnostics.authority_grants: Действующие namespace-привязки разрешают только get конфигурации этого потребителя
+  по имени; общие или лишние grants нарушают намерение.
+diagnostics.authority_live: Наблюдайте текущие готовые Pod с правильными владельцами и связанные credential-идентичности,
+  а не завершающийся Pod или посторонний токен.
+diagnostics.authority_allowed: Каждый текущий credential зависимого потребителя должен получать HTTP 200 и объявленное
+  значение своей записи.
+diagnostics.authority_denied: Запросы записей другого потребителя, маршрута, защищённых данных и списков вне намерения
+  должны возвращать HTTP 403.
+diagnostics.probe_0_0: Текущие входы не подтверждают это условие; изучите состояние живых объектов и заданный контракт.
+diagnostics.probe_0_2: Текущие входы не подтверждают это условие; изучите состояние живых объектов и заданный контракт.

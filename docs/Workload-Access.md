@@ -4,7 +4,7 @@
 
 Используйте только одноразовую офлайн-песочницу. Security context Pod задаёт идентичность и привилегии процесса; Pod Security admission проверяет спецификацию до запуска Pod. Изучите события ReplicaSet, проверьте Deployment и исправьте выданный `board.yaml`: UID 1000, seccomp RuntimeDefault, запрет повышения привилегий, удалённые capabilities и корневая файловая система только для чтения — разные меры защиты. Записываемый `emptyDir` в `/tmp` даёт временное место; проверяйте `/proc/mounts` и запись, а не делайте вывод о корневом монтировании по ошибке команды.
 
-ServiceAccount идентифицирует workload. У проецируемого токена есть аудитория и запрошенное время жизни; kubelet его обновляет. Отключите автоматическое монтирование, когда выданный манифест требует конкретную проекцию. Role задаёт операции API, а RoleBinding связывает их с субъектами в namespace. `resourceNames: [route]` ограничивает именованный `get`; он не даёт `list`. Перед изменением изучите действующие Role и RoleBinding и выданные файлы. В задании 125 привязанным должен остаться только `controller`; запрос `observer` должен быть отклонён.
+ServiceAccount — principal, общий для всех использующих его нагрузок. Сужение grant влияет на всех потребителей; метки не разделяют authority. RoleBinding связывает именованные права с principal, а текущий Pod-bound credential определяет вызывающего. Проследите namespace grants через шаблоны и текущие Pod, сохраните здоровый управляющий доступ, проверьте разрешённые чтения и межпотребительские запреты. Изменение шаблона не переписывает существующий credential.
 
 Выданные CA и endpoint позволяют проверить настоящее HTTPS. Не выводите данные доступа и не передавайте их в аргументах или файлах: прочитайте проецируемый токен в переменную shell, передайте заголовок Authorization в curl через стандартный ввод и удалите переменную после проверки. HTTP 200 для route и 403 для каждой указанной запрещённой операции подтверждают только эти запросы, а не все действующие права. Не отключайте проверку TLS и не выводите токен.
 
@@ -38,6 +38,7 @@ unset token
 cd ~/quest
 kubectl get role station-reader -o yaml
 kubectl get rolebinding station-reader -o yaml
+kubectl get deployment,serviceaccount,role,rolebinding,pods -o yaml
 api=$(cat api-endpoint)
 token=$(kubectl exec deployment/controller -- cat /credential/token)
 printf 'header = "Authorization: Bearer %s"\n' "$token" |

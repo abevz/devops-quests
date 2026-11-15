@@ -1,60 +1,47 @@
 title: Contratos RBAC con privilegios mínimos
 brief: |-
-  El lector de rutas debe tener acceso limitado. Restaure la respuesta esperada de controller mientras las solicitudes ajenas y de observer siguen prohibidas.
+  La autorización no coincide con las intenciones de acceso declaradas. Recupera privilegios limitados y lecturas actuales de consumidores conservando acceso de control.
 
-  Trabaja en la workstation en `~/quest` con los archivos suministrados:
-  - `controller-sa.yaml`, `observer-sa.yaml`, `controller.yaml`, `observer.yaml`, `role.yaml`, `binding.yaml`, `route.yaml`, `offlimits.yaml`, `secret.yaml`, `api-ca.pem`, `api-endpoint`.
+  Trabaja en la workstation en `~/quest` con las entradas de conexión/resultado: `authority-contract.json`, `api-ca.pem`, `api-endpoint`. Las definiciones de cargas están en los objetos actuales del clúster.
 
-  **Requirements:**
+  **Requisitos:**
 
-  - El Role del namespace suministrado concede solo lectura por nombre de la configuración de ruta existente, y su binding concede ese acceso solo a la identidad controller suministrada.
+  - El Role del namespace suministrado concede solo lectura por nombre de la configuración de ruta existente, y su binding concede ese acceso solo a la identidad controller suministrada. Conserva identidades e imágenes de todas las cargas y los ServiceAccounts de control originales. Cada consumidor dependiente usa su identidad dedicada y distinta, con montaje automático de credenciales deshabilitado y solo permisos namespaced de lectura de su registro por nombre.
   - Un GET de API verificado con CA y la credencial controller montada devuelve HTTP `200` y ruta `north-125` de la configuración existente.
-  - Las solicitudes controller para listar ConfigMap o Secret, leer la configuración protegida separada o el Secret de control, y la solicitud observer para leer la ruta reciben HTTP `403`.
+  - Las solicitudes controller para listar ConfigMap o Secret, leer la configuración protegida separada o el Secret de control, y la solicitud observer para leer la ruta reciben HTTP `403`. La credencial vinculada al Pod actual de cada consumidor lee su registro con HTTP 200 y valor declarado. Ruta, datos protegidos, registros de otro consumidor y listas devuelven HTTP 403; las identidades originales de control y observación no leen los registros dependientes.
 
-  Las comprobaciones cubren las solicitudes y objetos indicados, no todos los permisos posibles ni quién ejecutó comandos; nunca imprima tokens.
-debrief: Se verificó el privilegio mínimo tanto para las operaciones como para identities, incluidas las
-  solicitudes API negativas reales.
+  Se observan roles del namespace, identidades y peticiones API especificadas, no todos los permisos posibles ni historial. Nunca imprimas tokens.
+debrief: Least privilege es un grafo efectivo de identidades, permisos y credenciales actuales. Propagar principals
+  separados recupera dependencias sin restaurar permisos compartidos amplios.
 stages.0.brief: Mantén privadas ambas credenciales y conserva las denegaciones de acceso.
-hints.0.text: Un enlace selecciona identities; a Role define las operaciones permitidas. El Role suministrado
-  permite listas extra de ConfigMaps y lecturas de Secrets, y el binding incluye observer. Ambas cargas
-  ya tienen tokens proyectados de corta duración.
+hints.0.text: Los permisos se asocian a identidades, no a etiquetas de cargas. Reducir un permiso compartido puede
+  romper lecturas dependientes; cambiar la plantilla no sustituye credenciales de un Pod existente.
 hints.1.text: |-
-  get by resourceName es más estrecho que list, incluso para el mismo recurso kind.
-
-  Inspecciona los datos suministrados y las observaciones activas:
+  Compara contrato de intenciones con ServiceAccounts, RoleBindings e identidades Pod actuales. Decodifica solo metadatos de identidad, nunca imprimas credenciales bearer.
 
   ```sh
-  kubectl get role station-reader -o yaml
-    kubectl get rolebinding station-reader -o yaml
+  cat authority-contract.json
+  kubectl get deployment,serviceaccount,role,rolebinding -o yaml
+  kubectl get pods -o yaml
+  kubectl exec deployment/publisher -c worker -- cat /credential/token |
+    python3 -I -c 'import base64,json,sys; token=sys.stdin.read().strip(); c=json.loads(base64.urlsafe_b64decode(token.split(".")[1]+"===")); print(json.dumps({"sub":c.get("sub"),"podUID":c.get("kubernetes.io",{}).get("pod",{}).get("uid")}))'
+
   ```
 hints.2.text: |-
-  Restrinja tanto Role rules como subjects y luego pruebe las rutas de acceso denegadas explícitas.
+  Verifica cada lectura permitida por nombre y cada petición prohibida según las intenciones con la credencial real de la carga. Descarta todos los cuerpos de respuestas prohibidas.
 
-  Verifica el resultado desde `~/quest` en la workstation:
-
-  - La ruta indicada devuelve `north-125` con HTTP `200`; las otras cuatro solicitudes devuelven HTTP `403`. Nunca imprima ni guarde el token.
-
-    ```sh
-    api=$(cat api-endpoint)
-    token=$(kubectl exec deployment/controller -- cat /credential/token)
-    for path in configmaps/route configmaps configmaps/offlimits secrets secrets/control; do
+  ```sh
+  api=$(cat api-endpoint)
+  for actor in controller observer publisher sampler; do
+    token=$(kubectl exec "deployment/$actor" -c worker -- cat /credential/token)
+    for path in configmaps/route configmaps/release-plan configmaps/sampling configmaps secrets secrets/control configmaps/offlimits; do
+      printf '%s %s ' "$actor" "$path"
       printf 'header = "Authorization: Bearer %s"\n' "$token" |
-        curl --config - --cacert api-ca.pem -sS -w '\nHTTP %{http_code}\n' \
-        "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
+        curl --config - --cacert api-ca.pem -sS -o /dev/null -w 'HTTP %{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
     done
     unset token
-    ```
-
-  - La solicitud de observer devuelve HTTP `403` sin revelar la credencial.
-
-    ```sh
-    api=$(cat api-endpoint)
-    token=$(kubectl exec deployment/observer -- cat /credential/token)
-    printf 'header = "Authorization: Bearer %s"\n' "$token" |
-      curl --config - --cacert api-ca.pem -sS -o /dev/null -w 'HTTP %{http_code}\n' \
-      "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route"
-    unset token
-    ```
+  done
+  ```
 phrases.0: Obtuve acceso de lectura a un objeto con nombre.
 phrases.1: Quité el RoleBinding subject no deseado.
 phrases.2: Verifiqué operaciones denegadas utilizando el identities real.
@@ -65,7 +52,8 @@ questions.1.points.0: No; el principal incorrecto aún recibe esos permisos.
 questions.1.points.1: Revise identity y el alcance de la operación juntos.
 questions.1.prompt: ¿Puede el Role rules correcto compensar el binding subject incorrecto?
 diagnostics.role: role/station-reader rules debe ser igual a get configmaps resourceNames [route].
-diagnostics.binding: El RoleBinding debe conceder acceso solo a la identidad controller en el namespace de esta bahía.
+diagnostics.binding: El RoleBinding debe conceder acceso solo a la identidad controller en el namespace de esta
+  bahía.
 diagnostics.allowed: controller GET configmaps/route debe ser igual a HTTP 200.
 diagnostics.value: configmaps/route data.route debe ser igual a north-125.
 diagnostics.observer: observer GET configmaps/route debe devolver HTTP 403.
@@ -74,8 +62,31 @@ diagnostics.denied_configmaps_offlimits: controller GET configmaps/offlimits deb
 diagnostics.denied_secrets: controller GET secrets debe devolver HTTP 403.
 diagnostics.denied_secrets_control: controller GET secrets/control debe devolver HTTP 403.
 stages.0.objectives.0.text: El Role del namespace suministrado concede solo lectura por nombre de la configuración
-  de ruta existente, y su binding concede ese acceso solo a la identidad controller suministrada.
-stages.0.objectives.1.text: Un GET de API verificado con CA y la credencial controller montada devuelve
-  HTTP `200` y ruta `north-125` de la configuración existente.
-stages.0.objectives.2.text: Las solicitudes controller para listar ConfigMap o Secret, leer la configuración
-  protegida separada o el Secret de control, y la solicitud observer para leer la ruta reciben HTTP `403`.
+  de ruta existente, y su binding concede ese acceso solo a la identidad controller suministrada. Conserva identidades
+  e imágenes de todas las cargas y los ServiceAccounts de control originales. Cada consumidor dependiente usa su
+  identidad dedicada y distinta, con montaje automático de credenciales deshabilitado y solo permisos namespaced
+  de lectura de su registro por nombre.
+stages.0.objectives.1.text: Un GET de API verificado con CA y la credencial controller montada devuelve HTTP `200`
+  y ruta `north-125` de la configuración existente.
+stages.0.objectives.2.text: Las solicitudes controller para listar ConfigMap o Secret, leer la configuración protegida
+  separada o el Secret de control, y la solicitud observer para leer la ruta reciben HTTP `403`. La credencial vinculada
+  al Pod actual de cada consumidor lee su registro con HTTP 200 y valor declarado. Ruta, datos protegidos, registros
+  de otro consumidor y listas devuelven HTTP 403; las identidades originales de control y observación no leen los
+  registros dependientes.
+diagnostics.authority_actors: Las cargas e identidades suministradas deben estar disponibles mediante la API del
+  namespace actual.
+diagnostics.authority_identity: Cambió una carga original, identidad de control o imagen; conserva los componentes
+  suministrados.
+diagnostics.authority_split: Los consumidores necesitan ServiceAccounts dedicados y distintos, separados de identidades
+  reservadas de control, default y workstation.
+diagnostics.authority_projection: Usa la credencial del Pod actual propio para su ServiceAccount; conserva deshabilitado
+  el montaje automático en consumidores.
+diagnostics.authority_grants: Los vínculos del namespace solo permiten get de la configuración propia por nombre;
+  permisos compartidos o extras incumplen la intención.
+diagnostics.authority_live: Observa Pods actuales propios y listos con sus identidades vinculadas, no Pods en retirada
+  ni tokens ajenos.
+diagnostics.authority_allowed: Cada credencial actual del consumidor debe recibir HTTP 200 y el valor propio declarado.
+diagnostics.authority_denied: Peticiones de otros consumidores, ruta, datos protegidos y listas fuera de la intención
+  deben devolver HTTP 403.
+diagnostics.probe_0_0: Las entradas actuales no verifican esta condición; inspecciona estado de objetos y contrato.
+diagnostics.probe_0_2: Las entradas actuales no verifican esta condición; inspecciona estado de objetos y contrato.

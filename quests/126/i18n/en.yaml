@@ -1,41 +1,40 @@
 title: Quota and LimitRange admission
 brief: |-
-  The board workload is not becoming ready within its admission budget. Restore the required admitted resources without changing the supplied quota.
+  The workloads are not reaching their required admitted state within the shared budget. Recover both consumers without replacing the supplied quota.
 
-  Work on the workstation in `~/quest` with the supplied files:
-  - `client.yaml`, `quota.yaml`, `defaults.yaml`, `board.yaml`, `service.yaml`.
+  Work on the workstation in `~/quest` with the supplied connection/result inputs: `admission-contract.json`. Existing cluster objects provide the workload definitions.
 
   **Requirements:**
 
-  - Keep the agreed resource budget:
-    - ResourceQuota `station` retains the supplied budget: CPU requests `200m`, CPU limits `400m`, memory requests `32Mi`, memory limits `64Mi` and `2` Pods.
-  - The supplied admission defaults provide the required CPU budget to the board application without an explicit resource budget in its Deployment template.
-  - Deployment `board` has one ready replica and a nonterminating Pod with a ready container, CPU request/limit `100m`/`200m` and memory request/limit `16Mi`/`32Mi`, all on that same Pod.
+  - ResourceQuota `station` retains the supplied budget: CPU requests `200m`, CPU limits `400m`, memory requests `32Mi`, memory limits `64Mi` and `2` Pods.
+  - The supplied admission defaults provide the required CPU budget to the board application without an explicit resource budget in its Deployment template. This default CPU policy and absence of explicit resource budgets apply to both supplied Deployment templates. Keep their original identities, images and one desired replica each, together with the original quota identity.
+  - Deployment `board` has one ready replica and a nonterminating Pod with a ready container, CPU request/limit `100m`/`200m` and memory request/limit `16Mi`/`32Mi`, all on that same Pod. The other supplied workload also has exactly one current ready Pod with the same admitted CPU and memory budgets. Namespace quota consumption matches the two agreed consumer budgets.
   - From Deployment `client`, `http://board:8080` returns `north-126`.
 
-  The check inspects admitted Pod memory, not current LimitRange memory defaults or edit history; admission quota does not create node capacity.
-debrief: The defaulting policy was repaired within the namespace budget; scheduler capacity remained a
-  separate constraint.
+  Checks observe current quota identity/usage, CPU defaults and admitted memory, not current memory defaults or editing history. No uninterrupted-availability claim is made.
+debrief: Default policy, admitted Pod resources and controller replacement are separate lifetimes. Propagate the
+  CPU model through both consumers with deliberate budget sequencing instead of expanding the quota.
 stages.0.brief: Keep the supplied quota unchanged.
-hints.0.text: Read ReplicaSet events to distinguish admission rejection from Pending scheduling.
+hints.0.text: Admission accounts for all current consumers. Defaults apply to new admissions, and a replacement
+  or surge can require budget before an old Pod releases it.
 hints.1.text: |-
-  LimitRange supplies defaults before ResourceQuota evaluates consumption. The supplied CPU defaults request `300m` and limit `400m`, exceeding the fixed quota. Defaults affect newly admitted Pods, not existing ones.
+  Compare quota usage, default policy, current admitted resources and ReplicaSet condition messages. Waiting alone does not change an incompatible budget.
 
-  Inspect the supplied inputs and live observations:
+  ```sh
+  cat admission-contract.json
+  kubectl get resourcequota,limitrange,deployment,pods -o yaml
+  kubectl get replicasets -o yaml
+  kubectl describe resourcequota station
+  ```
+hints.2.text: |-
+  Verify the original quota, both default-driven templates, both current admitted resource sets and the workload response. Reported usage must match those two consumers.
 
   ```sh
   kubectl get resourcequota station -o yaml
-    kubectl get limitrange defaults -o yaml
-    kubectl get deployment board -o yaml
+  kubectl get deployment client board -o yaml
+  kubectl get pods -o yaml
+  kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://board:8080
   ```
-hints.2.text: |-
-  Repair defaults, retry the rollout and inspect Pod resources rather than only its template.
-
-  Verify the result from `~/quest` on the workstation:
-
-  - `kubectl get pods -l app=board -o yaml` — One nonterminating Pod has the required resources and a ready container together.
-
-  - `kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080` — The consumer receives `north-126`.
 phrases.0: I distinguished admission failure from scheduling failure.
 phrases.1: I checked resources after defaulting.
 phrases.2: I preserved the namespace quota.
@@ -50,27 +49,35 @@ diagnostics.default: LimitRange defaults CPU limit default must be 200m.
 diagnostics.request: LimitRange defaults CPU request default must be 100m.
 diagnostics.ready: Deployment board must have one ready replica.
 diagnostics.template: The board worker template must have no explicit resource budget.
-diagnostics.pod_requests: A board Pod not marked for deletion must have the exact CPU and memory requests
-  in the brief.
-diagnostics.pod_limits: A board Pod not marked for deletion must have the exact CPU and memory limits
-  in the brief.
+diagnostics.pod_requests: A board Pod not marked for deletion must have the exact CPU and memory requests in the
+  brief.
+diagnostics.pod_limits: A board Pod not marked for deletion must have the exact CPU and memory limits in the brief.
 diagnostics.pod_ready: A board Pod not marked for deletion must have a ready container.
-diagnostics.same_pod: One board Pod not marked for deletion must have all required resources and a ready
-  container.
+diagnostics.same_pod: One board Pod not marked for deletion must have all required resources and a ready container.
 diagnostics.http: board:8080 must return north-126.
-stages.0.objectives.0.text: 'ResourceQuota `station` retains the supplied budget: CPU requests `200m`,
-  CPU limits `400m`, memory requests `32Mi`, memory limits `64Mi` and `2` Pods.'
-stages.0.objectives.1.text: The supplied admission defaults provide the required CPU budget to the board
-  application without an explicit resource budget in its Deployment template.
-stages.0.objectives.2.text: Deployment `board` has one ready replica and a nonterminating Pod with a ready
-  container, CPU request/limit `100m`/`200m` and memory request/limit `16Mi`/`32Mi`, all on that same
-  Pod.
+stages.0.objectives.0.text: 'ResourceQuota `station` retains the supplied budget: CPU requests `200m`, CPU limits
+  `400m`, memory requests `32Mi`, memory limits `64Mi` and `2` Pods.'
+stages.0.objectives.1.text: The supplied admission defaults provide the required CPU budget to the board application
+  without an explicit resource budget in its Deployment template. This default CPU policy and absence of explicit
+  resource budgets apply to both supplied Deployment templates. Keep their original identities, images and one desired
+  replica each, together with the original quota identity.
+stages.0.objectives.2.text: Deployment `board` has one ready replica and a nonterminating Pod with a ready container,
+  CPU request/limit `100m`/`200m` and memory request/limit `16Mi`/`32Mi`, all on that same Pod. The other supplied
+  workload also has exactly one current ready Pod with the same admitted CPU and memory budgets. Namespace quota
+  consumption matches the two agreed consumer budgets.
 stages.0.objectives.3.text: From Deployment `client`, `http://board:8080` returns `north-126`.
 diagnostics.probe_0_0: 'The current inputs could not verify this objective: ResourceQuota `station` retains the
   supplied budget: CPU requests `200m`, CPU limits `400m`, memory requests `32Mi`, memory limits `64Mi` and `2`
   Pods.'
-diagnostics.probe_0_1: 'The current inputs could not verify this objective: The supplied admission defaults provide
-  the required CPU budget to the board application without an explicit resource budget in its Deployment template.'
-diagnostics.probe_0_2: 'The current inputs could not verify this objective: Deployment `board` has one ready replica
-  and a nonterminating Pod with a ready container, CPU request/limit `100m`/`200m` and memory request/limit `16Mi`/`32Mi`,
-  all on that same Pod.'
+diagnostics.probe_0_1: Current inputs could not verify this condition; inspect the live object status and supplied
+  contract.
+diagnostics.probe_0_2: Current inputs could not verify this condition; inspect the live object status and supplied
+  contract.
+diagnostics.admission_identity: An original workload, control identity or supplied image changed; preserve the provided
+  components.
+diagnostics.admission_template: Both preserved workloads need one desired replica, supplied images and empty explicit
+  application resource budgets so CPU defaults apply.
+diagnostics.admission_client: The second workload needs one current owned ready Pod with admitted CPU 100m/200m
+  and memory 16Mi/32Mi; defaults do not rewrite old Pods.
+diagnostics.admission_usage: 'Quota usage must match the two admitted consumers: CPU requests 200m, limits 400m,
+  memory requests 32Mi, limits 64Mi and 2 Pods.'

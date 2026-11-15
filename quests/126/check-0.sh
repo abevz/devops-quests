@@ -67,6 +67,12 @@ trap 'rm -f "$dq_probe_output"' EXIT
 set +e
 (
 set -euo pipefail
+timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_ADMISSION_1'
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 limits=$(timeout 2s kubectl get limitrange defaults -o json 2>/dev/null || true)
 board=$(timeout 2s kubectl get deployment board -o json 2>/dev/null || true)
 python3 -I - /dev/fd/3 /dev/fd/4 3<<<"$limits" 4<<<"$board" <<'DQ_DEFAULTS'
@@ -120,10 +126,93 @@ fi
 rm -f "$dq_probe_output"
 trap - EXIT
 test "$dq_probe_status" -eq 0
+DQ_LEGACY_ADMISSION_1
+python3 -I - <<'DQ_ADMISSION_POLICY'
+import json
+import subprocess
+import sys
+import time
+from decimal import InvalidOperation
+from pathlib import Path
+
+from dq_check import current_pods, named, pod_worker, quantity, workload_worker
+
+failed = False
+deadline = time.monotonic() + 10
+
+def require(value, marker):
+    global failed
+    if not value:
+        print('Admission propagation condition is unmet: ✗ [DQ:' + marker + ']')
+        failed = True
+
+def get(kind, name, marker):
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError('Observation budget exhausted')
+        result = subprocess.run(
+            ['kubectl', 'get', kind] + ([name] if name else []) + ['-o', 'json'],
+            capture_output=True, text=True, timeout=min(6, remaining),
+        )
+        if result.returncode:
+            raise ValueError('API observation failed')
+        return json.loads(result.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        print('Current admission observation is unavailable: ✗ [DQ:' + marker + ']')
+        sys.exit(1)
+
+facts = json.loads(Path('/run/dq/facts/0/admission-identities.json').read_text())
+contract = facts['contract']
+
+def same_image(actual, expected):
+    digest = expected.partition('@')[2]
+    return actual == expected or (
+        bool(digest) and isinstance(actual, str) and actual.partition('@')[2] == digest
+    )
+
+def equal(actual, expected):
+    try:
+        return quantity(actual, dialect='typed_ascii') == quantity(expected, dialect='typed_ascii')
+    except (ValueError, TypeError, InvalidOperation, OverflowError):
+        return False
+quota = get('resourcequota', contract['quota'], 'admission_identity')
+require(quota.get('metadata', {}).get('uid') ==
+        facts['identities']['resourcequota/' + contract['quota']], 'admission_identity')
+for name in contract['workloads']:
+    document = get('deployment', name, 'admission_template')
+    require(document.get('metadata', {}).get('uid') ==
+            facts['identities']['deployment/' + name], 'admission_identity')
+    try:
+        worker = workload_worker(document)
+        valid = (document['spec'].get('replicas') == contract['replicas']
+                 and not worker.get('resources')
+                 and same_image(worker.get('image'), facts['images'][name]))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        valid = False
+    require(valid, 'admission_template')
+sys.exit(int(failed))
+DQ_ADMISSION_POLICY
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_ADMISSION_2'
 dq_probe_output=$(mktemp)
 trap 'rm -f "$dq_probe_output"' EXIT
 set +e
@@ -185,6 +274,98 @@ set -e
 cat "$dq_probe_output"
 if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
 printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_2]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
+DQ_LEGACY_ADMISSION_2
+python3 -I - <<'DQ_ADMISSION_CONSUMERS'
+import json
+import subprocess
+import sys
+import time
+from decimal import InvalidOperation
+from pathlib import Path
+
+from dq_check import current_pods, named, pod_worker, quantity, workload_worker
+
+failed = False
+deadline = time.monotonic() + 10
+
+def require(value, marker):
+    global failed
+    if not value:
+        print('Admission propagation condition is unmet: ✗ [DQ:' + marker + ']')
+        failed = True
+
+def get(kind, name, marker):
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError('Observation budget exhausted')
+        result = subprocess.run(
+            ['kubectl', 'get', kind] + ([name] if name else []) + ['-o', 'json'],
+            capture_output=True, text=True, timeout=min(6, remaining),
+        )
+        if result.returncode:
+            raise ValueError('API observation failed')
+        return json.loads(result.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        print('Current admission observation is unavailable: ✗ [DQ:' + marker + ']')
+        sys.exit(1)
+
+facts = json.loads(Path('/run/dq/facts/0/admission-identities.json').read_text())
+contract = facts['contract']
+
+def same_image(actual, expected):
+    digest = expected.partition('@')[2]
+    return actual == expected or (
+        bool(digest) and isinstance(actual, str) and actual.partition('@')[2] == digest
+    )
+
+def equal(actual, expected):
+    try:
+        return quantity(actual, dialect='typed_ascii') == quantity(expected, dialect='typed_ascii')
+    except (ValueError, TypeError, InvalidOperation, OverflowError):
+        return False
+client = get('deployment', 'client', 'admission_client')
+sets = get('replicasets', '', 'admission_client')
+pods = get('pods', '', 'admission_client')
+try:
+    current = current_pods(client, sets, pods)
+    valid = (client['metadata']['uid'] == facts['identities']['deployment/client']
+             and client['spec'].get('replicas') == contract['replicas']
+             and client.get('status', {}).get('readyReplicas') == contract['replicas']
+             and client.get('status', {}).get('observedGeneration') == client['metadata']['generation']
+             and len(current) == contract['replicas'])
+    for pod in current:
+        worker = pod_worker(pod)
+        status = named(pod.get('status', {}).get('containerStatuses', []), 'worker')
+        valid = valid and (
+            pod.get('status', {}).get('phase') == 'Running'
+            and status.get('ready') is True
+            and isinstance(status.get('state', {}).get('running'), dict)
+            and same_image(worker.get('image'), facts['images']['client'])
+            and all(equal(worker.get('resources', {}).get(category, {}).get(resource), expected)
+                    for category, entries in contract['admitted'].items()
+                    for resource, expected in entries.items())
+        )
+except (KeyError, TypeError, ValueError, AttributeError):
+    valid = False
+require(valid, 'admission_client')
+quota = get('resourcequota', contract['quota'], 'admission_usage')
+used = quota.get('status', {}).get('used', {})
+expected = {'requests.cpu': '200m', 'limits.cpu': '400m',
+            'requests.memory': '32Mi', 'limits.memory': '64Mi', 'pods': '2'}
+require(all(equal(used.get(key), value) for key, value in expected.items()), 'admission_usage')
+sys.exit(int(failed))
+DQ_ADMISSION_CONSUMERS
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_2]'
 fi
 rm -f "$dq_probe_output"
 trap - EXIT
