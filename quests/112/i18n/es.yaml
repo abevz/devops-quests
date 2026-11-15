@@ -1,40 +1,41 @@
 title: Escalador automático horizontal Pod
 brief: |-
-  La carga board no alcanza la capacidad requerida. Restaure el autoescalado observable dentro del presupuesto de recursos acordado.
+  El servicio no alcanza la capacidad autoescalada requerida. Recupera su modelo de recursos y demanda real de procesamiento.
 
-  Trabaja en la workstation en `~/quest` con los archivos suministrados:
-  - `board.yaml`, `service.yaml`, `hpa.yaml`, `client.yaml`.
+  Trabaja en la workstation en `~/quest` con las entradas de conexión/resultado: `autoscaling-contract.json`. Las definiciones de cargas están en los objetos actuales del clúster.
 
-  **Requirements:**
+  **Requisitos:**
 
-  - Conserva el presupuesto de recursos acordado:
-    - El worker `board` solicita `100m` de CPU y conserva su límite de CPU `200m`.
-    - El HPA `board` permite `1`–`2` réplicas con una utilización objetivo del `50` por ciento.
-  - El HPA `board` tiene `ScalingActive=True`, indica `2` réplicas actuales y deseadas con utilización superior al `50` por ciento, ambas listas; las métricas reales muestran CPU en millicores.
+  - El worker `board` solicita `100m` de CPU y conserva su límite de CPU `200m`. Conserva identidades de cargas originales y ConfigMap del procesamiento, así como imágenes suministradas.
+  - El HPA `board` permite `1`–`2` réplicas con una utilización objetivo del `50` por ciento.
+  - El HPA `board` tiene `ScalingActive=True`, indica `2` réplicas actuales y deseadas con utilización superior al `50` por ciento, ambas listas; las métricas reales muestran CPU en millicores. El HPA existente apunta al servidor suministrado y el handler sin modificar registra nuevas finalizaciones durante la observación.
   - Desde Deployment `client`, `http://board:8080` devuelve `north-112`.
 
-  El muestreo y la reconciliación pueden tardar tres minutos; las comprobaciones no prueban que el primer objetivo o la métrica actual sean CPU ni qué causó el escalado. Las relajaciones TLS solo aplican a este adaptador kind desechable.
-debrief: Un metrics API en funcionamiento y un requests válido son requisitos previos independientes para
-  el escalado automático de CPU utilization.
+  El muestreo puede tardar tres minutos. Se observan política, Pods listos y progreso actuales, no historial, disponibilidad ininterrumpida ni un SLO de producción.
+debrief: Destino de escala, denominador de la métrica y trabajo real son eslabones distintos. El procesamiento acotado
+  muestra demanda real en lugar de un bucle CPU permanente sin trabajo útil.
 stages.0.brief: La capacidad permanece dentro de los presupuestos de autoescalado y recursos suministrados.
-hints.0.text: Utilization divide el observado CPU por el recurso request.
+hints.0.text: Escalar requiere destino previsto, métricas de utilización válidas y trabajo entrante. El presupuesto
+  CPU por sí solo no crea demanda.
 hints.1.text: |-
-  Un request cero no define un denominador utilization útil.
-
-  Inspecciona los datos suministrados y las observaciones activas:
+  Inspecciona referencias y condiciones HPA, modelo de recursos del contenedor servidor, métricas actuales e interfaz suministrada.
 
   ```sh
-  kubectl get deployment board -o yaml
-    kubectl get hpa board -o yaml
+  cat autoscaling-contract.json
+  kubectl get hpa,deployments,service -o yaml
+  kubectl describe hpa board
+  kubectl get configmap work-handler -o yaml
+  kubectl top pods -l app=board
   ```
 hints.2.text: |-
-  Repare el request, luego el inspect currentMetrics y el ScalingActive mientras espera la ampliación.
+  Verifica cantidades actual y deseada de dos, utilización CPU superior al objetivo, dos Pods servidores listos y contadores de finalización crecientes. La respuesta raíz no cambia.
 
-  Verifica el resultado desde `~/quest` en la workstation:
-
-  - `kubectl top pods -l app=board --no-headers` — Las métricas reales de CPU contienen valores en millicores.
-
-  - `kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080` — El consumidor recibe `north-112`.
+  ```sh
+  kubectl get hpa board
+  kubectl get pods -l app=board
+  kubectl top pods -l app=board
+  kubectl exec deployment/board -c worker -- wc -l /tmp/work-completions
+  ```
 phrases.0: Revisé la canalización de métricas antes de cambiar el HPA.
 phrases.1: Proporcioné un CPU request significativo.
 phrases.2: Verifiqué métricas observadas y escalamiento acotado.
@@ -56,12 +57,21 @@ diagnostics.metric: El HPA debe informar de una utilización de CPU superior al 
 diagnostics.active: HPA ScalingActive debe ser True.
 diagnostics.top: kubectl top pods debe mostrar CPU en milicores.
 diagnostics.http: board:8080 debe devolver north-112.
-stages.0.objectives.0.text: El worker `board` solicita `100m` de CPU y conserva su límite de CPU `200m`.
-stages.0.objectives.1.text: El HPA `board` permite `1`–`2` réplicas con una utilización objetivo del `50`
-  por ciento.
-stages.0.objectives.2.text: El HPA `board` tiene `ScalingActive=True`, indica `2` réplicas actuales y
-  deseadas con utilización superior al `50` por ciento, ambas listas; las métricas reales muestran CPU
-  en millicores.
+stages.0.objectives.0.text: El worker `board` solicita `100m` de CPU y conserva su límite de CPU `200m`. Conserva
+  identidades de cargas originales y ConfigMap del procesamiento, así como imágenes suministradas.
+stages.0.objectives.1.text: El HPA `board` permite `1`–`2` réplicas con una utilización objetivo del `50` por ciento.
+stages.0.objectives.2.text: El HPA `board` tiene `ScalingActive=True`, indica `2` réplicas actuales y deseadas con
+  utilización superior al `50` por ciento, ambas listas; las métricas reales muestran CPU en millicores. El HPA
+  existente apunta al servidor suministrado y el handler sin modificar registra nuevas finalizaciones durante la
+  observación.
 stages.0.objectives.3.text: Desde Deployment `client`, `http://board:8080` devuelve `north-112`.
-diagnostics.probe_0_0: 'Los datos actuales no permiten verificar este objetivo: El worker `board` solicita `100m`
-  de CPU y conserva su límite de CPU `200m`.'
+diagnostics.probe_0_0: Las entradas actuales no verifican esta condición; inspecciona estado de objetos y contrato.
+diagnostics.load_identity: Cambió una carga original, identidad de control o imagen; conserva los componentes suministrados.
+diagnostics.load_implementation: Conserva imágenes y bytes del handler suministrados en ConfigMap y archivos actuales.
+diagnostics.load_target: El HPA original debe apuntar al Deployment previsto; un objetivo de utilización válido
+  no selecciona la carga.
+diagnostics.load_workers: Dos Pods actuales y listos deben pertenecer al Deployment servidor conservado y usar su
+  imagen.
+diagnostics.load_progress: Las finalizaciones reales deben avanzar durante la observación; réplicas listas o inactivas
+  no establecen demanda.
+diagnostics.probe_0_2: Las entradas actuales no verifican esta condición; inspecciona estado de objetos y contrato.

@@ -1,72 +1,59 @@
 title: RBAC-Verträge mit den geringsten Privilegien
 brief: |-
-  Der Routenleser benötigt eng begrenzten Zugriff. Stellen Sie die beabsichtigte Controller-Antwort her, während andere und Observer-Anfragen verboten bleiben.
+  Die Workload-Autorisierung entspricht den deklarierten Zugriffsabsichten nicht. Stelle enge Rechte und aktuelle Verbraucher-Lesezugriffe bei erhaltenem Kontrollzugriff her.
 
-  Arbeiten Sie auf der Workstation in `~/quest` mit den bereitgestellten Dateien:
-  - `controller-sa.yaml`, `observer-sa.yaml`, `controller.yaml`, `observer.yaml`, `role.yaml`, `binding.yaml`, `route.yaml`, `offlimits.yaml`, `secret.yaml`, `api-ca.pem`, `api-endpoint`.
+  Arbeite auf der Workstation in `~/quest` mit den vorgegebenen Verbindungs-/Ergebniseingaben: `authority-contract.json`, `api-ca.pem`, `api-endpoint`. Die Workload-Definitionen stehen in aktuellen Clusterobjekten.
 
-  **Requirements:**
+  **Anforderungen:**
 
-  - Die bereitgestellte Role im Namespace gewährt nur benannten Lesezugriff auf die vorhandene Routenkonfiguration; ihre Bindung gewährt diesen Zugriff nur der bereitgestellten Controller-Identität.
+  - Die bereitgestellte Role im Namespace gewährt nur benannten Lesezugriff auf die vorhandene Routenkonfiguration; ihre Bindung gewährt diesen Zugriff nur der bereitgestellten Controller-Identität. Erhalte Identitäten und Images aller vorgegebenen Workloads und die ursprünglichen Kontroll-ServiceAccounts. Jeder abhängige Verbraucher nutzt eine eigene eindeutige dedizierte Identität, ohne automatisches Credential-Mounting und mit ausschließlich namespaced Lesegrants für seinen benannten Datensatz.
   - Ein CA-geprüftes API-GET mit dem eingebundenen Controller-Zugang liefert HTTP `200` und Route `north-125` aus der vorhandenen Routenkonfiguration.
-  - Controller-Anfragen zum Auflisten von ConfigMaps oder Secrets, Lesen der separaten geschützten Konfiguration oder des Kontroll-Secrets sowie die Observer-Anfrage zum Lesen der Route erhalten alle HTTP `403`.
+  - Controller-Anfragen zum Auflisten von ConfigMaps oder Secrets, Lesen der separaten geschützten Konfiguration oder des Kontroll-Secrets sowie die Observer-Anfrage zum Lesen der Route erhalten alle HTTP `403`. Das aktuelle Pod-gebundene Credential jedes abhängigen Verbrauchers liest seinen Datensatz mit HTTP 200 und deklariertem Wert. Route, geschützte Daten, fremde Datensätze und Listen liefern HTTP 403; ursprüngliche Kontroll- und Beobachteridentitäten dürfen abhängige Datensätze nicht lesen.
 
-  Die Prüfungen betreffen die angegebenen Anfragen und Objekte, nicht alle möglichen Berechtigungen oder den Ausführer der Befehle; Token niemals ausgeben.
-debrief: Die geringste Berechtigung wurde für beide Vorgänge und identities überprüft, einschließlich
-  echter negativer API-Anfragen.
+  Prüfungen beobachten aktuelle Namespace-Rollen, Identitäten und angegebene API-Anfragen, nicht jede mögliche Berechtigung oder den Befehlsverlauf. Token nie ausgeben.
+debrief: Least Privilege ist ein wirksamer Graph aus Identitäten, Grants und aktuellen Credentials. Getrennte Principals
+  durch Verbraucher zu propagieren repariert Abhängigkeiten ohne breiten gemeinsamen Grant.
 stages.0.brief: Halten Sie beide Zugangsdaten privat und bewahren Sie die Zugriffsverbote.
-hints.0.text: Eine Bindung wählt identities; a Role definiert erlaubte Operationen. Die bereitgestellte
-  Role erlaubt zusätzliche ConfigMap-Listen und Secret-Lesezugriffe; das Binding enthält den Observer.
-  Beide Workloads besitzen bereits kurzlebige projizierte Token.
+hints.0.text: Rechte gehören zu Identitäten, nicht zu Workload-Labels. Die Einschränkung eines gemeinsamen Grants
+  kann abhängige Lesezugriffe brechen; Vorlagenänderung ersetzt kein Credential eines bestehenden Pods.
 hints.1.text: |-
-  get by resourceName ist schmaler als list, selbst für die gleiche Ressource kind.
-
-  Prüfen Sie die bereitgestellten Eingaben und laufenden Beobachtungen:
+  Vergleiche Absichtsvertrag mit aktuellen ServiceAccounts, RoleBindings und Pod-Identitäten. Dekodiere nur Identitätsmetadaten, gib niemals Bearer-Zugangsdaten aus.
 
   ```sh
-  kubectl get role station-reader -o yaml
-    kubectl get rolebinding station-reader -o yaml
+  cat authority-contract.json
+  kubectl get deployment,serviceaccount,role,rolebinding -o yaml
+  kubectl get pods -o yaml
+  kubectl exec deployment/publisher -c worker -- cat /credential/token |
+    python3 -I -c 'import base64,json,sys; token=sys.stdin.read().strip(); c=json.loads(base64.urlsafe_b64decode(token.split(".")[1]+"===")); print(json.dumps({"sub":c.get("sub"),"podUID":c.get("kubernetes.io",{}).get("pod",{}).get("uid")}))'
+
   ```
 hints.2.text: |-
-  Beschränken Sie sowohl Role rules als auch subjects und testen Sie dann explizit verweigerte Pfade.
+  Prüfe jeden erlaubten benannten Zugriff und jede verweigerte Anfrage gemäß Absichtskarte mit dem tatsächlichen Workload-Credential. Verwerfe sämtliche verweigerten Antwortkörper.
 
-  Prüfen Sie das Ergebnis in `~/quest` auf der Workstation:
-
-  - Die benannte Route liefert `north-125` mit HTTP `200`; die anderen vier Anfragen liefern HTTP `403`. Token niemals ausgeben oder speichern.
-
-    ```sh
-    api=$(cat api-endpoint)
-    token=$(kubectl exec deployment/controller -- cat /credential/token)
-    for path in configmaps/route configmaps configmaps/offlimits secrets secrets/control; do
+  ```sh
+  api=$(cat api-endpoint)
+  for actor in controller observer publisher sampler; do
+    token=$(kubectl exec "deployment/$actor" -c worker -- cat /credential/token)
+    for path in configmaps/route configmaps/release-plan configmaps/sampling configmaps secrets secrets/control configmaps/offlimits; do
+      printf '%s %s ' "$actor" "$path"
       printf 'header = "Authorization: Bearer %s"\n' "$token" |
-        curl --config - --cacert api-ca.pem -sS -w '\nHTTP %{http_code}\n' \
-        "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
+        curl --config - --cacert api-ca.pem -sS -o /dev/null -w 'HTTP %{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
     done
     unset token
-    ```
-
-  - Die Observer-Anfrage liefert HTTP `403`, ohne Zugangsdaten offenzulegen.
-
-    ```sh
-    api=$(cat api-endpoint)
-    token=$(kubectl exec deployment/observer -- cat /credential/token)
-    printf 'header = "Authorization: Bearer %s"\n' "$token" |
-      curl --config - --cacert api-ca.pem -sS -o /dev/null -w 'HTTP %{http_code}\n' \
-      "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route"
-    unset token
-    ```
+  done
+  ```
 phrases.0: Ich habe den Lesezugriff auf ein benanntes Objekt eingeschränkt.
 phrases.1: Ich habe das unbeabsichtigte RoleBinding subject entfernt.
 phrases.2: Ich habe verweigerte Vorgänge anhand des tatsächlichen identities überprüft.
-questions.0.points.0: get greift auf eine einzelne benannte Ressource zu; list ermittelt eine Sammlung
-  von Ressourcen.
+questions.0.points.0: get greift auf eine einzelne benannte Ressource zu; list ermittelt eine Sammlung von Ressourcen.
 questions.0.points.1: Die Autorisierung prüft jeden verb separat.
 questions.0.prompt: Warum bedeutet get für einen einzelnen resourceName nicht auch die Berechtigung list?
 questions.1.points.0: NEIN; Der falsche principal erhält diese Berechtigungen weiterhin.
 questions.1.points.1: Überprüfen Sie identity und den Betriebsumfang gemeinsam.
 questions.1.prompt: Kann die Korrektur Role rules das falsche binding subject kompensieren?
 diagnostics.role: role/station-reader rules muss get configmaps resourceNames [route] entsprechen.
-diagnostics.binding: Das RoleBinding darf nur der Identität controller in diesem Namespace der Übungsumgebung Zugriff gewähren.
+diagnostics.binding: Das RoleBinding darf nur der Identität controller in diesem Namespace der Übungsumgebung Zugriff
+  gewähren.
 diagnostics.allowed: controller GET configmaps/route muss HTTP 200 entsprechen.
 diagnostics.value: configmaps/route data.route muss north-125 entsprechen.
 diagnostics.observer: observer GET configmaps/route muss HTTP 403 liefern.
@@ -74,10 +61,33 @@ diagnostics.denied_configmaps: controller GET configmaps muss HTTP 403 liefern.
 diagnostics.denied_configmaps_offlimits: controller GET configmaps/offlimits muss HTTP 403 liefern.
 diagnostics.denied_secrets: controller GET secrets muss HTTP 403 liefern.
 diagnostics.denied_secrets_control: controller GET secrets/control muss HTTP 403 liefern.
-stages.0.objectives.0.text: Die bereitgestellte Role im Namespace gewährt nur benannten Lesezugriff auf
-  die vorhandene Routenkonfiguration; ihre Bindung gewährt diesen Zugriff nur der bereitgestellten Controller-Identität.
-stages.0.objectives.1.text: Ein CA-geprüftes API-GET mit dem eingebundenen Controller-Zugang liefert HTTP
-  `200` und Route `north-125` aus der vorhandenen Routenkonfiguration.
-stages.0.objectives.2.text: Controller-Anfragen zum Auflisten von ConfigMaps oder Secrets, Lesen der separaten
-  geschützten Konfiguration oder des Kontroll-Secrets sowie die Observer-Anfrage zum Lesen der Route erhalten
-  alle HTTP `403`.
+stages.0.objectives.0.text: Die bereitgestellte Role im Namespace gewährt nur benannten Lesezugriff auf die vorhandene
+  Routenkonfiguration; ihre Bindung gewährt diesen Zugriff nur der bereitgestellten Controller-Identität. Erhalte
+  Identitäten und Images aller vorgegebenen Workloads und die ursprünglichen Kontroll-ServiceAccounts. Jeder abhängige
+  Verbraucher nutzt eine eigene eindeutige dedizierte Identität, ohne automatisches Credential-Mounting und mit
+  ausschließlich namespaced Lesegrants für seinen benannten Datensatz.
+stages.0.objectives.1.text: Ein CA-geprüftes API-GET mit dem eingebundenen Controller-Zugang liefert HTTP `200`
+  und Route `north-125` aus der vorhandenen Routenkonfiguration.
+stages.0.objectives.2.text: Controller-Anfragen zum Auflisten von ConfigMaps oder Secrets, Lesen der separaten geschützten
+  Konfiguration oder des Kontroll-Secrets sowie die Observer-Anfrage zum Lesen der Route erhalten alle HTTP `403`.
+  Das aktuelle Pod-gebundene Credential jedes abhängigen Verbrauchers liest seinen Datensatz mit HTTP 200 und deklariertem
+  Wert. Route, geschützte Daten, fremde Datensätze und Listen liefern HTTP 403; ursprüngliche Kontroll- und Beobachteridentitäten
+  dürfen abhängige Datensätze nicht lesen.
+diagnostics.authority_actors: Vorgegebene Workloads und Identitätsobjekte müssen über die aktuelle Namespace-API
+  verfügbar sein.
+diagnostics.authority_identity: Ein ursprünglicher Workload, eine Kontrollidentität oder ein vorgegebenes Image
+  wurde geändert; erhalte die Komponenten.
+diagnostics.authority_split: Abhängige Verbraucher brauchen unterschiedliche dedizierte ServiceAccounts, getrennt
+  von reservierten Kontroll-, Standard- und Workstation-Identitäten.
+diagnostics.authority_projection: Nutze das Credential des aktuellen eigenen Pods für seinen deklarierten ServiceAccount;
+  automatisches Mounting bleibt für Verbraucher aus.
+diagnostics.authority_grants: Wirksame Namespace-Bindungen dürfen nur get der benannten Konfiguration dieses Verbrauchers
+  erlauben; zusätzliche Grants verletzen die Absicht.
+diagnostics.authority_live: Beobachte aktuelle eigene bereite Pods und gebundene Credential-Identitäten, nicht beendende
+  Pods oder fremde Token.
+diagnostics.authority_allowed: Jedes aktuelle Verbraucher-Credential muss HTTP 200 und den deklarierten eigenen
+  Datensatzwert erhalten.
+diagnostics.authority_denied: Anfragen fremder Datensätze, Route, geschützter Daten und Listen außerhalb der Absicht
+  müssen HTTP 403 liefern.
+diagnostics.probe_0_0: Aktuelle Eingaben konnten diese Bedingung nicht bestätigen; prüfe Objektstatus und Vertrag.
+diagnostics.probe_0_2: Aktuelle Eingaben konnten diese Bedingung nicht bestätigen; prüfe Objektstatus und Vertrag.

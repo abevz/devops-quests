@@ -1,6 +1,8 @@
 # Хранение, идентичность и безопасная очистка
 
-Используйте только одноразовую песочницу задания. StatefulSet даёт каждому Pod стабильное порядковое имя, а его claim может пережить замену Pod. Headless Service предоставляет порядковый DNS. Сравните выданные файлы UID и манифесты с работающими объектами; дождитесь нового Pod перед проверкой имени и HTTP-ответа. Стабильная идентичность сама по себе не доказывает содержимое тома.
+Идентичность claim, работающий процесс и байты на томе — разные свидетельства. Сохраняйте известный исходный набор данных, определяя, какая целевая ёмкость пригодна. Замена процесса сама по себе не возвращает отсутствующие файлы, а привязка claim не доказывает их содержимое. Namespaced-определения claim, монтирования Pod и фактические файлы связывают идентичность хранилища с результатом приложения без предположения о доступе к каталогу всего кластера.
+
+Stateful discovery связывает governing headless Service, ordinal Pod и сохранённый claim. Одна готовность не доказывает нужный listener. Независимый сетевой потребитель должен разрешать ordinal в правильном namespace и публиковать текущий ответ, не монтируя исходный claim. Сопоставляйте идентичность источника, владельца потребителя, суффикс resolver и оба интерфейса; это текущие наблюдения, не история запросов.
 
 PersistentVolume (PV) и PersistentVolumeClaim (PVC) — разные объекты. Политика возврата PV `Retain` сохраняет том для ручного восстановления после удаления claim; настройка StorageClass по умолчанию не меняет существующий PV задним числом. В задании восстановления изучите `volume-contract.json` и `original-claim-uid`, убедитесь, что старый claim удалён, и используйте UID-предусловия с выданными значениями перед удалением старой ссылки claim. Дождитесь привязки нового claim. Этот локальный учебный том не является резервной копией вне узла.
 
@@ -10,13 +12,13 @@ Finalizer удерживает объект при удалении до зав�
 
 Источники: [StatefulSet](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/), [политика возврата PV](https://kubernetes.io/docs/tasks/administer-cluster/change-pv-reclaim-policy/), [finalizer](https://kubernetes.io/docs/concepts/overview/working-with-objects/finalizers/).
 
-Начните в `~/quest`. В задании 111 проверьте ordinal и сравните файлы перед изменением listener:
+Для задания 111 изучите сохранённый источник и контракт потребителя:
 
 ```sh
 cd ~/quest
-kubectl get statefulset shelf -o yaml
-kubectl get pod shelf-0 -o jsonpath='{.metadata.uid}'
-cat original-pod-uid
+cat discovery-contract.json
+kubectl get statefulset,pvc,service,pods -o yaml
+kubectl exec shelf-0 -c worker -- cat /etc/resolv.conf
 ```
 
 В задании 124 проверьте PV:

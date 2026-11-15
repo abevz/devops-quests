@@ -1,43 +1,40 @@
 title: Идентичность StatefulSet и headless DNS
 brief: |-
-  Конечная точка shelf недоступна. Восстановите обслуживание с сохранением идентичности существующего хранилища.
+  Endpoint недоступен, а независимому потребителю нужны сохранённые данные stateful-нагрузки.
 
-  Работайте на workstation в `~/quest` с предоставленными файлами:
-  - `shelf.yaml`, `service.yaml`.
+  Работайте на workstation в `~/quest` с заданными входами подключения/результата: `discovery-contract.json`. Определения нагрузок доступны в текущих объектах кластера.
 
-  **Requirements:**
+  **Требования:**
 
   - Существующие StatefulSet и claim данных сохраняют идентичность; новый Pod использует исходный управляющий Service и только существующий том данных в `/data` своего контейнера приложения.
   - StatefulSet `shelf` имеет одну готовую реплику.
   - Управляющий Service обеспечивает стабильное обнаружение по ordinal только для предоставленной нагрузки shelf, без виртуального IP.
-  - В Pod `shelf-0` порядковое DNS-имя `shelf-0.shelf` разрешается, а `http://shelf-0.shelf:8080` возвращает `ledger-111`.
+  - В Pod `shelf-0` порядковое DNS-имя `shelf-0.shelf` разрешается, а `http://shelf-0.shelf:8080` возвращает `ledger-111`. Создайте описанный в контракте Deployment потребителя с одним готовым Pod и заданным образом. Из контейнера приложения работают ordinal DNS и интерфейс исходного источника; локальный HTTP-интерфейс возвращает объявленный ответ источника. Потребитель не монтирует исходный data claim.
 
-  Проверки охватывают идентичность, монтирование и ответ, а не всё содержимое журнала или историю правок; локальный учебный том не является внешней резервной копией.
-debrief: Проверки наблюдали исходные UID StatefulSet и PVC, новый Pod, порядковый запрос и ответ.
+  Проверки наблюдают текущие идентичность, монтирования, DNS и ответы, а не историю запросов или off-host durability.
+debrief: Стабильный ordinal связывает discovery с stateful-идентичностью. Исправление listener не создаёт независимого
+  потребителя; замена процесса не пересоздаёт сохранённые данные.
 stages.0.brief: Сохраните исходные идентичности хранилища и контроллера при замене Pod.
-hints.0.text: У identity Pod и claim разные сроки жизни.
+hints.0.text: Идентичность хранилища, готовый процесс и работающий listener — разные наблюдения. Ordinal discovery
+  должен работать и из независимого потребителя.
 hints.1.text: |-
-  Headless Service обеспечивает стабильный DNS ordinal.
-
-  Изучите предоставленные файлы и живые наблюдения:
+  Изучите существующую stateful-нагрузку, её governing Service, data claim и конфигурацию resolver. Контракт описывает потребителя, которого нужно создать; изначально его нет.
 
   ```sh
-  kubectl get statefulset shelf -o yaml
-    kubectl get pvc ledger-shelf-0 -o yaml
-    kubectl get pod shelf-0 -o yaml
-    cat original-statefulset-uid original-pvc-uid original-pod-uid
-    kubectl get service shelf -o yaml
+  cat discovery-contract.json
+  kubectl get statefulset,pvc,service,pods -o yaml
+  kubectl describe pod shelf-0
+  kubectl exec shelf-0 -c worker -- cat /etc/resolv.conf
   ```
-hints.2.text: 'Исправьте порт в шаблоне и дождитесь выкатки StatefulSet. Исправьте порт слушателя на `8080` и дождитесь замены; StatefulSet и PVC сохраняют идентичность, а Pod меняется.
+hints.2.text: |-
+  Проверьте сохранённые идентичности и готовность источника, затем A-resolution ordinal-имени, удалённый ответ и локальную публикацию из потребителя.
 
-
-  Проверьте результат из `~/quest` на workstation:
-
-
-  - `kubectl exec shelf-0 -c worker -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."` — Порядковое DNS-имя разрешается внутри `shelf-0`.
-
-
-  - `kubectl exec shelf-0 -c worker -- wget -qO- -T 3 http://shelf-0.shelf:8080` — Потребитель shelf получает `ledger-111`.'
+  ```sh
+  fqdn="shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."
+  kubectl exec deployment/inspector -c worker -- nslookup -type=A "$fqdn"
+  kubectl exec deployment/inspector -c worker -- wget -qO- -T 3 "http://$fqdn:8080"
+  kubectl exec deployment/inspector -c worker -- wget -qO- -T 3 http://127.0.0.1:8080
+  ```
 phrases.0: Я сохранил claim ordinal при замене.
 phrases.1: Я проверил порядковый DNS и HTTP-ответ.
 phrases.2: Я разделил хранение и резервное копирование.
@@ -57,13 +54,24 @@ diagnostics.clusterip: service/shelf clusterIP должен совпадать �
 diagnostics.selector: Service shelf должен выбирать всю исходную нагрузку shelf и никакую другую.
 diagnostics.http: shelf-0.shelf:8080 должен совпадать с ledger-111.
 diagnostics.dns: nslookup shelf-0.shelf должен выполняться успешно.
-stages.0.objectives.0.text: Существующие StatefulSet и claim данных сохраняют идентичность; новый Pod
-  использует исходный управляющий Service и только существующий том данных в `/data` своего контейнера
-  приложения.
+stages.0.objectives.0.text: Существующие StatefulSet и claim данных сохраняют идентичность; новый Pod использует
+  исходный управляющий Service и только существующий том данных в `/data` своего контейнера приложения.
 stages.0.objectives.1.text: StatefulSet `shelf` имеет одну готовую реплику.
-stages.0.objectives.2.text: Управляющий Service обеспечивает стабильное обнаружение по ordinal только
-  для предоставленной нагрузки shelf, без виртуального IP.
+stages.0.objectives.2.text: Управляющий Service обеспечивает стабильное обнаружение по ordinal только для предоставленной
+  нагрузки shelf, без виртуального IP.
 stages.0.objectives.3.text: В Pod `shelf-0` порядковое DNS-имя `shelf-0.shelf` разрешается, а `http://shelf-0.shelf:8080`
-  возвращает `ledger-111`.
+  возвращает `ledger-111`. Создайте описанный в контракте Deployment потребителя с одним готовым Pod и заданным
+  образом. Из контейнера приложения работают ordinal DNS и интерфейс исходного источника; локальный HTTP-интерфейс
+  возвращает объявленный ответ источника. Потребитель не монтирует исходный data claim.
 diagnostics.probe_0_2: 'Текущие данные не позволили проверить эту цель: Управляющий Service обеспечивает стабильное
   обнаружение по ordinal только для предоставленной нагрузки shelf, без виртуального IP.'
+diagnostics.discovery_consumer: Независимому потребителю нужен один текущий готовый Pod с правильным владельцем
+  и заданным образом.
+diagnostics.discovery_network: Сетевой потребитель не должен монтировать исходный data claim, в том числе через
+  init или другой контейнер.
+diagnostics.discovery_dns: Ordinal A discovery должен работать из потребителя в текущем namespace; изучите governing
+  Service и суффикс resolver.
+diagnostics.discovery_source: Сохранённый ordinal-источник должен возвращать объявленный ответ при запросе из потребителя.
+diagnostics.discovery_publication: Локальная HTTP-публикация потребителя должна совпадать с ответом источника; одной
+  готовности недостаточно.
+diagnostics.probe_0_3: Текущие входы не подтверждают это условие; изучите состояние живых объектов и заданный контракт.

@@ -1,41 +1,40 @@
 title: Cuota y admisión LimitRange
 brief: |-
-  La carga board no está lista dentro del presupuesto de admisión. Restaure los recursos admitidos requeridos sin cambiar la cuota suministrada.
+  Las cargas no alcanzan el estado admitido requerido dentro del presupuesto compartido. Recupera ambos consumidores sin sustituir la cuota suministrada.
 
-  Trabaja en la workstation en `~/quest` con los archivos suministrados:
-  - `client.yaml`, `quota.yaml`, `defaults.yaml`, `board.yaml`, `service.yaml`.
+  Trabaja en la workstation en `~/quest` con las entradas de conexión/resultado: `admission-contract.json`. Las definiciones de cargas están en los objetos actuales del clúster.
 
-  **Requirements:**
+  **Requisitos:**
 
-  - Conserva el presupuesto de recursos acordado:
-    - ResourceQuota `station` conserva el presupuesto suministrado: solicitudes CPU `200m`, límites CPU `400m`, solicitudes de memoria `32Mi`, límites de memoria `64Mi` y `2` Pods.
-  - Los valores predeterminados de admisión suministrados proporcionan el presupuesto CPU requerido a la aplicación board sin un presupuesto explícito en su plantilla Deployment.
-  - El Deployment `board` tiene una réplica lista y un Pod sin terminar con contenedor listo, solicitud/límite CPU `100m`/`200m` y solicitud/límite de memoria `16Mi`/`32Mi`, todo en el mismo Pod.
+  - ResourceQuota `station` conserva el presupuesto suministrado: solicitudes CPU `200m`, límites CPU `400m`, solicitudes de memoria `32Mi`, límites de memoria `64Mi` y `2` Pods.
+  - Los valores predeterminados de admisión suministrados proporcionan el presupuesto CPU requerido a la aplicación board sin un presupuesto explícito en su plantilla Deployment. Esta política CPU por defecto y ausencia de presupuestos explícitos se aplican a ambas plantillas Deployment. Conserva identidades, imágenes y una réplica deseada de cada una, además de la identidad original de la cuota.
+  - El Deployment `board` tiene una réplica lista y un Pod sin terminar con contenedor listo, solicitud/límite CPU `100m`/`200m` y solicitud/límite de memoria `16Mi`/`32Mi`, todo en el mismo Pod. La otra carga también tiene exactamente un Pod actual listo con los mismos presupuestos admitidos CPU y memoria. El consumo de cuota del namespace coincide con los dos presupuestos acordados.
   - Desde el Deployment `client`, `http://board:8080` devuelve `north-126`.
 
-  La comprobación inspecciona la memoria del Pod admitido, no los valores actuales de memoria de LimitRange ni el historial; la cuota de admisión no crea capacidad de nodo.
-debrief: La póliza morosa fue reparada dentro del presupuesto namespace; La capacidad de scheduler siguió
-  siendo una limitación separada.
+  Se observan identidad/uso de cuota, CPU defaults y memoria admitida actuales, no defaults de memoria ni historial. No se afirma disponibilidad ininterrumpida.
+debrief: Política por defecto, recursos admitidos y reemplazo del controlador tienen vidas distintas. Propaga el
+  modelo CPU por ambos consumidores secuenciando el presupuesto, sin ampliar cuota.
 stages.0.brief: Conserva la cuota suministrada sin cambios.
-hints.0.text: Lea los eventos ReplicaSet para distinguir el rechazo de admisión del Pending scheduling.
+hints.0.text: Admission cuenta todos los consumidores actuales. Los defaults se aplican a nuevas admisiones; reemplazo
+  o surge puede necesitar presupuesto antes de liberarlo un Pod viejo.
 hints.1.text: |-
-  LimitRange suministra defaults antes de que ResourceQuota evalúe el consumo. Los valores CPU suministrados solicitan `300m` y limitan a `400m`, superando la cuota fija. Los valores afectan a Pods recién admitidos, no a los existentes.
+  Compara uso de cuota, defaults, recursos admitidos actuales y mensajes de condiciones ReplicaSet. Esperar no modifica un presupuesto incompatible.
 
-  Inspecciona los datos suministrados y las observaciones activas:
+  ```sh
+  cat admission-contract.json
+  kubectl get resourcequota,limitrange,deployment,pods -o yaml
+  kubectl get replicasets -o yaml
+  kubectl describe resourcequota station
+  ```
+hints.2.text: |-
+  Verifica cuota original, ambas plantillas basadas en defaults, ambos recursos admitidos y respuesta. El consumo debe corresponder a ambos consumidores.
 
   ```sh
   kubectl get resourcequota station -o yaml
-    kubectl get limitrange defaults -o yaml
-    kubectl get deployment board -o yaml
+  kubectl get deployment client board -o yaml
+  kubectl get pods -o yaml
+  kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://board:8080
   ```
-hints.2.text: |-
-  Repare defaults, vuelva a intentar la implementación y inspect Pod resources en lugar de solo su plantilla.
-
-  Verifica el resultado desde `~/quest` en la workstation:
-
-  - `kubectl get pods -l app=board -o yaml` — Un Pod sin terminar tiene juntos los recursos requeridos y un contenedor listo.
-
-  - `kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080` — El consumidor recibe `north-126`.
 phrases.0: Distinguí el fracaso de admisión del fracaso de scheduling.
 phrases.1: Revisé los recursos después de incumplir.
 phrases.2: Conservé el namespace quota.
@@ -50,28 +49,35 @@ diagnostics.default: El límite CPU predeterminado del LimitRange defaults debe 
 diagnostics.request: La solicitud CPU predeterminada del LimitRange defaults debe ser 100m.
 diagnostics.ready: Deployment board debe tener una réplica lista.
 diagnostics.template: La plantilla de worker en board no debe tener un presupuesto explícito de recursos.
-diagnostics.pod_requests: Un Pod board no marcado para eliminación debe tener las solicitudes exactas
-  de CPU y memoria de la descripción.
-diagnostics.pod_limits: Un Pod board no marcado para eliminación debe tener los límites exactos de CPU
-  y memoria de la descripción.
+diagnostics.pod_requests: Un Pod board no marcado para eliminación debe tener las solicitudes exactas de CPU y memoria
+  de la descripción.
+diagnostics.pod_limits: Un Pod board no marcado para eliminación debe tener los límites exactos de CPU y memoria
+  de la descripción.
 diagnostics.pod_ready: Un Pod board no marcado para eliminación debe tener un contenedor listo.
-diagnostics.same_pod: Un mismo Pod board no marcado para eliminación debe tener todos los recursos requeridos
-  y un contenedor listo.
+diagnostics.same_pod: Un mismo Pod board no marcado para eliminación debe tener todos los recursos requeridos y
+  un contenedor listo.
 diagnostics.http: board:8080 debe devolver north-126.
-stages.0.objectives.0.text: 'ResourceQuota `station` conserva el presupuesto suministrado: solicitudes
-  CPU `200m`, límites CPU `400m`, solicitudes de memoria `32Mi`, límites de memoria `64Mi` y `2` Pods.'
-stages.0.objectives.1.text: Los valores predeterminados de admisión suministrados proporcionan el presupuesto
-  CPU requerido a la aplicación board sin un presupuesto explícito en su plantilla Deployment.
-stages.0.objectives.2.text: El Deployment `board` tiene una réplica lista y un Pod sin terminar con contenedor
-  listo, solicitud/límite CPU `100m`/`200m` y solicitud/límite de memoria `16Mi`/`32Mi`, todo en el mismo
-  Pod.
+stages.0.objectives.0.text: 'ResourceQuota `station` conserva el presupuesto suministrado: solicitudes CPU `200m`,
+  límites CPU `400m`, solicitudes de memoria `32Mi`, límites de memoria `64Mi` y `2` Pods.'
+stages.0.objectives.1.text: Los valores predeterminados de admisión suministrados proporcionan el presupuesto CPU
+  requerido a la aplicación board sin un presupuesto explícito en su plantilla Deployment. Esta política CPU por
+  defecto y ausencia de presupuestos explícitos se aplican a ambas plantillas Deployment. Conserva identidades,
+  imágenes y una réplica deseada de cada una, además de la identidad original de la cuota.
+stages.0.objectives.2.text: El Deployment `board` tiene una réplica lista y un Pod sin terminar con contenedor listo,
+  solicitud/límite CPU `100m`/`200m` y solicitud/límite de memoria `16Mi`/`32Mi`, todo en el mismo Pod. La otra
+  carga también tiene exactamente un Pod actual listo con los mismos presupuestos admitidos CPU y memoria. El consumo
+  de cuota del namespace coincide con los dos presupuestos acordados.
 stages.0.objectives.3.text: Desde el Deployment `client`, `http://board:8080` devuelve `north-126`.
 diagnostics.probe_0_0: 'Los datos actuales no permiten verificar este objetivo: ResourceQuota `station` conserva
   el presupuesto suministrado: solicitudes CPU `200m`, límites CPU `400m`, solicitudes de memoria `32Mi`, límites
   de memoria `64Mi` y `2` Pods.'
-diagnostics.probe_0_1: 'Los datos actuales no permiten verificar este objetivo: Los valores predeterminados de admisión
-  suministrados proporcionan el presupuesto CPU requerido a la aplicación board sin un presupuesto explícito en
-  su plantilla Deployment.'
-diagnostics.probe_0_2: 'Los datos actuales no permiten verificar este objetivo: El Deployment `board` tiene una
-  réplica lista y un Pod sin terminar con contenedor listo, solicitud/límite CPU `100m`/`200m` y solicitud/límite
-  de memoria `16Mi`/`32Mi`, todo en el mismo Pod.'
+diagnostics.probe_0_1: Las entradas actuales no verifican esta condición; inspecciona estado de objetos y contrato.
+diagnostics.probe_0_2: Las entradas actuales no verifican esta condición; inspecciona estado de objetos y contrato.
+diagnostics.admission_identity: Cambió una carga original, identidad de control o imagen; conserva los componentes
+  suministrados.
+diagnostics.admission_template: Ambas cargas conservadas necesitan una réplica deseada, imágenes suministradas y
+  presupuestos explícitos vacíos para aplicar CPU defaults.
+diagnostics.admission_client: La segunda carga necesita un Pod actual propio y listo con CPU 100m/200m y memoria
+  16Mi/32Mi; defaults no reescriben Pods anteriores.
+diagnostics.admission_usage: 'El uso de cuota debe coincidir con dos consumidores: CPU requests 200m, limits 400m,
+  memoria requests 32Mi, limits 64Mi y 2 Pods.'

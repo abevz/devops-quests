@@ -1,60 +1,47 @@
 title: Least-privilege RBAC contracts
 brief: |-
-  The route consumer must have narrowly limited access. Restore the intended controller response while unrelated and observer requests remain forbidden.
+  Workload authorization does not match the declared access intents. Restore narrow privileges and current consumer reads while retaining control access.
 
-  Work on the workstation in `~/quest` with the supplied files:
-  - `controller-sa.yaml`, `observer-sa.yaml`, `controller.yaml`, `observer.yaml`, `role.yaml`, `binding.yaml`, `route.yaml`, `offlimits.yaml`, `secret.yaml`, `api-ca.pem`, `api-endpoint`.
+  Work on the workstation in `~/quest` with the supplied connection/result inputs: `authority-contract.json`, `api-ca.pem`, `api-endpoint`. Existing cluster objects provide the workload definitions.
 
   **Requirements:**
 
-  - The supplied namespaced Role grants only named-read access to the existing route configuration, and its binding grants that access only to the supplied controller identity.
+  - The supplied namespaced Role grants only named-read access to the existing route configuration, and its binding grants that access only to the supplied controller identity. Retain all supplied workload identities and images and the original control ServiceAccounts. Each dependent consumer uses its own distinct dedicated identity, with automatic credential mounting disabled and only namespaced named-read grants for its declared record.
   - A CA-verified API GET with the mounted controller credential returns HTTP `200` and route `north-125` from the existing route configuration.
-  - Controller requests to list ConfigMaps or Secrets, read the separate protected configuration or control Secret, and the observer request to read the route all receive HTTP `403`.
+  - Controller requests to list ConfigMaps or Secrets, read the separate protected configuration or control Secret, and the observer request to read the route all receive HTTP `403`. Each dependent consumer's current Pod-bound credential reads its own declared record with HTTP 200 and the declared value. Route, protected data, cross-consumer reads and lists are forbidden with HTTP 403; the original control and observer identities cannot read the dependent records.
 
-  Checks cover the specified requests and objects, not every possible permission or who issued commands; never print tokens.
-debrief: Least privilege was verified for both operations and identities, including real negative API
-  requests.
+  Checks observe current namespace roles, identities and the specified API requests, not every possible permission or command history. Never print tokens.
+debrief: Least privilege is an effective graph of identities, grants and current credentials. Propagating distinct
+  principals through consumers repairs dependencies without restoring a broad shared grant.
 stages.0.brief: Keep both credentials private and preserve denied access.
-hints.0.text: A binding selects identities; a Role defines allowed operations. The supplied Role permits
-  extra ConfigMap lists and Secret reads, and the binding includes the observer. Both workloads already
-  have short-lived projected tokens.
+hints.0.text: Permissions attach to identities, not to workload labels. Tightening a shared grant can break dependent
+  reads; changing a template does not replace credentials in an existing Pod.
 hints.1.text: |-
-  get by resourceName is narrower than list, even for the same resource kind.
-
-  Inspect the supplied inputs and live observations:
+  Compare the intent contract with live ServiceAccounts, RoleBindings and current Pod identities. Decode only identity metadata, never print bearer credentials.
 
   ```sh
-  kubectl get role station-reader -o yaml
-    kubectl get rolebinding station-reader -o yaml
+  cat authority-contract.json
+  kubectl get deployment,serviceaccount,role,rolebinding -o yaml
+  kubectl get pods -o yaml
+  kubectl exec deployment/publisher -c worker -- cat /credential/token |
+    python3 -I -c 'import base64,json,sys; token=sys.stdin.read().strip(); c=json.loads(base64.urlsafe_b64decode(token.split(".")[1]+"===")); print(json.dumps({"sub":c.get("sub"),"podUID":c.get("kubernetes.io",{}).get("pod",{}).get("uid")}))'
+
   ```
 hints.2.text: |-
-  Restrict both the Role rules and subjects, then test explicit denied paths.
+  Verify each allowed named read against the intent map and every forbidden request with the actual workload credential. All forbidden response bodies must be discarded.
 
-  Verify the result from `~/quest` on the workstation:
-
-  - The named route returns `north-125` with HTTP `200`; the other four requests return HTTP `403`. Never print or save the token.
-
-    ```sh
-    api=$(cat api-endpoint)
-    token=$(kubectl exec deployment/controller -- cat /credential/token)
-    for path in configmaps/route configmaps configmaps/offlimits secrets secrets/control; do
+  ```sh
+  api=$(cat api-endpoint)
+  for actor in controller observer publisher sampler; do
+    token=$(kubectl exec "deployment/$actor" -c worker -- cat /credential/token)
+    for path in configmaps/route configmaps/release-plan configmaps/sampling configmaps secrets secrets/control configmaps/offlimits; do
+      printf '%s %s ' "$actor" "$path"
       printf 'header = "Authorization: Bearer %s"\n' "$token" |
-        curl --config - --cacert api-ca.pem -sS -w '\nHTTP %{http_code}\n' \
-        "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
+        curl --config - --cacert api-ca.pem -sS -o /dev/null -w 'HTTP %{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
     done
     unset token
-    ```
-
-  - The observer request returns HTTP `403`, without revealing the credential.
-
-    ```sh
-    api=$(cat api-endpoint)
-    token=$(kubectl exec deployment/observer -- cat /credential/token)
-    printf 'header = "Authorization: Bearer %s"\n' "$token" |
-      curl --config - --cacert api-ca.pem -sS -o /dev/null -w 'HTTP %{http_code}\n' \
-      "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route"
-    unset token
-    ```
+  done
+  ```
 phrases.0: I scoped read access to one named object.
 phrases.1: I removed the unintended RoleBinding subject.
 phrases.2: I verified denied operations using the actual identities.
@@ -73,9 +60,33 @@ diagnostics.denied_configmaps: controller GET configmaps must return HTTP 403.
 diagnostics.denied_configmaps_offlimits: controller GET configmaps/offlimits must return HTTP 403.
 diagnostics.denied_secrets: controller GET secrets must return HTTP 403.
 diagnostics.denied_secrets_control: controller GET secrets/control must return HTTP 403.
-stages.0.objectives.0.text: The supplied namespaced Role grants only named-read access to the existing
-  route configuration, and its binding grants that access only to the supplied controller identity.
-stages.0.objectives.1.text: A CA-verified API GET with the mounted controller credential returns HTTP
-  `200` and route `north-125` from the existing route configuration.
-stages.0.objectives.2.text: Controller requests to list ConfigMaps or Secrets, read the separate protected
-  configuration or control Secret, and the observer request to read the route all receive HTTP `403`.
+stages.0.objectives.0.text: The supplied namespaced Role grants only named-read access to the existing route configuration,
+  and its binding grants that access only to the supplied controller identity. Retain all supplied workload identities
+  and images and the original control ServiceAccounts. Each dependent consumer uses its own distinct dedicated identity,
+  with automatic credential mounting disabled and only namespaced named-read grants for its declared record.
+stages.0.objectives.1.text: A CA-verified API GET with the mounted controller credential returns HTTP `200` and
+  route `north-125` from the existing route configuration.
+stages.0.objectives.2.text: Controller requests to list ConfigMaps or Secrets, read the separate protected configuration
+  or control Secret, and the observer request to read the route all receive HTTP `403`. Each dependent consumer's
+  current Pod-bound credential reads its own declared record with HTTP 200 and the declared value. Route, protected
+  data, cross-consumer reads and lists are forbidden with HTTP 403; the original control and observer identities
+  cannot read the dependent records.
+diagnostics.authority_actors: The supplied workload and identity objects must be available through the current namespace
+  API.
+diagnostics.authority_identity: An original workload, control identity or supplied image changed; preserve the provided
+  components.
+diagnostics.authority_split: Dependent consumers need distinct dedicated ServiceAccounts, separate from the reserved
+  control, default and workstation identities.
+diagnostics.authority_projection: Use the current owned Pod credential for its declared ServiceAccount; keep automatic
+  mounting disabled for dependent consumers.
+diagnostics.authority_grants: Effective namespaced bindings must grant only get on that consumer named configuration;
+  shared or extra grants violate the intent.
+diagnostics.authority_live: Observe current owned ready Pods and their bound credential identities, rather than
+  a retiring Pod or an unrelated token.
+diagnostics.authority_allowed: Each dependent current credential must receive HTTP 200 and its declared record value.
+diagnostics.authority_denied: Cross-consumer, route, protected-data and list requests outside the intent must return
+  HTTP 403.
+diagnostics.probe_0_0: Current inputs could not verify this condition; inspect the live object status and supplied
+  contract.
+diagnostics.probe_0_2: Current inputs could not verify this condition; inspect the live object status and supplied
+  contract.

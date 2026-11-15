@@ -89,3 +89,29 @@ kubectl get statefulset shelf -o jsonpath='{.metadata.uid}' > original-statefuls
 kubectl get pvc ledger-shelf-0 -o jsonpath='{.metadata.uid}' > original-pvc-uid
 kubectl get pod shelf-0 -o jsonpath='{.metadata.uid}' > original-pod-uid
 kubectl patch statefulset shelf --type=json -p '[{"op": "replace", "path": "/spec/template/spec/containers/0/command", "value": ["sh", "-c", "exec httpd -f -p 8099 -h /data"]}]'
+
+kubectl rollout status statefulset/shelf --timeout=90s
+cat > discovery-contract.json <<'DQ_DISCOVERY_CONTRACT'
+{
+  "schema": 1,
+  "consumer": "inspector",
+  "container": "worker",
+  "port": 8080,
+  "response": "ledger-111",
+  "preserveStatefulSetAndClaim": true,
+  "useOrdinalDiscovery": true,
+  "doNotMountSourceClaim": true
+}
+DQ_DISCOVERY_CONTRACT
+python3 -I - <<'DQ_DISCOVERY_FACTS'
+import json,subprocess
+from pathlib import Path
+source=json.loads(subprocess.check_output(['kubectl','get','statefulset','shelf','-o','json'],text=True))
+pod=json.loads(subprocess.check_output(['kubectl','get','pod','shelf-0','-o','json'],text=True))
+worker=next(c for c in pod['spec']['containers'] if c['name']=='worker')
+mount=next(m for m in worker['volumeMounts'] if m['mountPath']=='/data')
+volume=next(v for v in pod['spec']['volumes'] if v['name']==mount['name'])
+facts={'contract':json.loads(Path('discovery-contract.json').read_text()),'source':{'statefulSet':'shelf','pod':'shelf-0','service':source['spec']['serviceName'],'claim':volume['persistentVolumeClaim']['claimName']},'image':worker['image']}
+Path('discovery-identities.json').write_text(json.dumps(facts)+'\n')
+DQ_DISCOVERY_FACTS
+rm -f shelf.yaml service.yaml

@@ -55,7 +55,22 @@ fi
         path = binaries / name
         path.write_text("#!/bin/bash\n" + text)
         path.chmod(0o755)
-    source = (ROOT / f"quests/{number}/check-0.sh").read_text().replace("/run/dq/facts/0", str(facts))
+    source = (ROOT / f"quests/{number}/check-0.sh").read_text()
+    if number == 125:
+        # This transport fixture models the original controller/observer surface.
+        # Verify every old predicate remains intact before exercising that surface;
+        # new identity propagation has separate shipped-probe and native coverage.
+        original = (ROOT / "tests/fixtures/deepen-identity-admission/125-legacy-check.sh").read_text()
+        objectives = Catalog().quests[number]["stages"][0]["objectives"]
+        for index, part in enumerate(original.split("(\nset -e\n")[1:]):
+            body = part.split("\n)\n[ $? -eq 0 ] || failed=1\n", 1)[0]
+            current = objectives[index]["check"]
+            if index in (0, 2):
+                marker = f"DQ_LEGACY_AUTHORITY_{index}"
+                current = current.split("<<'" + marker + "'\n", 1)[1].split("\n" + marker, 1)[0]
+            assert current.rstrip() == body.rstrip()
+        source = original
+    source = source.replace("/run/dq/facts/0", str(facts))
     environment = {**os.environ, "HOME": str(home), "PATH": f'{binaries}:{os.environ["PATH"]}', "DQ_NAMESPACE": "test"}
     return subprocess.run(["bash", "-c", source], env=environment, text=True, capture_output=True, timeout=15)
 

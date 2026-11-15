@@ -1,45 +1,40 @@
 title: StatefulSet Identität und headless DNS
 brief: |-
-  Der Shelf-Endpunkt ist nicht verfügbar. Stellen Sie den Dienst unter Beibehaltung der Speicheridentität wieder her.
+  Der Endpunkt ist nicht verfügbar; ein unabhängiger Verbraucher benötigt die erhaltenen zustandsbehafteten Daten.
 
-  Arbeiten Sie auf der Workstation in `~/quest` mit den bereitgestellten Dateien:
-  - `shelf.yaml`, `service.yaml`.
+  Arbeite auf der Workstation in `~/quest` mit den vorgegebenen Verbindungs-/Ergebniseingaben: `discovery-contract.json`. Die Workload-Definitionen stehen in aktuellen Clusterobjekten.
 
-  **Requirements:**
+  **Anforderungen:**
 
   - Das vorhandene StatefulSet und der Daten-Claim behalten ihre Identität; der Ersatz-Pod nutzt den ursprünglichen steuernden Service und nur das vorhandene Daten-Volume unter `/data` im Anwendungscontainer.
   - StatefulSet `shelf` hat ein bereites Replikat.
   - Der steuernde Service ermöglicht stabile ordinale Erkennung nur für den bereitgestellten shelf-Workload, ohne virtuelle IP.
-  - Im Pod `shelf-0` wird der ordinale DNS-Name `shelf-0.shelf` aufgelöst und `http://shelf-0.shelf:8080` liefert `ledger-111`.
+  - Im Pod `shelf-0` wird der ordinale DNS-Name `shelf-0.shelf` aufgelöst und `http://shelf-0.shelf:8080` liefert `ledger-111`. Konstruiere das im Vertrag beschriebene Verbraucher-Deployment mit einem bereiten Pod und dem vorgegebenen Image. Aus seinem Anwendungscontainer funktionieren ordinales DNS und die ursprüngliche Quellschnittstelle; seine lokale HTTP-Schnittstelle liefert die deklarierte Quellantwort. Der Verbraucher mountet den ursprünglichen Daten-Claim nicht.
 
-  Die Prüfungen betreffen Identität, Mount-Konfiguration und Antwort, nicht alle Ledger-Inhalte oder den Änderungsverlauf; das lokale Übungsvolume ist kein externes Backup.
-debrief: Die Prüfungen beobachteten ursprüngliche StatefulSet- und PVC-UIDs, Ersatz-Pod, ordinale Abfrage
-  und Antwort.
-stages.0.brief: Bewahren Sie die ursprünglichen Speicher- und Controller-Identitäten beim Ersetzen des
-  Pods.
-hints.0.text: Pod identity und claim identity haben unterschiedliche Lebensdauern.
+  Prüfungen beobachten aktuelle Identität, Mounts, DNS und Antworten, keinen Anfragenverlauf oder externe Datensicherung.
+debrief: Ein stabiles Ordinal verbindet Discovery mit zustandsbehafteter Identität. Listener-Reparatur konstruiert
+  keinen unabhängigen Verbraucher; Prozessersatz erzeugt erhaltene Daten nicht neu.
+stages.0.brief: Bewahren Sie die ursprünglichen Speicher- und Controller-Identitäten beim Ersetzen des Pods.
+hints.0.text: Speicheridentität, ein bereiter Prozess und ein funktionierender Listener sind verschiedene Beobachtungen.
+  Ordinale Auflösung muss auch aus einem unabhängigen Verbraucher funktionieren.
 hints.1.text: |-
-  Der kopflose Service sorgt für einen stabilen ordinal DNS.
-
-  Prüfen Sie die bereitgestellten Eingaben und laufenden Beobachtungen:
+  Prüfe den vorhandenen Stateful-Workload, seinen governing Service, Daten-Claim und Resolver. Der Vertrag beschreibt den zu konstruierenden Verbraucher; anfangs existiert er nicht.
 
   ```sh
-  kubectl get statefulset shelf -o yaml
-    kubectl get pvc ledger-shelf-0 -o yaml
-    kubectl get pod shelf-0 -o yaml
-    cat original-statefulset-uid original-pvc-uid original-pod-uid
-    kubectl get service shelf -o yaml
+  cat discovery-contract.json
+  kubectl get statefulset,pvc,service,pods -o yaml
+  kubectl describe pod shelf-0
+  kubectl exec shelf-0 -c worker -- cat /etc/resolv.conf
   ```
-hints.2.text: 'Reparieren Sie den Vorlagen-Listener und warten Sie auf den Rollout von StatefulSet. Korrigieren Sie den Listener auf Port `8080` und warten Sie auf den Ersatz; StatefulSet und Claim behalten ihre Identität, der Pod wechselt.
+hints.2.text: |-
+  Prüfe erhaltene Quellidentitäten und Bereitschaft, danach ordinale A-Auflösung, entfernte Antwort und lokale Veröffentlichung aus dem Verbraucher.
 
-
-  Prüfen Sie das Ergebnis in `~/quest` auf der Workstation:
-
-
-  - `kubectl exec shelf-0 -c worker -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."` — Der ordinale DNS-Name wird in `shelf-0` aufgelöst.
-
-
-  - `kubectl exec shelf-0 -c worker -- wget -qO- -T 3 http://shelf-0.shelf:8080` — Der Shelf-Verbraucher erhält `ledger-111`.'
+  ```sh
+  fqdn="shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."
+  kubectl exec deployment/inspector -c worker -- nslookup -type=A "$fqdn"
+  kubectl exec deployment/inspector -c worker -- wget -qO- -T 3 "http://$fqdn:8080"
+  kubectl exec deployment/inspector -c worker -- wget -qO- -T 3 http://127.0.0.1:8080
+  ```
 phrases.0: Ich habe den ordinal claim beim Austausch erhalten.
 phrases.1: Ich prüfte ordinales DNS und die HTTP-Antwort.
 phrases.2: Ich habe die Persistenz vom Backup getrennt.
@@ -59,13 +54,25 @@ diagnostics.clusterip: service/shelf clusterIP muss None entsprechen.
 diagnostics.selector: Service shelf muss die gesamte bereitgestellte Workload shelf und keine andere auswählen.
 diagnostics.http: shelf-0.shelf:8080 muss ledger-111 entsprechen.
 diagnostics.dns: nslookup shelf-0.shelf muss erfolgreich sein.
-stages.0.objectives.0.text: Das vorhandene StatefulSet und der Daten-Claim behalten ihre Identität; der
-  Ersatz-Pod nutzt den ursprünglichen steuernden Service und nur das vorhandene Daten-Volume unter `/data`
-  im Anwendungscontainer.
+stages.0.objectives.0.text: Das vorhandene StatefulSet und der Daten-Claim behalten ihre Identität; der Ersatz-Pod
+  nutzt den ursprünglichen steuernden Service und nur das vorhandene Daten-Volume unter `/data` im Anwendungscontainer.
 stages.0.objectives.1.text: StatefulSet `shelf` hat ein bereites Replikat.
 stages.0.objectives.2.text: Der steuernde Service ermöglicht stabile ordinale Erkennung nur für den bereitgestellten
   shelf-Workload, ohne virtuelle IP.
-stages.0.objectives.3.text: Im Pod `shelf-0` wird der ordinale DNS-Name `shelf-0.shelf` aufgelöst und
-  `http://shelf-0.shelf:8080` liefert `ledger-111`.
+stages.0.objectives.3.text: Im Pod `shelf-0` wird der ordinale DNS-Name `shelf-0.shelf` aufgelöst und `http://shelf-0.shelf:8080`
+  liefert `ledger-111`. Konstruiere das im Vertrag beschriebene Verbraucher-Deployment mit einem bereiten Pod und
+  dem vorgegebenen Image. Aus seinem Anwendungscontainer funktionieren ordinales DNS und die ursprüngliche Quellschnittstelle;
+  seine lokale HTTP-Schnittstelle liefert die deklarierte Quellantwort. Der Verbraucher mountet den ursprünglichen
+  Daten-Claim nicht.
 diagnostics.probe_0_2: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: Der steuernde Service
   ermöglicht stabile ordinale Erkennung nur für den bereitgestellten shelf-Workload, ohne virtuelle IP.'
+diagnostics.discovery_consumer: Der unabhängige Verbraucher braucht einen aktuellen eigenen bereiten Pod mit dem
+  vorgegebenen Image.
+diagnostics.discovery_network: Der Netzwerkverbraucher darf den ursprünglichen Daten-Claim auch über Initialisierer
+  oder andere Container nicht mounten.
+diagnostics.discovery_dns: Ordinale A-Auflösung muss aus dem Verbraucher im aktuellen Namespace funktionieren; prüfe
+  governing Service und Resolver-Suffix.
+diagnostics.discovery_source: Die erhaltene ordinale Quelle muss dem Verbraucher die deklarierte Antwort liefern.
+diagnostics.discovery_publication: Die lokale HTTP-Veröffentlichung des Verbrauchers muss der Quellantwort entsprechen;
+  Bereitschaft allein reicht nicht.
+diagnostics.probe_0_3: Aktuelle Eingaben konnten diese Bedingung nicht bestätigen; prüfe Objektstatus und Vertrag.

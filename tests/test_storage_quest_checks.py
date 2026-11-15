@@ -9,7 +9,7 @@ import subprocess
 
 import pytest
 
-from devops_quests.catalog import ROOT
+from devops_quests.catalog import ROOT, Catalog
 
 
 def run_check(tmp_path, number, stage, kubectl, facts, *, tar=None, archive=None):
@@ -27,7 +27,22 @@ def run_check(tmp_path, number, stage, kubectl, facts, *, tar=None, archive=None
         path = bin_dir / name
         path.write_text('#!/bin/bash\n' + script)
         path.chmod(0o755)
-    source = (ROOT / f'quests/{number}/check-{stage}.sh').read_text().replace('/run/dq/facts/0', str(fact_dir))
+    source = (ROOT / f'quests/{number}/check-{stage}.sh').read_text()
+    if number == '111' and stage == 0:
+        # This fixture tests the original StatefulSet/PVC/replacement relation.
+        # Retain all positive and negative cases and assert every old condition
+        # still ships; the added network consumer has separate full/native tests.
+        original = (ROOT / "tests/fixtures/deepen-identity-admission/111-legacy-check.sh").read_text()
+        objectives = Catalog().quests[111]["stages"][0]["objectives"]
+        for index, part in enumerate(original.split("(\nset -e\n")[1:]):
+            body = part.split("\n)\n[ $? -eq 0 ] || failed=1\n", 1)[0]
+            current = objectives[index]["check"]
+            if index == 3:
+                marker = "DQ_LEGACY_DISCOVERY_3"
+                current = current.split("<<'" + marker + "'\n", 1)[1].split("\n" + marker, 1)[0]
+            assert current.rstrip() == body.rstrip()
+        source = original
+    source = source.replace('/run/dq/facts/0', str(fact_dir))
     environment = {**os.environ, 'HOME': str(home), 'PATH': f'{bin_dir}:{os.environ["PATH"]}', 'DQ_NAMESPACE': 'test'}
     return subprocess.run(['bash', '-c', source], capture_output=True, text=True, env=environment, timeout=10)
 

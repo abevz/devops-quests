@@ -91,6 +91,12 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_DISCOVERY_3'
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -101,6 +107,102 @@ pod=$(kubectl get pod shelf-0 -o json 2>/dev/null || true)
 if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s shelf-0 -c worker -- wget -qO- -T 3 http://shelf-0.shelf:8080 2>/dev/null)" = ledger-111; then printf '%s\n' 'shelf-0.shelf:8080 = ledger-111: ✗ [DQ:http]'; failed=1; fi
 if ! timeout 4s kubectl exec --pod-running-timeout=2s shelf-0 -c worker -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local." >/dev/null 2>&1; then printf '%s\n' 'shelf-0.shelf ordinal DNS lookup succeeds: ✗ [DQ:dns]'; failed=1; fi
 exit "$failed"
+DQ_LEGACY_DISCOVERY_3
+python3 -I - <<'DQ_DISCOVERY_CONSUMER'
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from dq_check import current_pods, named, pod_worker
+
+failed = False
+deadline = time.monotonic() + 10
+
+def require(value, marker):
+    global failed
+    if not value:
+        print('Ordinal consumption condition is unmet: ✗ [DQ:' + marker + ']')
+        failed = True
+
+def command(args, marker):
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError('Observation budget exhausted')
+        result = subprocess.run(args, capture_output=True, text=True, timeout=min(6, remaining))
+        if result.returncode:
+            raise ValueError('Observation failed')
+        return result.stdout
+    except (OSError, ValueError, subprocess.SubprocessError):
+        print('Current ordinal observation is unavailable: ✗ [DQ:' + marker + ']')
+        sys.exit(1)
+
+def get(kind, name, marker):
+    try:
+        return json.loads(command(['kubectl', 'get', kind] + ([name] if name else []) + ['-o', 'json'], marker))
+    except ValueError:
+        require(False, marker)
+        sys.exit(1)
+
+facts = json.loads(Path('/run/dq/facts/0/discovery-identities.json').read_text())
+contract = facts['contract']
+deployment = get('deployment', contract['consumer'], 'discovery_consumer')
+sets = get('replicasets', '', 'discovery_consumer')
+pods = get('pods', '', 'discovery_consumer')
+try:
+    current = current_pods(deployment, sets, pods)
+    valid = (deployment['spec'].get('replicas') == 1
+             and deployment.get('status', {}).get('readyReplicas') == 1
+             and len(current) == 1)
+    for pod in current:
+        worker = pod_worker(pod)
+        status = named(pod.get('status', {}).get('containerStatuses', []), contract['container'])
+        digest = facts['image'].partition('@')[2]
+        image = worker.get('image')
+        valid = valid and (
+            pod.get('status', {}).get('phase') == 'Running'
+            and status.get('ready') is True
+            and isinstance(status.get('state', {}).get('running'), dict)
+            and (image == facts['image'] or bool(digest) and isinstance(image, str)
+                 and image.partition('@')[2] == digest)
+        )
+        volumes = {v['name']: v for v in pod['spec'].get('volumes', [])}
+        source_volumes = {name for name, volume in volumes.items()
+                          if volume.get('persistentVolumeClaim', {}).get('claimName')
+                          == facts['source']['claim']}
+        mounted = any(mount.get('name') in source_volumes
+                      for container in pod['spec'].get('containers', []) + pod['spec'].get('initContainers', [])
+                      for mount in container.get('volumeMounts', []))
+        require(not mounted, 'discovery_network')
+except (KeyError, TypeError, ValueError, AttributeError):
+    valid, current = False, []
+require(valid, 'discovery_consumer')
+hostname = facts['source']['pod'] + '.' + facts['source']['service'] + '.' + os.environ['DQ_NAMESPACE'] + '.svc.cluster.local'
+for pod in current:
+    prefix = ['kubectl', 'exec', '--pod-running-timeout=2s', pod['metadata']['name'],
+              '-c', contract['container'], '--']
+    command(prefix + ['nslookup', '-type=A', hostname + '.'], 'discovery_dns')
+    source = command(prefix + ['wget', '-qO-', '-T', '3',
+                              'http://' + hostname + ':' + str(contract['port'])], 'discovery_source')
+    require(source.rstrip('\n') == contract['response'], 'discovery_source')
+    published = command(prefix + ['wget', '-qO-', '-T', '3',
+                                 'http://127.0.0.1:' + str(contract['port'])], 'discovery_publication')
+    require(published.rstrip('\n') == contract['response'], 'discovery_publication')
+sys.exit(int(failed))
+DQ_DISCOVERY_CONSUMER
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_3]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

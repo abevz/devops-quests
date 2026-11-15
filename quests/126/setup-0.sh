@@ -31,8 +31,8 @@ spec:
         - '3600'
         resources:
           requests:
-            cpu: 10m
-            memory: 8Mi
+            cpu: 150m
+            memory: 16Mi
           limits:
             cpu: 200m
             memory: 32Mi
@@ -153,3 +153,41 @@ from pathlib import Path
 p=Path(sys.argv[1]);p.write_text(p.read_text().replace('__DQ_APP_IMAGE__',os.environ['DQ_APP_IMAGE']))
 DQ_IMAGE
 kubectl apply -f service.yaml
+
+cat > admission-contract.json <<'DQ_ADMISSION_CONTRACT'
+{
+  "schema": 1,
+  "quota": "station",
+  "defaults": "defaults",
+  "workloads": [
+    "client",
+    "board"
+  ],
+  "replicas": 1,
+  "admitted": {
+    "requests": {
+      "cpu": "100m",
+      "memory": "16Mi"
+    },
+    "limits": {
+      "cpu": "200m",
+      "memory": "32Mi"
+    }
+  },
+  "templatesUseDefaults": true,
+  "preserveQuotaAndWorkloads": true
+}
+DQ_ADMISSION_CONTRACT
+python3 -I - <<'DQ_ADMISSION_FACTS'
+import json,subprocess
+from pathlib import Path
+contract=json.loads(Path('admission-contract.json').read_text())
+identities={};images={}
+for kind,name in [('resourcequota',contract['quota'])]+[('deployment',name) for name in contract['workloads']]:
+    value=json.loads(subprocess.check_output(['kubectl','get',kind,name,'-o','json'],text=True))
+    identities[kind+'/'+name]=value['metadata']['uid']
+    if kind=='deployment':
+        images[name]=next(c['image'] for c in value['spec']['template']['spec']['containers'] if c['name']=='worker')
+Path('admission-identities.json').write_text(json.dumps({'contract':contract,'identities':identities,'images':images})+'\n')
+DQ_ADMISSION_FACTS
+rm -f client.yaml quota.yaml defaults.yaml board.yaml service.yaml

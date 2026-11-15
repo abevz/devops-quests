@@ -1,41 +1,40 @@
 title: Wstęp kwotowy i LimitRange
 brief: |-
-  Obciążenie board nie osiąga gotowości w budżecie admission. Przywróć wymagane dopuszczone zasoby bez zmiany dostarczonej kwoty.
+  Obciążenia nie osiągają wymaganego przyjętego stanu we wspólnym budżecie. Przywróć obu odbiorców bez zastępowania podanej kwoty.
 
-  Pracuj na workstation w `~/quest` z dostarczonymi plikami:
-  - `client.yaml`, `quota.yaml`, `defaults.yaml`, `board.yaml`, `service.yaml`.
+  Pracuj na workstation w `~/quest` z podanymi danymi połączenia/wyniku: `admission-contract.json`. Definicje obciążeń są dostępne w bieżących obiektach klastra.
 
-  **Requirements:**
+  **Wymagania:**
 
-  - Zachowaj uzgodniony budżet zasobów:
-    - ResourceQuota `station` zachowuje dostarczony budżet: żądania CPU `200m`, limity CPU `400m`, żądania pamięci `32Mi`, limity pamięci `64Mi` i `2` Pody.
-  - Dostarczone domyślne ustawienia admission zapewniają wymagany budżet CPU aplikacji board bez jawnego budżetu zasobów w szablonie Deployment.
-  - Deployment `board` ma jedną gotową replikę i niekończony Pod z gotowym kontenerem, żądaniem/limitem CPU `100m`/`200m` i żądaniem/limitem pamięci `16Mi`/`32Mi`, wszystko w tym samym Podzie.
+  - ResourceQuota `station` zachowuje dostarczony budżet: żądania CPU `200m`, limity CPU `400m`, żądania pamięci `32Mi`, limity pamięci `64Mi` i `2` Pody.
+  - Dostarczone domyślne ustawienia admission zapewniają wymagany budżet CPU aplikacji board bez jawnego budżetu zasobów w szablonie Deployment. Ta polityka domyślnego CPU i brak jawnych budżetów zasobów dotyczą obu szablonów Deployment. Zachowaj pierwotne tożsamości, obrazy i po jednej docelowej replice oraz pierwotną tożsamość kwoty.
+  - Deployment `board` ma jedną gotową replikę i niekończony Pod z gotowym kontenerem, żądaniem/limitem CPU `100m`/`200m` i żądaniem/limitem pamięci `16Mi`/`32Mi`, wszystko w tym samym Podzie. Drugie podane obciążenie także ma dokładnie jeden bieżący gotowy Pod z tymi samymi przyjętymi budżetami CPU i pamięci. Zużycie kwoty namespace odpowiada dwóm uzgodnionym budżetom odbiorców.
   - Z Deployment `client` adres `http://board:8080` zwraca `north-126`.
 
-  Kontrola sprawdza pamięć dopuszczonego Poda, nie bieżące domyślne wartości pamięci LimitRange ani historię zmian; kwota admission nie tworzy pojemności węzła.
-debrief: Niedotrzymana polisa została naprawiona w ramach budżetu namespace; Pojemność scheduler pozostała
-  odrębnym ograniczeniem.
+  Testy obserwują bieżącą tożsamość/zużycie kwoty, CPU defaults i przyjętą pamięć, nie defaults pamięci ani historię. Nie deklarują ciągłej dostępności.
+debrief: Polityka defaults, przyjęte zasoby Podów i zastępowanie przez kontroler mają osobne czasy życia. Propaguj
+  model CPU przez obu odbiorców świadomą kolejnością budżetu zamiast powiększania kwoty.
 stages.0.brief: Zachowaj dostarczoną kwotę bez zmian.
-hints.0.text: Przeczytaj zdarzenia ReplicaSet, aby odróżnić odmowę przyjęcia od Pending scheduling.
+hints.0.text: Admission uwzględnia wszystkich bieżących odbiorców. Defaults dotyczą nowych przyjęć; zastąpienie
+  lub surge może wymagać budżetu, zanim stary Pod go zwolni.
 hints.1.text: |-
-  LimitRange dostarcza defaults, zanim ResourceQuota oceni zużycie. Dostarczone domyślne CPU to żądanie `300m` i limit `400m`, przekraczające stałą kwotę. Wartości domyślne dotyczą nowo dopuszczanych Podów, nie istniejących.
+  Porównaj zużycie kwoty, defaults, przyjęte zasoby i komunikaty warunków ReplicaSet. Samo czekanie nie zmienia niezgodnego budżetu.
 
-  Sprawdź dostarczone dane i bieżące obserwacje:
+  ```sh
+  cat admission-contract.json
+  kubectl get resourcequota,limitrange,deployment,pods -o yaml
+  kubectl get replicasets -o yaml
+  kubectl describe resourcequota station
+  ```
+hints.2.text: |-
+  Sprawdź pierwotną kwotę, oba szablony oparte na defaults, oba bieżące zestawy przyjętych zasobów i odpowiedź. Zużycie ma odpowiadać obu odbiorcom.
 
   ```sh
   kubectl get resourcequota station -o yaml
-    kubectl get limitrange defaults -o yaml
-    kubectl get deployment board -o yaml
+  kubectl get deployment client board -o yaml
+  kubectl get pods -o yaml
+  kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://board:8080
   ```
-hints.2.text: |-
-  Napraw defaults, ponów próbę wdrożenia i sprawdź zasoby Pod, a nie tylko jego szablon.
-
-  Sprawdź wynik z `~/quest` na workstation:
-
-  - `kubectl get pods -l app=board -o yaml` — Jeden niekończony Pod ma jednocześnie wymagane zasoby i gotowy kontener.
-
-  - `kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080` — Odbiorca otrzymuje `north-126`.
 phrases.0: Rozróżniłem niepowodzenie przyjęcia od niepowodzenia scheduling.
 phrases.1: Sprawdziłem zasoby po domyślnym.
 phrases.2: Zachowałem limit przestrzeni nazw.
@@ -50,25 +49,30 @@ diagnostics.default: Domyślny limit CPU LimitRange defaults musi wynosić 200m.
 diagnostics.request: Domyślne żądanie CPU LimitRange defaults musi wynosić 100m.
 diagnostics.ready: Deployment board musi mieć jedną gotową replikę.
 diagnostics.template: Szablon worker w board nie może mieć jawnego budżetu zasobów.
-diagnostics.pod_requests: Pod board nieoznaczony do usunięcia musi mieć dokładne żądania CPU i pamięci
-  z opisu.
-diagnostics.pod_limits: Pod board nieoznaczony do usunięcia musi mieć dokładne limity CPU i pamięci z
-  opisu.
+diagnostics.pod_requests: Pod board nieoznaczony do usunięcia musi mieć dokładne żądania CPU i pamięci z opisu.
+diagnostics.pod_limits: Pod board nieoznaczony do usunięcia musi mieć dokładne limity CPU i pamięci z opisu.
 diagnostics.pod_ready: Pod board nieoznaczony do usunięcia musi mieć gotowy kontener.
-diagnostics.same_pod: Jeden Pod board nieoznaczony do usunięcia musi mieć wszystkie wymagane zasoby i
-  gotowy kontener.
+diagnostics.same_pod: Jeden Pod board nieoznaczony do usunięcia musi mieć wszystkie wymagane zasoby i gotowy kontener.
 diagnostics.http: board:8080 musi zwrócić north-126.
-stages.0.objectives.0.text: 'ResourceQuota `station` zachowuje dostarczony budżet: żądania CPU `200m`,
-  limity CPU `400m`, żądania pamięci `32Mi`, limity pamięci `64Mi` i `2` Pody.'
-stages.0.objectives.1.text: Dostarczone domyślne ustawienia admission zapewniają wymagany budżet CPU aplikacji
-  board bez jawnego budżetu zasobów w szablonie Deployment.
-stages.0.objectives.2.text: Deployment `board` ma jedną gotową replikę i niekończony Pod z gotowym kontenerem,
-  żądaniem/limitem CPU `100m`/`200m` i żądaniem/limitem pamięci `16Mi`/`32Mi`, wszystko w tym samym Podzie.
+stages.0.objectives.0.text: 'ResourceQuota `station` zachowuje dostarczony budżet: żądania CPU `200m`, limity CPU
+  `400m`, żądania pamięci `32Mi`, limity pamięci `64Mi` i `2` Pody.'
+stages.0.objectives.1.text: Dostarczone domyślne ustawienia admission zapewniają wymagany budżet CPU aplikacji board
+  bez jawnego budżetu zasobów w szablonie Deployment. Ta polityka domyślnego CPU i brak jawnych budżetów zasobów
+  dotyczą obu szablonów Deployment. Zachowaj pierwotne tożsamości, obrazy i po jednej docelowej replice oraz pierwotną
+  tożsamość kwoty.
+stages.0.objectives.2.text: Deployment `board` ma jedną gotową replikę i niekończony Pod z gotowym kontenerem, żądaniem/limitem
+  CPU `100m`/`200m` i żądaniem/limitem pamięci `16Mi`/`32Mi`, wszystko w tym samym Podzie. Drugie podane obciążenie
+  także ma dokładnie jeden bieżący gotowy Pod z tymi samymi przyjętymi budżetami CPU i pamięci. Zużycie kwoty namespace
+  odpowiada dwóm uzgodnionym budżetom odbiorców.
 stages.0.objectives.3.text: Z Deployment `client` adres `http://board:8080` zwraca `north-126`.
 diagnostics.probe_0_0: 'Bieżące dane nie pozwalają potwierdzić tego celu: ResourceQuota `station` zachowuje dostarczony
   budżet: żądania CPU `200m`, limity CPU `400m`, żądania pamięci `32Mi`, limity pamięci `64Mi` i `2` Pody.'
-diagnostics.probe_0_1: 'Bieżące dane nie pozwalają potwierdzić tego celu: Dostarczone domyślne ustawienia admission
-  zapewniają wymagany budżet CPU aplikacji board bez jawnego budżetu zasobów w szablonie Deployment.'
-diagnostics.probe_0_2: 'Bieżące dane nie pozwalają potwierdzić tego celu: Deployment `board` ma jedną gotową replikę
-  i niekończony Pod z gotowym kontenerem, żądaniem/limitem CPU `100m`/`200m` i żądaniem/limitem pamięci `16Mi`/`32Mi`,
-  wszystko w tym samym Podzie.'
+diagnostics.probe_0_1: Bieżące dane nie potwierdzają tego warunku; sprawdź stan obiektów i kontrakt.
+diagnostics.probe_0_2: Bieżące dane nie potwierdzają tego warunku; sprawdź stan obiektów i kontrakt.
+diagnostics.admission_identity: Zmieniono pierwotne obciążenie, tożsamość sterującą lub obraz; zachowaj podane komponenty.
+diagnostics.admission_template: Oba zachowane obciążenia wymagają jednej docelowej repliki, podanych obrazów i pustych
+  jawnych budżetów aplikacji dla CPU defaults.
+diagnostics.admission_client: Drugie obciążenie wymaga jednego bieżącego własnego gotowego Poda z CPU 100m/200m
+  i pamięcią 16Mi/32Mi; defaults nie przepisują starych Podów.
+diagnostics.admission_usage: 'Zużycie kwoty ma odpowiadać dwóm odbiorcom: CPU requests 200m, limits 400m, pamięć
+  requests 32Mi, limits 64Mi i 2 Pody.'

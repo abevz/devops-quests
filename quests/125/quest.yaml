@@ -8,6 +8,12 @@ stages:
   objectives:
   - text: stages.0.objectives.0.text
     check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
+      timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_AUTHORITY_0'
       set -euo pipefail
       cd ~/quest
       failed=0
@@ -18,38 +24,354 @@ stages:
       binding=$(timeout 2s kubectl get rolebinding station-reader -o json 2>/dev/null || true)
       if ! jq -e --arg ns "$DQ_NAMESPACE" '.subjects | type=="array" and length>0 and all(.[]; (.kind=="ServiceAccount" and .name=="controller" and (.namespace==null or .namespace=="" or .namespace==$ns) and (.apiGroup==null or .apiGroup=="")) or (.kind=="User" and .name==("system:serviceaccount:"+$ns+":controller") and (.apiGroup==null or .apiGroup=="" or .apiGroup=="rbac.authorization.k8s.io") and (.namespace==null or .namespace=="")))' <<<"$binding" >/dev/null 2>&1; then printf '%s\n' 'rolebinding/station-reader subjects = controller in bay namespace: ✗ [DQ:binding]'; failed=1; fi
       exit "$failed"
+      DQ_LEGACY_AUTHORITY_0
+      python3 -I - <<'DQ_AUTHORITY_POLICY'
+      import base64
+      import json
+      import os
+      import re
+      import ssl
+      import subprocess
+      import sys
+      import time
+      import urllib.error
+      import urllib.request
+      from pathlib import Path
+
+      from dq_check import current_pods, named, pod_worker, workload_worker
+
+      failed = False
+      deadline = time.monotonic() + 10
+      namespace = os.environ['DQ_NAMESPACE']
+
+      def require(value, marker):
+          global failed
+          if not value:
+              print('Authority propagation condition is unmet: ✗ [DQ:' + marker + ']')
+              failed = True
+
+      def remaining():
+          value = deadline - time.monotonic()
+          if value <= 0:
+              raise ValueError('Authority observation budget exhausted')
+          return value
+
+      def command(args, marker):
+          try:
+              result = subprocess.run(args, capture_output=True, text=True, timeout=min(6, remaining()))
+              if result.returncode:
+                  raise ValueError('API observation failed')
+              return result.stdout
+          except (OSError, ValueError, subprocess.SubprocessError):
+              print('Current authority observation is unavailable: ✗ [DQ:' + marker + ']')
+              sys.exit(1)
+
+      def get(kind, marker):
+          try:
+              return json.loads(command(['kubectl', 'get', kind, '-o', 'json'], marker)).get('items', [])
+          except (ValueError, TypeError, AttributeError):
+              print('Current authority observation is invalid: ✗ [DQ:' + marker + ']')
+              sys.exit(1)
+
+      def resource(items, name):
+          found = [item for item in items if item.get('metadata', {}).get('name') == name]
+          if len(found) != 1:
+              raise ValueError('Resource identity')
+          return found[0]
+
+      def same_image(actual, expected):
+          digest = expected.partition('@')[2]
+          return actual == expected or (
+              bool(digest) and isinstance(actual, str) and actual.partition('@')[2] == digest
+          )
+
+      facts = json.loads(Path('/run/dq/facts/0/authority-identities.json').read_text())
+      contract = facts['contract']
+      deployments = get('deployments', 'authority_actors')
+      accounts = get('serviceaccounts', 'authority_actors')
+      roles = get('roles', 'authority_grants')
+      bindings = get('rolebindings', 'authority_grants')
+      for key, uid in facts['identities'].items():
+          kind, name = key.split('/')
+          try:
+              document = resource(deployments if kind == 'deployment' else accounts, name)
+              valid = document['metadata']['uid'] == uid
+              if kind == 'deployment':
+                  valid = valid and same_image(workload_worker(document).get('image'), facts['images'][name])
+                  if name in facts['originalAccounts']:
+                      valid = valid and document['spec']['template']['spec'].get('serviceAccountName') == facts['originalAccounts'][name]
+          except (KeyError, ValueError, TypeError, AttributeError):
+              valid = False
+          require(valid, 'authority_identity')
+
+      def exact(value, expected):
+          return isinstance(value, list) and all(isinstance(x, str) for x in value) and set(value) == set(expected)
+
+      def permitted(role, record):
+          rules = role.get('rules', [])
+          return bool(rules) and all(
+              isinstance(rule, dict)
+              and exact(rule.get('apiGroups'), [''])
+              and exact(rule.get('resources'), ['configmaps'])
+              and exact(rule.get('resourceNames'), [record])
+              and exact(rule.get('verbs'), ['get'])
+              and not rule.get('nonResourceURLs')
+              for rule in rules
+          )
+
+      def matches(subject, account):
+          kind, name = subject.get('kind'), subject.get('name')
+          if kind == 'ServiceAccount':
+              return name == account and subject.get('namespace') in (None, '', namespace)
+          if kind == 'User':
+              return name == 'system:serviceaccount:' + namespace + ':' + account
+          if kind == 'Group':
+              return name in ('system:authenticated', 'system:serviceaccounts',
+                              'system:serviceaccounts:' + namespace)
+          return False
+
+      selected = []
+      for consumer in contract['consumers']:
+          try:
+              document = resource(deployments, consumer['deployment'])
+              spec = document['spec']['template']['spec']
+              account = spec.get('serviceAccountName', 'default')
+              selected.append(account)
+              account_object = resource(accounts, account)
+              require(account not in contract['reservedServiceAccounts'], 'authority_split')
+              require(spec.get('automountServiceAccountToken') is False or (
+                  spec.get('automountServiceAccountToken') is None
+                  and account_object.get('automountServiceAccountToken') is False), 'authority_projection')
+              relevant = [binding for binding in bindings
+                          if any(matches(subject, account) for subject in binding.get('subjects', []))]
+              require(bool(relevant), 'authority_grants')
+              for binding in relevant:
+                  reference = binding.get('roleRef', {})
+                  valid = reference.get('kind') == 'Role'
+                  if valid:
+                      valid = permitted(resource(roles, reference.get('name')), consumer['configMap'])
+                  require(valid, 'authority_grants')
+          except (KeyError, ValueError, TypeError, AttributeError):
+              require(False, 'authority_grants')
+      require(len(selected) == len(contract['consumers']) and len(set(selected)) == len(selected),
+              'authority_split')
+      sys.exit(int(failed))
+      DQ_AUTHORITY_POLICY
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+       printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
   - text: stages.0.objectives.1.text
     keep: true
-    check: "set -euo pipefail\ncd ~/quest\nfailed=0\numask 077\nscratch=$(mktemp -d)\ntrap 'rm -rf \"$scratch\"\
-      ' EXIT\napi=$(cat /run/dq/facts/0/api-endpoint 2>/dev/null || true)\nrequest() {\n  local credential=$1 path=$2\
-      \ output=$3\n  if ! [[ \"$credential\" =~ ^[A-Za-z0-9._-]+$ ]] || ! test -n \"$api\"; then return 1; fi\n\
-      \  printf 'header = \"Authorization: Bearer %s\"\\n' \"$credential\" | timeout 2s curl --config - --cacert\
-      \ /run/dq/facts/0/api-ca.pem -sS -o \"$output\" -w '%{http_code}' \"$api/api/v1/namespaces/$DQ_NAMESPACE/$path\"\
-      \ 2>/dev/null\n}\ncontroller=$(timeout 2s kubectl exec --pod-running-timeout=2s deployment/controller -- cat\
-      \ /credential/token 2>/dev/null || true)\nstatus=$(request \"$controller\" configmaps/route \"$scratch/route\"\
-      \ || true)\nif ! test \"$status\" = 200; then printf '%s\\n' 'controller GET configmaps/route status = 200:\
-      \ ✗ [DQ:allowed]'; failed=1; fi\nif ! jq -e '.data.route==\"north-125\"' \"$scratch/route\" >/dev/null 2>&1;\
-      \ then printf '%s\\n' 'controller route data = north-125: ✗ [DQ:value]'; failed=1; fi\nexit \"$failed\"\n"
+    check: |
+      set -euo pipefail
+      cd ~/quest
+      failed=0
+      umask 077
+      scratch=$(mktemp -d)
+      trap 'rm -rf "$scratch"' EXIT
+      api=$(cat /run/dq/facts/0/api-endpoint 2>/dev/null || true)
+      request() {
+        local credential=$1 path=$2 output=$3
+        if ! [[ "$credential" =~ ^[A-Za-z0-9._-]+$ ]] || ! test -n "$api"; then return 1; fi
+        printf 'header = "Authorization: Bearer %s"\n' "$credential" | timeout 2s curl --config - --cacert /run/dq/facts/0/api-ca.pem -sS -o "$output" -w '%{http_code}' "$api/api/v1/namespaces/$DQ_NAMESPACE/$path" 2>/dev/null
+      }
+      controller=$(timeout 2s kubectl exec --pod-running-timeout=2s deployment/controller -- cat /credential/token 2>/dev/null || true)
+      status=$(request "$controller" configmaps/route "$scratch/route" || true)
+      if ! test "$status" = 200; then printf '%s\n' 'controller GET configmaps/route status = 200: ✗ [DQ:allowed]'; failed=1; fi
+      if ! jq -e '.data.route=="north-125"' "$scratch/route" >/dev/null 2>&1; then printf '%s\n' 'controller route data = north-125: ✗ [DQ:value]'; failed=1; fi
+      exit "$failed"
   - text: stages.0.objectives.2.text
-    check: "set -euo pipefail\ncd ~/quest\nfailed=0\numask 077\nscratch=$(mktemp -d)\ntrap 'rm -rf \"$scratch\"\
-      ' EXIT\napi=$(cat /run/dq/facts/0/api-endpoint 2>/dev/null || true)\nrequest() {\n  local credential=$1 path=$2\
-      \ output=$3\n  if ! [[ \"$credential\" =~ ^[A-Za-z0-9._-]+$ ]] || ! test -n \"$api\"; then return 1; fi\n\
-      \  printf 'header = \"Authorization: Bearer %s\"\\n' \"$credential\" | timeout 2s curl --config - --cacert\
-      \ /run/dq/facts/0/api-ca.pem -sS -o \"$output\" -w '%{http_code}' \"$api/api/v1/namespaces/$DQ_NAMESPACE/$path\"\
-      \ 2>/dev/null\n}\ncontroller=$(timeout 2s kubectl exec --pod-running-timeout=2s deployment/controller -- cat\
-      \ /credential/token 2>/dev/null || true)\nobserver=$(timeout 2s kubectl exec --pod-running-timeout=2s deployment/observer\
-      \ -- cat /credential/token 2>/dev/null || true)\nfor path in configmaps configmaps/offlimits secrets secrets/control;\
-      \ do\n  status=$(request \"$controller\" \"$path\" /dev/null || true)\n  if ! test \"$status\" = 403; then\
-      \ printf '%s\\n' \"controller GET $path status = 403: ✗ [DQ:denied_${path//\\//_}]\"; failed=1; fi\ndone\n\
-      status=$(request \"$observer\" configmaps/route /dev/null || true)\nif ! test \"$status\" = 403; then printf\
-      \ '%s\\n' 'observer GET configmaps/route status = 403: ✗ [DQ:observer]'; failed=1; fi\nexit \"$failed\"\n"
+    check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
+      timeout --kill-after=1s 10s bash -euo pipefail <<'DQ_LEGACY_AUTHORITY_2'
+      set -euo pipefail
+      cd ~/quest
+      failed=0
+      umask 077
+      scratch=$(mktemp -d)
+      trap 'rm -rf "$scratch"' EXIT
+      api=$(cat /run/dq/facts/0/api-endpoint 2>/dev/null || true)
+      request() {
+        local credential=$1 path=$2 output=$3
+        if ! [[ "$credential" =~ ^[A-Za-z0-9._-]+$ ]] || ! test -n "$api"; then return 1; fi
+        printf 'header = "Authorization: Bearer %s"\n' "$credential" | timeout 2s curl --config - --cacert /run/dq/facts/0/api-ca.pem -sS -o "$output" -w '%{http_code}' "$api/api/v1/namespaces/$DQ_NAMESPACE/$path" 2>/dev/null
+      }
+      controller=$(timeout 2s kubectl exec --pod-running-timeout=2s deployment/controller -- cat /credential/token 2>/dev/null || true)
+      observer=$(timeout 2s kubectl exec --pod-running-timeout=2s deployment/observer -- cat /credential/token 2>/dev/null || true)
+      for path in configmaps configmaps/offlimits secrets secrets/control; do
+        status=$(request "$controller" "$path" /dev/null || true)
+        if ! test "$status" = 403; then printf '%s\n' "controller GET $path status = 403: ✗ [DQ:denied_${path//\//_}]"; failed=1; fi
+      done
+      status=$(request "$observer" configmaps/route /dev/null || true)
+      if ! test "$status" = 403; then printf '%s\n' 'observer GET configmaps/route status = 403: ✗ [DQ:observer]'; failed=1; fi
+      exit "$failed"
+
+      DQ_LEGACY_AUTHORITY_2
+      python3 -I - <<'DQ_AUTHORITY_REQUESTS'
+      import base64
+      import json
+      import os
+      import re
+      import ssl
+      import subprocess
+      import sys
+      import time
+      import urllib.error
+      import urllib.request
+      from pathlib import Path
+
+      from dq_check import current_pods, named, pod_worker, workload_worker
+
+      failed = False
+      deadline = time.monotonic() + 10
+      namespace = os.environ['DQ_NAMESPACE']
+
+      def require(value, marker):
+          global failed
+          if not value:
+              print('Authority propagation condition is unmet: ✗ [DQ:' + marker + ']')
+              failed = True
+
+      def remaining():
+          value = deadline - time.monotonic()
+          if value <= 0:
+              raise ValueError('Authority observation budget exhausted')
+          return value
+
+      def command(args, marker):
+          try:
+              result = subprocess.run(args, capture_output=True, text=True, timeout=min(6, remaining()))
+              if result.returncode:
+                  raise ValueError('API observation failed')
+              return result.stdout
+          except (OSError, ValueError, subprocess.SubprocessError):
+              print('Current authority observation is unavailable: ✗ [DQ:' + marker + ']')
+              sys.exit(1)
+
+      def get(kind, marker):
+          try:
+              return json.loads(command(['kubectl', 'get', kind, '-o', 'json'], marker)).get('items', [])
+          except (ValueError, TypeError, AttributeError):
+              print('Current authority observation is invalid: ✗ [DQ:' + marker + ']')
+              sys.exit(1)
+
+      def resource(items, name):
+          found = [item for item in items if item.get('metadata', {}).get('name') == name]
+          if len(found) != 1:
+              raise ValueError('Resource identity')
+          return found[0]
+
+      def same_image(actual, expected):
+          digest = expected.partition('@')[2]
+          return actual == expected or (
+              bool(digest) and isinstance(actual, str) and actual.partition('@')[2] == digest
+          )
+
+      facts = json.loads(Path('/run/dq/facts/0/authority-identities.json').read_text())
+      contract = facts['contract']
+      deployments = get('deployments', 'authority_live')
+      sets = {'items': get('replicasets', 'authority_live')}
+      pods = {'items': get('pods', 'authority_live')}
+      context = ssl.create_default_context(cafile='/run/dq/facts/0/api-ca.pem')
+      api = Path('/run/dq/facts/0/api-endpoint').read_text().strip()
+
+      def credential(name):
+          document = resource(deployments, name)
+          current = current_pods(document, sets, pods)
+          if len(current) != 1:
+              raise ValueError('Current credential owner')
+          pod = current[0]
+          status = named(pod.get('status', {}).get('containerStatuses', []), 'worker')
+          expected = document['spec']['template']['spec'].get('serviceAccountName', 'default')
+          require(document['metadata']['uid'] == facts['identities']['deployment/' + name]
+                  and pod.get('status', {}).get('phase') == 'Running'
+                  and status.get('ready') is True
+                  and pod['spec'].get('serviceAccountName', 'default') == expected
+                  and same_image(pod_worker(pod).get('image'), facts['images'][name]), 'authority_live')
+          token = command(['kubectl', 'exec', '--pod-running-timeout=2s', pod['metadata']['name'],
+                           '-c', contract['credential']['container'], '--', 'cat',
+                           contract['credential']['path']], 'authority_projection').strip()
+          if not re.fullmatch(r'[A-Za-z0-9._-]+', token):
+              raise ValueError('Credential encoding')
+          claims = json.loads(base64.urlsafe_b64decode(token.split('.')[1] + '==='))
+          require(claims.get('sub') == 'system:serviceaccount:' + namespace + ':' + expected
+                  and claims.get('kubernetes.io', {}).get('pod', {}).get('uid') == pod['metadata']['uid'],
+                  'authority_projection')
+          return token, expected
+
+      def request(token, path, key=None):
+          try:
+              document = urllib.request.Request(
+                  api + '/api/v1/namespaces/' + namespace + '/' + path,
+                  headers={'Authorization': 'Bearer ' + token},
+              )
+              with urllib.request.urlopen(document, context=context, timeout=min(2, remaining())) as response:
+                  value = json.load(response).get('data', {}).get(key) if key else None
+                  return response.status, value
+          except urllib.error.HTTPError as response:
+              status = response.code
+              response.close()
+              return status, None
+          except (OSError, ValueError, urllib.error.URLError):
+              require(False, 'authority_live')
+              return None, None
+
+      tokens = {}
+      principals = []
+      try:
+          for name in [contract['control']['deployment'], contract['observer']['deployment']] + [
+                  item['deployment'] for item in contract['consumers']]:
+              tokens[name], principal = credential(name)
+              if name not in facts['originalAccounts']:
+                  principals.append(principal)
+          require(len(set(principals)) == len(contract['consumers'])
+                  and all(name not in contract['reservedServiceAccounts'] for name in principals),
+                  'authority_split')
+          for consumer in contract['consumers']:
+              token = tokens[consumer['deployment']]
+              status, value = request(token, 'configmaps/' + consumer['configMap'], consumer['key'])
+              require(status == 200 and value == consumer['response'], 'authority_allowed')
+              forbidden = ['configmaps', 'secrets', 'configmaps/route',
+                           'configmaps/offlimits', 'secrets/control']
+              forbidden += ['configmaps/' + other['configMap'] for other in contract['consumers']
+                            if other['deployment'] != consumer['deployment']]
+              for path in forbidden:
+                  require(request(token, path)[0] == 403, 'authority_denied')
+              for original in (contract['control']['deployment'], contract['observer']['deployment']):
+                  require(request(tokens[original], 'configmaps/' + consumer['configMap'])[0] == 403,
+                          'authority_denied')
+      except (KeyError, ValueError, TypeError, AttributeError, IndexError):
+          require(False, 'authority_live')
+      sys.exit(int(failed))
+      DQ_AUTHORITY_REQUESTS
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+       printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_2]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
 hints:
 - text: hints.0.text
   guide: workload-access
 - text: hints.1.text
-  guide: workload-access
+  guide: kubernetes-20
 - text: hints.2.text
-  guide: workload-access
+  guide: kubernetes-20
 debrief: debrief
 phrases:
 - phrases.0
@@ -71,15 +393,7 @@ facts:
   - KUBECONFIG
   - TF_CLI_CONFIG_FILE
   files:
-  - controller-sa.yaml
-  - observer-sa.yaml
-  - controller.yaml
-  - observer.yaml
-  - role.yaml
-  - binding.yaml
-  - route.yaml
-  - offlimits.yaml
-  - secret.yaml
+  - authority-contract.json
   - api-ca.pem
   - api-endpoint
   services: []
@@ -90,3 +404,5 @@ immutable:
   0:
   - api-ca.pem
   - api-endpoint
+  - authority-contract.json
+  - authority-identities.json
