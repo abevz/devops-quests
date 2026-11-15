@@ -4,6 +4,14 @@ failed=0
 set +e
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+set +e
+(
+set -euo pipefail
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -18,6 +26,73 @@ done
 check label 'board controller label = station-board' '.metadata.labels["devops-quests.controller"]=="station-board"' "$board"
 exit "$failed"
 
+)
+dq_legacy_status=$?
+set -e
+if [ "$dq_legacy_status" -ne 0 ]; then
+ exit 1
+fi
+python3 -I - <<'DQ_RECONCILIATION_IDENTITY'
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from dq_check import current_pods, named, pod_worker, workload_worker
+
+failed = False
+deadline = time.monotonic() + 10
+
+def require(value, marker):
+    global failed
+    if not value:
+        print('Reconciliation condition is unmet: ✗ [DQ:' + marker + ']')
+        failed = True
+
+def command(args, marker):
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError('Reconciliation observation budget exhausted')
+        result = subprocess.run(args, capture_output=True, text=True, timeout=min(6, remaining))
+        if result.returncode:
+            raise ValueError('Current reconciliation observation failed')
+        return result.stdout
+    except (OSError, ValueError, subprocess.SubprocessError):
+        print('Current reconciliation observation is unavailable: ✗ [DQ:' + marker + ']')
+        sys.exit(1)
+
+def get(kind, name, marker):
+    return json.loads(command(['kubectl', 'get', kind] + ([name] if name else []) + ['-o', 'json'], marker))
+
+def same_image(actual, expected):
+    digest = expected.partition('@')[2]
+    return actual == expected or bool(digest) and isinstance(actual, str) and actual.partition('@')[2] == digest
+
+facts = json.loads(Path('/run/dq/facts/0/reconciliation-identities.json').read_text())
+contract = facts['contract']
+for resource, uid in facts['identities'].items():
+    kind, name = resource.split('/')
+    require(get(kind, name, 'reconciliation_identity').get('metadata', {}).get('uid') == uid, 'reconciliation_identity')
+producer = contract['producer']
+consumer = contract['consumer']
+board = get('deployment', producer['deployment'], 'reconciliation_image')
+client = get('deployment', consumer['deployment'], 'reconciliation_image')
+require(same_image(named(board['spec']['template']['spec']['containers'], producer['container']).get('image'), facts['image']), 'reconciliation_image')
+require(same_image(workload_worker(client).get('image'), facts['image']), 'reconciliation_image')
+sys.exit(int(failed))
+DQ_RECONCILIATION_IDENTITY
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -41,6 +116,14 @@ exit "$failed"
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+set +e
+(
+set -euo pipefail
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -52,6 +135,83 @@ config=$(timeout 2s kubectl get configmap board-route -o json 2>/dev/null || tru
 if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = north-116; then printf '%s\n' 'board:8080 = north-116: ✗ [DQ:http]'; failed=1; fi
 exit "$failed"
 
+)
+dq_legacy_status=$?
+set -e
+if [ "$dq_legacy_status" -ne 0 ]; then
+ exit 1
+fi
+python3 -I - <<'DQ_RECONCILIATION_DELIVERY'
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from dq_check import current_pods, named, pod_worker, workload_worker
+
+failed = False
+deadline = time.monotonic() + 10
+
+def require(value, marker):
+    global failed
+    if not value:
+        print('Reconciliation condition is unmet: ✗ [DQ:' + marker + ']')
+        failed = True
+
+def command(args, marker):
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError('Reconciliation observation budget exhausted')
+        result = subprocess.run(args, capture_output=True, text=True, timeout=min(6, remaining))
+        if result.returncode:
+            raise ValueError('Current reconciliation observation failed')
+        return result.stdout
+    except (OSError, ValueError, subprocess.SubprocessError):
+        print('Current reconciliation observation is unavailable: ✗ [DQ:' + marker + ']')
+        sys.exit(1)
+
+def get(kind, name, marker):
+    return json.loads(command(['kubectl', 'get', kind] + ([name] if name else []) + ['-o', 'json'], marker))
+
+def same_image(actual, expected):
+    digest = expected.partition('@')[2]
+    return actual == expected or bool(digest) and isinstance(actual, str) and actual.partition('@')[2] == digest
+
+facts = json.loads(Path('/run/dq/facts/0/reconciliation-identities.json').read_text())
+contract = facts['contract']
+consumer = contract['consumer']
+interface = contract['interface']
+client = get('deployment', consumer['deployment'], 'reconciliation_delivery')
+command(['kubectl', 'rollout', 'status', 'deployment/' + consumer['deployment'], '--timeout=3s'], 'reconciliation_delivery')
+require(client.get('spec', {}).get('replicas') == consumer['replicas'] and client.get('status', {}).get('readyReplicas') == consumer['replicas'], 'reconciliation_delivery')
+pods = get('pods', '', 'reconciliation_delivery')
+replicasets = get('replicasets', '', 'reconciliation_delivery')
+current = current_pods(client, replicasets, pods)
+require(bool(current) and all(any(c.get('type') == 'Ready' and c.get('status') == 'True' for c in p.get('status', {}).get('conditions', [])) for p in current), 'reconciliation_delivery')
+for pod in current:
+    require(same_image(pod_worker(pod).get('image'), facts['image']), 'reconciliation_image')
+service = get('service', consumer['service'], 'reconciliation_service')
+selector = service.get('spec', {}).get('selector', {})
+labels = client.get('spec', {}).get('template', {}).get('metadata', {}).get('labels', {})
+ports = [port for port in service.get('spec', {}).get('ports', []) if port.get('port') == interface['port'] and port.get('protocol', 'TCP') == 'TCP']
+require(service.get('spec', {}).get('type', 'ClusterIP') == interface['type'] and bool(selector) and all(labels.get(k) == v for k, v in selector.items()) and len(ports) == 1, 'reconciliation_service')
+uri = 'http://' + consumer['service'] + ':' + str(interface['port']) + interface['path']
+response = command(['kubectl', 'exec', 'deployment/' + consumer['deployment'], '-c', consumer['container'], '--', 'wget', '-qO-', '-T', '3', uri], 'reconciliation_publication')
+require(response == interface['body'], 'reconciliation_publication')
+sys.exit(int(failed))
+DQ_RECONCILIATION_DELIVERY
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_2]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
