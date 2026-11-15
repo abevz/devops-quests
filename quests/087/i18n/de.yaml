@@ -1,49 +1,57 @@
-title: Zustandssperre
+title: State-Eigentümerschaft und konkurrierende Wiederherstellung
 brief: |-
-  Normale OpenTofu-Vorgänge können nicht abgeschlossen werden.
+  Nach überlappenden State-Operationen ist die Infrastrukturplanung blockiert. Stelle die Konvergenz wieder her und erhalte abgeschlossene Arbeit.
 
-  Arbeite auf der Workstation in `~/quest` mit `main.tf`, `lock-probe.log`.
+  Arbeite in `~/quest` auf der Workstation mit `main.tf`, `incident.txt`, `failed-apply.log` und `errored.tfstate`.
 
-  **Anforderungen:**
-  - Dateien auf der Workstation:
-    - `~/quest/notice.txt`: `north-ready`.
-  - OpenTofu-State:
-    - Die konfigurierte Hinweisdatei bleibt im OpenTofu-State verwaltet.
-  - Infrastrukturkonvergenz:
-    - Keine ausstehenden Infrastrukturänderungen; Exit-Code des detaillierten Plans `0`.
+  **Requirements:**
+  - Auf der Workstation enthält `~/quest/notice.txt` den Wert `north-ready` und bleibt im Root-State verwaltet.
+  - Der State behält den abgeschlossenen Wartungseintrag und verwaltet den ursprünglichen gesunden Docker-Container, ohne eine der beiden Identitäten neu zu erzeugen.
+  - Behalte das ursprüngliche `~/quest/errored.tfstate` unverändert. Sichere den Backend-Snapshot vor Wiederherstellungsschreibvorgängen samt ursprünglicher Lineage und abgeschlossener Arbeit in `~/quest/before-recovery.tfstate`.
+  - Die registrierte Wartungskonsole beendet sich regulär und gibt ihre eigene Sperre frei.
+  - Das wiederhergestellte Backend behält seine ursprüngliche Lineage und mindestens die bereitgestellte Serial; ein neuer detaillierter Plan endet mit Code `0`.
 
-  Die Prüfung beobachtet die aktuelle Datei, den State und das Planungsergebnis; sie belegt weder Verlauf noch Methode der Entsperrung.
-stages.0.brief: Die normale Infrastrukturplanung muss bei verfügbarer Nachricht abgeschlossen werden.
-hints.0.text: State-Locking koordiniert gleichzeitige Schreiber und schützt laufende State-Operationen.
-hints.1.text: |-
-  Überprüfen Sie lock-probe.log und den örtlichen Halter PID. Die Statusdatei muss intakt bleiben; Durch das Löschen wird die ursprüngliche Sperre nicht sicher freigegeben. Die Prüfung beobachtet Datei, State und Plan; sie beweist nicht direkt, welcher Prozess gestoppt oder ob force-unlock verwendet wurde.
+  **Dienstvertrag der Bay:**
+  - `main.tf` benennt ein Workstation-lokales HTTP-Backend. GET liest den State; POST schreibt mit der nativen Sperr-ID im Query, LOCK/UNLOCK tauschen native Sperrinformationen aus. Sperrkonflikte liefern `423`, ein nicht passendes Unlock `409`. Das Löschen des State ist nicht verfügbar.
+  - `GET http://127.0.0.1:18787/diagnostic` zeigt die aktuelle Sperre und Backend-Ereignisse. Frühere Logs beschreiben ihre eigene Operation, nicht zwingend den aktuellen Eigentümer.
+  - `GET http://127.0.0.1:18787/owner` zeigt `handle`, `running`, `eof_requested`, `completed` der registrierten Konsole sowie abschließend native `exit`/`stderr`, sobald verfügbar.
+  - `POST http://127.0.0.1:18787/owner/finish` akzeptiert nur ein JSON-Objekt mit dem String-Feld `handle`, höchstens 16384 Byte, für das registrierte Handle. Es fordert stdin-EOF für diese ursprüngliche Konsole an und wartet auf deren tatsächliches Ende und native Sperrfreigabe; übergebene Befehle oder PIDs werden nicht ausgeführt. `202` bestätigt die Anfrage; `400` verwirft ungültige Eingaben und `409` ein unbekanntes Handle. Dieselbe Anfrage darf wiederholt werden.
+  - `completed` erfordert angefordertes EOF, tatsächlichen Exit null, kein natives stderr und erfolgreiches Unlock durch den registrierten Eigentümer. Eine andere Operation wird damit nicht bestätigt.
 
-  Prüfen Sie die bereitgestellte Konfiguration und aktuelle Beobachtungen auf der Workstation:
-
-  ```sh
-  cat lock-probe.log
-  tofu state list
-  ```
-hints.2.text: |-
-  Stoppe den in lock-holder.pid erfassten Prozess und erhalte den State. Der Wartungsprozess hält die Sperre; force-unlock ersetzt nicht das Stoppen dieses laufenden Prozesses.
-
-  Prüfen Sie das Ergebnis in `~/quest` auf der Workstation:
-
-  - `cat notice.txt; tofu show -no-color` — Zeigt `north-ready` und die verwaltete Ressource `notice.txt`.
-  - `tofu plan -input=false -detailed-exitcode -no-color` — Endet mit `0` und meldet keine ausstehenden Infrastrukturänderungen.
-
-  Der State erfasst weiterhin die konfigurierte Datei notice.txt.
-debrief: Hinweisdatei und Zustandsadresse sind vorhanden, und der Plan endet ohne Änderungen.
+  Der vertrauenswürdige Dienst erfasst EOF, das tatsächliche Ende des registrierten Kindprozesses und dessen natives Unlock; andere Prüfungen beobachten aktuelle Dateien, State und Docker-Identität, keinen allgemeinen Befehlsverlauf.
+stages.0.brief: Stelle konsistenten State und reguläre Eigentümerschaft wieder her; erhalte beide abgeschlossenen
+  Identitäten.
+hints.0.text: Sperr- und Ressourceneigentümerschaft können auseinanderlaufen. Ein Wiederherstellungs-Snapshot kann
+  intern gültig sein und dennoch eine später abgeschlossene Operation auslassen.
+hints.1.text: Vergleiche `cat incident.txt failed-apply.log`, `tofu state pull`, `cat errored.tfstate`, `docker
+  ps -a` und die aktuellen Dienstbeobachtungen. Vergleiche Lineage, Serial, Ressourcen-IDs und Sperreigentümer getrennt;
+  ein früherer Fehler beschreibt nicht den aktuellen Eigentümer.
+hints.2.text: 'Koordiniere das reguläre Ende des registrierten aktuellen Eigentümers über den dokumentierten Vertrag.
+  Sichere das aktuelle Backend und gleiche dann die fehlende ursprüngliche Bindung in lokalen Arbeitskopien ab,
+  statt neuere Arbeit durch einen ganzen älteren Snapshot zu ersetzen. `tofu state mv -state=... -state-out=...`
+  verschiebt native Bindungen zwischen lokalen Kopien; übertrage nur den abgeglichenen Snapshot mit den üblichen
+  Backend-Schutzmaßnahmen. Prüfe beide ursprünglichen IDs, unveränderte Wiederherstellungsdaten, `completed: true`
+  und Exit `0` von `tofu plan -input=false -detailed-exitcode -no-color`.'
+debrief: Eine Sperrübergabe ließ zwei Clients auseinanderlaufen. Die Wiederherstellung erhielt den neueren abgeschlossenen
+  State und die ursprüngliche physische Ressource; der echte aktuelle Eigentümer gab seine eigene Sperre frei.
 phrases.0: Ich habe den Betriebsstatus überprüft, bevor ich eine Änderung vorgenommen habe.
 phrases.1: Ich habe die Ursache gefunden und eine Sache nach der anderen geändert.
 phrases.2: Ich habe die Live-Ressource ID mit dem Status OpenTofu verglichen.
 diagnostics.condition_0: notice.txt muss north-ready entsprechen.
-diagnostics.condition_1: |-
-  Der OpenTofu-State muss die verwaltete Quelldatei notice.txt erfassen.
-
+diagnostics.condition_1: Der OpenTofu-State muss die verwaltete Quelldatei notice.txt erfassen.
 diagnostics.condition_2: Der OpenTofu-Plan mit detailed-exitcode muss mit Code 0 enden.
 stages.0.objectives.0.text: 'Auf der Workstation: `notice.txt` enthält `north-ready`.'
 stages.0.objectives.1.text: Die konfigurierte Hinweisdatei bleibt im OpenTofu-State verwaltet.
-stages.0.objectives.2.text: OpenTofu meldet keine ausstehenden Infrastrukturänderungen.
+stages.0.objectives.2.text: Die State-Konvergenz erhält beide abgeschlossenen Identitäten, Wiederherstellungsdaten
+  und das reguläre Ende des registrierten Eigentümers.
 diagnostics.probe_0_1: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: Die konfigurierte Hinweisdatei
   bleibt im OpenTofu-State verwaltet.'
+diagnostics.locking_binding: Verwalte den ursprünglichen gesunden Docker-Container mit seiner physischen ID.
+diagnostics.locking_progress: Behalte die echte ID des abgeschlossenen Wartungseintrags.
+diagnostics.locking_lineage: Behalte die ursprüngliche Backend-Lineage und setze die Serial nicht zurück.
+diagnostics.locking_checkpoint: Behalte die ursprünglichen Bytes der nativen errored.tfstate unverändert.
+diagnostics.locking_backup: Behalte den ursprünglichen aktuellen Backend-Snapshot als before-recovery.tfstate.
+diagnostics.locking_owner: Der registrierte Eigentümer muss über EOF mit tatsächlichem Exit null und eigenem erfolgreichen
+  nativen Unlock enden.
+diagnostics.probe_0_2: Die State-Konvergenz erhält beide abgeschlossenen Identitäten, Wiederherstellungsdaten und
+  das reguläre Ende des registrierten Eigentümers.

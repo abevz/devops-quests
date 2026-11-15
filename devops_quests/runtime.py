@@ -837,6 +837,7 @@ nodes:
                 "--read-only",
                 "--tmpfs",
                 "/tmp:rw,noexec,nosuid,size=128m,mode=1777",
+                *(["--tmpfs", "/var/lib/dq-lock:rw,exec,nosuid,nodev,size=96m,mode=700"] if run["level"] == 87 else []),
                 "-v",
                 volumes["home"] + ":/home/hacker",
                 *docker_args,
@@ -961,6 +962,10 @@ nodes:
                 from .application_sets import ApplicationSets
 
                 ApplicationSets(self).create(run)
+            if run["level"] == 87:
+                from .locking_fixture import LockingFixture
+
+                LockingFixture(self).create(run)
             if run["level"] in {124, 129}:
                 from .recovery_fixtures import RecoveryFixtures
 

@@ -1,49 +1,56 @@
-title: Blokowanie stanu
+title: Własność stanu i odzyskiwanie po współbieżnych zapisach
 brief: |-
-  Zwykłe operacje OpenTofu nie mogą się zakończyć.
+  Planowanie infrastruktury jest zablokowane po nakładających się operacjach stanu. Przywróć zbieżność, zachowując ukończoną pracę.
 
-  Pracuj na workstation w `~/quest` z plikami `main.tf`, `lock-probe.log`.
+  Pracuj w `~/quest` na stacji roboczej z `main.tf`, `incident.txt`, `failed-apply.log` i `errored.tfstate`.
 
-  **Wymagania:**
-  - Pliki na workstation:
-    - `~/quest/notice.txt`: `north-ready`.
-  - Stan OpenTofu:
-    - Skonfigurowany plik komunikatu pozostaje zarządzany w stanie OpenTofu.
-  - Zbieżność infrastruktury:
-    - Brak oczekujących zmian infrastruktury; kod zakończenia szczegółowego planu `0`.
+  **Requirements:**
+  - Na stacji roboczej `~/quest/notice.txt` zawiera `north-ready` i pozostaje zarządzany w głównym stanie.
+  - Stan zachowuje ukończony rekord konserwacji i zarządza pierwotnym zdrowym kontenerem Docker bez odtwarzania żadnej z dwóch tożsamości.
+  - Zachowaj pierwotny `~/quest/errored.tfstate` bez zmian. W `~/quest/before-recovery.tfstate` zachowaj migawkę backendu sprzed zapisów odzyskiwania, z pierwotną lineage i ukończoną pracą.
+  - Zarejestrowana konsola konserwacji kończy pracę normalnie i zwalnia własną blokadę.
+  - Odzyskany backend zachowuje pierwotną lineage oraz serial nie mniejszy niż dostarczony; nowy szczegółowy plan kończy się kodem `0`.
 
-  Sprawdzenie obserwuje bieżący plik, stan i wynik planowania; nie ustala historii ani sposobu odblokowania.
-stages.0.brief: Zwykłe planowanie infrastruktury musi się zakończyć przy dostępnym powiadomieniu.
-hints.0.text: Blokada stanu koordynuje współbieżne zapisy i chroni trwające operacje stanu.
-hints.1.text: |-
-  Sprawdź lock-probe.log i lokalny uchwyt PID. Plik stanu musi pozostać nienaruszony; usunięcie go nie powoduje bezpiecznego zwolnienia oryginalnej blokady. Sprawdzenie obserwuje plik, stan i plan; nie dowodzi bezpośrednio, który proces zatrzymano ani czy użyto force-unlock.
+  **Kontrakt usługi zatoki:**
+  - `main.tf` wskazuje lokalny backend HTTP stacji roboczej. GET odczytuje stan; POST zapisuje go z natywnym ID blokady w query, a LOCK/UNLOCK wymieniają natywne informacje o blokadzie. Konflikty zwracają `423`, niedopasowane odblokowanie `409`. Usuwanie stanu jest niedostępne.
+  - `GET http://127.0.0.1:18787/diagnostic` pokazuje bieżącą blokadę i zdarzenia backendu. Wcześniejsze logi opisują własną operację, niekoniecznie obecnego właściciela.
+  - `GET http://127.0.0.1:18787/owner` pokazuje `handle`, `running`, `eof_requested`, `completed` zarejestrowanej konsoli oraz końcowe natywne `exit`/`stderr`, gdy są dostępne.
+  - `POST http://127.0.0.1:18787/owner/finish` przyjmuje tylko obiekt JSON z tekstowym polem `handle`, do 16384 bajtów, dla zarejestrowanego identyfikatora. Żąda EOF stdin tej pierwotnej konsoli, następnie czeka na jej rzeczywiste zakończenie i natywne zwolnienie blokady; nie wykonuje przekazanych poleceń ani PID. Kod `202` potwierdza żądanie; `400` odrzuca błędne dane, a `409` nieznany identyfikator. Powtórzenie tego samego żądania jest dozwolone.
+  - `completed` wymaga żądanego EOF, faktycznego kodu zakończenia zero, braku natywnego stderr i udanego odblokowania przez zarejestrowanego właściciela. Nie potwierdza innej operacji.
 
-  Sprawdź dostarczoną konfigurację i bieżące obserwacje na workstation:
-
-  ```sh
-  cat lock-probe.log
-  tofu state list
-  ```
-hints.2.text: |-
-  Zatrzymaj proces zapisany w lock-holder.pid i zachowaj stan. Proces konserwacyjny posiada blokadę; force-unlock nie zastępuje zatrzymania tego działającego procesu.
-
-  Sprawdź wynik z `~/quest` na workstation:
-
-  - `cat notice.txt; tofu show -no-color` — Pokazuje `north-ready` i śledzony zasób `notice.txt`.
-  - `tofu plan -input=false -detailed-exitcode -no-color` — Kończy się kodem `0` i nie zgłasza oczekujących zmian infrastruktury.
-
-  Stan nadal śledzi skonfigurowany plik notice.txt.
-debrief: Plik powiadomienia i adres stanu są obecne, a planowanie kończy się bez zmian.
+  Zaufana usługa rejestruje EOF, faktyczne zakończenie zarejestrowanego procesu potomnego i jego natywne odblokowanie; pozostałe testy obserwują bieżące pliki, stan i tożsamość Docker, a nie ogólną historię poleceń.
+stages.0.brief: Przywróć spójny stan i normalną własność, zachowując obie ukończone tożsamości.
+hints.0.text: Własność blokady i zasobu może się rozejść. Migawka odzyskiwania może być wewnętrznie poprawna i nadal
+  pomijać późniejszą ukończoną operację.
+hints.1.text: Porównaj `cat incident.txt failed-apply.log`, `tofu state pull`, `cat errored.tfstate`, `docker ps
+  -a` i bieżące obserwacje usługi. Osobno porównaj lineage, serial, ID zasobów i właściciela blokady; wcześniejszy
+  błąd nie opisuje bieżącego właściciela.
+hints.2.text: 'Uzgodnij normalne zakończenie zarejestrowanego obecnego właściciela przez udokumentowany kontrakt.
+  Zachowaj kopię bieżącego backendu, następnie uzgodnij brakujące pierwotne powiązanie w lokalnych kopiach roboczych
+  zamiast zastępować nowszą pracę całą starszą migawką. `tofu state mv -state=... -state-out=...` przenosi natywne
+  powiązanie między lokalnymi kopiami; wyślij tylko uzgodnioną migawkę ze zwykłymi zabezpieczeniami backendu. Sprawdź
+  oba pierwotne ID, niezmienione dowody, `completed: true` i kod `0` z `tofu plan -input=false -detailed-exitcode
+  -no-color`.'
+debrief: Przekazanie blokady spowodowało rozbieżność dwóch klientów. Odzyskiwanie zachowało nowszy ukończony stan
+  i pierwotny zasób fizyczny, a rzeczywisty bieżący właściciel zwolnił własną blokadę.
 phrases.0: Przed dokonaniem zmiany sprawdziłem stan działania.
 phrases.1: Znalazłem przyczynę i zmieniałem jedną rzecz na raz.
 phrases.2: Porównałem aktywny zasób ID ze stanem OpenTofu.
 diagnostics.condition_0: notice.txt musi być równe north-ready.
-diagnostics.condition_1: |-
-  Stan OpenTofu musi śledzić zarządzany plik źródłowy notice.txt.
-
+diagnostics.condition_1: Stan OpenTofu musi śledzić zarządzany plik źródłowy notice.txt.
 diagnostics.condition_2: Plan OpenTofu z detailed-exitcode musi zakończyć się kodem 0.
 stages.0.objectives.0.text: Na workstation `notice.txt` zawiera `north-ready`.
 stages.0.objectives.1.text: Skonfigurowany plik komunikatu pozostaje zarządzany w stanie OpenTofu.
-stages.0.objectives.2.text: OpenTofu nie zgłasza oczekujących zmian infrastruktury.
+stages.0.objectives.2.text: Zbieżność stanu zachowuje obie ukończone tożsamości, dowody odzyskiwania i normalne
+  zakończenie zarejestrowanego właściciela.
 diagnostics.probe_0_1: 'Bieżące dane nie pozwalają potwierdzić tego celu: Skonfigurowany plik komunikatu pozostaje
   zarządzany w stanie OpenTofu.'
+diagnostics.locking_binding: Zarządzaj pierwotnym zdrowym kontenerem Docker z jego fizycznym ID.
+diagnostics.locking_progress: Zachowaj rzeczywiste ID ukończonego rekordu konserwacji.
+diagnostics.locking_lineage: Zachowaj pierwotną lineage backendu bez cofania serial.
+diagnostics.locking_checkpoint: Zachowaj pierwotne bajty natywnego errored.tfstate bez zmian.
+diagnostics.locking_backup: Zachowaj pierwotną bieżącą migawkę backendu jako before-recovery.tfstate.
+diagnostics.locking_owner: Zarejestrowany właściciel musi zakończyć się przez EOF z faktycznym kodem zero i własnym
+  udanym natywnym odblokowaniem.
+diagnostics.probe_0_2: Zbieżność stanu zachowuje obie ukończone tożsamości, dowody odzyskiwania i normalne zakończenie
+  zarejestrowanego właściciela.
