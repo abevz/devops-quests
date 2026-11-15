@@ -57,6 +57,14 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+set +e
+(
+set -euo pipefail
 set -euo pipefail
 # Measure the serving container directly; the player's worksheet cannot supply this evidence.
 sample=$(timeout 8s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- sh -c '
@@ -76,6 +84,73 @@ printf "%s\n" "$((after-before))"
 if ! [[ "$sample" =~ ^[0-9]+$ ]] || ! test "$sample" -le 5; then exit 1; fi
 test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-94
 )
+dq_legacy_status=$?
+set -e
+if [ "$dq_legacy_status" -ne 0 ]; then
+ printf '%s\n' 'The native sample or serving condition is unmet: ✗ [DQ:performance_sample]'
+ exit 1
+fi
+python3 -I - <<'DQ_PERFORMANCE'
+import json
+import subprocess
+import sys
+import time
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+
+from dq_check import workload_worker
+
+failed = False
+
+def require(value, marker):
+    global failed
+    if not value:
+        print('Performance condition is unmet: ✗ [DQ:' + marker + ']')
+        failed = True
+
+def command(args, marker):
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=15)
+        if result.returncode:
+            raise ValueError('Current workload observation failed')
+        return result.stdout
+    except (ValueError, OSError, subprocess.SubprocessError):
+        print('Current performance inputs are unavailable: ✗ [DQ:' + marker + ']')
+        sys.exit(1)
+
+def document(args, marker):
+    return json.loads(command(args, marker))
+
+def get(kind, name, marker='performance_identity'):
+    return document(['kubectl', 'get', kind, name, '-o', 'json'], marker)
+
+def same_image(actual, expected):
+    digest = expected.partition('@')[2]
+    return actual == expected or bool(digest) and isinstance(actual, str) and actual.partition('@')[2] == digest
+
+facts = json.loads(Path('/run/dq/facts/0/performance-identities.json').read_text())
+contract = facts['contract']
+for key, original in facts['identities'].items():
+    kind, name = key.split('/', 1)
+    current = get(kind, name)
+    require(current.get('metadata', {}).get('uid') == original, 'performance_identity')
+    if kind == 'deployment':
+        require(same_image(workload_worker(current).get('image'), facts['image']), 'performance_image')
+policy = get('configmap', contract['policyConfigMap'], 'performance_policy')
+require(all(policy.get('data', {}).get(k) == v for k, v in facts['policy'].items()), 'performance_policy')
+sys.exit(int(failed))
+DQ_PERFORMANCE
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_3]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
+)
 [ $? -eq 0 ] || failed=1
 (
 set -e
@@ -84,8 +159,117 @@ kubectl get deployment board -o json | jq -e '.status.readyReplicas==1' >/dev/nu
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+set +e
+(
+set -euo pipefail
 sample=$(bash measure.sh)
 if ! [[ "$sample" =~ ^[0-9]+$ ]] || ! test "$sample" -le 5; then printf "Idle sample still throttled: %s\n" "$sample" >&2; exit 1; fi
+)
+dq_legacy_status=$?
+set -e
+if [ "$dq_legacy_status" -ne 0 ]; then
+ printf '%s\n' 'The native sample or serving condition is unmet: ✗ [DQ:performance_sample]'
+ exit 1
+fi
+python3 -I - <<'DQ_PERFORMANCE'
+import json
+import subprocess
+import sys
+import time
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+
+from dq_check import workload_worker
+
+failed = False
+
+def require(value, marker):
+    global failed
+    if not value:
+        print('Performance condition is unmet: ✗ [DQ:' + marker + ']')
+        failed = True
+
+def command(args, marker):
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=15)
+        if result.returncode:
+            raise ValueError('Current workload observation failed')
+        return result.stdout
+    except (ValueError, OSError, subprocess.SubprocessError):
+        print('Current performance inputs are unavailable: ✗ [DQ:' + marker + ']')
+        sys.exit(1)
+
+def document(args, marker):
+    return json.loads(command(args, marker))
+
+def get(kind, name, marker='performance_identity'):
+    return document(['kubectl', 'get', kind, name, '-o', 'json'], marker)
+
+def same_image(actual, expected):
+    digest = expected.partition('@')[2]
+    return actual == expected or bool(digest) and isinstance(actual, str) and actual.partition('@')[2] == digest
+
+facts = json.loads(Path('/run/dq/facts/0/performance-identities.json').read_text())
+contract = facts['contract']
+def cadence(value):
+    if not isinstance(value, str) or not value.isascii():
+        return None
+    try:
+        number = Decimal(value)
+        return number if number.is_finite() and number > 0 else None
+    except (InvalidOperation, ValueError, OverflowError):
+        return None
+
+expected_cadence = cadence(facts['policy']['POLL_DELAY'])
+require(expected_cadence is not None, 'performance_policy')
+
+def read_progress(consumer):
+    # Observe in the consumer's budget, not in the 50m serving cgroup whose
+    # existing independent CPU sampler must remain free of new probe work.
+    progress_marker = 'performance_progress_' + consumer['deployment'].replace('-', '_')
+    uri = 'http://' + consumer['service'] + ':' + str(contract['servicePort']) + contract['progressPath']
+    result = document(['kubectl', 'exec', 'deployment/' + consumer['deployment'], '-c', 'worker', '--', 'wget', '-qO-', '-T', '3', uri], progress_marker)
+    valid = isinstance(result, dict) and type(result.get('sequence')) is int and result['sequence'] >= 0 and result.get('route') == contract['producer']['response'] and result.get('policy_id') == facts['policy']['POLICY_ID'] and cadence(result.get('delay')) == expected_cadence
+    require(valid, progress_marker)
+    return result if valid else None
+
+for consumer in contract['consumers']:
+    name = consumer['deployment']
+    consumer_marker = 'performance_consumer_' + name.replace('-', '_')
+    deployment = get('deployment', name, consumer_marker)
+    require(deployment.get('spec', {}).get('replicas', 1) == consumer['replicas'] and deployment.get('status', {}).get('readyReplicas') == consumer['replicas'], consumer_marker)
+    command(['kubectl', 'rollout', 'status', 'deployment/' + name, '--timeout=3s'], consumer_marker)
+    service = get('service', consumer['service'], consumer_marker)
+    selector = service.get('spec', {}).get('selector', {})
+    labels = deployment.get('spec', {}).get('template', {}).get('metadata', {}).get('labels', {})
+    ports = [p for p in service.get('spec', {}).get('ports', []) if p.get('port') == contract['servicePort'] and p.get('protocol', 'TCP') == 'TCP']
+    require(service.get('spec', {}).get('type', 'ClusterIP') == 'ClusterIP' and bool(selector) and all(labels.get(k) == v for k, v in selector.items()) and len(ports) == 1, consumer_marker)
+    for variable, expected in facts['policy'].items():
+        actual = command(['kubectl', 'exec', 'deployment/' + name, '-c', 'worker', '--', 'printenv', variable], consumer_marker).strip()
+        require(cadence(actual) == expected_cadence if variable == 'POLL_DELAY' else actual == expected, consumer_marker)
+first = {consumer['deployment']: read_progress(consumer) for consumer in contract['consumers']}
+time.sleep(2.2)
+for consumer in contract['consumers']:
+    second = read_progress(consumer)
+    before = first[consumer['deployment']]
+    require(before is not None and second is not None and second['sequence'] > before['sequence'], 'performance_progress_' + consumer['deployment'].replace('-', '_'))
+sys.exit(int(failed))
+DQ_PERFORMANCE
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_5]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (

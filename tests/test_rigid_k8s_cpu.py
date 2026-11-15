@@ -9,10 +9,24 @@ import yaml
 from devops_quests.catalog import ROOT
 
 
-def check():
-    return yaml.safe_load((ROOT / "quests/094/quest.yaml").read_text())["stages"][0][
+def check(index=3):
+    current = yaml.safe_load((ROOT / "quests/094/quest.yaml").read_text())["stages"][0][
         "objectives"
-    ][3]["check"]
+    ][index]["check"]
+    # These fixtures model the original sampler, not the new consumer API state.
+    # Keep its full predicate byte-identical inside the current objective; the
+    # extended conditions have separate mocked and native regression coverage.
+    original = (
+        (ROOT / "tests/fixtures/deepen-performance/094-legacy-check.sh")
+        .read_text()
+        .split("(\nset -e\n")[index + 1]
+        .split("\n)\n[ $? -eq 0 ] || failed=1\n", 1)[0]
+    )
+    assert (
+        "set +e\n(\nset -euo pipefail\n" + original + "\n)\ndq_legacy_status=$?"
+        in current
+    )
+    return original
 
 
 @pytest.mark.parametrize(
@@ -71,8 +85,7 @@ else:
 def test_worksheet_output_must_be_a_valid_nonnegative_sample(
     tmp_path, sample, accepted
 ):
-    quest = yaml.safe_load((ROOT / "quests/094/quest.yaml").read_text())
-    source = quest["stages"][0]["objectives"][5]["check"]
+    source = check(5)
     (tmp_path / "measure.sh").write_text('printf "%s\\n" "$DQ_TEST_SAMPLE"\n')
     result = subprocess.run(
         ["bash", "-c", source],
