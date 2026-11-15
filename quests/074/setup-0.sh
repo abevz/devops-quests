@@ -1,5 +1,13 @@
 set -euo pipefail
 cd ~/quest
+# Generated host keys can precede SSH listener readiness.
+dq_transport_deadline=$((SECONDS+10))
+for dq_transport_host in app1 app2 app3; do
+  until ssh -n -o BatchMode=yes -o ConnectTimeout=1 -o ConnectionAttempts=1 -p 2222 root@"$dq_transport_host-${DQ_NAMESPACE#dq-}" true 2>/dev/null; do
+    [ "$SECONDS" -lt "$dq_transport_deadline" ] || exit 1
+    sleep 0.2
+  done
+done
 ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'set -eu; printf "%s\n" previous-74 > /srv/site/message; dq-service reload'
 ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'set -eu; printf "%s\n" previous-74 > /srv/site/message; dq-service reload'
 ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'set -eu; printf "%s\n" previous-74 > /srv/site/message; dq-service reload'
