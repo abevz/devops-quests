@@ -1,50 +1,55 @@
 title: NetworkPolicy
 brief: |-
-  The HTTP endpoint must be available to the permitted workload while remaining isolated from other callers. Traffic isolation is enforced by the bay network.
+  The protected application is not reachable by its permitted requester. Restore narrow access while retaining guest isolation.
 
   Work on the workstation in `~/quest` with the supplied files:
-  - `board.yaml`, `service.yaml`, `dispatcher.yaml`, `visitor.yaml`, `policy.yaml`.
+  - `isolation-contract.json`.
 
   **Requirements:**
 
-  - Exactly one NetworkPolicy remains in the bay.
-  - The existing policy retains its protected workload and permitted caller scope:
-    - Only incoming HTTP traffic to that service is permitted.
-    - The policy applies only to ingress.
-  - From Deployment `dispatcher`, `http://board:8080` returns `north-62`; from Deployment `visitor`, the same endpoint is blocked.
+  - The existing NetworkPolicy retains its protected workload and permitted caller scope, allowing only inbound HTTP traffic for that service. Preserve the original policy and Deployment identities and provided images. The permitted caller’s desired Pod template and every current ready Pod must remain inside the retained policy’s caller scope, as specified by `isolation-contract.json`.
+  - Exactly one NetworkPolicy exists in the bay.
+  - HTTP from Deployment `dispatcher` to `http://board:8080` returns `north-62`.
+  - HTTP from Deployment `visitor` to `http://board:8080` is blocked.
 
-  The traffic probes cover the two supplied callers; they do not test every possible caller or outbound path.
-debrief: The service route was restored while an unrelated client remained isolated.
+  Checks observe current desired state, Pod ownership and traffic, not label-edit history. Keep the original ingress-only boundary and change only this bay.
+debrief: The checks compared the original narrow policy, retained workload identities, desired and current caller
+  membership and real allowed/denied traffic.
 stages.0.brief: Retain the policy’s inbound-only isolation boundary.
-stages.0.objectives.0.text: The existing NetworkPolicy retains its protected workload and permitted caller
-  scope, allowing only inbound HTTP traffic for that service.
+stages.0.objectives.0.text: The existing NetworkPolicy retains its protected workload and permitted caller scope,
+  allowing only inbound HTTP traffic for that service. Preserve the original policy and Deployment identities and
+  provided images. The permitted caller’s desired Pod template and every current ready Pod must remain inside the
+  retained policy’s caller scope, as specified by `isolation-contract.json`.
 stages.0.objectives.1.text: Exactly one NetworkPolicy exists in the bay.
 stages.0.objectives.2.text: HTTP from Deployment `dispatcher` to `http://board:8080` returns `north-62`.
 stages.0.objectives.3.text: HTTP from Deployment `visitor` to `http://board:8080` is blocked.
-hints.0.text: A healthy Service does not bypass Pod ingress policy.
+hints.0.text: A policy selects destination Pods and permits sources by a separate selector. A label on one current
+  Pod and the labels in a Deployment template have different lifetimes; broadening the boundary hides the dependency
+  instead of repairing it.
 hints.1.text: |-
-  Policies are additive; allow-all would break isolation.
-
-  Inspect the supplied inputs and live observations:
+  Compare the policy’s complete scope, the desired caller template and current owned Pods. These objects already exist:
 
   ```sh
+  cat isolation-contract.json
   kubectl get networkpolicy -o yaml
+  kubectl get deployments -o yaml
   kubectl get pods --show-labels
   ```
 hints.2.text: |-
-  The supplied policy allows dispatcher Pods on TCP 9090 instead of HTTP 8080. Change the allowed port to 8080 and test permitted and denied clients.
+  Verify the policy count and identities, desired and current caller membership, the permitted response and the denied guest request:
 
-  Verify the result from `~/quest` on the workstation:
-
-  Run these observation commands from `~/quest` on the workstation.
-  - `kubectl exec deployment/dispatcher -c worker -- wget -qO- -T 3 http://board:8080` — The permitted caller receives `north-62`.
-  - `kubectl exec deployment/visitor -c worker -- wget -qO- -T 2 http://board:8080` — The isolated caller cannot connect; the command must fail.
-  - Exactly one policy exists and its target, permitted sources, direction and port match Requirements.
-
-    ```sh
-    kubectl get networkpolicy
-    kubectl get networkpolicy board-ingress -o yaml
-    ```
+  ```sh
+  kubectl get networkpolicy -o name
+  kubectl get deployment dispatcher -o yaml
+  kubectl get pods -l app=dispatcher --show-labels
+  kubectl rollout status deployment/dispatcher --timeout=90s
+  kubectl exec deployment/dispatcher -- wget -qO- -T 3 http://board:8080
+  if kubectl exec deployment/visitor -- wget -qO- -T 3 http://board:8080; then
+   printf '%s\n' 'unexpected guest access'
+  else
+   printf '%s\n' 'guest denied'
+  fi
+  ```
 phrases.0: I checked source selectors, direction and ports separately.
 phrases.1: I tested a denied client as well as the allowed one.
 phrases.2: I avoided additive allow-all policies during recovery.
@@ -56,5 +61,10 @@ questions.1.points.0: Availability does not prove the access boundary.
 questions.1.points.1: Selectors may include extra Pods.
 questions.1.points.2: The CNI must enforce policy on real traffic.
 questions.1.prompt: Why test a rejected client after opening a service path?
-diagnostics.probe_0_0: 'The current inputs could not verify this objective: The existing NetworkPolicy retains its
-  protected workload and permitted caller scope, allowing only inbound HTTP traffic for that service.'
+diagnostics.probe_0_0: Narrow ingress or desired/current caller membership could not be verified.
+diagnostics.isolation_identity: The original ingress policy or a supplied workload identity or application image
+  changed.
+diagnostics.isolation_template: The desired caller Pod template does not match the retained policy’s permitted-source
+  selector.
+diagnostics.isolation_current: Current owned caller Pods are missing, not ready, or outside the retained permitted-source
+  scope.

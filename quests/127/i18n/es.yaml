@@ -1,56 +1,52 @@
 title: Diagnóstico de la recopilación de métricas de Prometheus
 brief: |-
-  La monitorización no muestra los resultados esperados de la cola board. Restaure la salud real del scrape y las observaciones acordadas del gauge.
+  El camino privado de métricas no entrega las observaciones requeridas. Recupera la salud del scrape y los agregados actuales para ambos consumidores de consultas existentes.
 
-  Trabaja en la workstation en `~/quest` con los archivos suministrados:
-  - `metrics.yaml`, `board.yaml`, `service.yaml`, `client.yaml`, `prometheus-target.json`.
+  Trabaja en la estación de trabajo, en `~/quest`, con los archivos suministrados:
+  - `prometheus-target.json`.
+  - `observer-contract.json`.
 
-  **Requirements:**
+  **Requisitos:**
 
-  - El Service board existente alcanza solo la carga board suministrada mediante su interfaz HTTP declarada y el listener de la aplicación.
-  - Prometheus privado informa un resultado `up` de `1` para el job `board`, y al menos un destino `board` activo está `up` sin error de scrape.
+  - El Service board existente alcanza solo la carga board suministrada mediante su interfaz HTTP declarada y el listener de la aplicación. Conserva las identidades originales de Service, ConfigMaps y Deployments y las imágenes suministradas. Las entradas deseadas y actuales de ambos consumidores deben seleccionar la misma familia de métricas, job y ruta que las observaciones requeridas y usar sin cambios el programa de sondeo suministrado según `observer-contract.json`.
+  - Prometheus privado informa un resultado `up` de `1` para el job `board`, y al menos un destino `board` activo está `up` sin error de scrape. Cada consumidor suministrado tiene un Pod actual listo, sirve su agregado declarado y continúa observaciones correctas según `observer-contract.json`.
   - Para job `board` y ruta `north`, `station_queue_depth` tiene exactamente `2` series con suma `7`; ambas consultas agregadas tienen éxito con un resultado.
 
-  El gauge es un fixture sintético de práctica; Prometheus y su scrape cada dos segundos son reales. Las comprobaciones observan resultados actuales del Service/consultas, no el historial ni quién consultó.
-debrief: Un verdadero scrape y query demostraron recuperación; readiness por sí solo no demostraría las
-  métricas de aplicación registradas.
+  Las comprobaciones observan series, configuración, instantáneas y progreso actuales, no el historial completo. El programa suministrado y endpoint privado de Prometheus forman parte del ejercicio acotado.
+debrief: Las comprobaciones compararon camino conservado, salud real del scrape y series, identidades y código de
+  consumidores, entradas deseadas y ejecutadas, agregados actuales y progreso de observación.
 stages.0.brief: Demuestra observaciones reales de scrape y gauge, no un historial de tráfico inferido.
-hints.0.text: Separe la respuesta exporter, el reenvío Service y el estado scrape.
+hints.0.text: El transporte de scrape, las etiquetas de series almacenadas y la intención de una consulta posterior
+  son dependencias distintas. Reparar una no reescribe las demás, y cambiar el entorno deseado no actualiza un proceso
+  existente.
 hints.1.text: |-
-  Un valor de up de cero significa que el scrape falló, no que la cola esté vacía. La profundidad de cola es un gauge de valor actual, por lo que `rate()` no es apropiado.
-
-  Inspecciona los datos suministrados y las observaciones activas:
+  Sigue el Service y los datos de métricas originales por Prometheus privado hasta las entradas deseadas, el Pod actual y el programa de cada consumidor existente:
 
   ```sh
+  cat prometheus-target.json observer-contract.json
   kubectl get service board -o yaml
-  cat prometheus-target.json
+  kubectl get configmap board-metrics observer-program -o yaml
+  kubectl get deployment,pods -o yaml
+  url=$(jq -r .url prometheus-target.json)
+  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/targets"
   ```
 hints.2.text: |-
-  Reparar el puerto Service backend, esperar un scrape y consultar tanto el conteo como el sum. El listener board sirve en `8080`, pero el backend suministrado del Service es `8099`; restaure solo targetPort a `8080` y espere un scrape.
-
-  Verifica el resultado desde `~/quest` en la workstation:
-
-  - La consulta tiene éxito con un resultado cuyo valor es `1`.
-
-    ```sh
-    url=$(jq -r .url prometheus-target.json)
-    kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
-    ```
-
-  - Ambas consultas tienen éxito con un resultado: suma `7`, cantidad `2`.
-
-    ```sh
-    url=$(jq -r .url prometheus-target.json)
-    for aggregate in sum count; do
-      kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=$aggregate%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29"
-    done
-    ```
-
-  Un destino board activo está up sin error de scrape:
+  Verifica la salud del scrape y los agregados requeridos; después la respuesta JSON actual correspondiente, el programa sin cambios y el contador de observaciones creciente de cada consumidor:
 
   ```sh
   url=$(jq -r .url prometheus-target.json)
-  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/targets?state=active"
+  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
+  kubectl get deployment,pods -o yaml
+  kubectl get configmap observer-program -o jsonpath='{.data.poll\.sh}' | sha256sum
+  for name in observer-count observer-total; do
+   kubectl exec deployment/"$name" -- sha256sum /opt/observer/poll.sh
+   kubectl exec deployment/"$name" -- wget -qO- -T 2 http://127.0.0.1:8080
+   kubectl exec deployment/"$name" -- cat /tmp/observations
+  done
+  sleep 2
+  for name in observer-count observer-total; do
+   kubectl exec deployment/"$name" -- cat /tmp/observations
+  done
   ```
 phrases.0: Seguí la falla de scrape a través del Service.
 phrases.1: Verifiqué up y la métrica registrada labels.
@@ -62,7 +58,8 @@ questions.1.points.0: La métrica gauge ya representa el tamaño actual de la co
 questions.1.points.1: Rate está diseñado para cambios de counter a lo largo del tiempo.
 questions.1.prompt: ¿Por qué no rate un gauge con profundidad de cola?
 diagnostics.port: El puerto HTTP del Service board debe ser 8080.
-diagnostics.target_port: El destino HTTP del Service board debe resolver al listener de la aplicación en el puerto 8080.
+diagnostics.target_port: El destino HTTP del Service board debe resolver al listener de la aplicación en el puerto
+  8080.
 diagnostics.selector: El Service board debe seleccionar toda la carga suministrada board y ninguna otra.
 diagnostics.target_health: Un target activo board debe estar up con lastError vacío.
 diagnostics.up_status: La consulta up debe tener éxito.
@@ -74,11 +71,23 @@ diagnostics.sum_value: El valor de la consulta sum debe ser 7.
 diagnostics.count_status: La consulta count debe tener éxito.
 diagnostics.count_count: La consulta count debe devolver exactamente un resultado.
 diagnostics.count_value: El valor de la consulta count debe ser 2.
-stages.0.objectives.0.text: El Service board existente alcanza solo la carga board suministrada mediante
-  su interfaz HTTP declarada y el listener de la aplicación.
-stages.0.objectives.1.text: Prometheus privado informa un resultado `up` de `1` para el job `board`, y
-  al menos un destino `board` activo está `up` sin error de scrape.
-stages.0.objectives.2.text: Para job `board` y ruta `north`, `station_queue_depth` tiene exactamente `2`
-  series con suma `7`; ambas consultas agregadas tienen éxito con un resultado.
-diagnostics.probe_0_0: 'Los datos actuales no permiten verificar este objetivo: El Service board existente alcanza
-  solo la carga board suministrada mediante su interfaz HTTP declarada y el listener de la aplicación.'
+stages.0.objectives.0.text: El Service board existente alcanza solo la carga board suministrada mediante su interfaz
+  HTTP declarada y el listener de la aplicación. Conserva las identidades originales de Service, ConfigMaps y Deployments
+  y las imágenes suministradas. Las entradas deseadas y actuales de ambos consumidores deben seleccionar la misma
+  familia de métricas, job y ruta que las observaciones requeridas y usar sin cambios el programa de sondeo suministrado
+  según `observer-contract.json`.
+stages.0.objectives.1.text: Prometheus privado informa un resultado `up` de `1` para el job `board`, y al menos
+  un destino `board` activo está `up` sin error de scrape. Cada consumidor suministrado tiene un Pod actual listo,
+  sirve su agregado declarado y continúa observaciones correctas según `observer-contract.json`.
+stages.0.objectives.2.text: Para job `board` y ruta `north`, `station_queue_depth` tiene exactamente `2` series
+  con suma `7`; ambas consultas agregadas tienen éxito con un resultado.
+diagnostics.probe_0_0: No se pudo verificar el camino del Service o entradas y código conservados de consultas.
+diagnostics.observer_identity: Cambió o no está disponible un objeto de métricas original, una identidad de consumidor
+  o una imagen suministrada.
+diagnostics.observer_code: Cambió el ConfigMap del sondeo, los bytes del programa o su configuración real de inicio.
+diagnostics.observer_template: Las entradas deseadas aún seleccionan otra familia de métricas, job, ruta u operación.
+diagnostics.observer_current: Falta un Pod actual del consumidor, no está listo o aún ejecuta entradas diferentes.
+diagnostics.observer_delivery: La instantánea actual de consulta no está disponible o no contiene el agregado declarado.
+diagnostics.observer_progress: El contador de observaciones no avanzó, se reinició o no permite establecer progreso
+  actual.
+diagnostics.probe_0_1: No se pudo verificar la publicación actual de agregados y el progreso del sondeo.

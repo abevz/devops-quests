@@ -1,51 +1,55 @@
 title: NetworkPolicy
 brief: |-
-  Der HTTP-Endpunkt muss für den zugelassenen Workload erreichbar und für andere Aufrufer isoliert bleiben. Das Bay-Netzwerk erzwingt die Verkehrsisolierung.
+  Das geschützte Board ist für den erlaubten Anfragenden nicht erreichbar. Stelle engen Zugriff unter Erhalt der Gastisolation wieder her.
 
-  Arbeiten Sie auf der Workstation in `~/quest` mit den bereitgestellten Dateien:
-  - `board.yaml`, `service.yaml`, `dispatcher.yaml`, `visitor.yaml`, `policy.yaml`.
+  Arbeite auf der Workstation in `~/quest` mit den bereitgestellten Dateien:
+  - `isolation-contract.json`.
 
   **Anforderungen:**
 
-  - Genau eine NetworkPolicy bleibt in der Bay.
-  - Die vorhandene Richtlinie behält ihren geschützten Workload und den erlaubten Aufruferkreis bei:
-    - Nur eingehender HTTP-Verkehr zu diesem Dienst ist erlaubt.
-    - Die Richtlinie gilt nur für Ingress.
-  - Aus Deployment `dispatcher` liefert `http://board:8080` den Wert `north-62`; aus Deployment `visitor` ist derselbe Endpunkt blockiert.
+  - Die vorhandene NetworkPolicy behält ihren geschützten Workload und den erlaubten Aufruferkreis bei und erlaubt nur eingehenden HTTP-Verkehr für diesen Dienst. Erhalte die Identitäten der ursprünglichen Policy und Deployments sowie bereitgestellte Images. Die gewünschte Pod-Vorlage des erlaubten Aufrufers und jeder aktuelle bereite Pod müssen zum erhaltenen Aufruferbereich der Policy gemäß `isolation-contract.json` gehören.
+  - In der Umgebung existiert genau eine NetworkPolicy.
+  - HTTP von Deployment `dispatcher` an `http://board:8080` liefert `north-62`.
+  - HTTP von Deployment `visitor` an `http://board:8080` ist blockiert.
 
-  Die Verkehrsprüfungen decken die zwei bereitgestellten Aufrufer ab; sie testen nicht jeden möglichen Aufrufer oder ausgehenden Pfad.
-debrief: Der Dienst route wurde wiederhergestellt, während ein nicht verwandter Dienst client isoliert
-  blieb.
+  Prüfungen beobachten aktuellen Sollzustand, Pod-Eigentümerschaft und Verkehr, nicht den Label-Änderungsverlauf. Erhalte die ursprüngliche reine Ingress-Grenze und ändere nur diese Bay.
+debrief: Die Prüfungen verglichen ursprüngliche enge Policy, erhaltene Workload-Identitäten, gewünschte und aktuelle
+  Aufruferzugehörigkeit sowie realen erlaubten und abgewiesenen Verkehr.
 stages.0.brief: Erhalten Sie die reine Eingangs-Isolationsgrenze der Richtlinie.
-stages.0.objectives.0.text: Die vorhandene NetworkPolicy behält ihren geschützten Workload und den erlaubten
-  Aufruferkreis bei und erlaubt nur eingehenden HTTP-Verkehr für diesen Dienst.
+stages.0.objectives.0.text: Die vorhandene NetworkPolicy behält ihren geschützten Workload und den erlaubten Aufruferkreis
+  bei und erlaubt nur eingehenden HTTP-Verkehr für diesen Dienst. Erhalte die Identitäten der ursprünglichen Policy
+  und Deployments sowie bereitgestellte Images. Die gewünschte Pod-Vorlage des erlaubten Aufrufers und jeder aktuelle
+  bereite Pod müssen zum erhaltenen Aufruferbereich der Policy gemäß `isolation-contract.json` gehören.
 stages.0.objectives.1.text: In der Umgebung existiert genau eine NetworkPolicy.
 stages.0.objectives.2.text: HTTP von Deployment `dispatcher` an `http://board:8080` liefert `north-62`.
 stages.0.objectives.3.text: HTTP von Deployment `visitor` an `http://board:8080` ist blockiert.
-hints.0.text: Ein fehlerfreier Service umgeht Pod ingress policy nicht.
+hints.0.text: Eine Policy wählt Ziel-Pods aus und erlaubt Quellen über einen getrennten Selektor. Labels eines aktuellen
+  Pods und einer Deployment-Vorlage haben unterschiedliche Lebensdauern; eine breitere Grenze verdeckt die Abhängigkeit
+  statt sie zu beheben.
 hints.1.text: |-
-  Policies sind additiv; allow-all würde die Isolation durchbrechen.
-
-  Prüfen Sie die bereitgestellten Eingaben und laufenden Beobachtungen:
+  Vergleiche vollständigen Policy-Bereich, gewünschte Aufrufervorlage und aktuell zugehörige Pods. Diese Objekte bestehen bereits:
 
   ```sh
+  cat isolation-contract.json
   kubectl get networkpolicy -o yaml
+  kubectl get deployments -o yaml
   kubectl get pods --show-labels
   ```
 hints.2.text: |-
-  Die bereitgestellte Richtlinie erlaubt dispatcher-Pods auf TCP 9090 statt HTTP 8080. Ändern Sie den erlaubten Port auf 8080 und testen Sie zugelassene und abgewiesene Clients.
+  Prüfe Policy-Anzahl und Identitäten, gewünschte und aktuelle Aufruferzugehörigkeit, erlaubte Antwort und abgewiesene Gastanfrage:
 
-  Prüfen Sie das Ergebnis in `~/quest` auf der Workstation:
-
-  Führen Sie diese Beobachtungsbefehle in `~/quest` auf der Workstation aus.
-  - `kubectl exec deployment/dispatcher -c worker -- wget -qO- -T 3 http://board:8080` — Der zugelassene Aufrufer erhält `north-62`.
-  - `kubectl exec deployment/visitor -c worker -- wget -qO- -T 2 http://board:8080` — Der isolierte Aufrufer kann keine Verbindung herstellen; der Befehl muss scheitern.
-  - Genau eine Richtlinie existiert; Ziel, zugelassene Quellen, Richtung und Port entsprechen den Anforderungen.
-
-    ```sh
-    kubectl get networkpolicy
-    kubectl get networkpolicy board-ingress -o yaml
-    ```
+  ```sh
+  kubectl get networkpolicy -o name
+  kubectl get deployment dispatcher -o yaml
+  kubectl get pods -l app=dispatcher --show-labels
+  kubectl rollout status deployment/dispatcher --timeout=90s
+  kubectl exec deployment/dispatcher -- wget -qO- -T 3 http://board:8080
+  if kubectl exec deployment/visitor -- wget -qO- -T 3 http://board:8080; then
+   printf '%s\n' 'unexpected guest access'
+  else
+   printf '%s\n' 'guest denied'
+  fi
+  ```
 phrases.0: Ich habe Quelle selectors, Richtung und Ports separat überprüft.
 phrases.1: Ich habe einen verweigerten client sowie den erlaubten getestet.
 phrases.2: Ich habe während der Wiederherstellung auf den Zusatzstoff allow-all policies verzichtet.
@@ -57,6 +61,11 @@ questions.1.points.0: Die Verfügbarkeit beweist nicht die Zugriffsgrenze.
 questions.1.points.1: Selectors kann zusätzliche Pods enthalten.
 questions.1.points.2: Der CNI muss policy im realen Datenverkehr erzwingen.
 questions.1.prompt: Warum einen abgelehnten client testen, nachdem ein Servicepfad geöffnet wurde?
-diagnostics.probe_0_0: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: Die vorhandene NetworkPolicy
-  behält ihren geschützten Workload und den erlaubten Aufruferkreis bei und erlaubt nur eingehenden HTTP-Verkehr
-  für diesen Dienst.'
+diagnostics.probe_0_0: Enger Ingress-Bereich oder gewünschte/aktuelle Aufruferzugehörigkeit konnte nicht geprüft
+  werden.
+diagnostics.isolation_identity: Die ursprüngliche Ingress-Policy, eine bereitgestellte Workload-Identität oder ein
+  Anwendungsimage wurde geändert.
+diagnostics.isolation_template: Die gewünschte Aufrufer-Pod-Vorlage passt nicht zum erhaltenen Selektor erlaubter
+  Quellen.
+diagnostics.isolation_current: Aktuelle zugehörige Aufrufer-Pods fehlen, sind nicht bereit oder liegen außerhalb
+  des erhaltenen Quellenbereichs.

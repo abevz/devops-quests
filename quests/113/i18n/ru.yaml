@@ -1,51 +1,46 @@
 title: Присоединение маршрута Gateway API
 brief: |-
-  Частный шлюз не обслуживает требуемый маршрут. Восстановите принятую маршрутизацию и правильные ответы потребителю.
+  Приватный gateway не обслуживает требуемый маршрут приложения. Восстановите принятое подключение, разрешённые ссылки и нужные ответы.
 
-  Работайте на workstation в `~/quest` с предоставленными файлами:
-  - `board.yaml`, `service.yaml`, `client.yaml`, `gateway.yaml`, `route.yaml`, `gateway-target.json`.
+  Работайте на рабочей станции в `~/quest` с предоставленными файлами:
+  - `gateway-target.json`.
+  - `attachment-contract.json`.
 
-  **Requirements:**
+  **Требования:**
 
   - Gateway `station` использует предоставленный частный GatewayClass и принят для текущего поколения.
-  - Предоставленный HTTPRoute обслуживает только `north.station.internal` через существующий Gateway и backend board; один parent принимает маршрут и разрешает его ссылки.
+  - Предоставленный HTTPRoute обслуживает только `north.station.internal` через существующий Gateway и backend board; один parent принимает маршрут и разрешает его ссылки. Сохраните идентичность исходных Gateway, HTTPRoute, Service backend и Deployment и предоставленные образы; не меняйте определения listener Gateway. Нужный контроллер должен сообщать оба условия для запрошенного родителя, совместимого с сохранённым listener, и текущего поколения маршрута по `attachment-contract.json`.
   - Из Deployment `client` предоставленный частный URL шлюза с Host `north.station.internal` возвращает `north-113`.
   - Тот же запрос к частному шлюзу с Host `closed.station.internal` завершается неудачей.
 
-  Один неудачный запрос не устанавливает причину; проверки не устанавливают, какой родитель или поколение дали состояние маршрута.
-debrief: GatewayClass, Gateway и HTTPRoute разделяют выбор контроллера, владение listener и маршрутизацию
-  приложения.
+  Проверки подтверждают текущее подключение, ссылки и трафик, но не историю исправлений. Используйте только предоставленный приватный endpoint gateway.
+debrief: Проверки сравнили идентичность маршрутизации и listener, текущий контекст контроллера, родителя и поколения,
+  а также реальные ответы для подходящего и закрытого Host.
 stages.0.brief: Используйте только предоставленный частный endpoint gateway.
-hints.0.text: Backend port HTTPRoute относится к порту Service. GatewayClass выбирает контроллер, Gateway
-  владеет слушателем, HTTPRoute подключает правила маршрутизации.
+hints.0.text: Подключение к listener и разрешение ссылок backend отвечают на разные вопросы. Условие может относиться
+  к другому родителю или старому поколению; установите контекст, прежде чем считать его признаком текущего здоровья
+  маршрута.
 hints.1.text: |-
-  Accepted и ResolvedRefs отвечают на разные вопросы.
+  Сопоставьте существующие listener Gateway, запрошенных родителей, интерфейс Service и текущие условия контроллера:
 
-  Изучите предоставленные файлы и живые наблюдения:
+  ```sh
+  cat gateway-target.json attachment-contract.json
+  kubectl get gateway,httproute,service,pods -o yaml
+  ```
+hints.2.text: |-
+  Проверьте сохранённые listener и идентичность, оба условия родителя для текущего поколения и реальный трафик с подходящим и закрытым Host:
 
   ```sh
   kubectl get gateway station -o yaml
-    kubectl get httproute board -o yaml
-    cat gateway-target.json
+  kubectl get httproute board -o json | jq '{generation:.metadata.generation,parents:.status.parents}'
+  url=$(jq -r .url gateway-target.json)
+  kubectl exec deployment/client -- wget -qO- -T 3 --header='Host: north.station.internal' "$url"
+  if kubectl exec deployment/client -- wget -qO- -T 3 --header='Host: closed.station.internal' "$url"; then
+   printf '%s\n' 'unexpected closed Host response'
+  else
+   printf '%s\n' 'closed Host denied'
+  fi
   ```
-hints.2.text: |-
-  Исправьте backend port и проверьте сохранённый приватный endpoint с явным Host.
-
-  Проверьте результат из `~/quest` на workstation:
-
-  - Потребитель шлюза получает `north-113`.
-
-    ```sh
-    url=$(jq -r .url gateway-target.json)
-    kubectl exec deployment/client -- wget -qO- -T 3 --header='Host: north.station.internal' "$url"
-    ```
-
-  - Запрос с другим Host завершается неудачей (ненулевой код).
-
-    ```sh
-    url=$(jq -r .url gateway-target.json)
-    kubectl exec deployment/client -- wget -qO- -T 3 --header='Host: closed.station.internal' "$url"
-    ```
 phrases.0: Я проследил маршрут до реального порта Service.
 phrases.1: Я проверил условия принятия и разрешения ссылок.
 phrases.2: Я проверил подходящий и неподходящий Host.
@@ -66,11 +61,21 @@ diagnostics.parent_resolved: У некоторого parent HTTPRoute должн
 diagnostics.parent_both: У одного parent HTTPRoute должны быть одновременно Accepted=True и ResolvedRefs=True.
 diagnostics.http: Запрос с Host north.station.internal должен вернуть north-113.
 diagnostics.wrong: Запрос с Host closed.station.internal должен завершиться ошибкой.
-stages.0.objectives.0.text: Gateway `station` использует предоставленный частный GatewayClass и принят
-  для текущего поколения.
-stages.0.objectives.1.text: Предоставленный HTTPRoute обслуживает только `north.station.internal` через
-  существующий Gateway и backend board; один parent принимает маршрут и разрешает его ссылки.
+stages.0.objectives.0.text: Gateway `station` использует предоставленный частный GatewayClass и принят для текущего
+  поколения.
+stages.0.objectives.1.text: Предоставленный HTTPRoute обслуживает только `north.station.internal` через существующий
+  Gateway и backend board; один parent принимает маршрут и разрешает его ссылки. Сохраните идентичность исходных
+  Gateway, HTTPRoute, Service backend и Deployment и предоставленные образы; не меняйте определения listener Gateway.
+  Нужный контроллер должен сообщать оба условия для запрошенного родителя, совместимого с сохранённым listener,
+  и текущего поколения маршрута по `attachment-contract.json`.
 stages.0.objectives.2.text: Из Deployment `client` предоставленный частный URL шлюза с Host `north.station.internal`
   возвращает `north-113`.
-stages.0.objectives.3.text: Тот же запрос к частному шлюзу с Host `closed.station.internal` завершается
-  неудачей.
+stages.0.objectives.3.text: Тот же запрос к частному шлюзу с Host `closed.station.internal` завершается неудачей.
+diagnostics.attachment_identity: Изменилась идентичность исходного объекта маршрутизации или нагрузки либо предоставленный
+  образ приложения.
+diagnostics.attachment_listener: Изменились сохранённые определения listener Gateway.
+diagnostics.attachment_parent: Среди сообщённых запрошенных родителей нет соответствующего нужному контроллеру и
+  сохранённому listener Gateway.
+diagnostics.attachment_generation: Подходящий родитель не сообщает одновременно Accepted и ResolvedRefs для текущего
+  поколения маршрута.
+diagnostics.probe_0_1: Наблюдения текущего подключения маршрута и его ссылок недоступны или несогласованны.

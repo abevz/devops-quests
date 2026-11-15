@@ -1,56 +1,52 @@
 title: Prometheus scrape diagnosis
 brief: |-
-  Monitoring is not showing the expected board queue results. Restore real scrape health and the agreed gauge observations.
+  The private metrics path is not delivering the required observations. Restore scrape health and current aggregate delivery to both existing query consumers.
 
   Work on the workstation in `~/quest` with the supplied files:
-  - `metrics.yaml`, `board.yaml`, `service.yaml`, `client.yaml`, `prometheus-target.json`.
+  - `prometheus-target.json`.
+  - `observer-contract.json`.
 
   **Requirements:**
 
-  - The existing board Service reaches only the supplied board workload through its declared HTTP interface and application listener.
-  - Private Prometheus reports one `up` result of `1` for job `board`, and at least one active `board` target is `up` with no scrape error.
+  - The existing board Service reaches only the supplied board workload through its declared HTTP interface and application listener. Preserve the original Service, ConfigMaps and Deployment identities and provided images. Both desired and current query-consumer inputs must select the same metric family, job and route as the required observations and use the provided polling program unchanged, as specified by `observer-contract.json`.
+  - Private Prometheus reports one `up` result of `1` for job `board`, and at least one active `board` target is `up` with no scrape error. Each supplied query consumer has one current ready Pod, serves its declared aggregate result and continues successful observations according to `observer-contract.json`.
   - For job `board` and route `north`, `station_queue_depth` has exactly `2` series with sum `7`; both aggregate queries succeed with one result.
 
-  The gauge is a synthetic training fixture; Prometheus and its two-second scrape are real. Checks observe current Service/query results, not edit history or who issued queries.
-debrief: A real scrape and query proved recovery; readiness alone would not prove recorded application
-  metrics.
+  Checks observe current series, configuration, snapshots and progress, not the entire request or edit history. The supplied polling code and private Prometheus endpoint remain part of the bounded exercise.
+debrief: The checks compared the preserved metric path, actual scrape health and series, retained consumer identities/code,
+  desired and running inputs, current aggregate responses and observation progress.
 stages.0.brief: Report real scrape and gauge observations, not inferred traffic history.
-hints.0.text: Separate exporter response, Service forwarding and scrape health.
+hints.0.text: Scrape transport, stored series labels and the intent of a downstream query are separate dependencies.
+  Restoring one does not rewrite the others, and changing desired environment inputs does not update an existing
+  process.
 hints.1.text: |-
-  An up value of zero means the scrape failed, not that the queue is empty. Queue depth is a current-value gauge, so `rate()` is not appropriate for it.
-
-  Inspect the supplied inputs and live observations:
+  Trace the Service and raw metric data through private Prometheus to each existing query consumer’s desired inputs, current Pod and polling program:
 
   ```sh
+  cat prometheus-target.json observer-contract.json
   kubectl get service board -o yaml
-  cat prometheus-target.json
+  kubectl get configmap board-metrics observer-program -o yaml
+  kubectl get deployment,pods -o yaml
+  url=$(jq -r .url prometheus-target.json)
+  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/targets"
   ```
 hints.2.text: |-
-  Repair the Service backend port, wait for a scrape and query both count and sum. The board listener serves `8080`, but the supplied Service backend is `8099`; restore only its targetPort to `8080` and wait for a scrape.
-
-  Verify the result from `~/quest` on the workstation:
-
-  - The query succeeds with one result whose value is `1`.
-
-    ```sh
-    url=$(jq -r .url prometheus-target.json)
-    kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
-    ```
-
-  - Both queries succeed with one result: sum `7`, count `2`.
-
-    ```sh
-    url=$(jq -r .url prometheus-target.json)
-    for aggregate in sum count; do
-      kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=$aggregate%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29"
-    done
-    ```
-
-  An active board target is up with no scrape error:
+  Verify scrape health and the required series aggregates, then each current consumer’s matching JSON result, unchanged program and advancing observation count:
 
   ```sh
   url=$(jq -r .url prometheus-target.json)
-  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/targets?state=active"
+  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
+  kubectl get deployment,pods -o yaml
+  kubectl get configmap observer-program -o jsonpath='{.data.poll\.sh}' | sha256sum
+  for name in observer-count observer-total; do
+   kubectl exec deployment/"$name" -- sha256sum /opt/observer/poll.sh
+   kubectl exec deployment/"$name" -- wget -qO- -T 2 http://127.0.0.1:8080
+   kubectl exec deployment/"$name" -- cat /tmp/observations
+  done
+  sleep 2
+  for name in observer-count observer-total; do
+   kubectl exec deployment/"$name" -- cat /tmp/observations
+  done
   ```
 phrases.0: I traced the scrape failure through the Service.
 phrases.1: I verified up and the recorded metric labels.
@@ -74,11 +70,24 @@ diagnostics.sum_value: sum query value must be 7.
 diagnostics.count_status: count query must succeed.
 diagnostics.count_count: count query must return exactly one result.
 diagnostics.count_value: count query value must be 2.
-stages.0.objectives.0.text: The existing board Service reaches only the supplied board workload through
-  its declared HTTP interface and application listener.
-stages.0.objectives.1.text: Private Prometheus reports one `up` result of `1` for job `board`, and at
-  least one active `board` target is `up` with no scrape error.
-stages.0.objectives.2.text: For job `board` and route `north`, `station_queue_depth` has exactly `2` series
-  with sum `7`; both aggregate queries succeed with one result.
-diagnostics.probe_0_0: 'The current inputs could not verify this objective: The existing board Service reaches only
-  the supplied board workload through its declared HTTP interface and application listener.'
+stages.0.objectives.0.text: The existing board Service reaches only the supplied board workload through its declared
+  HTTP interface and application listener. Preserve the original Service, ConfigMaps and Deployment identities and
+  provided images. Both desired and current query-consumer inputs must select the same metric family, job and route
+  as the required observations and use the provided polling program unchanged, as specified by `observer-contract.json`.
+stages.0.objectives.1.text: Private Prometheus reports one `up` result of `1` for job `board`, and at least one
+  active `board` target is `up` with no scrape error. Each supplied query consumer has one current ready Pod, serves
+  its declared aggregate result and continues successful observations according to `observer-contract.json`.
+stages.0.objectives.2.text: For job `board` and route `north`, `station_queue_depth` has exactly `2` series with
+  sum `7`; both aggregate queries succeed with one result.
+diagnostics.probe_0_0: The Service path or retained query-consumer inputs/code could not be verified.
+diagnostics.observer_identity: An original metrics object or query-consumer identity or provided application image
+  changed or is unavailable.
+diagnostics.observer_code: The supplied polling ConfigMap, program bytes or actual launch configuration changed.
+diagnostics.observer_template: Desired query inputs still select a different metric family, job, route or operation.
+diagnostics.observer_current: A current owned query-consumer Pod is missing, not ready, or still running different
+  inputs.
+diagnostics.observer_delivery: A current query snapshot is unavailable or does not contain the declared aggregate
+  result.
+diagnostics.observer_progress: The observation count did not advance, reset or could not establish current polling
+  progress.
+diagnostics.probe_0_1: Current aggregate publication and polling progress could not be verified.

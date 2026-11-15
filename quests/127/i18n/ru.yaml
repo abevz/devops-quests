@@ -1,56 +1,51 @@
 title: Диагностика scrape Prometheus
 brief: |-
-  Мониторинг не показывает ожидаемые результаты очереди board. Восстановите реальный сбор метрик и согласованные наблюдения gauge.
+  Приватный путь метрик не доставляет требуемые наблюдения. Восстановите scrape и текущую выдачу агрегатов обоим существующим потребителям запросов.
 
-  Работайте на workstation в `~/quest` с предоставленными файлами:
-  - `metrics.yaml`, `board.yaml`, `service.yaml`, `client.yaml`, `prometheus-target.json`.
+  Работайте на рабочей станции в `~/quest` с предоставленными файлами:
+  - `prometheus-target.json`.
+  - `observer-contract.json`.
 
-  **Requirements:**
+  **Требования:**
 
-  - Существующий Service board достигает только предоставленной нагрузки board через объявленный HTTP-интерфейс и listener приложения.
-  - Частный Prometheus сообщает один результат `up` со значением `1` для задания `board`, и хотя бы одна активная цель `board` имеет `up` без ошибки сбора.
+  - Существующий Service board достигает только предоставленной нагрузки board через объявленный HTTP-интерфейс и listener приложения. Сохраните идентичность исходных Service, ConfigMap и Deployment и предоставленные образы. Желаемые и текущие входы обоих потребителей запросов должны выбирать то же семейство метрик, job и маршрут, что и требуемые наблюдения, и использовать предоставленную программу опроса без изменений по `observer-contract.json`.
+  - Частный Prometheus сообщает один результат `up` со значением `1` для задания `board`, и хотя бы одна активная цель `board` имеет `up` без ошибки сбора. У каждого предоставленного потребителя запросов есть один готовый текущий Pod, он выдаёт объявленный агрегат и продолжает успешные наблюдения согласно `observer-contract.json`.
   - Для задания `board` и маршрута `north` метрика `station_queue_depth` имеет ровно `2` ряда с суммой `7`; оба агрегатных запроса успешны и дают один результат.
 
-  Gauge — синтетические учебные данные; Prometheus и его сбор раз в две секунды реальны. Проверки наблюдают текущие результаты Service/запросов, а не историю правок или автора запросов.
-debrief: Настоящие scrape и query подтвердили восстановление; одной readiness недостаточно для метрик
-  приложения.
+  Проверки наблюдают текущие ряды, конфигурацию, снимки и прогресс, но не полную историю запросов или правок. Предоставленный код опроса и приватный endpoint Prometheus остаются частью ограниченного упражнения.
+debrief: Проверки сравнили сохранённый путь метрик, реальное здоровье scrape и ряды, идентичность и код потребителей,
+  желаемые и работающие входы, текущие ответы агрегатов и прогресс наблюдений.
 stages.0.brief: Подтвердите реальные наблюдения scrape и gauge, а не предполагаемую историю трафика.
-hints.0.text: Разделите ответ exporter, перенаправление Service и здоровье scrape.
+hints.0.text: Транспорт scrape, метки сохранённых рядов и смысл запроса потребителя — отдельные зависимости. Восстановление
+  одной не переписывает остальные, а изменение желаемых переменных окружения не обновляет уже работающий процесс.
 hints.1.text: |-
-  up равный нулю означает сбой scrape, а не пустую очередь. Глубина очереди — gauge текущего значения, поэтому `rate()` для неё не подходит.
-
-  Изучите предоставленные файлы и живые наблюдения:
+  Проследите Service и исходные данные метрик через приватный Prometheus к желаемым входам каждого существующего потребителя запросов, текущему Pod и программе опроса:
 
   ```sh
+  cat prometheus-target.json observer-contract.json
   kubectl get service board -o yaml
-  cat prometheus-target.json
+  kubectl get configmap board-metrics observer-program -o yaml
+  kubectl get deployment,pods -o yaml
+  url=$(jq -r .url prometheus-target.json)
+  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/targets"
   ```
 hints.2.text: |-
-  Исправьте backend port Service, дождитесь scrape и проверьте count и sum. Слушатель board обслуживает `8080`, а предоставленный backend Service — `8099`; восстановите только targetPort на `8080` и дождитесь сбора.
-
-  Проверьте результат из `~/quest` на workstation:
-
-  - Запрос успешен и даёт один результат со значением `1`.
-
-    ```sh
-    url=$(jq -r .url prometheus-target.json)
-    kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
-    ```
-
-  - Оба запроса успешны и дают один результат: сумма `7`, количество `2`.
-
-    ```sh
-    url=$(jq -r .url prometheus-target.json)
-    for aggregate in sum count; do
-      kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=$aggregate%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29"
-    done
-    ```
-
-  Активная цель board имеет статус up без ошибки scrape:
+  Проверьте scrape и требуемые агрегаты рядов, затем соответствующий JSON-ответ каждого текущего потребителя, неизменность программы и растущий счётчик наблюдений:
 
   ```sh
   url=$(jq -r .url prometheus-target.json)
-  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/targets?state=active"
+  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
+  kubectl get deployment,pods -o yaml
+  kubectl get configmap observer-program -o jsonpath='{.data.poll\.sh}' | sha256sum
+  for name in observer-count observer-total; do
+   kubectl exec deployment/"$name" -- sha256sum /opt/observer/poll.sh
+   kubectl exec deployment/"$name" -- wget -qO- -T 2 http://127.0.0.1:8080
+   kubectl exec deployment/"$name" -- cat /tmp/observations
+  done
+  sleep 2
+  for name in observer-count observer-total; do
+   kubectl exec deployment/"$name" -- cat /tmp/observations
+  done
   ```
 phrases.0: Я проследил сбой scrape через Service.
 phrases.1: Я проверил up и labels собранных метрик.
@@ -74,11 +69,24 @@ diagnostics.sum_value: Значение запроса sum должно быть
 diagnostics.count_status: Запрос count должен завершиться успешно.
 diagnostics.count_count: Запрос count должен вернуть ровно один результат.
 diagnostics.count_value: Значение запроса count должно быть 2.
-stages.0.objectives.0.text: Существующий Service board достигает только предоставленной нагрузки board
-  через объявленный HTTP-интерфейс и listener приложения.
-stages.0.objectives.1.text: Частный Prometheus сообщает один результат `up` со значением `1` для задания
-  `board`, и хотя бы одна активная цель `board` имеет `up` без ошибки сбора.
-stages.0.objectives.2.text: Для задания `board` и маршрута `north` метрика `station_queue_depth` имеет
-  ровно `2` ряда с суммой `7`; оба агрегатных запроса успешны и дают один результат.
-diagnostics.probe_0_0: 'Текущие данные не позволили проверить эту цель: Существующий Service board достигает только
-  предоставленной нагрузки board через объявленный HTTP-интерфейс и listener приложения.'
+stages.0.objectives.0.text: Существующий Service board достигает только предоставленной нагрузки board через объявленный
+  HTTP-интерфейс и listener приложения. Сохраните идентичность исходных Service, ConfigMap и Deployment и предоставленные
+  образы. Желаемые и текущие входы обоих потребителей запросов должны выбирать то же семейство метрик, job и маршрут,
+  что и требуемые наблюдения, и использовать предоставленную программу опроса без изменений по `observer-contract.json`.
+stages.0.objectives.1.text: Частный Prometheus сообщает один результат `up` со значением `1` для задания `board`,
+  и хотя бы одна активная цель `board` имеет `up` без ошибки сбора. У каждого предоставленного потребителя запросов
+  есть один готовый текущий Pod, он выдаёт объявленный агрегат и продолжает успешные наблюдения согласно `observer-contract.json`.
+stages.0.objectives.2.text: Для задания `board` и маршрута `north` метрика `station_queue_depth` имеет ровно `2`
+  ряда с суммой `7`; оба агрегатных запроса успешны и дают один результат.
+diagnostics.probe_0_0: Не удалось проверить путь Service либо сохранённые входы и код потребителей запросов.
+diagnostics.observer_identity: Изменились или недоступны исходный объект метрик, идентичность потребителя запросов
+  либо предоставленный образ.
+diagnostics.observer_code: Изменились предоставленный ConfigMap программы опроса, её байты или конфигурация запуска.
+diagnostics.observer_template: Желаемые входы запроса всё ещё выбирают другое семейство метрик, job, маршрут или
+  операцию.
+diagnostics.observer_current: Текущий Pod потребителя запросов отсутствует, не готов или продолжает работать с другими
+  входами.
+diagnostics.observer_delivery: Текущий снимок запроса недоступен или не содержит объявленного результата агрегирования.
+diagnostics.observer_progress: Счётчик наблюдений не вырос, сбросился или не позволил подтвердить текущий прогресс
+  опроса.
+diagnostics.probe_0_1: Не удалось проверить текущую выдачу агрегатов и прогресс опроса.

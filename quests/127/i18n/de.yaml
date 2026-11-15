@@ -1,56 +1,52 @@
 title: Diagnose der Prometheus-Metrikerfassung
 brief: |-
-  Das Monitoring zeigt die erwarteten Board-Warteschlangenergebnisse nicht. Stellen Sie echten Scrape-Zustand und die vereinbarten Gauge-Beobachtungen her.
+  Der private Metrikpfad liefert die erforderlichen Beobachtungen nicht. Stelle Scrape-Gesundheit und aktuelle Aggregate für beide vorhandenen Abfrageverbraucher wieder her.
 
-  Arbeiten Sie auf der Workstation in `~/quest` mit den bereitgestellten Dateien:
-  - `metrics.yaml`, `board.yaml`, `service.yaml`, `client.yaml`, `prometheus-target.json`.
+  Arbeite auf der Workstation in `~/quest` mit den bereitgestellten Dateien:
+  - `prometheus-target.json`.
+  - `observer-contract.json`.
 
-  **Requirements:**
+  **Anforderungen:**
 
-  - Der vorhandene board-Service erreicht nur den bereitgestellten board-Workload über seine deklarierte HTTP-Schnittstelle und den Anwendungs-Listener.
-  - Das private Prometheus meldet ein `up`-Ergebnis mit Wert `1` für Job `board`; mindestens ein aktives `board`-Ziel ist `up` ohne Scrape-Fehler.
+  - Der vorhandene board-Service erreicht nur den bereitgestellten board-Workload über seine deklarierte HTTP-Schnittstelle und den Anwendungs-Listener. Erhalte ursprüngliche Identitäten von Service, ConfigMaps und Deployments sowie bereitgestellte Images. Gewünschte und laufende Eingaben beider Abfrageverbraucher müssen dieselbe Metrikfamilie, denselben Job und dieselbe Route wie die erforderlichen Beobachtungen auswählen und das bereitgestellte Polling-Programm unverändert nutzen, gemäß `observer-contract.json`.
+  - Das private Prometheus meldet ein `up`-Ergebnis mit Wert `1` für Job `board`; mindestens ein aktives `board`-Ziel ist `up` ohne Scrape-Fehler. Jeder bereitgestellte Abfrageverbraucher hat einen aktuellen bereiten Pod, liefert sein deklariertes Aggregat und setzt erfolgreiche Beobachtungen gemäß `observer-contract.json` fort.
   - Für Job `board` und Route `north` hat `station_queue_depth` genau `2` Serien mit Summe `7`; beide Aggregatabfragen sind erfolgreich und liefern ein Ergebnis.
 
-  Die Gauge ist ein synthetischer Trainingsdatensatz; Prometheus und sein Zwei-Sekunden-Scrape sind echt. Die Prüfungen beobachten aktuelle Service-/Abfrageergebnisse, nicht Änderungsverlauf oder Abfrageausführer.
-debrief: Eine echte Erholung von scrape und query; readiness allein würde die aufgezeichneten Anwendungsmetriken
-  nicht beweisen.
+  Prüfungen beobachten aktuelle Reihen, Konfiguration, Snapshots und Fortschritt, nicht den vollständigen Anfrage- oder Änderungsverlauf. Bereitgestelltes Polling-Programm und privater Prometheus-Endpunkt bleiben Teil dieser begrenzten Übung.
+debrief: Die Prüfungen verglichen erhaltenen Metrikpfad, reale Scrape-Gesundheit und Reihen, Verbraucheridentitäten
+  und Code, gewünschte und laufende Eingaben, aktuelle Aggregate und Beobachtungsfortschritt.
 stages.0.brief: Belegen Sie tatsächliche Scrape- und Gauge-Beobachtungen statt abgeleiteter Verkehrshistorie.
-hints.0.text: Separate exporter-Antwort, Service-Weiterleitung und scrape-Zustand.
+hints.0.text: Scrape-Transport, Labels gespeicherter Zeitreihen und die Absicht einer nachgelagerten Abfrage sind
+  getrennte Abhängigkeiten. Eine Reparatur schreibt die anderen nicht um; geänderte gewünschte Umgebungswerte aktualisieren
+  keinen bestehenden Prozess.
 hints.1.text: |-
-  Ein up-Wert von Null bedeutet, dass der scrape fehlgeschlagen ist, nicht, dass die Warteschlange leer ist. Warteschlangentiefe ist eine Gauge des aktuellen Werts; `rate()` ist dafür ungeeignet.
-
-  Prüfen Sie die bereitgestellten Eingaben und laufenden Beobachtungen:
+  Verfolge Service und rohe Metrikdaten über privates Prometheus zu gewünschten Eingaben, aktuellem Pod und Polling-Programm jedes vorhandenen Abfrageverbrauchers:
 
   ```sh
+  cat prometheus-target.json observer-contract.json
   kubectl get service board -o yaml
-  cat prometheus-target.json
+  kubectl get configmap board-metrics observer-program -o yaml
+  kubectl get deployment,pods -o yaml
+  url=$(jq -r .url prometheus-target.json)
+  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/targets"
   ```
 hints.2.text: |-
-  Reparieren Sie den Port Service backend, warten Sie auf einen scrape und fragen Sie sowohl count als auch sum ab. Der Board-Listener bedient `8080`, das vorgegebene Service-Backend ist `8099`; setzen Sie nur targetPort auf `8080` und warten Sie auf einen Scrape.
-
-  Prüfen Sie das Ergebnis in `~/quest` auf der Workstation:
-
-  - Die Abfrage ist erfolgreich und liefert ein Ergebnis mit Wert `1`.
-
-    ```sh
-    url=$(jq -r .url prometheus-target.json)
-    kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
-    ```
-
-  - Beide Abfragen sind erfolgreich mit einem Ergebnis: Summe `7`, Anzahl `2`.
-
-    ```sh
-    url=$(jq -r .url prometheus-target.json)
-    for aggregate in sum count; do
-      kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=$aggregate%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29"
-    done
-    ```
-
-  Ein aktives board-Ziel ist up ohne Scrape-Fehler:
+  Prüfe Scrape-Gesundheit und erforderliche Aggregate, danach passende aktuelle JSON-Antwort, unverändertes Programm und fortschreitenden Beobachtungszähler jedes Verbrauchers:
 
   ```sh
   url=$(jq -r .url prometheus-target.json)
-  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/targets?state=active"
+  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
+  kubectl get deployment,pods -o yaml
+  kubectl get configmap observer-program -o jsonpath='{.data.poll\.sh}' | sha256sum
+  for name in observer-count observer-total; do
+   kubectl exec deployment/"$name" -- sha256sum /opt/observer/poll.sh
+   kubectl exec deployment/"$name" -- wget -qO- -T 2 http://127.0.0.1:8080
+   kubectl exec deployment/"$name" -- cat /tmp/observations
+  done
+  sleep 2
+  for name in observer-count observer-total; do
+   kubectl exec deployment/"$name" -- cat /tmp/observations
+  done
   ```
 phrases.0: Ich habe den Fehler scrape über den Fehler Service verfolgt.
 phrases.1: Ich habe up und die aufgezeichnete Metrik labels überprüft.
@@ -62,7 +58,8 @@ questions.1.points.0: Die Gauge-Metrik bildet bereits die aktuelle Warteschlange
 questions.1.points.1: Rate ist für counter Änderungen im Laufe der Zeit gedacht.
 questions.1.prompt: Warum nicht rate und Warteschlangentiefe gauge?
 diagnostics.port: Der HTTP-Port des Service board muss 8080 sein.
-diagnostics.target_port: Das HTTP-Ziel des Service board muss auf den Anwendungslistener an Port 8080 aufgelöst werden.
+diagnostics.target_port: Das HTTP-Ziel des Service board muss auf den Anwendungslistener an Port 8080 aufgelöst
+  werden.
 diagnostics.selector: Service board muss die gesamte bereitgestellte Workload board und keine andere auswählen.
 diagnostics.target_health: Ein aktives Board-Target muss up mit leerem lastError sein.
 diagnostics.up_status: Die up-Abfrage muss erfolgreich sein.
@@ -74,11 +71,28 @@ diagnostics.sum_value: Der Wert der sum-Abfrage muss 7 sein.
 diagnostics.count_status: Die count-Abfrage muss erfolgreich sein.
 diagnostics.count_count: Die count-Abfrage muss genau ein Ergebnis liefern.
 diagnostics.count_value: Der Wert der count-Abfrage muss 2 sein.
-stages.0.objectives.0.text: Der vorhandene board-Service erreicht nur den bereitgestellten board-Workload
-  über seine deklarierte HTTP-Schnittstelle und den Anwendungs-Listener.
-stages.0.objectives.1.text: Das private Prometheus meldet ein `up`-Ergebnis mit Wert `1` für Job `board`;
-  mindestens ein aktives `board`-Ziel ist `up` ohne Scrape-Fehler.
-stages.0.objectives.2.text: Für Job `board` und Route `north` hat `station_queue_depth` genau `2` Serien
-  mit Summe `7`; beide Aggregatabfragen sind erfolgreich und liefern ein Ergebnis.
-diagnostics.probe_0_0: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: Der vorhandene board-Service
-  erreicht nur den bereitgestellten board-Workload über seine deklarierte HTTP-Schnittstelle und den Anwendungs-Listener.'
+stages.0.objectives.0.text: Der vorhandene board-Service erreicht nur den bereitgestellten board-Workload über seine
+  deklarierte HTTP-Schnittstelle und den Anwendungs-Listener. Erhalte ursprüngliche Identitäten von Service, ConfigMaps
+  und Deployments sowie bereitgestellte Images. Gewünschte und laufende Eingaben beider Abfrageverbraucher müssen
+  dieselbe Metrikfamilie, denselben Job und dieselbe Route wie die erforderlichen Beobachtungen auswählen und das
+  bereitgestellte Polling-Programm unverändert nutzen, gemäß `observer-contract.json`.
+stages.0.objectives.1.text: Das private Prometheus meldet ein `up`-Ergebnis mit Wert `1` für Job `board`; mindestens
+  ein aktives `board`-Ziel ist `up` ohne Scrape-Fehler. Jeder bereitgestellte Abfrageverbraucher hat einen aktuellen
+  bereiten Pod, liefert sein deklariertes Aggregat und setzt erfolgreiche Beobachtungen gemäß `observer-contract.json`
+  fort.
+stages.0.objectives.2.text: Für Job `board` und Route `north` hat `station_queue_depth` genau `2` Serien mit Summe
+  `7`; beide Aggregatabfragen sind erfolgreich und liefern ein Ergebnis.
+diagnostics.probe_0_0: Service-Pfad oder erhaltene Abfrageeingaben und Programm konnten nicht geprüft werden.
+diagnostics.observer_identity: Ein ursprüngliches Metrikobjekt, eine Abfrageverbraucher-Identität oder ein bereitgestelltes
+  Image wurde geändert oder ist nicht verfügbar.
+diagnostics.observer_code: Bereitgestellte Polling-ConfigMap, Programmbytes oder tatsächliche Startkonfiguration
+  wurden geändert.
+diagnostics.observer_template: Gewünschte Abfrageeingaben wählen noch eine andere Metrikfamilie, einen anderen Job,
+  eine andere Route oder Operation.
+diagnostics.observer_current: Ein aktueller zugehöriger Abfrageverbraucher-Pod fehlt, ist nicht bereit oder läuft
+  noch mit anderen Eingaben.
+diagnostics.observer_delivery: Ein aktueller Abfragesnapshot ist nicht verfügbar oder enthält nicht das deklarierte
+  Aggregat.
+diagnostics.observer_progress: Der Beobachtungszähler stieg nicht, wurde zurückgesetzt oder belegt keinen aktuellen
+  Polling-Fortschritt.
+diagnostics.probe_0_1: Aktuelle Aggregatveröffentlichung und Polling-Fortschritt konnten nicht geprüft werden.

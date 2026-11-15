@@ -1,50 +1,54 @@
 title: NetworkPolicy
 brief: |-
-  Punkt HTTP ma być dostępny dla dozwolonego obciążenia i odizolowany od innych źródeł żądań. Sieć środowiska wymusza izolację ruchu.
+  Chroniona tablica jest niedostępna dla dozwolonego odbiorcy. Przywróć wąski dostęp, zachowując izolację gościa.
 
-  Pracuj na workstation w `~/quest` z dostarczonymi plikami:
-  - `board.yaml`, `service.yaml`, `dispatcher.yaml`, `visitor.yaml`, `policy.yaml`.
+  Pracuj na stacji roboczej w `~/quest` z dostarczonymi plikami:
+  - `isolation-contract.json`.
 
   **Wymagania:**
 
-  - W zatoce pozostaje dokładnie jedna NetworkPolicy.
-  - Istniejąca polityka zachowuje chronione obciążenie i zakres dozwolonych klientów:
-    - Dozwolony jest tylko przychodzący ruch HTTP do tej usługi.
-    - Polityka dotyczy wyłącznie ingress.
-  - Z Deployment `dispatcher` adres `http://board:8080` zwraca `north-62`; z Deployment `visitor` ten sam endpoint jest zablokowany.
+  - Istniejąca NetworkPolicy zachowuje chronione obciążenie i zakres dozwolonych klientów, dopuszczając tylko przychodzący ruch HTTP tej usługi. Zachowaj tożsamość pierwotnej polityki i Deploymentów oraz dostarczone obrazy. Żądany szablon Poda dozwolonego nadawcy i każdy bieżący gotowy Pod muszą należeć do zachowanego zakresu nadawców polityki według `isolation-contract.json`.
+  - W środowisku istnieje dokładnie jedna NetworkPolicy.
+  - HTTP z Deployment `dispatcher` do `http://board:8080` zwraca `north-62`.
+  - HTTP z Deploymentu `visitor` do `http://board:8080` jest blokowany.
 
-  Próby ruchu obejmują dwóch dostarczonych klientów; nie sprawdzają każdego możliwego klienta ani ścieżki wychodzącej.
-debrief: Trasa usługi została przywrócona, podczas gdy niepowiązany client pozostał odizolowany.
+  Kontrole obserwują bieżący stan żądany, przynależność Podów i ruch, nie historię zmian etykiet. Zachowaj pierwotną granicę wyłącznie Ingress i zmieniaj tylko ten bay.
+debrief: Kontrole porównały pierwotną wąską politykę, zachowane tożsamości obciążeń, żądaną i bieżącą przynależność
+  nadawcy oraz rzeczywisty dozwolony i zabroniony ruch.
 stages.0.brief: Zachowaj granicę izolacji polityki dotyczącą wyłącznie ruchu przychodzącego.
-stages.0.objectives.0.text: Istniejąca NetworkPolicy zachowuje chronione obciążenie i zakres dozwolonych
-  klientów, dopuszczając tylko przychodzący ruch HTTP tej usługi.
+stages.0.objectives.0.text: Istniejąca NetworkPolicy zachowuje chronione obciążenie i zakres dozwolonych klientów,
+  dopuszczając tylko przychodzący ruch HTTP tej usługi. Zachowaj tożsamość pierwotnej polityki i Deploymentów oraz
+  dostarczone obrazy. Żądany szablon Poda dozwolonego nadawcy i każdy bieżący gotowy Pod muszą należeć do zachowanego
+  zakresu nadawców polityki według `isolation-contract.json`.
 stages.0.objectives.1.text: W środowisku istnieje dokładnie jedna NetworkPolicy.
 stages.0.objectives.2.text: HTTP z Deployment `dispatcher` do `http://board:8080` zwraca `north-62`.
 stages.0.objectives.3.text: HTTP z Deploymentu `visitor` do `http://board:8080` jest blokowany.
-hints.0.text: Sprawny Service nie omija polityki ruchu przychodzącego Pod.
+hints.0.text: Polityka wybiera docelowe Pody, a osobny selektor określa dozwolone źródła. Etykiety bieżącego Poda
+  i szablonu Deploymentu mają różne czasy życia; poszerzenie granicy ukrywa zależność zamiast ją naprawić.
 hints.1.text: |-
-  Policies są addytywne; allow-all przerwałoby izolację.
-
-  Sprawdź dostarczone dane i bieżące obserwacje:
+  Porównaj pełny zakres polityki, żądany szablon nadawcy i bieżące należące do niego Pody. Te obiekty już istnieją:
 
   ```sh
+  cat isolation-contract.json
   kubectl get networkpolicy -o yaml
+  kubectl get deployments -o yaml
   kubectl get pods --show-labels
   ```
 hints.2.text: |-
-  Dostarczona polityka zezwala Podom dispatcher na TCP 9090 zamiast HTTP 8080. Zmień dozwolony port na 8080 i sprawdź klientów dozwolonych oraz blokowanych.
+  Sprawdź liczbę i tożsamość polityk, żądaną i bieżącą przynależność nadawcy, dozwoloną odpowiedź oraz odrzucenie żądania gościa:
 
-  Sprawdź wynik z `~/quest` na workstation:
-
-  Wykonaj te polecenia obserwacyjne w `~/quest` na workstation.
-  - `kubectl exec deployment/dispatcher -c worker -- wget -qO- -T 3 http://board:8080` — Dozwolone źródło żądań otrzymuje `north-62`.
-  - `kubectl exec deployment/visitor -c worker -- wget -qO- -T 2 http://board:8080` — Odizolowane źródło nie może się połączyć; polecenie ma zakończyć się błędem.
-  - Istnieje dokładnie jedna polityka, a jej cel, dozwolone źródła, kierunek i port odpowiadają wymaganiom.
-
-    ```sh
-    kubectl get networkpolicy
-    kubectl get networkpolicy board-ingress -o yaml
-    ```
+  ```sh
+  kubectl get networkpolicy -o name
+  kubectl get deployment dispatcher -o yaml
+  kubectl get pods -l app=dispatcher --show-labels
+  kubectl rollout status deployment/dispatcher --timeout=90s
+  kubectl exec deployment/dispatcher -- wget -qO- -T 3 http://board:8080
+  if kubectl exec deployment/visitor -- wget -qO- -T 3 http://board:8080; then
+   printf '%s\n' 'unexpected guest access'
+  else
+   printf '%s\n' 'guest denied'
+  fi
+  ```
 phrases.0: Osobno sprawdzałem źródło selectors, kierunek i porty.
 phrases.1: Przetestowałem client odrzuconego i dozwolonego.
 phrases.2: Podczas odzyskiwania unikałem dodatku allow-all policies.
@@ -56,5 +60,9 @@ questions.1.points.0: Dostępność nie potwierdza granicy dostępu.
 questions.1.points.1: Selectors może zawierać dodatkowe moduły.
 questions.1.points.2: CNI musi wymuszać policy w rzeczywistym ruchu.
 questions.1.prompt: Po co testować odrzuconego client po otwarciu ścieżki usługi?
-diagnostics.probe_0_0: 'Bieżące dane nie pozwalają potwierdzić tego celu: Istniejąca NetworkPolicy zachowuje chronione
-  obciążenie i zakres dozwolonych klientów, dopuszczając tylko przychodzący ruch HTTP tej usługi.'
+diagnostics.probe_0_0: Nie udało się sprawdzić wąskiego zakresu Ingress albo żądanej i bieżącej przynależności nadawcy.
+diagnostics.isolation_identity: Zmieniono pierwotną politykę Ingress, tożsamość dostarczonego obciążenia lub obraz
+  aplikacji.
+diagnostics.isolation_template: Żądany szablon Poda nadawcy nie odpowiada zachowanemu selektorowi dozwolonych źródeł.
+diagnostics.isolation_current: Bieżące Pody nadawcy nie istnieją, nie są gotowe lub nie należą do zachowanego zakresu
+  dozwolonych źródeł.

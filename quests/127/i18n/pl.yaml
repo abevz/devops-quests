@@ -1,56 +1,51 @@
 title: Diagnostyka pobierania metryk Prometheus
 brief: |-
-  Monitoring nie pokazuje oczekiwanych wyników kolejki board. Przywróć rzeczywiste działanie zbierania i uzgodnione obserwacje gauge.
+  Prywatna ścieżka metryk nie dostarcza wymaganych obserwacji. Przywróć poprawny scrape i bieżące agregaty obu istniejącym odbiorcom zapytań.
 
-  Pracuj na workstation w `~/quest` z dostarczonymi plikami:
-  - `metrics.yaml`, `board.yaml`, `service.yaml`, `client.yaml`, `prometheus-target.json`.
+  Pracuj na stacji roboczej w `~/quest` z dostarczonymi plikami:
+  - `prometheus-target.json`.
+  - `observer-contract.json`.
 
-  **Requirements:**
+  **Wymagania:**
 
-  - Istniejący Service board dociera tylko do dostarczonego obciążenia board przez zadeklarowany interfejs HTTP i listener aplikacji.
-  - Prywatny Prometheus zgłasza jeden wynik `up` o wartości `1` dla zadania `board`, a co najmniej jeden aktywny cel `board` jest `up` bez błędu zbierania.
+  - Istniejący Service board dociera tylko do dostarczonego obciążenia board przez zadeklarowany interfejs HTTP i listener aplikacji. Zachowaj pierwotne tożsamości Service, ConfigMap i Deploymentów oraz dostarczone obrazy. Żądane i bieżące wejścia obu odbiorców zapytań mają wybierać tę samą rodzinę metryk, job i trasę co wymagane obserwacje oraz używać niezmienionego programu odpytywania według `observer-contract.json`.
+  - Prywatny Prometheus zgłasza jeden wynik `up` o wartości `1` dla zadania `board`, a co najmniej jeden aktywny cel `board` jest `up` bez błędu zbierania. Każdy dostarczony odbiorca zapytań ma jeden bieżący gotowy Pod, publikuje zadeklarowany agregat i kontynuuje poprawne obserwacje zgodnie z `observer-contract.json`.
   - Dla zadania `board` i trasy `north` metryka `station_queue_depth` ma dokładnie `2` serie o sumie `7`; obydwa zapytania agregujące kończą się powodzeniem i dają jeden wynik.
 
-  Gauge to syntetyczne dane szkoleniowe; Prometheus i zbieranie co dwie sekundy są rzeczywiste. Kontrole obserwują bieżące wyniki Service/zapytań, nie historię ani autora zapytań.
-debrief: Prawdziwe scrape i query okazały się odzyskiem; Sam readiness nie udowodniłby zarejestrowanych
-  parametrów aplikacji.
+  Kontrole obserwują bieżące szeregi, konfigurację, migawki i postęp, nie pełną historię żądań ani zmian. Dostarczony program odpytywania i prywatny endpoint Prometheus pozostają częścią ograniczonego ćwiczenia.
+debrief: Kontrole porównały zachowaną ścieżkę metryk, rzeczywisty scrape i szeregi, tożsamości i kod odbiorców,
+  żądane i działające wejścia, bieżące agregaty i postęp obserwacji.
 stages.0.brief: Potwierdź rzeczywiste obserwacje scrape i gauge, a nie wywnioskowaną historię ruchu.
-hints.0.text: Oddzielna odpowiedź exporter, przekazywanie Service i kondycja scrape.
+hints.0.text: Transport scrape, etykiety zapisanych szeregów i intencja dalszego zapytania to oddzielne zależności.
+  Naprawa jednej nie przepisuje pozostałych, a zmiana żądanego środowiska nie aktualizuje istniejącego procesu.
 hints.1.text: |-
-  Wartość up równa zero oznacza, że ​​scrape nie powiodło się, a nie, że kolejka jest pusta. Głębokość kolejki jest gauge bieżącej wartości, więc `rate()` nie jest odpowiednie.
-
-  Sprawdź dostarczone dane i bieżące obserwacje:
+  Prześledź Service i źródłowe dane metryk przez prywatny Prometheus do żądanych wejść, bieżącego Poda i programu każdego istniejącego odbiorcy zapytań:
 
   ```sh
+  cat prometheus-target.json observer-contract.json
   kubectl get service board -o yaml
-  cat prometheus-target.json
+  kubectl get configmap board-metrics observer-program -o yaml
+  kubectl get deployment,pods -o yaml
+  url=$(jq -r .url prometheus-target.json)
+  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/targets"
   ```
 hints.2.text: |-
-  Napraw port zaplecza Service, poczekaj na scrape i zapytaj zarówno count, jak i sum. Nasłuch board działa na `8080`, ale dostarczony backend Service to `8099`; przywróć tylko targetPort do `8080` i poczekaj na zebranie.
-
-  Sprawdź wynik z `~/quest` na workstation:
-
-  - Zapytanie kończy się powodzeniem z jednym wynikiem o wartości `1`.
-
-    ```sh
-    url=$(jq -r .url prometheus-target.json)
-    kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
-    ```
-
-  - Oba zapytania kończą się powodzeniem z jednym wynikiem: suma `7`, liczba `2`.
-
-    ```sh
-    url=$(jq -r .url prometheus-target.json)
-    for aggregate in sum count; do
-      kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=$aggregate%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29"
-    done
-    ```
-
-  Aktywny cel board ma stan up bez błędu scrape:
+  Sprawdź stan scrape i wymagane agregaty, potem zgodną bieżącą odpowiedź JSON, niezmieniony program i rosnący licznik obserwacji każdego odbiorcy:
 
   ```sh
   url=$(jq -r .url prometheus-target.json)
-  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/targets?state=active"
+  kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
+  kubectl get deployment,pods -o yaml
+  kubectl get configmap observer-program -o jsonpath='{.data.poll\.sh}' | sha256sum
+  for name in observer-count observer-total; do
+   kubectl exec deployment/"$name" -- sha256sum /opt/observer/poll.sh
+   kubectl exec deployment/"$name" -- wget -qO- -T 2 http://127.0.0.1:8080
+   kubectl exec deployment/"$name" -- cat /tmp/observations
+  done
+  sleep 2
+  for name in observer-count observer-total; do
+   kubectl exec deployment/"$name" -- cat /tmp/observations
+  done
   ```
 phrases.0: Prześledziłem awarię scrape poprzez Service.
 phrases.1: Zweryfikowałem up i zarejestrowaną metrykę labels.
@@ -74,11 +69,24 @@ diagnostics.sum_value: Wartość zapytania sum musi wynosić 7.
 diagnostics.count_status: Zapytanie count musi się powieść.
 diagnostics.count_count: Zapytanie count musi zwrócić dokładnie jeden wynik.
 diagnostics.count_value: Wartość zapytania count musi wynosić 2.
-stages.0.objectives.0.text: Istniejący Service board dociera tylko do dostarczonego obciążenia board przez
-  zadeklarowany interfejs HTTP i listener aplikacji.
-stages.0.objectives.1.text: Prywatny Prometheus zgłasza jeden wynik `up` o wartości `1` dla zadania `board`,
-  a co najmniej jeden aktywny cel `board` jest `up` bez błędu zbierania.
-stages.0.objectives.2.text: Dla zadania `board` i trasy `north` metryka `station_queue_depth` ma dokładnie
-  `2` serie o sumie `7`; obydwa zapytania agregujące kończą się powodzeniem i dają jeden wynik.
-diagnostics.probe_0_0: 'Bieżące dane nie pozwalają potwierdzić tego celu: Istniejący Service board dociera tylko
-  do dostarczonego obciążenia board przez zadeklarowany interfejs HTTP i listener aplikacji.'
+stages.0.objectives.0.text: Istniejący Service board dociera tylko do dostarczonego obciążenia board przez zadeklarowany
+  interfejs HTTP i listener aplikacji. Zachowaj pierwotne tożsamości Service, ConfigMap i Deploymentów oraz dostarczone
+  obrazy. Żądane i bieżące wejścia obu odbiorców zapytań mają wybierać tę samą rodzinę metryk, job i trasę co wymagane
+  obserwacje oraz używać niezmienionego programu odpytywania według `observer-contract.json`.
+stages.0.objectives.1.text: Prywatny Prometheus zgłasza jeden wynik `up` o wartości `1` dla zadania `board`, a co
+  najmniej jeden aktywny cel `board` jest `up` bez błędu zbierania. Każdy dostarczony odbiorca zapytań ma jeden
+  bieżący gotowy Pod, publikuje zadeklarowany agregat i kontynuuje poprawne obserwacje zgodnie z `observer-contract.json`.
+stages.0.objectives.2.text: Dla zadania `board` i trasy `north` metryka `station_queue_depth` ma dokładnie `2` serie
+  o sumie `7`; obydwa zapytania agregujące kończą się powodzeniem i dają jeden wynik.
+diagnostics.probe_0_0: Nie udało się sprawdzić ścieżki Service albo zachowanych wejść i kodu odbiorców zapytań.
+diagnostics.observer_identity: Pierwotny obiekt metryk, tożsamość odbiorcy zapytań lub dostarczony obraz zmieniły
+  się albo są niedostępne.
+diagnostics.observer_code: Zmieniono dostarczony ConfigMap programu odpytywania, jego bajty lub rzeczywistą konfigurację
+  uruchomienia.
+diagnostics.observer_template: Żądane wejścia zapytania nadal wybierają inną rodzinę metryk, job, trasę lub operację.
+diagnostics.observer_current: Bieżący Pod odbiorcy zapytań nie istnieje, nie jest gotowy albo nadal działa z innymi
+  wejściami.
+diagnostics.observer_delivery: Bieżąca migawka zapytania jest niedostępna lub nie zawiera zadeklarowanego agregatu.
+diagnostics.observer_progress: Licznik obserwacji nie wzrósł, został wyzerowany lub nie potwierdza bieżącego postępu
+  odpytywania.
+diagnostics.probe_0_1: Nie udało się sprawdzić bieżącej publikacji agregatów i postępu odpytywania.

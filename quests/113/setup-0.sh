@@ -154,7 +154,7 @@ metadata:
 spec:
   parentRefs:
   - name: station
-    sectionName: web
+    sectionName: retired
   hostnames:
   - north.station.internal
   rules:
@@ -172,3 +172,36 @@ from pathlib import Path
 p=Path(sys.argv[1]);p.write_text(p.read_text().replace('__DQ_APP_IMAGE__',os.environ['DQ_APP_IMAGE']))
 DQ_IMAGE
 kubectl apply -f route.yaml
+for i in $(seq 1 30); do
+ if kubectl get httproute board -o json | jq -e '.metadata.generation as $g | any(.status.parents[]?.conditions[]?; .type=="Accepted" and .status=="False" and .observedGeneration==$g)' >/dev/null; then break; fi
+ sleep 1
+done
+python3 -I - <<'DQ_ATTACHMENT_SEED'
+import json,subprocess
+from pathlib import Path
+def get(kind,name):
+    return json.loads(subprocess.check_output(['kubectl','get',kind,name,'-o','json'],text=True))
+def deployments(names):
+    result={}
+    for name in names:
+        value=get('deployment',name)
+        result[name]={'uid':value['metadata']['uid'],
+                      'image':next(item['image'] for item in value['spec']['template']['spec']['containers'] if item['name']=='worker')}
+    return result
+
+gateway=get('gateway','station')
+route=get('httproute','board')
+assert any(condition.get('type')=='Accepted' and condition.get('status')=='False' and condition.get('observedGeneration')==route['metadata']['generation'] for parent in route.get('status',{}).get('parents',[]) for condition in parent.get('conditions',[]))
+contract={'schema':1,'gateway':'station','route':'board','backendService':'board',
+          'preserveExistingGatewayRouteServiceAndWorkloads':True,
+          'preserveGatewayListenerDefinitions':True,'preserveProvidedWorkerImages':True,
+          'currentParentStatusForCurrentRouteGeneration':True,'observesCurrentStateOnly':True}
+controllers={item['controllerName'] for item in route.get('status',{}).get('parents',[]) if item.get('controllerName')}
+assert len(controllers)==1
+facts={'contract':contract,'gatewayUID':gateway['metadata']['uid'],'routeUID':route['metadata']['uid'],
+       'serviceUID':get('service','board')['metadata']['uid'],'listeners':gateway['spec']['listeners'],
+       'controller':next(iter(controllers)),'deployments':deployments(['board','client'])}
+Path('attachment-contract.json').write_text(json.dumps(contract,indent=2)+'\n')
+Path('attachment-identities.json').write_text(json.dumps(facts)+'\n')
+DQ_ATTACHMENT_SEED
+rm -f board.yaml service.yaml client.yaml gateway.yaml route.yaml book-components.env
