@@ -64,6 +64,20 @@ print(Path(os.environ['DQ_TEST_DOCUMENT']).read_text())
     source = yaml.safe_load((ROOT / f"quests/{number:03}/quest.yaml").read_text())[
         "stages"
     ][0]["objectives"][goal]["check"]
+    if number == 34 and goal == 1:
+        # The fixture models the original CPU transport/quantity predicate.
+        # Assert its complete trusted shell entrypoint is retained unchanged;
+        # added phase/identity state has separate full helper/native coverage.
+        source = source.split("<<'DQ_LEGACY_CPU_1'\n", 1)[1].split(
+            "\nDQ_LEGACY_CPU_1\n", 1
+        )[0]
+        original = (
+            (ROOT / "tests/fixtures/deepen-cpu-phases/034-legacy-check.sh")
+            .read_text()
+            .split("(\nset -e\n")[goal + 1]
+            .split("\n)\n[ $? -eq 0 ] || failed=1\n", 1)[0]
+        )
+        assert source.rstrip() == original.rstrip()
     if number == 88:
         # This fixture represents only the original worker property. Keep the
         # complete trusted shell entrypoint (including -I and fd transport),

@@ -1,39 +1,56 @@
 title: PVC Diagnose
 brief: |-
-  Der Routen-Workload wartet auf nutzbaren Speicher. Stellen Sie seine Verfügbarkeit wieder her und behalten Sie das Deployment bei.
+  Der angeforderte Speicher liefert noch keinen nutzbaren Routendatensatz. Stelle die Zielanwendung aus der erhaltenen Quelle wieder her, ohne ursprüngliche Workloads neu anzulegen.
 
-  Arbeiten Sie auf der Workstation in `~/quest` mit den bereitgestellten Dateien:
-  - `spool.yaml`, `deployment.yaml`.
+  Arbeite auf der Workstation in `~/quest` mit `storage-contract.json`; untersuche die bereitgestellten Ressourcen im Namespace.
 
   **Anforderungen:**
+  - Der bereitgestellte Ziel-Claim ist anfangs leer und ungebunden. Erhalte die ursprüngliche Quell-PVC- und beide Deployment-Identitäten, unveränderliche Images und alle deklarierten Quelldateien.
+  - Der Ziel-Claim ist `Bound`. Beide Leser haben eine bereite Replik; der Quellleser behält seinen schreibgeschützten Mount und beide verwenden ihre deklarierte PVC am deklarierten Pfad.
+  - Die deklarierten regulären Dateien liegen mit aktuellen Größen und Prüfsummen auf diesen Claims; andere Mounts überdecken ihre Dateipfade nicht. Beide deklarierten HTTP-Schnittstellen veröffentlichen den aktuellen Quelldatensatz.
 
-  - Der vom bereitgestellten Workload angeforderte Storage-Claim ist `Bound`.
-  - Deployment `relay` schließt seinen Rollout ab.
-
-  Bindung und Bereitschaft beweisen weder Datenerhalt noch Wiederherstellungshistorie.
-stages.0.brief: Beschränken Sie die Wiederherstellung auf den bereitgestellten Claim des Workloads.
-stages.0.objectives.0.text: Der vom bereitgestellten Workload angeforderte Storage-Claim ist Bound.
-stages.0.objectives.1.text: Deployment `relay` schließt seinen Rollout ab.
-hints.0.text: Diese Behauptung ist frisch und leer; Sein class-Name kann nicht vor Ort repariert werden.
-hints.1.text: |-
-  Beschreiben Sie den PVC und lesen Sie seine Storage Class. Der bereitgestellte Claim nennt eine unbekannte Storage Class.
-
-  Prüfen Sie die bereitgestellten Eingaben und laufenden Beobachtungen:
-
-  ```sh
-  kubectl describe pvc
-  kubectl get storageclass
-  ```
+  Geprüft werden aktuelle Claims, Mounts, Dateien und Antworten. Kopierhistorie oder eine externe Sicherung werden nicht nachgewiesen.
+stages.0.brief: Beide Leser sind bereit und veröffentlichen den aktuellen regulären Datensatz aus ihren deklarierten
+  PVCs.
+stages.0.objectives.0.text: Der Ziel-Claim ist gebunden; ursprüngliche Workloads/Quell-Claim, bereitgestellte Images
+  und Quell-Mount bleiben erhalten.
+stages.0.objectives.1.text: Beide Leser sind bereit und veröffentlichen den aktuellen regulären Datensatz aus ihren
+  deklarierten PVCs.
+hints.0.text: Ein gebundenes Volume stellt Kapazität bereit, nicht die erforderlichen Daten. Erhalte die vorhandene
+  Quelle und trenne Provisionierung von Anwendungswiederherstellung.
+hints.1.text: Vergleiche `storage-contract.json`, `kubectl get pvc -o yaml` und `kubectl describe pod` mit beiden
+  Leserdefinitionen und tatsächlichen Quelldateien. Der gesunde Quell-Claim zeigt seine funktionierenden Speichereinstellungen
+  über die Namespace-API.
 hints.2.text: |-
-  Stoppen Sie diese Bereitstellung, erstellen Sie nur den leeren Anspruch mit standard neu und überprüfen Sie Bound vor readiness.
+  Prüfe nach Bindung und Datenübertragung den aktuellen Zustand gegen den Vertrag. Erhalte Quelldaten und Identitäten. Erwartete Beobachtungen:
 
-  Prüfen Sie das Ergebnis in `~/quest` auf der Workstation:
-
-  Führen Sie diese Beobachtungsbefehle in `~/quest` auf der Workstation aus.
-  - `kubectl get pvc spool` — Der Claim ist `Bound`.
-  - `kubectl rollout status deployment/relay --timeout=3s` — Der Workload-Rollout ist abgeschlossen.
-debrief: Für den neuen leeren Anspruch wurde ein unbekannter storage class angefordert. Sie haben nur
-  diesen Einweganspruch mit standard neu erstellt und Bound sowie ein fertiges reader überprüft.
+  - `kubectl get pvc` — Quell- und Ziel-Claim sind Bound.
+  - `kubectl exec deployment/relay -c worker -- stat -c '%F:%s' /spool/index.html /spool/payload.bin` — deklarierte reguläre Dateitypen und Größen stimmen.
+  - `kubectl exec deployment/relay -c worker -- sha256sum /spool/index.html /spool/payload.bin` — beide Prüfsummen entsprechen dem Vertrag.
+  - `kubectl exec deployment/relay -c worker -- wget -qO- http://127.0.0.1:8080` — Antwort entspricht der aktuellen Quellveröffentlichung.
+debrief: Die Provisionierung stellte Kapazität her; eine separate Datenübertragung stellte den aktuellen Quelldatensatz
+  und Payload auf dem Ziel-Claim wieder her. Quell-Volume und Workload-Identitäten blieben erhalten.
 phrases.0: Ich habe den Betriebsstatus überprüft, bevor ich eine Änderung vorgenommen habe.
 phrases.1: Ich habe die Ursache gefunden und eine Sache nach der anderen geändert.
 phrases.2: Ich habe den workload-Status und seine Bereitschaft nach der Änderung überprüft.
+diagnostics.storage_identity: Erhalte die ursprünglichen UIDs des Quell-Claims und beider Deployments.
+diagnostics.storage_image: Erhalte die bereitgestellten unveränderlichen Anwendungs-Images.
+diagnostics.storage_source: Der erhaltene Quell-Claim muss gebunden bleiben.
+diagnostics.storage_mount_reserve: 'reserve: Der deklarierte Claim muss den Datenpfad ohne Datei-Overlays hinterlegen;
+  der Quellleser bleibt schreibgeschützt.'
+diagnostics.storage_ready_reserve: 'reserve: Der ursprüngliche Leser muss mit einer bereiten Replik ausgerollt sein.'
+diagnostics.storage_data_reserve: 'reserve: Tatsächliche reguläre Dateien müssen bereitgestellten Größen und SHA-256-Prüfsummen
+  entsprechen.'
+diagnostics.storage_publication_reserve: 'reserve: Die tatsächliche HTTP-Antwort muss der aktuellen Quellveröffentlichung
+  entsprechen.'
+diagnostics.storage_mount_relay: 'relay: Der deklarierte Claim muss den Datenpfad ohne Datei-Overlays hinterlegen;
+  der Quellleser bleibt schreibgeschützt.'
+diagnostics.storage_ready_relay: 'relay: Der ursprüngliche Leser muss mit einer bereiten Replik ausgerollt sein.'
+diagnostics.storage_data_relay: 'relay: Tatsächliche reguläre Dateien müssen bereitgestellten Größen und SHA-256-Prüfsummen
+  entsprechen.'
+diagnostics.storage_publication_relay: 'relay: Die tatsächliche HTTP-Antwort muss der aktuellen Quellveröffentlichung
+  entsprechen.'
+diagnostics.probe_0_0: Der Ziel-Claim ist gebunden; ursprüngliche Workloads/Quell-Claim, bereitgestellte Images
+  und Quell-Mount bleiben erhalten.
+diagnostics.probe_0_1: Beide Leser sind bereit und veröffentlichen den aktuellen regulären Datensatz aus ihren deklarierten
+  PVCs.

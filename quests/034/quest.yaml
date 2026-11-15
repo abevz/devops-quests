@@ -16,6 +16,12 @@ stages:
       set +e
       (
       set -euo pipefail
+      timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_CPU_1'
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
       document=$(kubectl get deployment board -o json 2>/dev/null || true)
       python3 -I - /dev/fd/3 3<<<"$document" <<'DQ_QUANTITY'
       import json, sys
@@ -46,6 +52,109 @@ stages:
       cat "$dq_probe_output"
       if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
       printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
+      DQ_LEGACY_CPU_1
+      python3 -I - <<'DQ_CPU_POLICY'
+      import json
+      import subprocess
+      import sys
+      import time
+      from decimal import InvalidOperation
+      from pathlib import Path
+
+      from dq_check import current_pods, named, pod_worker, quantity, workload_worker
+
+      failed = False
+      deadline = time.monotonic() + 10
+
+      def require(value, marker):
+          global failed
+          if not value:
+              print('Startup CPU condition is unmet: ✗ [DQ:' + marker + ']')
+              failed = True
+
+      def command(args, marker):
+          try:
+              remaining = deadline - time.monotonic()
+              if remaining <= 0:
+                  raise ValueError('Startup CPU observation budget exhausted')
+              result = subprocess.run(args, capture_output=True, text=True, timeout=min(6, remaining))
+              if result.returncode:
+                  raise ValueError('Startup CPU observation failed')
+              return result.stdout
+          except (OSError, ValueError, subprocess.SubprocessError):
+              print('Current startup CPU inputs are unavailable: ✗ [DQ:' + marker + ']')
+              sys.exit(1)
+
+      def get(kind, name, marker):
+          return json.loads(command(['kubectl', 'get', kind] + ([name] if name else []) + ['-o', 'json'], marker))
+
+      def same_image(actual, expected):
+          digest = expected.partition('@')[2]
+          return actual == expected or bool(digest) and isinstance(actual, str) and actual.partition('@')[2] == digest
+
+      def startup_initializer(spec):
+          try:
+              return named(spec.get('initContainers', []), contract['initializer'])
+          except (KeyError, ValueError, TypeError, AttributeError):
+              require(False, 'cpu_initializer')
+              sys.exit(1)
+
+      def phase_request(spec):
+          try:
+              def request(container):
+                  resources = container.get('resources', {})
+                  value = resources.get('requests', {}).get('cpu', resources.get('limits', {}).get('cpu', '0'))
+                  result = quantity(value, dialect='typed_ascii')
+                  if result < 0:
+                      raise ValueError('Negative CPU request')
+                  return result
+              applications = sum(request(c) for c in spec.get('containers', []))
+              sidecars = 0
+              peak_init = 0
+              for container in spec.get('initContainers', []):
+                  value = request(container)
+                  if container.get('restartPolicy') == 'Always':
+                      sidecars += value
+                      peak_init = max(peak_init, sidecars)
+                  else:
+                      peak_init = max(peak_init, sidecars + value)
+              parent = spec.get('resources', {}).get('requests', {}).get('cpu')
+              effective = max(applications + sidecars, peak_init)
+              if parent is not None:
+                  effective = quantity(parent, dialect='typed_ascii')
+              overhead = quantity(spec.get('overhead', {}).get('cpu', '0'), dialect='typed_ascii')
+              if overhead < 0:
+                  return False
+              ceiling = quantity(contract['phaseRequestCeiling'], dialect='typed_ascii')
+              return bool(spec.get('containers')) and 0 <= effective + overhead <= ceiling
+          except (KeyError, ValueError, TypeError, AttributeError, InvalidOperation, OverflowError):
+              return False
+
+      facts = json.loads(Path('/run/dq/facts/0/cpu-identities.json').read_text())
+      contract = facts['contract']
+      for resource, uid in facts['identities'].items():
+          kind, name = resource.split('/')
+          require(get(kind, name, 'cpu_identity').get('metadata', {}).get('uid') == uid, 'cpu_identity')
+      deployment = get('deployment', contract['deployment'], 'cpu_phase')
+      spec = deployment['spec']['template']['spec']
+      initializer = startup_initializer(spec)
+      require(initializer.get('restartPolicy') != 'Always', 'cpu_initializer')
+      require(same_image(workload_worker(deployment).get('image'), facts['image']) and same_image(initializer.get('image'), facts['image']), 'cpu_image')
+      require(phase_request(spec), 'cpu_phase')
+      source = get('configmap', contract['source']['configMap'], 'cpu_source')
+      require(all(source.get('data', {}).get(k) == v for k, v in facts['sourceData'].items()), 'cpu_source')
+      sys.exit(int(failed))
+      DQ_CPU_POLICY
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+       printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
       fi
       rm -f "$dq_probe_output"
       trap - EXIT
@@ -93,7 +202,118 @@ stages:
       trap - EXIT
       test "$dq_probe_status" -eq 0
   - text: stages.0.objectives.3.text
-    check: kubectl rollout status deployment/board --timeout=3s
+    check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
+      timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_CPU_3'
+      kubectl rollout status deployment/board --timeout=3s
+      DQ_LEGACY_CPU_3
+      python3 -I - <<'DQ_CPU_STARTUP'
+      import json
+      import subprocess
+      import sys
+      import time
+      from decimal import InvalidOperation
+      from pathlib import Path
+
+      from dq_check import current_pods, named, pod_worker, quantity, workload_worker
+
+      failed = False
+      deadline = time.monotonic() + 10
+
+      def require(value, marker):
+          global failed
+          if not value:
+              print('Startup CPU condition is unmet: ✗ [DQ:' + marker + ']')
+              failed = True
+
+      def command(args, marker):
+          try:
+              remaining = deadline - time.monotonic()
+              if remaining <= 0:
+                  raise ValueError('Startup CPU observation budget exhausted')
+              result = subprocess.run(args, capture_output=True, text=True, timeout=min(6, remaining))
+              if result.returncode:
+                  raise ValueError('Startup CPU observation failed')
+              return result.stdout
+          except (OSError, ValueError, subprocess.SubprocessError):
+              print('Current startup CPU inputs are unavailable: ✗ [DQ:' + marker + ']')
+              sys.exit(1)
+
+      def get(kind, name, marker):
+          return json.loads(command(['kubectl', 'get', kind] + ([name] if name else []) + ['-o', 'json'], marker))
+
+      def same_image(actual, expected):
+          digest = expected.partition('@')[2]
+          return actual == expected or bool(digest) and isinstance(actual, str) and actual.partition('@')[2] == digest
+
+      def startup_initializer(spec):
+          try:
+              return named(spec.get('initContainers', []), contract['initializer'])
+          except (KeyError, ValueError, TypeError, AttributeError):
+              require(False, 'cpu_initializer')
+              sys.exit(1)
+
+      def phase_request(spec):
+          try:
+              def request(container):
+                  resources = container.get('resources', {})
+                  value = resources.get('requests', {}).get('cpu', resources.get('limits', {}).get('cpu', '0'))
+                  result = quantity(value, dialect='typed_ascii')
+                  if result < 0:
+                      raise ValueError('Negative CPU request')
+                  return result
+              applications = sum(request(c) for c in spec.get('containers', []))
+              sidecars = 0
+              peak_init = 0
+              for container in spec.get('initContainers', []):
+                  value = request(container)
+                  if container.get('restartPolicy') == 'Always':
+                      sidecars += value
+                      peak_init = max(peak_init, sidecars)
+                  else:
+                      peak_init = max(peak_init, sidecars + value)
+              parent = spec.get('resources', {}).get('requests', {}).get('cpu')
+              effective = max(applications + sidecars, peak_init)
+              if parent is not None:
+                  effective = quantity(parent, dialect='typed_ascii')
+              overhead = quantity(spec.get('overhead', {}).get('cpu', '0'), dialect='typed_ascii')
+              if overhead < 0:
+                  return False
+              ceiling = quantity(contract['phaseRequestCeiling'], dialect='typed_ascii')
+              return bool(spec.get('containers')) and 0 <= effective + overhead <= ceiling
+          except (KeyError, ValueError, TypeError, AttributeError, InvalidOperation, OverflowError):
+              return False
+
+      facts = json.loads(Path('/run/dq/facts/0/cpu-identities.json').read_text())
+      contract = facts['contract']
+      deployment = get('deployment', contract['deployment'], 'cpu_initializer')
+      pods = get('pods', '', 'cpu_initializer')
+      replicasets = get('replicasets', '', 'cpu_initializer')
+      current = current_pods(deployment, replicasets, pods)
+      require(bool(current) and all(any(c.get('type') == 'Ready' and c.get('status') == 'True' for c in p.get('status', {}).get('conditions', [])) for p in current), 'cpu_initializer')
+      for pod in current:
+          spec = pod.get('spec', {})
+          initializer = startup_initializer(spec)
+          require(phase_request(spec), 'cpu_phase')
+          require(initializer.get('restartPolicy') != 'Always' and same_image(initializer.get('image'), facts['image']) and same_image(pod_worker(pod).get('image'), facts['image']), 'cpu_image')
+          statuses = [s for s in pod.get('status', {}).get('initContainerStatuses', []) if s.get('name') == contract['initializer']]
+          require(len(statuses) == 1 and statuses[0].get('state', {}).get('terminated', {}).get('exitCode') == 0, 'cpu_initializer')
+      sys.exit(int(failed))
+      DQ_CPU_STARTUP
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+       printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_3]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
   - text: stages.0.objectives.4.text
     check: |-
       pod=$(kubectl get pods -l app=board -o jsonpath='{.items[0].metadata.name}')
@@ -102,9 +322,9 @@ hints:
 - text: hints.0.text
   guide: kubernetes-9
 - text: hints.1.text
-  guide: kubernetes-9
+  guide: kubernetes-20
 - text: hints.2.text
-  guide: kubernetes-9
+  guide: kubernetes-20
 debrief: debrief
 phrases:
 - phrases.0
@@ -128,7 +348,7 @@ facts:
   - KUBECONFIG
   - TF_CLI_CONFIG_FILE
   files:
-  - board.yaml
+  - cpu-contract.json
   services: []
 book:
   chapter: 4
@@ -136,3 +356,7 @@ book:
   topics:
   - resources
   - scheduling
+immutable:
+  0:
+  - cpu-contract.json
+  - cpu-identities.json

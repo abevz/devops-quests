@@ -1,39 +1,50 @@
 title: Diagnostyka PVC
 brief: |-
-  Obciążenie tras oczekuje na dostępny magazyn danych. Przywróć dostępność, zachowując Deployment.
+  Żądane miejsce nie udostępnia jeszcze użytecznego zestawu danych trasy. Przywróć aplikację docelową z zachowanego źródła bez odtwarzania pierwotnych workload.
 
-  Pracuj na workstation w `~/quest` z dostarczonymi plikami:
-  - `spool.yaml`, `deployment.yaml`.
+  Pracuj na stacji roboczej w `~/quest` z `storage-contract.json`; sprawdź udostępnione zasoby w namespace.
 
   **Wymagania:**
+  - Dostarczony claim docelowy jest początkowo pusty i niezwiązany. Zachowaj pierwotne tożsamości źródłowego PVC i obu Deployment, niezmienne obrazy oraz wszystkie zadeklarowane pliki źródłowe.
+  - Claim docelowy ma stan `Bound`. Oba czytniki mają jedną gotową replikę; czytnik źródłowy zachowuje montowanie tylko do odczytu, a oba używają zadeklarowanego PVC pod zadeklarowaną ścieżką.
+  - Zadeklarowane zwykłe pliki znajdują się na tych claim z bieżącymi rozmiarami i sumami, bez montowań zasłaniających ich ścieżki. Oba zadeklarowane interfejsy HTTP publikują bieżący rekord źródłowy.
 
-  - Claim magazynu żądany przez dostarczone obciążenie ma stan `Bound`.
-  - Deployment `relay` kończy rollout.
-
-  Powiązanie i gotowość nie dowodzą zachowania danych ani historii odzyskiwania.
-stages.0.brief: Ogranicz odzyskiwanie do dostarczonego claimu obciążenia.
-stages.0.objectives.0.text: Claim magazynu żądany przez dostarczone obciążenie ma stan Bound.
-stages.0.objectives.1.text: Deployment `relay` kończy rollout.
-hints.0.text: Twierdzenie to jest świeże i puste; jego class name nie można naprawić na miejscu.
-hints.1.text: |-
-  Sprawdź opis PVC i jego storage class. Dostarczone żądanie wskazuje nieznaną storage class.
-
-  Sprawdź dostarczone dane i bieżące obserwacje:
-
-  ```sh
-  kubectl describe pvc
-  kubectl get storageclass
-  ```
+  Testy obserwują bieżące claim, montowania, pliki i odpowiedzi. Nie dowodzą historii kopiowania ani kopii poza hostem.
+stages.0.brief: Oba czytniki są gotowe i publikują bieżące zwykłe pliki z zadeklarowanych PVC.
+stages.0.objectives.0.text: Claim docelowy jest związany; pierwotne workload i claim źródłowy, dostarczone obrazy
+  i montowanie źródła pozostają zachowane.
+stages.0.objectives.1.text: Oba czytniki są gotowe i publikują bieżące zwykłe pliki z zadeklarowanych PVC.
+hints.0.text: Związany wolumen zapewnia pojemność, a nie wymagane dane. Zachowaj istniejące źródło i oddziel provisioning
+  od przywracania aplikacji.
+hints.1.text: Porównaj `storage-contract.json`, `kubectl get pvc -o yaml` i `kubectl describe pod` z definicjami
+  obu czytników oraz rzeczywistymi plikami źródłowymi. Zdrowy claim źródłowy pokazuje działające ustawienia przez
+  API namespace.
 hints.2.text: |-
-  Zatrzymaj to wdrożenie, odtwórz tylko jego puste żądanie za pomocą standard i zweryfikuj Bound przed readiness.
+  Po przywróceniu wiązania i przesłaniu danych sprawdź bieżący stan z kontraktem. Zachowaj źródło i tożsamości. Oczekiwane obserwacje:
 
-  Sprawdź wynik z `~/quest` na workstation:
-
-  Wykonaj te polecenia obserwacyjne w `~/quest` na workstation.
-  - `kubectl get pvc spool` — Żądanie ma status `Bound`.
-  - `kubectl rollout status deployment/relay --timeout=3s` — Rollout obciążenia jest zakończony.
-debrief: Świeże, puste roszczenie wymagało nieznanego storage class. Odtworzyłeś tylko to jednorazowe
-  roszczenie za pomocą standard i zweryfikowałeś Bound i gotowy reader.
+  - `kubectl get pvc` — claim źródłowy i docelowy mają stan Bound.
+  - `kubectl exec deployment/relay -c worker -- stat -c '%F:%s' /spool/index.html /spool/payload.bin` — zadeklarowane zwykłe typy plików i rozmiary są zgodne.
+  - `kubectl exec deployment/relay -c worker -- sha256sum /spool/index.html /spool/payload.bin` — obie sumy odpowiadają kontraktowi.
+  - `kubectl exec deployment/relay -c worker -- wget -qO- http://127.0.0.1:8080` — odpowiedź odpowiada bieżącej publikacji źródłowej.
+debrief: Provisioning przywrócił pojemność; osobny transfer przywrócił bieżący rekord i payload na claim docelowym.
+  Źródłowy wolumen i tożsamości workload pozostały zachowane.
 phrases.0: Przed dokonaniem zmiany sprawdziłem stan działania.
 phrases.1: Znalazłem przyczynę i zmieniałem jedną rzecz na raz.
 phrases.2: Sprawdziłem stan workload i jego gotowość po zmianie.
+diagnostics.storage_identity: Zachowaj pierwotne UID claim źródłowego i obu Deployment.
+diagnostics.storage_image: Zachowaj dostarczone niezmienne obrazy aplikacji.
+diagnostics.storage_source: Zachowany claim źródłowy musi pozostać związany.
+diagnostics.storage_mount_reserve: 'reserve: Zadeklarowany claim musi obsługiwać ścieżkę danych bez nakładek plików;
+  czytnik źródłowy pozostaje tylko do odczytu.'
+diagnostics.storage_ready_reserve: 'reserve: Pierwotny czytnik musi zakończyć rollout z jedną gotową repliką.'
+diagnostics.storage_data_reserve: 'reserve: Rzeczywiste zwykłe pliki muszą mieć dostarczone rozmiary i sumy SHA-256.'
+diagnostics.storage_publication_reserve: 'reserve: Rzeczywista odpowiedź HTTP musi odpowiadać bieżącej publikacji
+  źródłowej.'
+diagnostics.storage_mount_relay: 'relay: Zadeklarowany claim musi obsługiwać ścieżkę danych bez nakładek plików;
+  czytnik źródłowy pozostaje tylko do odczytu.'
+diagnostics.storage_ready_relay: 'relay: Pierwotny czytnik musi zakończyć rollout z jedną gotową repliką.'
+diagnostics.storage_data_relay: 'relay: Rzeczywiste zwykłe pliki muszą mieć dostarczone rozmiary i sumy SHA-256.'
+diagnostics.storage_publication_relay: 'relay: Rzeczywista odpowiedź HTTP musi odpowiadać bieżącej publikacji źródłowej.'
+diagnostics.probe_0_0: Claim docelowy jest związany; pierwotne workload i claim źródłowy, dostarczone obrazy i montowanie
+  źródła pozostają zachowane.
+diagnostics.probe_0_1: Oba czytniki są gotowe i publikują bieżące zwykłe pliki z zadeklarowanych PVC.
