@@ -1,44 +1,34 @@
 title: Secret permissions
-brief: |-
-  The fleet needs private delivery of a supplied synthetic credential.
-
-  Work on the workstation in `~/quest` with `inventory.ini`, `ansible.cfg`, `rollout.yml`, `credentials.yml`.
-
-  **Requirements:**
-  - File on every managed host (`app1`, `app2`, `app3`):
-    - Path: `/srv/site/station-token`.
-    - Content: the supplied synthetic credential.
-    - Access mode: `0600`.
-  - Deployment record:
-    - On the workstation, `~/quest/deployment.log` must not contain the supplied synthetic credential.
-    - The file is nonempty.
-
-  Keeping the credential out of task output does not encrypt `credentials.yml`.
-debrief: The synthetic credential is private on disk and absent from task diff output.
+brief: "The fleet needs private delivery of a supplied synthetic credential.\n\nWork on the workstation in `~/quest`\
+  \ with `inventory.ini`, `ansible.cfg`, `rollout.yml`, `credentials.yml`.\n\n**Requirements:**\n- File on every\
+  \ managed host (`app1`, `app2`, `app3`):\n  - Path: `/srv/site/station-token`.\n  - Content: the supplied synthetic\
+  \ credential.\n  - Access mode: `0600`.\n- Deployment record:\n  - On the workstation, `~/quest/deployment.log`\
+  \ must not contain the supplied synthetic credential.\n  - The file is nonempty.\n- Both supplied applications\
+  \ must authenticate the original synthetic credential on every managed host. Their input paths and HTTP interfaces\
+  \ are listed in workstation `~/quest/consumer-contract.json`; the supplied program is `provided-consumer.py`.\
+  \ Preserve their original process identities, principals, privileges, command lines and installed program bytes\
+  \ from `consumer-identities.json`. Each consumer must be unable to read or write the other consumer’s input; the\
+  \ supplied outsider must be unable to read or write either input. Private group access is acceptable for the secondary\
+  \ input. Preserve the original `credentials.yml`.\n\nKeeping the credential out of task output does not encrypt\
+  \ `credentials.yml`."
+debrief: You delivered private inputs to real consumers while respecting ownership authority, preserving identities
+  and denying cross-principal access.
 stages.0.brief: Credential delivery must keep both target files and recorded output private.
-stages.0.objectives.0.text: The workstation `deployment.log` is nonempty and does not expose the supplied
-  game credential.
-stages.0.objectives.1.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/station-token`
-  contains the supplied synthetic credential.
-stages.0.objectives.2.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/station-token`
-  has mode `0600`.
-hints.0.text: File permissions and output suppression solve different exposure paths.
-hints.1.text: |-
-  A diff can reveal copied content unless the sensitive task suppresses logging. `no_log` limits task output; it does not encrypt `credentials.yml`.
-
-  Inspect the inventory and the supplied playbook on the workstation:
-
-  ```sh
-  ansible-inventory -i inventory.ini --graph
-  cat rollout.yml
-  ls -l credentials.yml
-  ```
-hints.2.text: |-
-  Verify the result from `~/quest` on the workstation:
-
-  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'test "$(cat /srv/site/station-token)" = game-station-secret-69 && printf "credential matches\n"'` — Every host confirms `credential matches` without printing the credential.
-  - `ansible fleet -i inventory.ini -m ansible.builtin.shell -a 'ls -l /srv/site/station-token; if runuser -u nobody -- cat /srv/site/station-token >/dev/null 2>&1; then exit 1; else printf "unprivileged read denied\n"; fi'` — Every host shows `-rw-------` and confirms `unprivileged read denied` for user `nobody`.
-  - `python3 -c 'from pathlib import Path; import yaml; s=yaml.safe_load(Path("credentials.yml").read_text())["station_token"]; log=Path("deployment.log").read_text(); assert log and s not in log; print("nonempty private deployment record")'` — Confirms `nonempty private deployment record` without displaying the credential or log contents.
+stages.0.objectives.0.text: The workstation `deployment.log` is nonempty and does not expose the supplied game credential.
+stages.0.objectives.1.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/station-token` contains the
+  supplied synthetic credential. The supplied credential reaches both original application consumers on every host
+  while cross-consumer and outsider reads and writes remain denied.
+stages.0.objectives.2.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/station-token` has mode `0600`.
+hints.0.text: Private delivery must satisfy both the recipient’s real access and isolation from other principals.
+  File metadata changes are limited by the operator’s actual authority.
+hints.1.text: Compare `rollout.yml`, `consumer-contract.json`, `consumer-identities.json` and `provided-consumer.py`.
+  Inspect input ownership and modes on the managed hosts, the operator capability list and the HTTP authentication
+  status. Do not print credential values into diagnostic output.
+hints.2.text: 'Protect sensitive copy output with `no_log`. Under these capabilities, prepare content and restrictive
+  permissions before transferring ownership; metadata-only ownership updates avoid requesting an unavailable permission
+  change after transfer. Verify each application with the original credential without printing it: expect HTTP 200
+  and `credential-ready`. Confirm other consumers and the outsider cannot open either foreign input for reading
+  or writing; retain legacy mode `0600` and the nonempty private `deployment.log`.'
 phrases.0: I protected both target-file permissions and task output.
 phrases.1: I verified the secret without printing it.
 phrases.2: I did not treat no_log as encryption at rest.
@@ -50,3 +40,18 @@ diagnostics.content_3: 'app3, `/srv/site/station-token`: content `game-station-s
 diagnostics.mode_1: 'app1, `/srv/site/station-token`: access mode `600`.'
 diagnostics.mode_2: 'app2, `/srv/site/station-token`: access mode `600`.'
 diagnostics.mode_3: 'app3, `/srv/site/station-token`: access mode `600`.'
+diagnostics.credential_access: Credential access is too broad. Another consumer or the outsider can open a protected
+  input for reading or writing.
+diagnostics.credential_auth: An application did not authenticate the original credential. Check its input, private
+  access and HTTP response.
+diagnostics.consumer_identity: The supplied application identity changed. Compare its process, principal, privileges,
+  command line and installed program with the original receipt.
+diagnostics.consumer_budget: The application observation exceeded its budget. Check SSH availability and HTTP responsiveness
+  on the managed hosts.
+diagnostics.consumer_observation: The supplied application could not be observed. Check its process, identity receipt,
+  SSH connection and HTTP endpoint.
+diagnostics.credential_original: The original workstation credentials.yml changed. Preserve the supplied input bytes;
+  correct delivery without rewriting its source.
+diagnostics.probe_0_1: 'The current inputs could not verify this objective: On every managed host (`app1`, `app2`,
+  `app3`), `/srv/site/station-token` contains the supplied synthetic credential. The supplied credential reaches
+  both original application consumers on every host while cross-consumer and outsider reads and writes remain denied.'
