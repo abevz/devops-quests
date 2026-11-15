@@ -1,48 +1,50 @@
 title: Fortschreitender Vorfall
 brief: |-
-  Zwei aufeinanderfolgende Vorfälle unterbrechen die Routenverarbeitung. Schließen Sie die erste Wiederherstellung ab, bevor Sie den zweiten Vorfall bearbeiten.
+  Die Wiederherstellung von Veröffentlichung und Failover ist unvollständig. Stelle den öffentlichen Pfad aus dem bereitgestellten Datensatz wieder her und übergib ihn an das Backup, während der Producer erhalten bleibt.
 
-  Arbeiten Sie auf der Workstation in `~/quest` mit den bereitgestellten Dateien:
-  - `deployment.yaml`, `backup.yaml`.
-
-  `backup.yaml` wird in Stufe 2 bereitgestellt.
+  Arbeite auf der Workstation in `~/quest` mit `progressive-contract.json`; untersuche aktuelle Workloads, Quelldaten und Routingobjekte im Kubernetes-Namespace.
 
   **Anforderungen:**
+  - Erhalte Identität des ursprünglichen Producer-Deployments sowie Identität und Daten der Quell-ConfigMap. Der Producer projiziert diese Quelle und veröffentlicht den bereitgestellten Datensatz über selectorbasierten ClusterIP Service und HTTP-Schnittstelle des Vertrags.
+  - Der Service leitet an bereite Pods unter Kontrolle des aktiven ursprünglichen Deployments.
+  - Erhalte beim Failover die Service-Identität und das ursprüngliche Backup-Deployment. Das Backup bezieht `ROUTE` und `PRODUCER_ID` über Container-Umgebungsreferenzen aus derselben ConfigMap und nutzt deren Datenprojektion.
+  - Der öffentliche Consumer-Datensatz entspricht ursprünglicher Route und Veröffentlichungsidentität. Der öffentliche Service leitet nun an bereite Backup-Pods.
+  - Halte den wiederhergestellten Producer an seiner etablierten HTTP-Schnittstelle gesund und seine ursprüngliche Veröffentlichung intakt.
 
-  - Stufe 1: Deployment `relay` schließt seinen Rollout ab.
-  - Stufe 2: Im Container `worker` von Deployment `backup` stellt der laufende Prozess Folgendes bereit:
-    - `ROUTE`: `north`
-
-  Die Stufenprüfungen bestätigen punktuelle Ergebnisse, keine durchgehende Verfügbarkeit zwischen Vorfällen.
-stages.0.brief: |
-  Deployment `relay` muss vor dem nächsten Vorfall seinen Rollout abschließen.
-stages.0.objectives.0.text: Deployment `relay` schließt seinen Rollout ab.
-stages.1.brief: |
-  Der laufende Ersatz-Workload muss die geforderte Route bereitstellen.
-stages.1.objectives.0.text: Deployment `backup` stellt `ROUTE` mit dem Wert `north` bereit.
-hints.0.text: Ein Vorfall kann aufeinanderfolgende Wiederherstellungsmeilensteine mit verschiedenen beobachtbaren
-  Ergebnissen haben.
-hints.1.text: |-
-  Der erste worker scheiterte an seinem HTTP readiness probe. Vergleichen Sie den probe-Port mit dem HTTP listener; Schauen Sie sich nach der Genesung den Teamkanal an.
-
-  Prüfen Sie die bereitgestellten Eingaben und laufenden Beobachtungen:
-
-  ```sh
-  # Stage 1
-  kubectl describe deployment relay
-  # Stage 2, after it appears
-  kubectl describe deployment backup
-  ```
-hints.2.text: |-
-  Der zweite Vorfall betrifft ein anderes Deployment: Prüfen Sie die ROUTE-Variable des Ersatz-reader. Er erhielt die Route retired; stellen Sie ROUTE=north wieder her.
-
-  Prüfen Sie das Ergebnis in `~/quest` auf der Workstation:
-
-  Führen Sie diese Beobachtungsbefehle in `~/quest` auf der Workstation aus.
-  - `kubectl rollout status deployment/relay --timeout=3s` — Stufe 1: Der Rollout ist abgeschlossen.
-  - `kubectl exec deployment/backup -c worker -- printenv ROUTE` — Stufe 2, sobald sie verfügbar ist: Der laufende Ersatzprozess gibt `north` aus.
-debrief: Der erste Fehler war ein probe-Port. Nach der Wiederherstellung trat ein neuer Konfigurationsvorfall
-  backup-reader auf. Sie haben beide Phasen repariert und überprüft.
+  Prüfungen beobachten aktuelle Controller-/Objektidentitäten, Datenreferenzen, bereite Endpoints, Container-Umgebung und HTTP-Datensätze; sie beweisen weder lückenlose Verfügbarkeit noch Befehlsverlauf.
+stages.0.brief: Stelle die ursprüngliche Veröffentlichung hinter einem stabilen öffentlichen Service wieder her.
+stages.0.objectives.0.text: Der ursprüngliche Producer veröffentlicht den intakten Datensatz über den deklarierten
+  öffentlichen Service.
+stages.1.brief: Aktiviere das quellengebundene Backup an demselben Service und erhalte den Producer.
+stages.1.objectives.0.text: Das ursprüngliche Backup nutzt Route und Identität der Quelle, übernimmt den öffentlichen
+  Pfad und erhält den Producer.
+hints.0.text: Readiness, veröffentlichte Daten und Service-Routing sind getrennte Verträge. Ein gesunder Prozess
+  beweist nicht, welcher Datensatz oder Controller den öffentlichen Pfad bedient.
+hints.1.text: Vergleiche `cat progressive-contract.json`, `kubectl get deployments,configmaps,services,endpointslices
+  -o yaml` und Pod-Ereignisse. Untersuche Projektionen, Umgebungsreferenzen, Controller-Eigentümerschaft und tatsächliche
+  HTTP-Datensätze der aktuellen Stufe.
+hints.2.text: Konstruiere Quellennutzung und öffentlichen Service; prüfe Producer-Rollout und Datensatz. Bereite
+  dann Quellreferenzen und Laufzeitdatensatz des Backups vor dem Umschalten des erhaltenen Service vor. Vergleiche
+  `kubectl rollout status deployment/<name>`, Container-Umgebung, beide HTTP-Pfade und Eigentümer der bereiten Endpoint-Pods
+  mit dem Vertrag. Erwartet werden ursprüngliche Route/Identität und unveränderte erhaltene Objekt-UIDs.
+debrief: Der Quelldatensatz erreicht einen echten Producer und ein quellengebundenes Backup. Öffentliches Routing
+  wechselte zwischen kontrollierten bereiten Pods; Daten, Workloads und etablierter Service blieben erhalten.
 phrases.0: Ich habe den Betriebsstatus überprüft, bevor ich eine Änderung vorgenommen habe.
 phrases.1: Ich habe die Ursache gefunden und eine Sache nach der anderen geändert.
 phrases.2: Ich habe den workload-Status und seine Bereitschaft nach der Änderung überprüft.
+diagnostics.probe_0_0: Der ursprüngliche Producer veröffentlicht den intakten Datensatz über den deklarierten öffentlichen
+  Service.
+diagnostics.probe_1_0: Das ursprüngliche Backup nutzt Route und Identität der Quelle, übernimmt den öffentlichen
+  Pfad und erhält den Producer.
+diagnostics.progressive_producer: Der ursprüngliche Producer muss ausgerollt bleiben und seine ursprüngliche Veröffentlichung
+  bedienen.
+diagnostics.progressive_route: Backup-ROUTE muss der ursprünglichen Quellroute entsprechen.
+diagnostics.progressive_identity: Erhalte ursprüngliche Workload-, Datensatz- und öffentliche Service-Identitäten.
+diagnostics.progressive_source: Erhalte jeden bereitgestellten Quelldateneintrag.
+diagnostics.progressive_projection: Der Producer muss die ursprüngliche ConfigMap projizieren.
+diagnostics.progressive_consumer: Das Backup muss die Quelle über Umgebungsreferenzen und Projektion nutzen und
+  den passenden Laufzeitdatensatz veröffentlichen.
+diagnostics.progressive_service: Der öffentliche ClusterIP Service muss bereite Pods des aktiven ursprünglichen
+  Deployments auswählen.
+diagnostics.progressive_publication: Der tatsächliche öffentliche HTTP-Datensatz muss dem ursprünglichen Quelldatensatz
+  entsprechen.

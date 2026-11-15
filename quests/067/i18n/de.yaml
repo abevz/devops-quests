@@ -1,56 +1,41 @@
 title: Helm-Upgrades
-brief: 'Das installierte Helm-Release stellt keinen bereiten HTTP-Workload bereit. Behalten Sie die ursprüngliche
-  Deployment-Identität und das vorgegebene festgelegte Image bei.
+brief: |-
+  Der installierte Release ist ungesund; das Arbeitspaket erfüllt seinen bereitgestellten Values-Vertrag nicht. Stelle denselben Release mit ursprünglichen Ressourcen und gepinntem Image wieder her.
 
-
-  Arbeiten Sie auf der Workstation in `~/quest` mit `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/board.yaml`.
-
+  Arbeite auf der Workstation in `~/quest` mit `chart/Chart.yaml`, `chart/values.yaml`, `chart/values.schema.json`, `chart/templates/board.yaml` und `helm-contract.json`.
 
   **Anforderungen:**
+  - Values des Helm-Releases `board`, sein veröffentlichtes Manifest und der Arbeitschart entsprechen demselben vorgegebenen Anwendungsvertrag.
+  - Helm-Release `board` hat mindestens 3 Revisionen; der letzte Status ist `deployed`.
+  - Erhalte ursprüngliche Deployment-, ConfigMap- und Service-UIDs sowie das bereitgestellte unveränderliche Anwendungsimage.
+  - Installierter Release und Arbeitschart erfüllen den Values-Vertrag: Readiness, projizierter Quelldatensatz, Routennachricht, Release-Identität und Service-Routing stimmen überein. Alle deklarierten Renderprofile funktionieren deterministisch.
+  - Deployment `board` schließt den Rollout ab; HTTP im Anwendungscontainer an `http://127.0.0.1:8080` liefert `north-67`.
+  - Der erhaltene öffentliche Service liefert dieselbe Antwort und den deklarierten Metadatensatz mit ursprünglicher Release-Identität.
 
-  - Die Korrektur erfolgt über die Werte des Helm-Releases `board`, nicht durch Bearbeiten des Deployments.
-
-  - Helm-Release `board` hat mindestens 3 Revisionen und zuletzt Status `deployed`.
-
-  - Das ursprüngliche Deployment `board` bleibt erhalten.
-
-  - Der laufende Workload `board` und die gerenderte Version stimmen hinsichtlich des funktionierenden HTTP-Endpunkts
-  überein.
-
-  - Deployment `board` schließt seinen Rollout ab.
-
-  - HTTP von Deployment `board` an `http://127.0.0.1:8080` liefert `north-67`.
-
-
-  Die Ausgangsnachweise unter `/run/dq/facts/0/` auf der Workstation sind maßgeblich und schreibgeschützt;
-  entsprechende Dateien in `~/quest` sind Arbeitskopien.
-
-  '
-debrief: Release-Absicht und Live-Bereitschaft stimmen nun überein, ohne den verwalteten Deployment zu ersetzen.
+  Geschützte Setup-Fakten erfassen ursprüngliche Identitäten. Prüfungen vergleichen aktuelle Values, Chart-Renderings, Release-Manifeste, Live-Objekte und HTTP; sie beweisen weder durchgehende Verfügbarkeit noch jedes mögliche Eingabeprofil.
+debrief: Der erhaltene Release übernimmt einen funktionierenden Chart-Vertrag. Quellprojektion und öffentliches
+  Routing stimmen mit den Values überein; alternative Renderings prüfen die reparierte Parameterweitergabe.
 stages.0.brief: Behalten Sie den ursprünglichen Workload bei, während Helm-Release und HTTP-Endpunkt wiederhergestellt
   werden.
-stages.0.objectives.0.text: Die Korrektur erfolgt über die Werte des Helm-Releases `board`, nicht durch Bearbeiten
-  des Deployments.
+stages.0.objectives.0.text: Der erhaltene Release übernimmt den Values-Vertrag, und der Arbeitschart rendert jedes
+  deklarierte Eingabeprofil korrekt.
 stages.0.objectives.1.text: Helm-Release `board` hat mindestens 3 Revisionen und zuletzt Status `deployed`.
-stages.0.objectives.2.text: Das ursprüngliche Deployment `board` bleibt erhalten.
-stages.0.objectives.3.text: Der laufende Workload `board` und die gerenderte Version stimmen hinsichtlich des
-  funktionierenden HTTP-Endpunkts überein.
+stages.0.objectives.2.text: Ursprüngliches Deployment, Quell-ConfigMap, öffentlicher Service und gepinntes Image
+  bleiben erhalten.
+stages.0.objectives.3.text: Live-Workload, Release-Manifest und öffentliches Datenpaket erfüllen denselben funktionierenden
+  HTTP-Vertrag.
 stages.0.objectives.4.text: Deployment `board` schließt seinen Rollout ab.
 stages.0.objectives.5.text: HTTP von Deployment `board` an `http://127.0.0.1:8080` liefert `north-67`.
-hints.0.text: Eine deployed Helm-Revision kann immer noch einen fehlerhaften workload enthalten.
-hints.1.text: 'Vergleichen Sie die Release-Eingaben, den gerenderten Workload und den aktuellen Zustand:
-
-
-  ```sh
-
-  helm get values board
-
-  helm template board chart
-
-  kubectl get deployment board -o yaml
-
-  ```'
-hints.2.text: "Das Upgrade änderte readinessPort von 8080 auf 9090, während die Anwendung weiterhin auf 8080 lauscht. Prüfen Sie Release-Verlauf, effektive Werte und gerendertes Chart. Aktualisieren Sie dasselbe Release mit readinessPort=8080 und warten Sie auf Bereitschaft; ersetzen Sie weder das Release noch ändern Sie nur die laufende Probe.\n\nPrüfen Sie das beobachtete Ergebnis:\n\n- `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080` — Im Anwendungscontainer lautet die Antwort `north-67`.\n\n- `helm history board` — Mindestens `3` Revisionen; der neueste Status ist `deployed`.\n\n- Der Rollout wird abgeschlossen und die UID des laufenden Deployments entspricht der geschützten ursprünglichen Referenz.\n\n  ```sh\n  kubectl rollout status deployment/board --timeout=3s\n  kubectl get deployment board -o custom-columns=NAME:.metadata.name,UID:.metadata.uid\n  cat /run/dq/facts/0/original-deployment-uid\n  ```\n\n- Die drei Prüfungen geben `true` aus: Die Werte legen `8080` fest, und die Readiness-Probe des Containers `worker` verwendet den Anwendungsport `8080` sowohl im laufenden Deployment als auch im gerenderten Helm-Manifest. Eine HTTP- oder TCP-Probe darf die Zahl oder einen darauf aufgelösten Portnamen verwenden.\n\n  ```sh\n  helm get values board -o json | jq -e '(.readinessPort|tonumber)==8080'\n  kubectl get deployment board -o json | jq -e '(.spec.template.spec.containers[] | select(.name==\"worker\")) as $c | ($c.readinessProbe.httpGet.port // $c.readinessProbe.tcpSocket.port) as $p | (if ($p|type)==\"number\" then $p else first($c.ports[]? | select(.name==$p) | .containerPort) end)==8080'\n  helm get manifest board | python3 -I -c 'import json,sys,yaml; docs=[d for d in yaml.safe_load_all(sys.stdin) if isinstance(d,dict) and d.get(\"kind\")==\"Deployment\" and d.get(\"metadata\",{}).get(\"name\")==\"board\"]; assert len(docs)==1; json.dump(docs[0],sys.stdout)' | jq -e '(.spec.template.spec.containers[] | select(.name==\"worker\")) as $c | ($c.readinessProbe.httpGet.port // $c.readinessProbe.tcpSocket.port) as $p | (if ($p|type)==\"number\" then $p else first($c.ports[]? | select(.name==$p) | .containerPort) end)==8080'\n  ```\n"
+hints.0.text: Gespeicherte Overrides, Chart-Defaults, gerenderte Absicht und Live-Ressourcen sind unterschiedliche
+  Ansichten. Ein deployed-Status beschreibt eine Operation, beweist aber keinen gesunden Consumer.
+hints.1.text: Vergleiche `helm get values board`, `helm get values board --all`, `helm get manifest board`, `helm
+  history board`, Arbeitspaket/Schema und Pod-Ereignisse. Ermittle mit dem Vertrag, welche Ressourcen- und Eingabebeziehungen
+  das Upgrade überstehen müssen.
+hints.2.text: Rekonstruiere notwendige Chart-Ressourcen und Eingabeweitergabe, untersuche die Renderprofile und
+  aktualisiere denselben Release mit der beabsichtigten Values-Schicht. Prüfe `helm get values board -o json`, `helm
+  history board`, `helm template board chart`, Rollout und beide HTTP-Pfade. Erwartet werden aufgezeichnete Readiness
+  `8080`, Antwort `north-67`, ursprüngliche Objekt-/Image-Identitäten sowie Metadaten mit aktiver Nachricht und
+  erhaltener Release-ID.
 phrases.0: Ich habe den Helm-Verlauf, den effektiven values und den gerenderten manifests verglichen.
 phrases.1: Ich habe den Veröffentlichungsvertrag korrigiert, anstatt ihn live auszublenden drift.
 phrases.2: Ich habe readiness unabhängig vom Revisionsstatus Helm überprüft.
@@ -62,5 +47,21 @@ questions.1.points.0: Der nächste upgrade rendert erneut values.
 questions.1.points.1: Ein Live-patch kann dazu führen, dass die Freigabeabsicht falsch ist.
 questions.1.points.2: Vergleichen Sie die gerenderten Ressourcen und das beobachtete Verhalten.
 questions.1.prompt: Warum values reparieren, anstatt nur Deployment zu patchen?
-diagnostics.probe_0_3: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: Der laufende Workload
-  `board` und die gerenderte Version stimmen hinsichtlich des funktionierenden HTTP-Endpunkts überein.'
+diagnostics.probe_0_3: Live-Workload, Release-Manifest und öffentliches Datenpaket erfüllen denselben funktionierenden
+  HTTP-Vertrag.
+diagnostics.probe_0_0: Der erhaltene Release übernimmt den Values-Vertrag, und der Arbeitschart rendert jedes deklarierte
+  Eingabeprofil korrekt.
+diagnostics.probe_0_2: Ursprüngliches Deployment, Quell-ConfigMap, öffentlicher Service und gepinntes Image bleiben
+  erhalten.
+diagnostics.helm_values_contract: Aktuelle Release-Values und Arbeitschart müssen jedes deklarierte Renderprofil
+  deterministisch umsetzen.
+diagnostics.helm_image: Erhalte das bereitgestellte unveränderliche Image in Live- und gerenderten Workloads.
+diagnostics.helm_projection: Der Workload muss die Quell-ConfigMap des Releases projizieren.
+diagnostics.helm_bundle: Gerendertes und Live-Datenpaket müssen konfigurierter Nachricht und ursprünglicher Release-Identität
+  entsprechen.
+diagnostics.helm_service: Der erhaltene öffentliche Service muss den richtigen Workload auswählen und die deklarierte
+  HTTP-Schnittstelle anbieten.
+diagnostics.helm_publication: Tatsächliche öffentliche Metadaten müssen ursprünglicher Release-Identität und aktueller
+  Nachricht entsprechen.
+diagnostics.helm_identity: Erhalte ursprüngliche UIDs von Deployment, Quell-ConfigMap und öffentlichem Service des
+  Releases.

@@ -15,7 +15,7 @@ smoke logs. Historical outputs and diagrams are not runnable tests.
 
 | Guide | Profile | Short example | Full experiment | Observation / boundary |
 |---|---|---|---|---|
-| Health checks and container restarts | kubernetes | [probes](../labs/examples/kubernetes/probes/run.sh) | [full-probes](../labs/examples/kubernetes/full-probes/run.sh) | Readiness gates traffic; liveness restarts; HTTP startup/readiness/liveness transitions. |
+| Health checks and container restarts | kubernetes | [probes](../labs/examples/kubernetes/probes/run.sh) | [full-probes](../labs/examples/kubernetes/full-probes/run.sh) | Readiness gates traffic; liveness restarts; HTTP startup/readiness/liveness transitions. Publication identity and complete failover recovery are conceptual extensions, not exercised here. |
 | Where a Pod can run | kubernetes | [placement](../labs/examples/kubernetes/placement/run.sh) | [full-placement](../labs/examples/kubernetes/full-placement/run.sh) | Pending requests, tolerations, required node selection, two-worker spread, non-preempting priority. |
 | CPU, memory and resource limits | kubernetes | [resources](../labs/examples/kubernetes/resources/run.sh) | [full-resources](../labs/examples/kubernetes/full-resources/run.sh) | Requests/limits, BestEffort/Burstable, actual CPU throttling and in-place resize. |
 | Finding a Pod through a Service | kubernetes | [networking](../labs/examples/kubernetes/networking/run.sh) | [full-networking](../labs/examples/kubernetes/full-networking/run.sh) | Selectors, EndpointSlices, failed selectors and HTTP to a ready backend. |
@@ -71,3 +71,5 @@ The English guide text in the repository is the source of truth. Re-hashing it
 (`python -m scripts.guide_excerpts`) preserves `guide-lessons.yaml` and
 `guide-topics.yaml`; stale source hashes require a new editorial/coverage review
 before release.
+
+The Helm values and lifecycle lessons also distinguish parameter propagation, resource identity and application responses. Their existing Labs cover values and release operations; they do not rehearse arbitrary chart reconstruction or prove uninterrupted service.

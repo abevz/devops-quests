@@ -1,47 +1,45 @@
 title: Postępujący incydent
 brief: |-
-  Dwa kolejne incydenty przerywają przetwarzanie tras. Zakończ pierwsze przywracanie działania przed obsługą drugiego incydentu.
+  Odzyskiwanie publikacji i failover jest niepełne. Przywróć publiczną ścieżkę z dostarczonego zbioru danych, następnie przekaż ją do backupu, zachowując działającego producera.
 
-  Pracuj na workstation w `~/quest` z dostarczonymi plikami:
-  - `deployment.yaml`, `backup.yaml`.
-
-  `backup.yaml` pojawia się w etapie 2.
+  Pracuj w `~/quest` na stacji roboczej z `progressive-contract.json`; sprawdź bieżące workloady, dane źródłowe i routing w namespace Kubernetes.
 
   **Wymagania:**
+  - Zachowaj tożsamość pierwotnego Deploymentu producera oraz tożsamość/dane źródłowego ConfigMap. Producer projektuje to źródło i publikuje dostarczony rekord przez ClusterIP Service z selektorem i interfejs HTTP opisany w kontrakcie.
+  - Service kieruje do gotowych Podów kontrolowanych przez aktywny pierwotny Deployment.
+  - Podczas failover zachowaj tożsamość Service i pierwotnego Deploymentu backupu. Backup pobiera `ROUTE` i `PRODUCER_ID` z tego samego ConfigMap przez referencje środowiska kontenera i korzysta z projekcji jego danych.
+  - Publiczny rekord consumera odpowiada pierwotnej trasie i tożsamości publikacji. Publiczny Service kieruje teraz do gotowych Podów backupu.
+  - Zachowaj zdrowego odzyskanego producera na jego ustalonym interfejsie HTTP i jego pierwotną publikację.
 
-  - Etap 1: Deployment `relay` kończy rollout.
-  - Etap 2: wewnątrz kontenera `worker` Deployment `backup` działający proces udostępnia:
-    - `ROUTE`: `north`
-
-  Sprawdzenia etapów potwierdzają wyniki w danym momencie, a nie ciągłą dostępność między incydentami.
-stages.0.brief: |
-  Deployment `relay` ma zakończyć rollout przed kolejnym incydentem.
-stages.0.objectives.0.text: Deployment `relay` kończy rollout.
-stages.1.brief: |
-  Działające obciążenie zapasowe ma udostępniać wymaganą trasę.
-stages.1.objectives.0.text: Deployment `backup` udostępnia `ROUTE` o wartości `north`.
-hints.0.text: Incydent może mieć kolejne etapy odzyskiwania z różnymi obserwowalnymi wynikami.
-hints.1.text: |-
-  Pierwszy worker zawiódł HTTP readiness probe. Porównaj port probe z HTTP listener; obejrzyj kanał zespołu po powrocie do zdrowia.
-
-  Sprawdź dostarczone dane i bieżące obserwacje:
-
-  ```sh
-  # Stage 1
-  kubectl describe deployment relay
-  # Stage 2, after it appears
-  kubectl describe deployment backup
-  ```
-hints.2.text: |-
-  Drugi incydent dotyczy innego deployment: sprawdź zmienną ROUTE zapasowego reader. Otrzymał trasę retired; przywróć ROUTE=north.
-
-  Sprawdź wynik z `~/quest` na workstation:
-
-  Wykonaj te polecenia obserwacyjne w `~/quest` na workstation.
-  - `kubectl rollout status deployment/relay --timeout=3s` — Etap 1: rollout jest zakończony.
-  - `kubectl exec deployment/backup -c worker -- printenv ROUTE` — Etap 2, po jego udostępnieniu: działający proces zapasowy wypisuje `north`.
-debrief: Pierwszą awarią był port probe. Po przywróceniu pojawił się nowy incydent związany z konfiguracją
-  backup-reader. Naprawiłeś i zweryfikowałeś oba etapy.
+  Testy obserwują bieżące tożsamości kontrolerów/obiektów, referencje danych, gotowe endpointy, środowisko kontenera i rekordy HTTP; nie dowodzą ciągłej dostępności ani historii poleceń.
+stages.0.brief: Przywróć pierwotną publikację za stabilnym publicznym Service.
+stages.0.objectives.0.text: Pierwotny producer publikuje nienaruszone dane przez zadeklarowany publiczny Service.
+stages.1.brief: Aktywuj backup powiązany ze źródłem na tym samym Service, zachowując zdrowego producera.
+stages.1.objectives.0.text: Pierwotny backup używa trasy i tożsamości źródła, przejmuje publiczną ścieżkę i zachowuje
+  odzyskanego producera.
+hints.0.text: Readiness, publikowane dane i routing Service to odrębne kontrakty. Zdrowy proces nie dowodzi, które
+  dane lub kontroler obsługują publiczną ścieżkę.
+hints.1.text: Porównaj `cat progressive-contract.json`, `kubectl get deployments,configmaps,services,endpointslices
+  -o yaml` i zdarzenia Podów. Sprawdź projekcje źródeł, referencje środowiska, właścicieli-kontrolerów i rzeczywiste
+  rekordy HTTP bieżącego etapu.
+hints.2.text: Zbuduj korzystanie ze źródła i publiczny Service; sprawdź rollout i publikację producera. Następnie
+  przygotuj referencje i rekord runtime backupu przed przełączeniem zachowanego Service. Porównaj `kubectl rollout
+  status deployment/<name>`, środowisko kontenera, obie ścieżki HTTP i właścicieli gotowych Podów endpointów z kontraktem.
+  Oczekuj pierwotnej trasy/tożsamości i niezmienionych zachowanych UID.
+debrief: Dane źródłowe docierają do rzeczywistego producera i backupu powiązanego ze źródłem. Publiczny routing
+  przeniesiono między kontrolowanymi gotowymi Podami, zachowując dane, workloady i ustalony Service.
 phrases.0: Przed dokonaniem zmiany sprawdziłem stan działania.
 phrases.1: Znalazłem przyczynę i zmieniałem jedną rzecz na raz.
 phrases.2: Sprawdziłem stan workload i jego gotowość po zmianie.
+diagnostics.probe_0_0: Pierwotny producer publikuje nienaruszone dane przez zadeklarowany publiczny Service.
+diagnostics.probe_1_0: Pierwotny backup używa trasy i tożsamości źródła, przejmuje publiczną ścieżkę i zachowuje
+  odzyskanego producera.
+diagnostics.progressive_producer: Pierwotny producer musi pozostać wdrożony i obsługiwać pierwotny interfejs publikacji.
+diagnostics.progressive_route: ROUTE backupu musi odpowiadać pierwotnej trasie źródła.
+diagnostics.progressive_identity: Zachowaj pierwotne tożsamości workloadów, danych i ustalonego publicznego Service.
+diagnostics.progressive_source: Zachowaj każdą dostarczoną pozycję danych źródłowych.
+diagnostics.progressive_projection: Producer musi projektować pierwotny ConfigMap.
+diagnostics.progressive_consumer: Backup musi korzystać ze źródła przez referencje środowiska i projekcję oraz publikować
+  zgodny rekord runtime.
+diagnostics.progressive_service: Publiczny ClusterIP Service musi wybierać gotowe Pody aktywnego pierwotnego Deploymentu.
+diagnostics.progressive_publication: Rzeczywisty publiczny rekord HTTP musi odpowiadać pierwotnym danym źródłowym.

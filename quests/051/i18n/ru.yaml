@@ -1,47 +1,47 @@
 title: Развивающийся инцидент
 brief: |-
-  Два последовательных инцидента прерывают обработку маршрутов. Завершите первое восстановление, прежде чем переходить ко второму инциденту.
+  Восстановление публикации и failover не завершено. Верните публичный путь к предоставленному набору данных, затем передайте его backup, сохранив работающий producer.
 
-  Работайте на workstation в `~/quest` с предоставленными файлами:
-  - `deployment.yaml`, `backup.yaml`.
-
-  `backup.yaml` появляется на этапе 2.
+  Работайте в `~/quest` на рабочей станции с `progressive-contract.json`; изучите текущие workloads, исходные данные и маршрутизацию в namespace Kubernetes.
 
   **Требования:**
+  - Сохраните исходный UID Deployment producer и UID/данные исходного ConfigMap. Producer проецирует этот источник и публикует предоставленную запись через selector-based ClusterIP Service и HTTP-интерфейс из контракта.
+  - Service направляет трафик в готовые Pod под управлением активного исходного Deployment.
+  - При failover сохраните UID этого Service и исходного Deployment backup. Backup получает `ROUTE` и `PRODUCER_ID` из того же ConfigMap через ссылки переменных окружения контейнера и использует его проекцию данных.
+  - Публичная запись consumer совпадает с исходными маршрутом и идентичностью публикации. Публичный Service теперь направляет трафик в готовые Pod backup.
+  - Сохраните работоспособность восстановленного producer на его установленном HTTP-интерфейсе и его исходную публикацию.
 
-  - Этап 1: Deployment `relay` завершает rollout.
-  - Этап 2: внутри контейнера `worker` Deployment `backup` работающий процесс предоставляет:
-    - `ROUTE`: `north`
-
-  Проверки этапов подтверждают результаты в отдельные моменты, а не непрерывную доступность между инцидентами.
-stages.0.brief: |
-  Deployment `relay` должен завершить rollout до следующего инцидента.
-stages.0.objectives.0.text: Deployment `relay` завершает rollout.
-stages.1.brief: |
-  Работающая резервная нагрузка должна предоставлять требуемый маршрут.
-stages.1.objectives.0.text: В Deployment `backup` переменная `ROUTE` имеет значение `north`.
-hints.0.text: У инцидента могут быть последовательные этапы восстановления с разными наблюдаемыми результатами.
-hints.1.text: |-
-  Первый worker не прошёл HTTP readiness probe. Сравните порт probe с listener; после восстановления следите за каналом команды.
-
-  Изучите предоставленные файлы и живые наблюдения:
-
-  ```sh
-  # Stage 1
-  kubectl describe deployment relay
-  # Stage 2, after it appears
-  kubectl describe deployment backup
-  ```
-hints.2.text: |-
-  Второй инцидент использует другой deployment: проверьте переменную ROUTE резервного reader. Он получил маршрут retired; восстановите ROUTE=north.
-
-  Проверьте результат из `~/quest` на workstation:
-
-  Выполняйте эти команды наблюдения из `~/quest` на workstation.
-  - `kubectl rollout status deployment/relay --timeout=3s` — Этап 1: rollout завершён.
-  - `kubectl exec deployment/backup -c worker -- printenv ROUTE` — Этап 2, после его открытия: работающий резервный процесс выводит `north`.
-debrief: Сначала был неверный порт probe. После восстановления возник инцидент конфигурации backup-reader.
-  Вы исправили и проверили оба этапа.
+  Проверки наблюдают текущие идентичности контроллеров и объектов, ссылки данных, готовые endpoints, окружение контейнера и HTTP-записи; непрерывную доступность и историю команд они не доказывают.
+stages.0.brief: Восстановите исходную публикацию через стабильный публичный Service.
+stages.0.objectives.0.text: Исходный producer публикует неизменный набор данных через объявленный публичный Service.
+stages.1.brief: Активируйте backup с исходными данными на том же Service, сохранив producer.
+stages.1.objectives.0.text: Исходный backup использует маршрут и идентичность источника, обслуживает публичный путь
+  и сохраняет восстановленный producer.
+hints.0.text: Readiness, опубликованные данные и маршрутизация Service — разные контракты. Здоровый процесс ещё
+  не показывает, какие данные и контроллер обслуживают публичный путь.
+hints.1.text: Сопоставьте `cat progressive-contract.json`, `kubectl get deployments,configmaps,services,endpointslices
+  -o yaml` и события Pod. Изучите проекции источников, ссылки окружения, владельцев-контроллеров и фактические HTTP-записи
+  текущего этапа.
+hints.2.text: Постройте потребление источника и публичный Service, проверьте rollout и публикацию producer, затем
+  подготовьте ссылки источника и запись runtime у backup до переключения сохранённого Service. Сверьте `kubectl
+  rollout status deployment/<name>`, окружение контейнера, оба HTTP-пути и владельцев готовых endpoint Pod с контрактом.
+  Ожидаются исходные маршрут и идентичность публикации, а также неизменные UID сохраняемых объектов.
+debrief: Исходный набор данных доходит до настоящего producer и связанного с источником backup. Публичный маршрут
+  перенесён между управляемыми готовыми Pod с сохранением данных, workloads и установленного Service.
 phrases.0: Я проверил фактическое состояние до изменения.
 phrases.1: Я нашёл причину и менял по одному параметру.
 phrases.2: После изменения я проверил состояние workload и его готовность.
+diagnostics.probe_0_0: Исходный producer публикует неизменный набор данных через объявленный публичный Service.
+diagnostics.probe_1_0: Исходный backup использует маршрут и идентичность источника, обслуживает публичный путь и
+  сохраняет восстановленный producer.
+diagnostics.progressive_producer: Исходный producer должен оставаться развёрнутым и обслуживать исходный интерфейс
+  публикации.
+diagnostics.progressive_route: ROUTE backup должен совпадать с исходным маршрутом набора данных.
+diagnostics.progressive_identity: Сохраните идентичности исходных workloads, набора данных и установленного публичного
+  Service.
+diagnostics.progressive_source: Сохраните каждую предоставленную запись исходных данных.
+diagnostics.progressive_projection: Producer должен проецировать исходный ConfigMap.
+diagnostics.progressive_consumer: Backup должен потреблять источник через ссылки окружения и проекцию и публиковать
+  совпадающую запись runtime.
+diagnostics.progressive_service: Публичный ClusterIP Service должен выбирать готовые Pod активного исходного Deployment.
+diagnostics.progressive_publication: Фактическая публичная HTTP-запись должна совпадать с исходным набором данных.
