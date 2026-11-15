@@ -1,68 +1,58 @@
 title: Copia de seguridad y restauración de Application
 brief: |-
-  El libro necesita un archivo verificable y después una copia restaurada utilizable. Conserve la identidad original del claim en ambas etapas.
+  La aplicación necesita un punto de recuperación coherente entre pedidos y resumen, seguido de una recuperación utilizable.
 
-  Trabaja en la workstation en `~/quest` con los archivos suministrados:
-  - `claim.yaml`, `ledger.yaml`, `service.yaml`, `client.yaml`.
+  Trabaja en la estación de trabajo, en `~/quest`, con los archivos suministrados:
+  - `checkpoint-contract.json`.
 
-  **Requirements:**
+  **Requisitos:**
 
   - Etapa 1:
-    - `ledger.tar` en `~/quest` en la workstation contiene exactamente `ledger.txt` y conserva los bytes originales del ledger.
+    - `ledger.tar` en `~/quest` en la workstation contiene exactamente `ledger.txt` y conserva los bytes originales del ledger. Un segundo archivo, `checkpoint.tar` en `~/quest` de la estación de trabajo, contiene exactamente los archivos regulares `orders.tsv` y `summary.json`: misma generación y marcador, cantidades positivas, todas las rutas declaradas y el total correspondiente de `checkpoint-contract.json`. Conserva los PVC, Deployments e imágenes de worker originales.
     - El PVC `ledger` conserva su UID original no vacío.
-
   - Etapa 2:
     - `ledger.tar` en `~/quest` en la workstation contiene exactamente `ledger.txt` y conserva los bytes originales del ledger.
     - El PVC `ledger` conserva su UID original no vacío.
-    - Tanto `/data/ledger.txt` dentro del Deployment `ledger` como los bytes recibidos por el Deployment `client` en `http://ledger:8080/ledger.txt` coinciden con los bytes originales del ledger.
+    - Tanto `/data/ledger.txt` dentro del Deployment `ledger` como los bytes recibidos por el Deployment `client` en `http://ledger:8080/ledger.txt` coinciden con los bytes originales del ledger. Los dos archivos de datos actuales y ambas respuestas obtenidas por el cliente existente coinciden con `checkpoint.tar`; los lectores actuales listos montan sus PVC originales y la entrada de datos permanece pausada según `checkpoint-contract.json`. Conserva los PVC, Deployments e imágenes de worker originales.
 
-  Se usa un archivo sintético en reposo, no una copia de base de datos activa; las comprobaciones observan bytes e identidad del claim actuales, no el historial de restauración ni si la respuesta HTTP vino del PVC.
-debrief: Las comprobaciones compararon el archivo, el fichero activo, la respuesta HTTP y la identidad
-  del PVC.
-stages.0.brief: Un archivo completo debe coincidir con los bytes originales del libro.
-stages.1.brief: El archivo restaurado y los bytes servidos deben coincidir con el libro original.
-hints.0.text: Un comando de archivo exitoso no demuestra por sí solo bytes recuperables.
+  Es una carga sintética acotada, no una copia de una base de datos activa. Las comprobaciones observan coherencia del archivo y estado actual; no prueban el historial de captura o restauración.
+debrief: Las comprobaciones compararon el archivo original, un checkpoint coherente entre almacenes, identidades
+  conservadas, montajes actuales, archivos restaurados y ambas vistas HTTP.
+stages.0.brief: Obtén un punto de recuperación coherente conservando las identidades originales de almacenamiento
+  y cargas.
+stages.1.brief: Recupera ambos almacenes y sus vistas actuales de la aplicación desde ese punto.
+hints.0.text: Dos copias correctas por separado pueden corresponder a transacciones diferentes. El punto de recuperación
+  debe ser coherente entre almacenes y llegar a los consumidores actuales de la aplicación.
 hints.1.text: |-
-  Verifique la entrada exacta del archivo y el checksum original congelado.
-
-  Inspecciona los datos suministrados y las observaciones activas:
+  Compara el protocolo de escritura, ambos almacenes actuales, los montajes de la aplicación y el contrato de resultado. Estas observaciones corresponden al estado existente:
 
   ```sh
-  kubectl describe pvc
-  kubectl describe deployment ledger
+  cat checkpoint-contract.json
+  kubectl get deployment,pvc,pods -o yaml
+  kubectl exec deployment/ledger -- cat /data/writer-phase /data/orders.tsv
+  kubectl exec deployment/summary -- cat /data/summary.json
   ```
 hints.2.text: |-
-  Transmita el archivo verificado nuevamente al volumen existente y pruebe el contenido servido.
+  Verifica entradas de los archivos y coherencia de la transacción; después compara archivos restaurados, identidades de PVC y ambas respuestas de la aplicación. Durante la recuperación, la entrada de datos queda pausada:
 
-  Verifica el resultado desde `~/quest` en la workstation:
-
-  - El archivo enumera solo `ledger.txt`, cuyos bytes tienen la suma original.
-
-    ```sh
-    tar tf ledger.tar
-    tar xOf ledger.tar ledger.txt | sha256sum
-    cat original-ledger.sha256
-    ```
-
-  - La configuración, identidades y estado cumplen los requisitos.
-
-    ```sh
-    kubectl get pvc ledger -o yaml
-    cat original-pvc-uid
-    ```
-
-  - En la segunda etapa, las sumas del archivo real y de los bytes recibidos coinciden con la original.
-
-    ```sh
-    kubectl exec deployment/ledger -- sha256sum /data/ledger.txt
-    kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/ledger.txt | sha256sum
-    cat original-ledger.sha256
-    ```
+  ```sh
+  tar tf ledger.tar
+  tar xOf ledger.tar ledger.txt | sha256sum
+  cat original-ledger.sha256
+  tar tf checkpoint.tar
+  tar xOf checkpoint.tar orders.tsv
+  tar xOf checkpoint.tar summary.json
+  kubectl get deployment,pvc,pods -o yaml
+  kubectl exec deployment/ledger -- sha256sum /data/ledger.txt /data/orders.tsv
+  kubectl exec deployment/summary -- sha256sum /data/summary.json
+  kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/orders.tsv
+  kubectl exec deployment/client -- wget -qO- -T 3 http://summary:8080/summary.json
+  ```
 phrases.0: Comparé la suma del archivo.
 phrases.1: Comprobé el fichero activo y el UID del PVC.
 phrases.2: Comparé la suma de la respuesta HTTP.
-questions.0.points.0: Demuestra la integridad de los bytes frente a una referencia, no la recuperación
-  completa de la aplicación.
+questions.0.points.0: Demuestra la integridad de los bytes frente a una referencia, no la recuperación completa
+  de la aplicación.
 questions.0.points.1: Pruebe también los datos restaurados a través de la aplicación.
 questions.0.prompt: ¿Un checksum demuestra que una copia de seguridad puede restaurar el servicio?
 questions.1.points.0: Las transacciones, WAL y los archivos relacionados pueden cambiar durante la copia.
@@ -73,16 +63,36 @@ diagnostics.archive_hash: ledger.tar ledger.txt SHA-256 debe ser igual a origina
 diagnostics.pvc_uid: PVC/ledger UID debe ser igual a original-pvc-uid.
 diagnostics.file_hash: /data/ledger.txt SHA-256 debe ser igual a original-ledger.sha256.
 diagnostics.http_hash: http://ledger:8080/ledger.txt SHA-256 debe ser igual a original-ledger.sha256.
-stages.0.objectives.0.text: '`ledger.tar` en `~/quest` en la workstation contiene exactamente `ledger.txt`
-  y conserva los bytes originales del ledger.'
+stages.0.objectives.0.text: '`ledger.tar` en `~/quest` en la workstation contiene exactamente `ledger.txt` y conserva
+  los bytes originales del ledger. Un segundo archivo, `checkpoint.tar` en `~/quest` de la estación de trabajo,
+  contiene exactamente los archivos regulares `orders.tsv` y `summary.json`: misma generación y marcador, cantidades
+  positivas, todas las rutas declaradas y el total correspondiente de `checkpoint-contract.json`. Conserva los PVC,
+  Deployments e imágenes de worker originales.'
 stages.0.objectives.1.text: El PVC `ledger` conserva su UID original no vacío.
-stages.1.objectives.0.text: '`ledger.tar` en `~/quest` en la workstation contiene exactamente `ledger.txt`
-  y conserva los bytes originales del ledger.'
+stages.1.objectives.0.text: '`ledger.tar` en `~/quest` en la workstation contiene exactamente `ledger.txt` y conserva
+  los bytes originales del ledger.'
 stages.1.objectives.1.text: El PVC `ledger` conserva su UID original no vacío.
-stages.1.objectives.2.text: Tanto `/data/ledger.txt` dentro del Deployment `ledger` como los bytes recibidos
-  por el Deployment `client` en `http://ledger:8080/ledger.txt` coinciden con los bytes originales del
-  ledger.
-diagnostics.probe_0_0: 'Los datos actuales no permiten verificar este objetivo: `ledger.tar` en `~/quest` en la
-  workstation contiene exactamente `ledger.txt` y conserva los bytes originales del ledger.'
+stages.1.objectives.2.text: Tanto `/data/ledger.txt` dentro del Deployment `ledger` como los bytes recibidos por
+  el Deployment `client` en `http://ledger:8080/ledger.txt` coinciden con los bytes originales del ledger. Los dos
+  archivos de datos actuales y ambas respuestas obtenidas por el cliente existente coinciden con `checkpoint.tar`;
+  los lectores actuales listos montan sus PVC originales y la entrada de datos permanece pausada según `checkpoint-contract.json`.
+  Conserva los PVC, Deployments e imágenes de worker originales.
+diagnostics.probe_0_0: Falta el archivo checkpoint, tiene formato incorrecto o combina generaciones, rutas o totales
+  incoherentes.
 diagnostics.probe_1_0: 'Los datos actuales no permiten verificar este objetivo: `ledger.tar` en `~/quest` en la
   workstation contiene exactamente `ledger.txt` y conserva los bytes originales del ledger.'
+diagnostics.checkpoint_archive: Falta el archivo checkpoint, tiene formato incorrecto o combina generaciones, rutas
+  o totales incoherentes.
+diagnostics.checkpoint_identity: La identidad de un PVC o Deployment original, o una imagen suministrada de worker,
+  difiere del estado inicial.
+diagnostics.checkpoint_consumers: Un consumidor requerido no tiene exactamente un Pod actual listo perteneciente
+  a su Deployment.
+diagnostics.checkpoint_quiescence: El escritor aún solicita réplicas o conserva un Pod actual activo; la recuperación
+  debe permanecer pausada.
+diagnostics.checkpoint_source: Un lector actual o su plantilla no usa el PVC original para la ruta declarada, o
+  no se puede observar el estado.
+diagnostics.checkpoint_file: Un archivo de datos montado difiere de la entrada verificada del checkpoint.
+diagnostics.checkpoint_http: La respuesta recibida por el cliente existente difiere de la entrada verificada del
+  checkpoint.
+diagnostics.probe_1_2: Un lector actual o su plantilla no usa el PVC original para la ruta declarada, o no se puede
+  observar el estado.

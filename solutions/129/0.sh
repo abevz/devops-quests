@@ -1,5 +1,19 @@
 set -euo pipefail
 cd ~/quest
+python3 -I - <<'DQ_RETIREMENT_REFERENCE'
+import json,subprocess
+retired=json.loads(subprocess.check_output(['kubectl','get','secret','station-record','-o','json'],text=True))
+successor={'apiVersion':'v1','kind':'Secret','metadata':{'name':'station-successor'},
+           'type':retired.get('type','Opaque'),'data':retired['data']}
+subprocess.run(['kubectl','apply','-f','-'],input=json.dumps(successor),text=True,check=True)
+for name in ('dispatch','reporter'):
+    patch={'spec':{'template':{'spec':{'volumes':[{'name':'configuration','secret':{'secretName':'station-successor'}}]}}}}
+    subprocess.run(['kubectl','patch','deployment',name,'--type=strategic','-p',json.dumps(patch)],check=True)
+for name in ('dispatch','reporter'):
+    subprocess.run(['kubectl','rollout','status','deployment/'+name,'--timeout=90s'],check=True)
+DQ_RETIREMENT_REFERENCE
+set -euo pipefail
+cd ~/quest
 kubectl get configmap station -o json > /tmp/parent-live.json
 kubectl get secret station-record -o json > /tmp/child-live.json
 python3 - <<'CLEANUP_PROOF'

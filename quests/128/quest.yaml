@@ -13,6 +13,12 @@ stages:
       set +e
       (
       set -euo pipefail
+      timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_CHECKPOINT_0_0'
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
       checksum=$(cat /run/dq/facts/0/original-ledger.sha256 2>/dev/null || true)
       python3 -I - /dev/fd/3 3<<<"$checksum" <<'DQ_ARCHIVE'
       import sys
@@ -53,24 +59,139 @@ stages:
       rm -f "$dq_probe_output"
       trap - EXIT
       test "$dq_probe_status" -eq 0
+      DQ_LEGACY_CHECKPOINT_0_0
+      timeout --kill-after=1s 12s python3 -I - <<'DQ_CHECKPOINT_SNAPSHOT'
+      import csv
+      import hashlib
+      import io
+      import json
+      import subprocess
+      import sys
+      import tarfile
+      import time
+      from pathlib import Path
+
+      from dq_check import current_pods, named, pod_worker, workload_worker
+
+      failed = False
+      deadline = time.monotonic() + 10
+
+
+      def require(value, marker):
+          global failed
+          if not value:
+              print('Checkpoint condition is unmet: ✗ [DQ:' + marker + ']')
+              failed = True
+
+
+      def command(arguments, *, binary=False):
+          remaining = deadline - time.monotonic()
+          if remaining <= 0:
+              raise ValueError('Observation budget exhausted')
+          result = subprocess.run(arguments, capture_output=True, text=not binary,
+                                  timeout=min(6, remaining))
+          if result.returncode:
+              raise ValueError('Observation unavailable')
+          return result.stdout
+
+
+      def get(kind):
+          return json.loads(command(['kubectl', 'get', kind, '-o', 'json']))
+
+
+      def resource(items, name):
+          matches = [item for item in items if item.get('metadata', {}).get('name') == name]
+          if len(matches) != 1:
+              raise ValueError('Resource identity')
+          return matches[0]
+
+
+      def same_image(actual, expected):
+          digest = expected.partition('@')[2]
+          return actual == expected or (bool(digest) and isinstance(actual, str)
+                                        and actual.partition('@')[2] == digest)
+
+
+      def checkpoint(contract):
+          expected = {item['entry'] for item in contract['stores']}
+          result = {}
+          with tarfile.open(contract['checkpointArchive']) as archive:
+              for member in archive:
+                  name = member.name
+                  while name.startswith('./'):
+                      name = name[2:]
+                  if (name not in expected or name in result or not member.isfile()
+                          or member.issparse() or member.size < 1
+                          or member.size > contract['maximumEntryBytes']):
+                      raise ValueError('Unexpected checkpoint member')
+                  stream = archive.extractfile(member)
+                  data = stream.read(contract['maximumEntryBytes'] + 1)
+                  if len(data) != member.size:
+                      raise ValueError('Truncated checkpoint member')
+                  result[name] = data
+          if set(result) != expected:
+              raise ValueError('Incomplete checkpoint')
+          reader = csv.DictReader(io.StringIO(result['orders.tsv'].decode()), delimiter='\t')
+          orders = list(reader)
+          summary = json.loads(result['summary.json'])
+          if (len(orders) != len(contract['routes'])
+                  or reader.fieldnames is None or len(reader.fieldnames) != 4
+                  or any(set(row) != {'marker', 'generation', 'route', 'units'} for row in orders)
+                  or {row['route'] for row in orders} != set(contract['routes'])
+                  or {row['marker'] for row in orders} != {contract['marker']}
+                  or {int(row['generation']) for row in orders} != {summary['generation']}
+                  or type(summary['generation']) is not int or summary['generation'] < 1
+                  or summary['marker'] != contract['marker']
+                  or any(int(row['units']) < 1 for row in orders)
+                  or type(summary['total']) is not int
+                  or sum(int(row['units']) for row in orders) != summary['total']):
+              raise ValueError('Inconsistent recovery point')
+          return result
+
+
+      facts = json.loads(Path('/run/dq/facts/0/checkpoint-identities.json').read_text())
+      contract = facts['contract']
+      try:
+          snapshot = checkpoint(contract)
+      except (KeyError, ValueError, TypeError, AttributeError, IndexError, OSError, tarfile.TarError):
+          require(False, 'checkpoint_archive')
+          snapshot = None
+
+      deployments = {'items': []}
+      try:
+          deployments = get('deployments')
+          claims = get('persistentvolumeclaims')
+          for name, uid in facts['claims'].items():
+              require(resource(claims['items'], name)['metadata']['uid'] == uid, 'checkpoint_identity')
+          for name, identity in facts['deployments'].items():
+              deployment = resource(deployments['items'], name)
+              require(deployment['metadata']['uid'] == identity['uid']
+                      and same_image(workload_worker(deployment).get('image'), identity['image']),
+                      'checkpoint_identity')
+      except (KeyError, ValueError, TypeError, AttributeError, OSError, subprocess.SubprocessError):
+          require(False, 'checkpoint_identity')
+      sys.exit(failed)
+      DQ_CHECKPOINT_SNAPSHOT
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+       printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
   - text: stages.0.objectives.1.text
     keep: true
-    check: 'set -euo pipefail
-
+    check: |
+      set -euo pipefail
       cd ~/quest
-
       failed=0
-
       uid=$(cat /run/dq/facts/0/original-pvc-uid 2>/dev/null || true)
-
-      live_uid=$(kubectl get pvc ledger -o jsonpath=''{.metadata.uid}'' 2>/dev/null || true)
-
-      if ! test -n "$uid" || ! test "$live_uid" = "$uid"; then printf ''%s\n'' ''ledger PVC UID = original-pvc-uid:
-      ✗ [DQ:pvc_uid]''; failed=1; fi
-
+      live_uid=$(kubectl get pvc ledger -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+      if ! test -n "$uid" || ! test "$live_uid" = "$uid"; then printf '%s\n' 'ledger PVC UID = original-pvc-uid: ✗ [DQ:pvc_uid]'; failed=1; fi
       exit "$failed"
-
-      '
 - brief: stages.1.brief
   objectives:
   - text: stages.1.objectives.0.text
@@ -123,46 +244,209 @@ stages:
       test "$dq_probe_status" -eq 0
   - text: stages.1.objectives.1.text
     keep: true
-    check: 'set -euo pipefail
-
+    check: |
+      set -euo pipefail
       cd ~/quest
-
       failed=0
-
       uid=$(cat /run/dq/facts/0/original-pvc-uid 2>/dev/null || true)
-
-      live_uid=$(kubectl get pvc ledger -o jsonpath=''{.metadata.uid}'' 2>/dev/null || true)
-
-      if ! test -n "$uid" || ! test "$live_uid" = "$uid"; then printf ''%s\n'' ''ledger PVC UID = original-pvc-uid:
-      ✗ [DQ:pvc_uid]''; failed=1; fi
-
+      live_uid=$(kubectl get pvc ledger -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+      if ! test -n "$uid" || ! test "$live_uid" = "$uid"; then printf '%s\n' 'ledger PVC UID = original-pvc-uid: ✗ [DQ:pvc_uid]'; failed=1; fi
       exit "$failed"
-
-      '
   - text: stages.1.objectives.2.text
-    check: 'set -euo pipefail
-
+    check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
+      timeout --kill-after=1s 9s bash -euo pipefail <<'DQ_LEGACY_CHECKPOINT_1_2'
+      set -euo pipefail
       cd ~/quest
-
       failed=0
-
       checksum=$(cat /run/dq/facts/0/original-ledger.sha256 2>/dev/null || true)
-
-      if ! file_hash=$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/ledger -- sha256sum /data/ledger.txt
-      2>/dev/null | awk ''{print $1}''); then file_hash=; fi
-
-      if ! test -n "$checksum" || ! test "$file_hash" = "$checksum"; then printf ''%s\n'' ''live ledger.txt checksum
-      = original-ledger.sha256: ✗ [DQ:file_hash]''; failed=1; fi
-
-      if ! http_hash=$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- wget -qO- -T 3 http://ledger:8080/ledger.txt
-      2>/dev/null | sha256sum | awk ''{print $1}''); then http_hash=; fi
-
-      if ! test -n "$checksum" || ! test "$http_hash" = "$checksum"; then printf ''%s\n'' ''ledger HTTP checksum
-      = original-ledger.sha256: ✗ [DQ:http_hash]''; failed=1; fi
-
+      if ! file_hash=$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/ledger -- sha256sum /data/ledger.txt 2>/dev/null | awk '{print $1}'); then file_hash=; fi
+      if ! test -n "$checksum" || ! test "$file_hash" = "$checksum"; then printf '%s\n' 'live ledger.txt checksum = original-ledger.sha256: ✗ [DQ:file_hash]'; failed=1; fi
+      if ! http_hash=$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/client -- wget -qO- -T 3 http://ledger:8080/ledger.txt 2>/dev/null | sha256sum | awk '{print $1}'); then http_hash=; fi
+      if ! test -n "$checksum" || ! test "$http_hash" = "$checksum"; then printf '%s\n' 'ledger HTTP checksum = original-ledger.sha256: ✗ [DQ:http_hash]'; failed=1; fi
       exit "$failed"
 
-      '
+      DQ_LEGACY_CHECKPOINT_1_2
+      timeout --kill-after=1s 12s python3 -I - <<'DQ_CHECKPOINT_RESTORE'
+      import csv
+      import hashlib
+      import io
+      import json
+      import subprocess
+      import sys
+      import tarfile
+      import time
+      from pathlib import Path
+
+      from dq_check import current_pods, named, pod_worker, workload_worker
+
+      failed = False
+      deadline = time.monotonic() + 10
+
+
+      def require(value, marker):
+          global failed
+          if not value:
+              print('Checkpoint condition is unmet: ✗ [DQ:' + marker + ']')
+              failed = True
+
+
+      def command(arguments, *, binary=False):
+          remaining = deadline - time.monotonic()
+          if remaining <= 0:
+              raise ValueError('Observation budget exhausted')
+          result = subprocess.run(arguments, capture_output=True, text=not binary,
+                                  timeout=min(6, remaining))
+          if result.returncode:
+              raise ValueError('Observation unavailable')
+          return result.stdout
+
+
+      def get(kind):
+          return json.loads(command(['kubectl', 'get', kind, '-o', 'json']))
+
+
+      def resource(items, name):
+          matches = [item for item in items if item.get('metadata', {}).get('name') == name]
+          if len(matches) != 1:
+              raise ValueError('Resource identity')
+          return matches[0]
+
+
+      def same_image(actual, expected):
+          digest = expected.partition('@')[2]
+          return actual == expected or (bool(digest) and isinstance(actual, str)
+                                        and actual.partition('@')[2] == digest)
+
+
+      def checkpoint(contract):
+          expected = {item['entry'] for item in contract['stores']}
+          result = {}
+          with tarfile.open(contract['checkpointArchive']) as archive:
+              for member in archive:
+                  name = member.name
+                  while name.startswith('./'):
+                      name = name[2:]
+                  if (name not in expected or name in result or not member.isfile()
+                          or member.issparse() or member.size < 1
+                          or member.size > contract['maximumEntryBytes']):
+                      raise ValueError('Unexpected checkpoint member')
+                  stream = archive.extractfile(member)
+                  data = stream.read(contract['maximumEntryBytes'] + 1)
+                  if len(data) != member.size:
+                      raise ValueError('Truncated checkpoint member')
+                  result[name] = data
+          if set(result) != expected:
+              raise ValueError('Incomplete checkpoint')
+          reader = csv.DictReader(io.StringIO(result['orders.tsv'].decode()), delimiter='\t')
+          orders = list(reader)
+          summary = json.loads(result['summary.json'])
+          if (len(orders) != len(contract['routes'])
+                  or reader.fieldnames is None or len(reader.fieldnames) != 4
+                  or any(set(row) != {'marker', 'generation', 'route', 'units'} for row in orders)
+                  or {row['route'] for row in orders} != set(contract['routes'])
+                  or {row['marker'] for row in orders} != {contract['marker']}
+                  or {int(row['generation']) for row in orders} != {summary['generation']}
+                  or type(summary['generation']) is not int or summary['generation'] < 1
+                  or summary['marker'] != contract['marker']
+                  or any(int(row['units']) < 1 for row in orders)
+                  or type(summary['total']) is not int
+                  or sum(int(row['units']) for row in orders) != summary['total']):
+              raise ValueError('Inconsistent recovery point')
+          return result
+
+
+      facts = json.loads(Path('/run/dq/facts/0/checkpoint-identities.json').read_text())
+      contract = facts['contract']
+      try:
+          snapshot = checkpoint(contract)
+      except (KeyError, ValueError, TypeError, AttributeError, IndexError, OSError, tarfile.TarError):
+          require(False, 'checkpoint_archive')
+          snapshot = None
+
+      deployments = {'items': []}
+      try:
+          deployments = get('deployments')
+          claims = get('persistentvolumeclaims')
+          for name, uid in facts['claims'].items():
+              require(resource(claims['items'], name)['metadata']['uid'] == uid, 'checkpoint_identity')
+          for name, identity in facts['deployments'].items():
+              deployment = resource(deployments['items'], name)
+              require(deployment['metadata']['uid'] == identity['uid']
+                      and same_image(workload_worker(deployment).get('image'), identity['image']),
+                      'checkpoint_identity')
+      except (KeyError, ValueError, TypeError, AttributeError, OSError, subprocess.SubprocessError):
+          require(False, 'checkpoint_identity')
+      def mounted_claim(policy, worker, target):
+          candidates = [mount for mount in worker.get('volumeMounts', [])
+                        if mount.get('mountPath', '').startswith('/')
+                        and (target == mount['mountPath']
+                             or target.startswith(mount['mountPath'].rstrip('/') + '/'))]
+          if not candidates:
+              raise ValueError('No data volume')
+          longest = max(len(mount['mountPath']) for mount in candidates)
+          matches = [mount for mount in candidates if len(mount['mountPath']) == longest]
+          if len(matches) != 1:
+              raise ValueError('Ambiguous data volume')
+          volume = named(policy.get('volumes', []), matches[0]['name'])
+          return volume['persistentVolumeClaim']['claimName']
+
+
+      try:
+          replicasets = get('replicasets')
+          pods = get('pods')
+
+          def current(name):
+              deployment = resource(deployments['items'], name)
+              require(deployment['spec'].get('replicas') == 1, 'checkpoint_consumers')
+              active = current_pods(deployment, replicasets, pods)
+              if len(active) != 1:
+                  raise ValueError('One current consumer required')
+              pod = active[0]
+              require(any(condition.get('type') == 'Ready' and condition.get('status') == 'True'
+                          for condition in pod.get('status', {}).get('conditions', []))
+                      and same_image(pod_worker(pod).get('image'), facts['deployments'][name]['image']),
+                      'checkpoint_consumers')
+              return deployment, pod
+
+          writer = resource(deployments['items'], contract['writer'])
+          require(writer['spec'].get('replicas') == 0
+                  and not current_pods(writer, replicasets, pods), 'checkpoint_quiescence')
+          _, client = current(contract['client'])
+          if snapshot is not None:
+              for store in contract['stores']:
+                  try:
+                      deployment, pod = current(store['deployment'])
+                      require(mounted_claim(deployment['spec']['template']['spec'], workload_worker(deployment), store['path']) == store['claim']
+                              and mounted_claim(pod['spec'], pod_worker(pod), store['path']) == store['claim'],
+                              'checkpoint_source')
+                      digest = hashlib.sha256(snapshot[store['entry']]).hexdigest()
+                      actual = command(['kubectl', 'exec', pod['metadata']['name'], '-c', 'worker', '--',
+                                        'sha256sum', store['path']]).split()
+                      require(bool(actual) and actual[0] == digest, 'checkpoint_file')
+                      response = command(['kubectl', 'exec', client['metadata']['name'], '-c', 'worker', '--',
+                                          'wget', '-qO-', '-T', '2', store['url']], binary=True)
+                      require(hashlib.sha256(response).hexdigest() == digest, 'checkpoint_http')
+                  except (KeyError, ValueError, TypeError, AttributeError, OSError, subprocess.SubprocessError):
+                      require(False, 'checkpoint_source')
+      except (KeyError, ValueError, TypeError, AttributeError, OSError, subprocess.SubprocessError):
+          require(False, 'checkpoint_consumers')
+      sys.exit(failed)
+      DQ_CHECKPOINT_RESTORE
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+       printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_1_2]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
 hints:
 - text: hints.0.text
   guide: storage-lifecycle
@@ -191,12 +475,7 @@ facts:
   - KUBECONFIG
   - TF_CLI_CONFIG_FILE
   files:
-  - claim.yaml
-  - ledger.yaml
-  - service.yaml
-  - client.yaml
-  - original-ledger.sha256
-  - original-pvc-uid
+  - checkpoint-contract.json
   services: []
 book:
   chapter: 15
@@ -205,3 +484,5 @@ immutable:
   0:
   - original-ledger.sha256
   - original-pvc-uid
+  - checkpoint-contract.json
+  - checkpoint-identities.json

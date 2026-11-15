@@ -1,68 +1,58 @@
 title: Application Sicherung und Wiederherstellung
 brief: |-
-  Das Ledger benötigt ein prüfbares Archiv und danach eine nutzbare wiederhergestellte Kopie. Bewahren Sie die ursprüngliche Claim-Identität in beiden Stufen.
+  Die Anwendung benötigt einen konsistenten Wiederherstellungspunkt für Aufträge und Zusammenfassung und anschließend eine nutzbare Wiederherstellung.
 
-  Arbeiten Sie auf der Workstation in `~/quest` mit den bereitgestellten Dateien:
-  - `claim.yaml`, `ledger.yaml`, `service.yaml`, `client.yaml`.
+  Arbeite auf der Workstation in `~/quest` mit den bereitgestellten Dateien:
+  - `checkpoint-contract.json`.
 
-  **Requirements:**
+  **Anforderungen:**
 
   - Stufe 1:
-    - `ledger.tar` in `~/quest` auf der Workstation enthält genau `ledger.txt` und bewahrt die ursprünglichen Ledger-Bytes.
+    - `ledger.tar` in `~/quest` auf der Workstation enthält genau `ledger.txt` und bewahrt die ursprünglichen Ledger-Bytes. Ein zweites Archiv `checkpoint.tar` in `~/quest` auf der Workstation enthält genau die regulären Dateien `orders.tsv` und `summary.json`: gleiche Generation und Markierung, positive Mengen, alle vorgegebenen Routen und die passende Summe gemäß `checkpoint-contract.json`. Erhalte die ursprünglichen PVCs, Deployments und bereitgestellten Worker-Images.
     - PVC `ledger` behält seine ursprüngliche nichtleere UID.
-
   - Stufe 2:
     - `ledger.tar` in `~/quest` auf der Workstation enthält genau `ledger.txt` und bewahrt die ursprünglichen Ledger-Bytes.
     - PVC `ledger` behält seine ursprüngliche nichtleere UID.
-    - Sowohl `/data/ledger.txt` in Deployment `ledger` als auch die von Deployment `client` unter `http://ledger:8080/ledger.txt` empfangenen Bytes entsprechen den ursprünglichen Ledger-Bytes.
+    - Sowohl `/data/ledger.txt` in Deployment `ledger` als auch die von Deployment `client` unter `http://ledger:8080/ledger.txt` empfangenen Bytes entsprechen den ursprünglichen Ledger-Bytes. Beide aktuellen Datendateien und beide vom vorhandenen Client abgerufenen Antworten entsprechen `checkpoint.tar`; aktuelle bereite Leser mounten ihre ursprünglichen PVCs, und die Datenaufnahme bleibt gemäß `checkpoint-contract.json` pausiert. Erhalte die ursprünglichen PVCs, Deployments und bereitgestellten Worker-Images.
 
-  Dies nutzt eine synthetische ruhende Datei, kein Live-Datenbankbackup; die Prüfungen beobachten aktuelle Bytes und Claim-Identität, nicht Wiederherstellungsverlauf oder ob die HTTP-Antwort aus dem PVC stammt.
-debrief: Die Prüfungen verglichen Archiv, laufende Datei, HTTP-Antwort und PVC-Identität.
-stages.0.brief: Ein vollständiges Archiv muss den ursprünglichen Ledger-Bytes entsprechen.
-stages.1.brief: Wiederhergestellte Datei und ausgelieferte Bytes müssen dem ursprünglichen Ledger entsprechen.
-hints.0.text: Ein erfolgreicher Archivierungsbefehl allein beweist nicht, dass wiederherstellbare Bytes
-  vorhanden sind.
+  Dies ist eine begrenzte synthetische Last, kein Backup einer laufenden Datenbank. Prüfungen beobachten Archivkonsistenz und aktuellen Zustand, beweisen aber keinen Sicherungs- oder Wiederherstellungsverlauf.
+debrief: Die Prüfungen verglichen Ledger-Archiv, konsistenten speicherübergreifenden Checkpoint, erhaltene Objektidentitäten,
+  aktuelle Mounts, wiederhergestellte Dateien und beide HTTP-Ansichten.
+stages.0.brief: Erstelle einen konsistenten Wiederherstellungspunkt unter Erhalt der ursprünglichen Speicher- und
+  Workload-Identitäten.
+stages.1.brief: Stelle beide Datenspeicher und ihre aktuellen Anwendungsansichten aus diesem Punkt wieder her.
+hints.0.text: Einzeln erfolgreiche Kopien können verschiedene Transaktionen beschreiben. Ein Wiederherstellungspunkt
+  muss über beide Speicher konsistent sein und die aktuellen Anwendungsverbraucher erreichen.
 hints.1.text: |-
-  Überprüfen Sie den genauen Archiveintrag und das eingefrorene Original checksum.
-
-  Prüfen Sie die bereitgestellten Eingaben und laufenden Beobachtungen:
+  Vergleiche Schreibprotokoll, beide aktuellen Speicher, Anwendungsmounts und Ergebnisvertrag. Die folgenden Beobachtungen betreffen vorhandenen Zustand:
 
   ```sh
-  kubectl describe pvc
-  kubectl describe deployment ledger
+  cat checkpoint-contract.json
+  kubectl get deployment,pvc,pods -o yaml
+  kubectl exec deployment/ledger -- cat /data/writer-phase /data/orders.tsv
+  kubectl exec deployment/summary -- cat /data/summary.json
   ```
 hints.2.text: |-
-  Streamen Sie die verifizierte Datei zurück in das vorhandene Volume und testen Sie den bereitgestellten Inhalt.
+  Prüfe Archiveinträge und Transaktionskonsistenz, danach wiederhergestellte Dateien, aktuelle PVC-Identitäten und beide Anwendungsantworten. Bei der Wiederherstellung bleibt die Datenaufnahme pausiert:
 
-  Prüfen Sie das Ergebnis in `~/quest` auf der Workstation:
-
-  - Das Archiv listet nur `ledger.txt`, dessen Bytes die ursprüngliche Prüfsumme haben.
-
-    ```sh
-    tar tf ledger.tar
-    tar xOf ledger.tar ledger.txt | sha256sum
-    cat original-ledger.sha256
-    ```
-
-  - Einstellungen, Identitäten und Status entsprechen den Anforderungen.
-
-    ```sh
-    kubectl get pvc ledger -o yaml
-    cat original-pvc-uid
-    ```
-
-  - In Stufe zwei entsprechen die Prüfsummen der aktuellen Datei und empfangenen Bytes dem Original.
-
-    ```sh
-    kubectl exec deployment/ledger -- sha256sum /data/ledger.txt
-    kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/ledger.txt | sha256sum
-    cat original-ledger.sha256
-    ```
+  ```sh
+  tar tf ledger.tar
+  tar xOf ledger.tar ledger.txt | sha256sum
+  cat original-ledger.sha256
+  tar tf checkpoint.tar
+  tar xOf checkpoint.tar orders.tsv
+  tar xOf checkpoint.tar summary.json
+  kubectl get deployment,pvc,pods -o yaml
+  kubectl exec deployment/ledger -- sha256sum /data/ledger.txt /data/orders.tsv
+  kubectl exec deployment/summary -- sha256sum /data/summary.json
+  kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/orders.tsv
+  kubectl exec deployment/client -- wget -qO- -T 3 http://summary:8080/summary.json
+  ```
 phrases.0: Ich verglich die Archiv-Prüfsumme.
 phrases.1: Ich prüfte die laufende Datei und PVC-UID.
 phrases.2: Ich verglich die Prüfsumme der HTTP-Antwort.
-questions.0.points.0: Es beweist die Byte-Integrität anhand einer Referenz und nicht die vollständige
-  Wiederherstellung der Anwendung.
+questions.0.points.0: Es beweist die Byte-Integrität anhand einer Referenz und nicht die vollständige Wiederherstellung
+  der Anwendung.
 questions.0.points.1: Testen Sie wiederhergestellte Daten auch über die Anwendung.
 questions.0.prompt: Beweist ein checksum, dass ein Backup den Dienst wiederherstellen kann?
 questions.1.points.0: Transaktionen, WAL und zugehörige Dateien können sich während des Kopierens ändern.
@@ -73,15 +63,36 @@ diagnostics.archive_hash: ledger.tar ledger.txt SHA-256 muss original-ledger.sha
 diagnostics.pvc_uid: PVC/ledger UID muss original-pvc-uid entsprechen.
 diagnostics.file_hash: /data/ledger.txt SHA-256 muss original-ledger.sha256 entsprechen.
 diagnostics.http_hash: http://ledger:8080/ledger.txt SHA-256 muss original-ledger.sha256 entsprechen.
-stages.0.objectives.0.text: '`ledger.tar` in `~/quest` auf der Workstation enthält genau `ledger.txt`
-  und bewahrt die ursprünglichen Ledger-Bytes.'
+stages.0.objectives.0.text: '`ledger.tar` in `~/quest` auf der Workstation enthält genau `ledger.txt` und bewahrt
+  die ursprünglichen Ledger-Bytes. Ein zweites Archiv `checkpoint.tar` in `~/quest` auf der Workstation enthält
+  genau die regulären Dateien `orders.tsv` und `summary.json`: gleiche Generation und Markierung, positive Mengen,
+  alle vorgegebenen Routen und die passende Summe gemäß `checkpoint-contract.json`. Erhalte die ursprünglichen PVCs,
+  Deployments und bereitgestellten Worker-Images.'
 stages.0.objectives.1.text: PVC `ledger` behält seine ursprüngliche nichtleere UID.
-stages.1.objectives.0.text: '`ledger.tar` in `~/quest` auf der Workstation enthält genau `ledger.txt`
-  und bewahrt die ursprünglichen Ledger-Bytes.'
+stages.1.objectives.0.text: '`ledger.tar` in `~/quest` auf der Workstation enthält genau `ledger.txt` und bewahrt
+  die ursprünglichen Ledger-Bytes.'
 stages.1.objectives.1.text: PVC `ledger` behält seine ursprüngliche nichtleere UID.
-stages.1.objectives.2.text: Sowohl `/data/ledger.txt` in Deployment `ledger` als auch die von Deployment
-  `client` unter `http://ledger:8080/ledger.txt` empfangenen Bytes entsprechen den ursprünglichen Ledger-Bytes.
-diagnostics.probe_0_0: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: `ledger.tar` in `~/quest`
-  auf der Workstation enthält genau `ledger.txt` und bewahrt die ursprünglichen Ledger-Bytes.'
+stages.1.objectives.2.text: Sowohl `/data/ledger.txt` in Deployment `ledger` als auch die von Deployment `client`
+  unter `http://ledger:8080/ledger.txt` empfangenen Bytes entsprechen den ursprünglichen Ledger-Bytes. Beide aktuellen
+  Datendateien und beide vom vorhandenen Client abgerufenen Antworten entsprechen `checkpoint.tar`; aktuelle bereite
+  Leser mounten ihre ursprünglichen PVCs, und die Datenaufnahme bleibt gemäß `checkpoint-contract.json` pausiert.
+  Erhalte die ursprünglichen PVCs, Deployments und bereitgestellten Worker-Images.
+diagnostics.probe_0_0: Das Checkpoint-Archiv fehlt, ist fehlerhaft oder kombiniert inkonsistente Transaktionsgenerationen,
+  Routen oder Summen.
 diagnostics.probe_1_0: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: `ledger.tar` in `~/quest`
   auf der Workstation enthält genau `ledger.txt` und bewahrt die ursprünglichen Ledger-Bytes.'
+diagnostics.checkpoint_archive: Das Checkpoint-Archiv fehlt, ist fehlerhaft oder kombiniert inkonsistente Transaktionsgenerationen,
+  Routen oder Summen.
+diagnostics.checkpoint_identity: Eine ursprüngliche PVC- oder Deployment-Identität oder ein bereitgestelltes Worker-Image
+  weicht vom Ausgangszustand ab.
+diagnostics.checkpoint_consumers: Ein erforderlicher Verbraucher hat nicht genau einen aktuellen bereiten Pod im
+  Besitz seines Deployments.
+diagnostics.checkpoint_quiescence: Für den Writer sind noch Replikate gewünscht oder ein aktueller aktiver Pod bleibt;
+  die Wiederherstellung muss pausiert bleiben.
+diagnostics.checkpoint_source: Ein aktueller Leser oder seine Vorlage nutzt nicht den ursprünglichen PVC für den
+  Datenpfad, oder die Beobachtung ist nicht verfügbar.
+diagnostics.checkpoint_file: Eine gemountete Datendatei weicht vom geprüften Checkpoint-Eintrag ab.
+diagnostics.checkpoint_http: Die beim vorhandenen Client empfangene Antwort weicht vom geprüften Checkpoint-Eintrag
+  ab.
+diagnostics.probe_1_2: Ein aktueller Leser oder seine Vorlage nutzt nicht den ursprünglichen PVC für den Datenpfad,
+  oder die Beobachtung ist nicht verfügbar.

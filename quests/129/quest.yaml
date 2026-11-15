@@ -7,23 +7,167 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: 'set -euo pipefail
-
+    check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
+      timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_RETIREMENT_0'
+      set -euo pipefail
       cd ~/quest
-
       failed=0
-
-      if ! remaining=$(kubectl get configmap station --ignore-not-found -o name 2>/dev/null); then printf ''%s\n''
-      ''query configmap/station: ✗ [DQ:config_query]''; failed=1; elif test -n "$remaining"; then printf ''%s\n''
-      ''configmap/station absent: ✗ [DQ:config_absent]''; failed=1; fi
-
-      if ! remaining=$(kubectl get secret station-record --ignore-not-found -o name 2>/dev/null); then printf ''%s\n''
-      ''query secret/station-record: ✗ [DQ:secret_query]''; failed=1; elif test -n "$remaining"; then printf ''%s\n''
-      ''secret/station-record absent: ✗ [DQ:secret_absent]''; failed=1; fi
-
+      if ! remaining=$(kubectl get configmap station --ignore-not-found -o name 2>/dev/null); then printf '%s\n' 'query configmap/station: ✗ [DQ:config_query]'; failed=1; elif test -n "$remaining"; then printf '%s\n' 'configmap/station absent: ✗ [DQ:config_absent]'; failed=1; fi
+      if ! remaining=$(kubectl get secret station-record --ignore-not-found -o name 2>/dev/null); then printf '%s\n' 'query secret/station-record: ✗ [DQ:secret_query]'; failed=1; elif test -n "$remaining"; then printf '%s\n' 'secret/station-record absent: ✗ [DQ:secret_absent]'; failed=1; fi
       exit "$failed"
 
-      '
+      DQ_LEGACY_RETIREMENT_0
+      python3 -I - <<'DQ_RETIREMENT'
+      import base64
+      import hashlib
+      import json
+      import posixpath
+      import subprocess
+      import sys
+      import time
+      from pathlib import Path
+
+      from dq_check import current_pods, pod_worker, readonly_mount, workload_worker
+
+      failed = False
+      deadline = time.monotonic() + 10
+
+
+      def require(value, marker):
+          global failed
+          if not value:
+              print('Retirement condition is unmet: ✗ [DQ:' + marker + ']')
+              failed = True
+
+
+      def command(arguments):
+          remaining = deadline - time.monotonic()
+          if remaining <= 0:
+              raise ValueError('Observation budget exhausted')
+          result = subprocess.run(arguments, text=True, capture_output=True,
+                                  timeout=min(6, remaining))
+          if result.returncode:
+              raise ValueError('Observation unavailable')
+          return result.stdout
+
+
+      def get(kind, name=None):
+          args = ['kubectl', 'get', kind]
+          if name is not None:
+              args.append(name)
+          return json.loads(command(args + ['-o', 'json']))
+
+
+      def resource(items, name):
+          matches = [item for item in items if item.get('metadata', {}).get('name') == name]
+          if len(matches) != 1:
+              raise ValueError('Resource identity')
+          return matches[0]
+
+
+      def same_image(actual, expected):
+          digest = expected.partition('@')[2]
+          return actual == expected or (bool(digest) and isinstance(actual, str)
+                                        and actual.partition('@')[2] == digest)
+
+
+      def secret_source(policy, worker, target):
+          matches = []
+          for mount in worker.get('volumeMounts', []):
+              path = mount.get('mountPath', '')
+              if not path.startswith('/') or not (target == path or target.startswith(path.rstrip('/') + '/')):
+                  continue
+              volumes = {item['name']: item for item in policy.get('volumes', [])}
+              volume = volumes.get(mount.get('name'), {})
+              if not readonly_mount(mount, volumes) or mount.get('subPathExpr'):
+                  continue
+              relative = posixpath.relpath(target, path)
+              if relative == '.':
+                  relative = ''
+              relative = posixpath.normpath(posixpath.join(mount.get('subPath', ''), relative))
+              sources = []
+              if 'secret' in volume:
+                  sources.append((volume['secret']['secretName'], volume['secret'].get('items')))
+              for item in volume.get('projected', {}).get('sources', []):
+                  if 'secret' in item:
+                      sources.append((item['secret']['name'], item['secret'].get('items')))
+              for source, items in sources:
+                  keys = [item['key'] for item in items if item.get('path') == relative] if items is not None else [relative]
+                  matches.extend((source, key) for key in keys)
+          if len(matches) != 1:
+              raise ValueError('Unambiguous Secret source required')
+          return matches[0]
+
+
+      try:
+          facts = json.loads(Path('/run/dq/facts/0/retirement-identities.json').read_text())
+          contract = facts['contract']
+          deployments = get('deployments')
+          replicasets = get('replicasets')
+          pods = get('pods')
+          cache = {}
+          for name, identity in facts['consumers'].items():
+              try:
+                  deployment = resource(deployments['items'], name)
+                  template = deployment['spec']['template']['spec']
+                  worker = workload_worker(deployment)
+                  require(deployment['metadata']['uid'] == identity['uid']
+                          and deployment['spec'].get('replicas') == 1
+                          and same_image(worker.get('image'), identity['image']), 'retirement_identity')
+                  active = current_pods(deployment, replicasets, pods)
+                  require(len(active) == 1, 'retirement_state')
+                  if len(active) != 1:
+                      continue
+                  pod = active[0]
+                  live_worker = pod_worker(pod)
+                  require(any(condition.get('type') == 'Ready' and condition.get('status') == 'True'
+                              for condition in pod.get('status', {}).get('conditions', []))
+                          and same_image(live_worker.get('image'), identity['image']), 'retirement_state')
+                  source = secret_source(template, worker, contract['configurationFile'])
+                  require(source == secret_source(pod['spec'], live_worker, contract['configurationFile']),
+                          'retirement_source')
+                  secret_name, key = source
+                  if secret_name not in cache:
+                      cache[secret_name] = get('secret', secret_name)
+                  secret = cache[secret_name]
+                  data = secret['data']
+                  canonical = json.dumps(data, sort_keys=True).encode()
+                  require(secret['metadata']['uid'] != facts['retiredRecordUID']
+                          and secret['metadata'].get('deletionTimestamp') is None
+                          and secret['metadata'].get('labels', {}).get(contract['parentLabel']) != facts['retiredParentUID']
+                          and all(owner.get('uid') != facts['retiredParentUID']
+                                  for owner in secret['metadata'].get('ownerReferences', []))
+                          and hashlib.sha256(canonical).hexdigest() == facts['dataHash']
+                          and hashlib.sha256(base64.b64decode(data[key], validate=True)).hexdigest() == facts['fingerprint'],
+                          'retirement_source')
+                  pod_name = pod['metadata']['name']
+                  file_hash = command(['kubectl', 'exec', pod_name, '-c', 'worker', '--',
+                                       'sha256sum', contract['configurationFile']]).split()
+                  served = command(['kubectl', 'exec', pod_name, '-c', 'worker', '--',
+                                    'wget', '-qO-', '-T', '2', contract['fingerprintURL']]).rstrip('\n')
+                  require(bool(file_hash) and file_hash[0] == facts['fingerprint'], 'retirement_delivery')
+                  require(served == facts['fingerprint'], 'retirement_fingerprint')
+              except (KeyError, ValueError, TypeError, AttributeError, OSError, subprocess.SubprocessError):
+                  require(False, 'retirement_source')
+      except (KeyError, ValueError, TypeError, AttributeError, OSError, subprocess.SubprocessError):
+          require(False, 'retirement_state')
+      sys.exit(failed)
+      DQ_RETIREMENT
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+       printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
   - text: stages.0.objectives.1.text
     keep: true
     check: |-
@@ -81,6 +225,7 @@ facts:
   - TF_CLI_CONFIG_FILE
   files:
   - cleanup-contract.json
+  - retirement-contract.json
   services: []
 book:
   chapter: 16
@@ -88,3 +233,5 @@ book:
 immutable:
   0:
   - cleanup-contract.json
+  - retirement-contract.json
+  - retirement-identities.json

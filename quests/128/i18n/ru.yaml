@@ -1,67 +1,56 @@
 title: Бэкап и восстановление приложения
 brief: |-
-  Журналу нужны проверяемый архив и затем работоспособная восстановленная копия. Сохраняйте исходную идентичность PVC на обоих этапах.
+  Приложению нужна согласованная точка восстановления данных заказов и итогов, а затем работающее восстановление обоих хранилищ.
 
-  Работайте на workstation в `~/quest` с предоставленными файлами:
-  - `claim.yaml`, `ledger.yaml`, `service.yaml`, `client.yaml`.
+  Работайте на рабочей станции в `~/quest` с предоставленными файлами:
+  - `checkpoint-contract.json`.
 
-  **Requirements:**
+  **Требования:**
 
   - Этап 1:
-    - `ledger.tar` в `~/quest` на workstation содержит только `ledger.txt` и сохраняет исходные байты ledger.
+    - `ledger.tar` в `~/quest` на workstation содержит только `ledger.txt` и сохраняет исходные байты ledger. Второй архив `checkpoint.tar` в `~/quest` на рабочей станции содержит ровно обычные файлы `orders.tsv` и `summary.json`: одинаковые поколение и маркер, положительные количества, все объявленные маршруты и соответствующий итог по `checkpoint-contract.json`. Сохраните исходные PVC, Deployment и предоставленные образы рабочих контейнеров.
     - PVC `ledger` сохраняет исходный непустой UID.
-
   - Этап 2:
     - `ledger.tar` в `~/quest` на workstation содержит только `ledger.txt` и сохраняет исходные байты ledger.
     - PVC `ledger` сохраняет исходный непустой UID.
-    - И `/data/ledger.txt` внутри Deployment `ledger`, и байты, полученные Deployment `client` по `http://ledger:8080/ledger.txt`, совпадают с исходными байтами ledger.
+    - И `/data/ledger.txt` внутри Deployment `ledger`, и байты, полученные Deployment `client` по `http://ledger:8080/ledger.txt`, совпадают с исходными байтами ledger. Два текущих файла данных и оба ответа, полученные существующим клиентом, совпадают с `checkpoint.tar`; готовые текущие читатели монтируют исходные PVC, а приём данных остаётся приостановленным согласно `checkpoint-contract.json`. Сохраните исходные PVC, Deployment и предоставленные образы рабочих контейнеров.
 
-  Здесь используется один синтетический неизменяемый во время копирования файл, а не резервная копия живой БД; проверки наблюдают текущие байты и идентичность PVC, а не историю восстановления или происхождение HTTP-ответа из PVC.
-debrief: Проверки сравнили архив, текущий файл, HTTP-ответ и идентичность PVC.
-stages.0.brief: Полный архив должен соответствовать исходным байтам журнала.
-stages.1.brief: Восстановленный файл и отдаваемые байты должны соответствовать исходному журналу.
-hints.0.text: Успешная команда архивации сама не доказывает восстанавливаемые байты.
+  Это ограниченная синтетическая нагрузка, а не резервная копия работающей БД. Проверки наблюдают согласованность архива и текущее состояние, но не доказывают историю создания копии или восстановления.
+debrief: Проверки сравнили исходный архив реестра, согласованный checkpoint двух хранилищ, идентичность объектов,
+  текущие монтирования, восстановленные файлы и обе HTTP-выдачи.
+stages.0.brief: Получите согласованную точку восстановления, сохранив исходные PVC и объекты нагрузок.
+stages.1.brief: Восстановите оба хранилища и их текущую выдачу приложением из этой точки.
+hints.0.text: Отдельные успешные копии могут относиться к разным транзакциям. Точка восстановления должна быть согласована
+  между хранилищами, а восстановленные данные должны дойти до текущих потребителей приложения.
 hints.1.text: |-
-  Проверьте точное имя в архиве и исходный сохранённый checksum.
-
-  Изучите предоставленные файлы и живые наблюдения:
+  Сопоставьте протокол записи, оба текущих хранилища, монтирования приложения и контракт результата. Ниже наблюдения существующего состояния:
 
   ```sh
-  kubectl describe pvc
-  kubectl describe deployment ledger
+  cat checkpoint-contract.json
+  kubectl get deployment,pvc,pods -o yaml
+  kubectl exec deployment/ledger -- cat /data/writer-phase /data/orders.tsv
+  kubectl exec deployment/summary -- cat /data/summary.json
   ```
 hints.2.text: |-
-  Верните проверенный файл потоком на существующий том и проверьте отдаваемое содержимое.
+  Проверьте состав архивов и согласованность транзакции, затем сравните восстановленные файлы, идентичность PVC и оба ответа приложения. При восстановлении приём данных приостановлен:
 
-  Проверьте результат из `~/quest` на workstation:
-
-  - Архив перечисляет только `ledger.txt`, чьи байты имеют исходную контрольную сумму.
-
-    ```sh
-    tar tf ledger.tar
-    tar xOf ledger.tar ledger.txt | sha256sum
-    cat original-ledger.sha256
-    ```
-
-  - Настройки, идентичности и состояние соответствуют требованиям.
-
-    ```sh
-    kubectl get pvc ledger -o yaml
-    cat original-pvc-uid
-    ```
-
-  - На втором этапе контрольные суммы живого файла и полученных байтов соответствуют исходной.
-
-    ```sh
-    kubectl exec deployment/ledger -- sha256sum /data/ledger.txt
-    kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/ledger.txt | sha256sum
-    cat original-ledger.sha256
-    ```
+  ```sh
+  tar tf ledger.tar
+  tar xOf ledger.tar ledger.txt | sha256sum
+  cat original-ledger.sha256
+  tar tf checkpoint.tar
+  tar xOf checkpoint.tar orders.tsv
+  tar xOf checkpoint.tar summary.json
+  kubectl get deployment,pvc,pods -o yaml
+  kubectl exec deployment/ledger -- sha256sum /data/ledger.txt /data/orders.tsv
+  kubectl exec deployment/summary -- sha256sum /data/summary.json
+  kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/orders.tsv
+  kubectl exec deployment/client -- wget -qO- -T 3 http://summary:8080/summary.json
+  ```
 phrases.0: Я сравнил сумму архива.
 phrases.1: Я проверил текущий файл и UID PVC.
 phrases.2: Я сравнил хеш HTTP-ответа.
-questions.0.points.0: Он доказывает целостность байтов относительно эталона, а не полное восстановление
-  приложения.
+questions.0.points.0: Он доказывает целостность байтов относительно эталона, а не полное восстановление приложения.
 questions.0.points.1: Проверьте восстановленные данные и через приложение.
 questions.0.prompt: Доказывает ли checksum возможность восстановить сервис?
 questions.1.points.0: Транзакции, WAL и связанные файлы могут меняться при копировании.
@@ -72,15 +61,34 @@ diagnostics.archive_hash: ledger.tar ledger.txt SHA-256 должен совпа�
 diagnostics.pvc_uid: PVC/ledger UID должен совпадать с original-pvc-uid.
 diagnostics.file_hash: /data/ledger.txt SHA-256 должен совпадать с original-ledger.sha256.
 diagnostics.http_hash: http://ledger:8080/ledger.txt SHA-256 должен совпадать с original-ledger.sha256.
-stages.0.objectives.0.text: '`ledger.tar` в `~/quest` на workstation содержит только `ledger.txt` и сохраняет
-  исходные байты ledger.'
+stages.0.objectives.0.text: '`ledger.tar` в `~/quest` на workstation содержит только `ledger.txt` и сохраняет исходные
+  байты ledger. Второй архив `checkpoint.tar` в `~/quest` на рабочей станции содержит ровно обычные файлы `orders.tsv`
+  и `summary.json`: одинаковые поколение и маркер, положительные количества, все объявленные маршруты и соответствующий
+  итог по `checkpoint-contract.json`. Сохраните исходные PVC, Deployment и предоставленные образы рабочих контейнеров.'
 stages.0.objectives.1.text: PVC `ledger` сохраняет исходный непустой UID.
-stages.1.objectives.0.text: '`ledger.tar` в `~/quest` на workstation содержит только `ledger.txt` и сохраняет
-  исходные байты ledger.'
+stages.1.objectives.0.text: '`ledger.tar` в `~/quest` на workstation содержит только `ledger.txt` и сохраняет исходные
+  байты ledger.'
 stages.1.objectives.1.text: PVC `ledger` сохраняет исходный непустой UID.
-stages.1.objectives.2.text: И `/data/ledger.txt` внутри Deployment `ledger`, и байты, полученные Deployment
-  `client` по `http://ledger:8080/ledger.txt`, совпадают с исходными байтами ledger.
-diagnostics.probe_0_0: 'Текущие данные не позволили проверить эту цель: `ledger.tar` в `~/quest` на workstation
-  содержит только `ledger.txt` и сохраняет исходные байты ledger.'
+stages.1.objectives.2.text: И `/data/ledger.txt` внутри Deployment `ledger`, и байты, полученные Deployment `client`
+  по `http://ledger:8080/ledger.txt`, совпадают с исходными байтами ledger. Два текущих файла данных и оба ответа,
+  полученные существующим клиентом, совпадают с `checkpoint.tar`; готовые текущие читатели монтируют исходные PVC,
+  а приём данных остаётся приостановленным согласно `checkpoint-contract.json`. Сохраните исходные PVC, Deployment
+  и предоставленные образы рабочих контейнеров.
+diagnostics.probe_0_0: Архив checkpoint отсутствует, повреждён или объединяет несогласованные поколения транзакции,
+  маршруты либо итоги.
 diagnostics.probe_1_0: 'Текущие данные не позволили проверить эту цель: `ledger.tar` в `~/quest` на workstation
   содержит только `ledger.txt` и сохраняет исходные байты ledger.'
+diagnostics.checkpoint_archive: Архив checkpoint отсутствует, повреждён или объединяет несогласованные поколения
+  транзакции, маршруты либо итоги.
+diagnostics.checkpoint_identity: Идентичность исходного PVC или Deployment либо предоставленный образ контейнера
+  отличается от начального состояния.
+diagnostics.checkpoint_consumers: У нужного потребителя нет ровно одного готового текущего Pod, принадлежащего его
+  Deployment.
+diagnostics.checkpoint_quiescence: Для процесса записи всё ещё запрошены реплики или остался текущий активный Pod;
+  восстановление требует приостановленного приёма данных.
+diagnostics.checkpoint_source: Текущий читатель или его шаблон не использует исходный PVC для заданного пути данных
+  либо наблюдения недоступны.
+diagnostics.checkpoint_file: Смонтированный файл данных отличается от проверенной записи checkpoint.
+diagnostics.checkpoint_http: Ответ существующему клиенту отличается от проверенной записи checkpoint.
+diagnostics.probe_1_2: Текущий читатель или его шаблон не использует исходный PVC для заданного пути данных либо
+  наблюдения недоступны.

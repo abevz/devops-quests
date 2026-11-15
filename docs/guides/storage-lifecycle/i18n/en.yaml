@@ -8,9 +8,9 @@ text: |
 
   A PersistentVolume (PV) and PersistentVolumeClaim (PVC) are different objects. The PV's `Retain` reclaim policy preserves the volume for manual recovery when a claim is removed; a StorageClass default does not retroactively change an existing PV. In the reclaim quest, read `volume-contract.json` and `original-claim-uid`, verify the old claim is gone, and use UID preconditions with the supplied values before clearing its old claim reference. Wait for the replacement claim to bind. This local practice volume is not an off-host backup.
 
-  For the synthetic quiescent ledger, `ledger.tar` must contain only `ledger.txt` and match `original-ledger.sha256`; after recovery compare the live file and HTTP bytes too. A live database needs an application-consistent backup method, not an assumption that an arbitrary file copy is consistent.
+  A recovery point spans every store participating in the application transaction. Two individually valid copies can combine different generations when a writer publishes files separately. Read the application checkpoint protocol and compare transaction markers, generations and aggregates rather than trusting successful copy commands. The original static ledger archive remains a separate integrity check. During recovery, compare the selected checkpoint with both mounted files and the responses seen by current consumers, while retaining claim and workload identities. This bounded synthetic protocol is not a general live-database backup method.
 
-  A finalizer holds an object in deletion until its cleanup is complete. Read `cleanup-contract.json`, verify the expected object UIDs and association, clean the identified record, then remove only the known finalizer with preconditions. Never remove an unknown finalizer just to make an object disappear. Current object checks cannot prove the complete order of prior commands.
+  A finalizer represents a cleanup obligation, not merely a flag blocking deletion. Retirement can include consumers whose templates still name the old configuration. Existing Pods may retain projected bytes after the source is deleted; that does not make a new Pod viable. Trace UID-bound associations, successor lifetime and both template and current-Pod sources. Independent control data must survive. Current-state checks can establish retained identities, delivery and absence, but not the complete order of prior commands.
 
   References: [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/), [PV reclaim policy](https://kubernetes.io/docs/tasks/administer-cluster/change-pv-reclaim-policy/), [finalizers](https://kubernetes.io/docs/concepts/overview/working-with-objects/finalizers/).
 
@@ -30,15 +30,27 @@ text: |
   kubectl get pv "$volume" -o yaml
   ```
 
-  In quest 128, for the single synthetic file, stream an archive from the Pod, inspect it and compare its checksum. In the restore stage, stream it back only after verification:
+  For quest 128, inspect the declared checkpoint format and compare both stores with the captured entries. An archive can pass an integrity check while still combining incompatible application generations:
 
   ```sh
-  kubectl exec deployment/ledger -- tar cf - -C /data ledger.txt > ledger.tar
+  cd ~/quest
+  cat checkpoint-contract.json
   tar tf ledger.tar
   tar xOf ledger.tar ledger.txt | sha256sum
-  cat original-ledger.sha256
-  kubectl exec -i deployment/ledger -- tar xf - -C /data < ledger.tar
+  tar tf checkpoint.tar
+  tar xOf checkpoint.tar orders.tsv
+  tar xOf checkpoint.tar summary.json
+  kubectl get deployment,pvc,pods -o yaml
+  kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/orders.tsv
+  kubectl exec deployment/client -- wget -qO- -T 3 http://summary:8080/summary.json
   ```
 
-  In quest 129, inspect the contract and live objects first. Construct DeleteOptions with the frozen child UID and a JSON Patch that tests the parent UID and the complete expected finalizer array before removing it. Send the DeleteOptions to the namespaced Secret endpoint, then apply the patch to the ConfigMap; a failed test means stop and investigate. The exact known finalizer and parent-label are in the quest brief.
-source_hash: a905ad9495e79b03bbae5b661b27a657d37991a82b75914d91c6d8da837514fa
+  For quest 129, inspect the retirement contracts and metadata without printing Secret data. Follow consumer references and current mounted fingerprints separately from finalizer state; healthy old Pods alone are insufficient evidence of safe retirement.
+
+  ```sh
+  cat cleanup-contract.json retirement-contract.json
+  kubectl get configmap,secret -o json | jq '.items[] | {kind,name:.metadata.name,uid:.metadata.uid,parentUID:.metadata.labels["training.devops-quests.local/parent-uid"],owners:.metadata.ownerReferences,deleting:.metadata.deletionTimestamp}'
+  kubectl get deployments -o json | jq '.items[] | {name:.metadata.name,uid:.metadata.uid,volumes:.spec.template.spec.volumes,mounts:[.spec.template.spec.containers[] | {name,volumeMounts}]}'
+  kubectl get pods -o wide
+  ```
+source_hash: 811597b62a44cb1470f421c5072f87d1b0ca1145aac680d6100ac54d3a744da4
