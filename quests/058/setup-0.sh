@@ -25,3 +25,33 @@ cat > rollout.yml <<'DQ_ASSET'
   roles:
   - banner
 DQ_ASSET
+
+mkdir -p roles/banner/defaults roles/base/meta
+cat > roles/banner/defaults/main.yml <<'DQ_DEFAULTS'
+install_root: /srv/routes
+banner_route: north-ready
+DQ_DEFAULTS
+cat > roles/base/meta/main.yml <<'DQ_META'
+allow_duplicates: false
+DQ_META
+cat > role-contract.json <<'DQ_CONTRACT'
+{
+  "schema": 1,
+  "entryRole": "roles/banner",
+  "inputs": {
+    "install_root": "caller-owned output directory",
+    "banner_route": "caller route text"
+  },
+  "output": "current file below install_root",
+  "cases": {
+    "first": "south-ready",
+    "second": "east-ready"
+  },
+  "multipleCallsInOnePlay": true,
+  "preserveOtherCallerData": true,
+  "secondApplicationNoChanges": true,
+  "localUnprivilegedCaller": true,
+  "preserveDefaultFleetResult": true,
+  "observesCurrentProgramCapabilityOnly": true
+}
+DQ_CONTRACT

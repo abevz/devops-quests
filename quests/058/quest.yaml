@@ -8,6 +8,13 @@ stages:
   objectives:
   - text: stages.0.objectives.0.text
     check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
+      cd ~/quest
+      timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_ANSIBLE_058_0'
       dq_group_failed=0
       set +e
       (
@@ -39,6 +46,90 @@ stages:
       fi
       set -e
       test "$dq_group_failed" -eq 0
+      DQ_LEGACY_ANSIBLE_058_0
+      python3 -I - <<'DQ_ROLE_CAPABILITY'
+      import json
+      import os
+      import subprocess
+      import sys
+      import tempfile
+      import time
+      from pathlib import Path
+      from dq_check import ansible_recap
+
+      failed = False
+      deadline = time.monotonic() + 10
+
+
+      def require(value, marker):
+          global failed
+          if not value:
+              print('Input contract is unmet: ✗ [DQ:' + marker + ']')
+              failed = True
+
+
+      def command(args, env=None):
+          remaining = deadline - time.monotonic()
+          if remaining <= 0:
+              raise ValueError('Observation budget exhausted')
+          return subprocess.run(args, env=env, capture_output=True, text=True, timeout=remaining)
+
+
+      def supplied(name):
+          return json.loads((Path('/run/dq/facts/0') / name).read_text())
+
+
+      def local_inventory(names):
+          return {'all': {'hosts': {name: {'ansible_connection': 'local', 'ansible_python_interpreter': '/usr/bin/python3'} for name in names}}}
+
+
+      def subset(actual, expected):
+          return isinstance(actual, dict) and all(actual.get(key) == value for key, value in expected.items())
+      try:
+          contract = supplied('role-contract.json')
+          cases = contract['cases']
+          with tempfile.TemporaryDirectory(prefix='dq-role-check-') as folder:
+              root = Path(folder)
+              control = root / 'retained-control'
+              control.write_text('retain original data\n')
+              (root / 'ansible.cfg').write_text('[defaults]\ninterpreter_python=/usr/bin/python3\n')
+              (root / 'inventory.json').write_text(json.dumps(local_inventory(['localhost'])))
+              roles = [{'role': str(Path(contract['entryRole']).resolve()), 'install_root': str(root / name), 'banner_route': value} for name, value in cases.items()]
+              (root / 'play.json').write_text(json.dumps([{'hosts': 'all', 'gather_facts': False, 'become': False, 'roles': roles}]))
+              env = dict(os.environ, ANSIBLE_CONFIG=str(root / 'ansible.cfg'), ANSIBLE_ROLES_PATH=str(Path('roles').resolve()))
+              for index in range(2):
+                  result = command(['/opt/ansible/bin/ansible-playbook', '-i', str(root / 'inventory.json'), str(root / 'play.json')], env)
+                  require(result.returncode == 0, 'role_entrypoint')
+                  if result.returncode:
+                      break
+                  require(control.is_file() and control.read_text() == 'retain original data\n', 'role_preservation')
+                  for name, value in cases.items():
+                      current = root / name / 'current'
+                      require(current.is_file() and current.read_text().rstrip('\n') == value, 'role_inputs')
+                      retained = root / name / 'keep-existing.txt'
+                      if index == 0:
+                          retained.write_text('keep caller data\n')
+                      else:
+                          require(retained.is_file() and retained.read_text() == 'keep caller data\n', 'role_preservation')
+                  if index == 1:
+                      rows = ansible_recap(result.stdout)
+                      require('localhost' in rows and all(row.get('changed') == 0 and row.get('failed') == 0 and row.get('unreachable') == 0 for row in rows.values()), 'role_convergence')
+      except subprocess.TimeoutExpired:
+          require(False, 'role_budget')
+      except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, RuntimeError):
+          require(False, 'role_observation')
+      sys.exit(int(failed))
+      DQ_ROLE_CAPABILITY
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+       printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
 hints:
 - text: hints.0.text
   guide: ansible-12
@@ -65,4 +156,10 @@ facts:
   - roles/banner/tasks/main.yml
   - roles/banner/meta/main.yml
   - rollout.yml
+  - roles/banner/defaults/main.yml
+  - roles/base/meta/main.yml
+  - role-contract.json
   services: []
+immutable:
+  0:
+  - role-contract.json
