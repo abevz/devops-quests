@@ -1,45 +1,46 @@
-title: Refactor into module with moved blocks
+title: Module refactor with retained identities
 brief: |-
-  A consumer needs the existing container through the requested module interface.
+  The live service topology works, but it is not yet available through the requested module boundaries and stable route keys.
 
-  Work on the workstation in `~/quest` with `main.tf`.
+  Work on the workstation in `~/quest` with `main.tf` and `module-contract.json`; construct the required local modules there.
 
   **Requirements:**
-  - OpenTofu state:
-    - Required addresses: `module.station.docker_container.worker`.
-  - Container in the private Docker daemon:
-    - Name: `rail-worker`.
-  - Container identity:
-    - Tracked resource: `module.station.docker_container.worker`.
-    - The existing `rail-worker` container, its tracked resource and root output `worker_id` keep the original container ID.
-    - The container ID and the tracked resource ID match that receipt.
-    - Matching root output: `worker_id`.
-  - Infrastructure convergence:
-    - No pending infrastructure changes; detailed-plan exit code `0`.
+  - OpenTofu state contains exactly the six managed objects at the addresses described in the supplied contract, including `module.station.docker_container.worker`. No unrelated managed entries remain; read-only data lookups are allowed.
+  - In the bay's private Docker daemon, the original `rail-worker` container, its tracked resource and root output `worker_id` keep the original container ID. All other original containers and the shared network keep their identities; the existing data volumes keep their creation identity.
+  - Each running route container retains its own data-volume mount, shared network and original ledger bytes. The root output `routes` maps each route key to its original container ID, as described in the contract.
+  - On the workstation, `~/quest/migration-plan.json` contains exactly those six managed entries with action `no-op` and original IDs before and after. No unrelated managed entries are allowed; read-only data lookups are allowed.
+  - The final detailed infrastructure plan exits `0` with no pending changes.
 
-  The check observes current results; it does not prove which refactoring method was used.
-stages.0.brief: Expose the recorded container identity through the required module interface.
-hints.0.text: A refactor should preserve the existing container identity.
+  Checks observe current state, live identities, creation metadata, data and saved/fresh plans; they do not prove command history, which refactoring method was used or uninterrupted availability.
+stages.0.brief: Expose the existing topology through the requested modules while retaining every object and its
+  data.
+hints.0.text: An address is a management binding, while a stable key represents an object role. Reassigning positions
+  must not swap identities or discard retained data.
 hints.1.text: |-
-  The destination is module.station.docker_container.worker.
-
-  Inspect the supplied configuration and live observations on the workstation:
+  Compare the requested roles with current state and live objects before choosing any transition. A resource name or an empty plan alone does not establish that the correct existing object and data survived.
 
   ```sh
-  cat main.tf
+  cat main.tf module-contract.json
   tofu state list
-  docker inspect rail-worker
+  tofu show -no-color
+  docker ps --no-trunc
+  docker volume inspect rail-north-data rail-south-data
   ```
 hints.2.text: |-
-  Use a root moved block, initialize the local module and apply the move. The child provider must use registry.terraform.io/kreuzwerker/docker version 3.6.2 to match the offline mirror.
+  Inspect the saved plan, state addresses and actual objects together. Every managed plan entry must be unchanged, published IDs must match their original roles, and the running route containers must still serve their retained ledgers.
 
-  Verify the result from `~/quest` on the workstation:
-
-  - `docker inspect rail-worker --format '{{.Id}}'; cat original-id` — The current container ID matches the supplied receipt.
-  - `tofu show -no-color; tofu output -raw worker_id` — Shows `module.station.docker_container.worker`; its ID and `worker_id` match `original-id`.
-  - `tofu plan -input=false -detailed-exitcode -no-color` — Exits `0` and reports no pending infrastructure changes.
-debrief: The module state resource, root output and live worker now match the recorded ID, and the final
-  plan has no changes.
+  ```sh
+  tofu show -json migration.plan > migration-plan.json
+  jq -r '.resource_changes[] | select(.mode=="managed") | [.address, (.change.actions | join(","))] | @tsv' migration-plan.json
+  tofu state list
+  tofu output -raw worker_id
+  tofu output -json routes
+  docker inspect rail-worker --format '{{.Id}}'
+  for route in north south; do docker exec "rail-$route" wget -qO- http://127.0.0.1:8080/ledger; done
+  tofu plan -input=false -detailed-exitcode -no-color
+  ```
+debrief: The keyed module bindings, saved plan, live object identities and original ledger data now agree; the fresh
+  plan has no pending changes.
 phrases.0: I checked the running state before making a change.
 phrases.1: I found the cause and changed one thing at a time.
 phrases.2: I compared the live resource ID with the OpenTofu state.
@@ -49,7 +50,14 @@ diagnostics.condition_2: original-id must be nonempty, and tofu show -json modul
   ID must equal it.
 diagnostics.condition_3: original-id must be nonempty, and docker inspect rail-worker ID must equal it.
 diagnostics.condition_4: The OpenTofu detailed plan must exit with code 0.
-stages.0.objectives.0.text: OpenTofu state includes `module.station.docker_container.worker`.
-stages.0.objectives.1.text: The existing `rail-worker` container, its tracked resource and root output
-  `worker_id` keep the original container ID.
+stages.0.objectives.0.text: OpenTofu tracks all original objects at the requested module addresses, with a saved
+  plan containing only unchanged managed objects.
+stages.0.objectives.1.text: The original `rail-worker`, its state resource and output `worker_id` retain their ID;
+  all route containers, network, volumes, ledger data and output `routes` retain their original correspondence.
 stages.0.objectives.2.text: OpenTofu reports no pending infrastructure changes.
+diagnostics.migration_bindings: The module bindings and saved plan must retain all six original managed objects
+  without replacement.
+diagnostics.migration_identity: The live topology, original volumes, ledger bytes and published IDs must retain
+  their original correspondence.
+diagnostics.probe_0_0: Current inputs could not verify the module bindings and saved plan.
+diagnostics.probe_0_1: Current inputs could not verify the retained live identities, data and outputs.

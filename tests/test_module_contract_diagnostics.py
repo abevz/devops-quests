@@ -121,9 +121,25 @@ def test_container_checks_reject_a_different_state_id(
         if number == 26
         else {"child_modules": [{"address": "module.station", "resources": [resource]}]}
     )
+    fact_paths = {}
+    state_addresses = address
+    if number == 84:
+        # Model the new positive topology while retaining the original wrong-ID
+        # mutation and the exact one-diagnostic negative expectation below.
+        from test_module_migration_deepen import migration_fixture
+
+        spec, facts, document, plan, _, _ = migration_fixture(worker_id="live-id")
+        module = document["values"]["root_module"]
+        next(child for child in module["child_modules"] if child["address"] == "module.station")["resources"][0] = resource
+        state_addresses = "\n".join(row["address"] for child in module["child_modules"] for row in child["resources"])
+        (quest / "migration-plan.json").write_text(json.dumps(plan))
+        for filename, value in [("module-contract.json", spec), ("migration-identities.json", facts)]:
+            target = tmp_path / filename
+            target.write_text(json.dumps(value))
+            fact_paths["/run/dq/facts/0/" + filename] = str(target)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ["PATH"])
-    monkeypatch.setenv("STATE_ADDRESS", address)
+    monkeypatch.setenv("STATE_ADDRESS", state_addresses)
     monkeypatch.setenv("STATE_JSON", json.dumps({"values": {"root_module": module}}))
     catalog = Catalog()
     checks = (
@@ -132,6 +148,8 @@ def test_container_checks_reject_a_different_state_id(
         + catalog.quests[number]["stages"][0]["objectives"][1]["check"],
     )
     for check in checks:
+        for source, target in fact_paths.items():
+            check = check.replace(source, target)
         result = subprocess.run(["bash", "-c", check], capture_output=True, text=True)
         assert result.returncode != 0
         assert len(result.stdout.splitlines()) == 1

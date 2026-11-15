@@ -4,16 +4,76 @@ failed=0
 set +e
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 failed=0
 if ! tofu state list 2>/dev/null | grep -Fx module.station.docker_container.worker >/dev/null; then
   printf '%s\n' 'tofu state list ∋ module.station.docker_container.worker: ✗ [DQ:condition_0]'
   failed=1
 fi
-exit "$failed"
+test "$failed" -eq 0
+python3 -I - <<'DQ_MIGRATION_BINDINGS'
+import hashlib,json,subprocess,sys
+from dq_check import read_json,resource_records,tofu_json
+
+def inputs():
+    spec=read_json('/run/dq/facts/0/module-contract.json')
+    facts=read_json('/run/dq/facts/0/migration-identities.json')
+    assert isinstance(spec,dict) and isinstance(facts,dict)
+    expected={spec['worker_address']:('docker_container',facts['worker_id']),spec['network_address']:('docker_network',facts['network_id'])}
+    for key,item in spec['routes'].items():
+        expected[item['container_address']]=('docker_container',facts['routes'][key]['container_id'])
+        expected[item['volume_address']]=('docker_volume',facts['routes'][key]['volume_name'])
+    assert len(expected)==6 and all(isinstance(value[1],str) and value[1] for value in expected.values())
+    return spec,facts,expected
+
+def inspect(*args):
+    value=subprocess.run(['docker',*args],check=True,capture_output=True,text=True,timeout=10)
+    result=json.loads(value.stdout);assert isinstance(result,list) and len(result)==1
+    return result[0]
+
+try:
+    spec,facts,expected=inputs()
+    records=resource_records(tofu_json('show','-json'))
+    assert all(row.get('mode') in ['managed','data'] for _,row in records)
+    managed=[row for _,row in records if row.get('mode')=='managed']
+    assert len(managed)==len(expected) and {row['address'] for row in managed}==set(expected)
+    assert all(row['type']==expected[row['address']][0] for row in managed)
+    plan=read_json(spec['plan_file']);changes=plan['resource_changes']
+    assert isinstance(changes,list) and all(row.get('mode') in ['managed','data'] for row in changes)
+    managed=[row for row in changes if row.get('mode')=='managed']
+    assert len(managed)==len(expected) and {row['address'] for row in managed}==set(expected)
+    for row in managed:
+        kind,identity=expected[row['address']]
+        assert row['type']==kind and row['change']['actions']==['no-op']
+        assert row['change']['before']['id']==row['change']['after']['id']==identity
+    assert all(row['change']['actions'] in [['no-op'],['read']] for row in changes if row.get('mode')=='data')
+except (AssertionError,KeyError,ValueError,TypeError,AttributeError,IndexError,OSError,subprocess.SubprocessError):
+    print('The module bindings and saved no-replacement plan must retain all original objects. ✗ [DQ:migration_bindings]')
+    sys.exit(1)
+DQ_MIGRATION_BINDINGS
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 failed=0
 if ! test -s original-id || ! test "$(tofu output -raw worker_id 2>/dev/null)" = "$(cat original-id 2>/dev/null)"; then
   printf '%s\n' 'worker_id = original-id: ✗ [DQ:condition_1]'
@@ -27,7 +87,60 @@ if ! test -s original-id || ! test "$(docker inspect rail-worker --format '{{.Id
   printf '%s\n' 'docker inspect rail-worker --format {{.Id}} = original-id: ✗ [DQ:condition_3]'
   failed=1
 fi
-exit "$failed"
+test "$failed" -eq 0
+python3 -I - <<'DQ_MIGRATION_IDENTITIES'
+import hashlib,json,subprocess,sys
+from dq_check import read_json,resource_records,tofu_json
+
+def inputs():
+    spec=read_json('/run/dq/facts/0/module-contract.json')
+    facts=read_json('/run/dq/facts/0/migration-identities.json')
+    assert isinstance(spec,dict) and isinstance(facts,dict)
+    expected={spec['worker_address']:('docker_container',facts['worker_id']),spec['network_address']:('docker_network',facts['network_id'])}
+    for key,item in spec['routes'].items():
+        expected[item['container_address']]=('docker_container',facts['routes'][key]['container_id'])
+        expected[item['volume_address']]=('docker_volume',facts['routes'][key]['volume_name'])
+    assert len(expected)==6 and all(isinstance(value[1],str) and value[1] for value in expected.values())
+    return spec,facts,expected
+
+def inspect(*args):
+    value=subprocess.run(['docker',*args],check=True,capture_output=True,text=True,timeout=10)
+    result=json.loads(value.stdout);assert isinstance(result,list) and len(result)==1
+    return result[0]
+
+try:
+    spec,facts,expected=inputs()
+    records=resource_records(tofu_json('show','-json'))
+    managed={row['address']:row for _,row in records if row.get('mode')=='managed'}
+    assert all(managed[address]['values']['id']==identity for address,(kind,identity) in expected.items())
+    assert inspect('inspect',spec['worker_name'])['Id']==facts['worker_id']
+    assert inspect('network','inspect',spec['network_name'])['Id']==facts['network_id']
+    for key,item in spec['routes'].items():
+        original=facts['routes'][key]
+        node=inspect('inspect',item['container_name'])
+        assert node['Id']==original['container_id'] and node['State']['Running']
+        assert node['NetworkSettings']['Networks'][spec['network_name']]['NetworkID']==facts['network_id']
+        mounts=[mount for mount in node['Mounts'] if mount['Destination']=='/data']
+        assert len(mounts)==1 and mounts[0]['Type']=='volume' and mounts[0]['Name']==original['volume_name']
+        volume=inspect('volume','inspect',item['volume_name'])
+        assert volume['Name']==original['volume_name'] and volume['CreatedAt']==original['volume_created_at']
+        data=subprocess.run(['docker','exec',item['container_name'],'wget','-qO-','http://127.0.0.1:8080/ledger'],capture_output=True,check=True,timeout=10).stdout
+        assert hashlib.sha256(data).hexdigest()==original['data_sha256']
+    assert tofu_json('output','-json',spec['routes_output'])=={key:value['container_id'] for key,value in facts['routes'].items()}
+except (AssertionError,KeyError,ValueError,TypeError,AttributeError,IndexError,OSError,subprocess.SubprocessError):
+    print('Retain the live topology, original volumes and ledger bytes through the module refactor. ✗ [DQ:migration_identity]')
+    sys.exit(1)
+DQ_MIGRATION_IDENTITIES
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (

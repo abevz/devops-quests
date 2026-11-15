@@ -1,57 +1,63 @@
-title: Рефакторинг в модуль без замены
+title: Рефакторинг модулей с сохранением идентичности
 brief: |-
-  Потребителю нужен существующий контейнер через требуемый интерфейс модуля.
+  Живая топология сервиса работает, но ещё недоступна через требуемые границы модулей и стабильные ключи маршрутов.
 
-  Работайте на workstation в `~/quest` с файлами `main.tf`.
+  Работайте на workstation в `~/quest` с `main.tf` и `module-contract.json`; создайте там необходимые локальные модули.
 
   **Требования:**
-  - Состояние OpenTofu:
-    - Требуемые адреса: `module.station.docker_container.worker`.
-  - Контейнер в приватном Docker daemon:
-    - Имя: `rail-worker`.
-  - Идентичность контейнера:
-    - Отслеживаемый ресурс: `module.station.docker_container.worker`.
-    - Существующий контейнер `rail-worker`, его учтённый ресурс и корневое выходное значение `worker_id` сохраняют исходный ID контейнера.
-    - ID контейнера и ID отслеживаемого ресурса совпадают с этой квитанцией.
-    - Совпадающий корневой вывод: `worker_id`.
-  - Согласованность инфраструктуры:
-    - Нет ожидающих изменений инфраструктуры; код завершения подробного плана `0`.
+  - State OpenTofu содержит ровно шесть управляемых объектов на адресах из поставляемого контракта, включая `module.station.docker_container.worker`. Посторонних управляемых записей нет; разрешены читающие data sources.
+  - В приватном Docker daemon стенда исходный контейнер `rail-worker`, его ресурс в state и корневой output `worker_id` сохраняют исходный ID контейнера. Остальные исходные контейнеры и общая сеть сохраняют идентичность, а существующие тома данных — идентичность создания.
+  - Каждый работающий контейнер маршрута сохраняет свой том данных, общую сеть и исходные байты журнала. Корневой output `routes` сопоставляет каждому ключу исходный ID контейнера согласно контракту.
+  - На workstation файл `~/quest/migration-plan.json` содержит ровно эти шесть управляемых записей с действием `no-op` и исходными ID до и после. Посторонних управляемых записей нет; разрешены читающие data sources.
+  - Итоговый detailed plan инфраструктуры завершается с кодом `0` без ожидающих изменений.
 
-  Проверка наблюдает текущие результаты; она не доказывает, какой метод рефакторинга использовался.
-stages.0.brief: Предоставьте записанную идентичность контейнера через требуемый интерфейс модуля.
-hints.0.text: Рефакторинг должен сохранить существующую идентичность контейнера.
+  Проверки наблюдают текущий state, живые ID, метаданные создания, данные и сохранённый/новый планы; они не доказывают историю команд, конкретный способ рефакторинга или непрерывную доступность.
+stages.0.brief: Предоставьте существующую топологию через требуемые модули, сохранив каждый объект и его данные.
+hints.0.text: Адрес — привязка управления, а стабильный ключ обозначает роль объекта. Переназначение позиций не
+  должно менять идентичность объектов местами или терять сохранённые данные.
 hints.1.text: |-
-  Целевой адрес — module.station.docker_container.worker.
-
-  Изучите предоставленную конфигурацию и текущие наблюдения на workstation:
+  До выбора перехода сопоставьте требуемые роли с текущим state и живыми объектами. Одно имя ресурса или пустой план не доказывают сохранность нужного объекта и его данных.
 
   ```sh
-  cat main.tf
+  cat main.tf module-contract.json
   tofu state list
-  docker inspect rail-worker
+  tofu show -no-color
+  docker ps --no-trunc
+  docker volume inspect rail-north-data rail-south-data
   ```
 hints.2.text: |-
-  Используйте корневой блок moved, инициализируйте локальный модуль и примените перенос. Дочерний провайдер должен использовать registry.terraform.io/kreuzwerker/docker версии 3.6.2 для соответствия офлайн-зеркалу.
+  Сопоставьте сохранённый план, адреса state и реальные объекты. Каждая управляемая запись плана должна оставаться неизменной, опубликованные ID — соответствовать исходным ролям, а работающие контейнеры маршрутов — отдавать сохранённые журналы.
 
-  Проверьте результат из `~/quest` на workstation:
-
-  - `docker inspect rail-worker --format '{{.Id}}'; cat original-id` — Текущий ID контейнера совпадает с предоставленной квитанцией.
-  - `tofu show -no-color; tofu output -raw worker_id` — Показывает `module.station.docker_container.worker`; его ID и `worker_id` совпадают с `original-id`.
-  - `tofu plan -input=false -detailed-exitcode -no-color` — Завершается с кодом `0` и не сообщает об ожидающих изменениях инфраструктуры.
-debrief: Ресурс состояния модуля, корневой выход и работающий worker теперь совпадают с записанным ID,
-  а итоговый план не содержит изменений.
+  ```sh
+  tofu show -json migration.plan > migration-plan.json
+  jq -r '.resource_changes[] | select(.mode=="managed") | [.address, (.change.actions | join(","))] | @tsv' migration-plan.json
+  tofu state list
+  tofu output -raw worker_id
+  tofu output -json routes
+  docker inspect rail-worker --format '{{.Id}}'
+  for route in north south; do docker exec "rail-$route" wget -qO- http://127.0.0.1:8080/ledger; done
+  tofu plan -input=false -detailed-exitcode -no-color
+  ```
+debrief: Привязки модулей со стабильными ключами, сохранённый план, живые ID и исходные данные журналов согласованы;
+  новый план не содержит изменений.
 phrases.0: Я проверил фактическое состояние до изменения.
 phrases.1: Я нашёл причину и менял по одному параметру.
 phrases.2: Я сравнил ID живого ресурса с state OpenTofu.
 diagnostics.condition_0: tofu state list должен содержать module.station.docker_container.worker.
-diagnostics.condition_1: original-id должен быть непустым, а tofu output -raw worker_id должен совпадать
-  с его содержимым.
+diagnostics.condition_1: original-id должен быть непустым, а tofu output -raw worker_id должен совпадать с его содержимым.
 diagnostics.condition_2: original-id должен быть непустым, а tofu show -json module.station.docker_container.worker
   ID должен совпадать с его содержимым.
-diagnostics.condition_3: original-id должен быть непустым, а docker inspect rail-worker ID должен совпадать
-  с его содержимым.
+diagnostics.condition_3: original-id должен быть непустым, а docker inspect rail-worker ID должен совпадать с его
+  содержимым.
 diagnostics.condition_4: План OpenTofu с detailed-exitcode должен завершиться с кодом 0.
-stages.0.objectives.0.text: Состояние OpenTofu содержит `module.station.docker_container.worker`.
-stages.0.objectives.1.text: Существующий контейнер `rail-worker`, его учтённый ресурс и корневое выходное
-  значение `worker_id` сохраняют исходный ID контейнера.
+stages.0.objectives.0.text: OpenTofu отслеживает все исходные объекты на требуемых адресах модулей; сохранённый
+  план не меняет управляемые объекты.
+stages.0.objectives.1.text: Исходный `rail-worker`, его ресурс в state и output `worker_id` сохраняют ID; контейнеры
+  маршрутов, сеть, тома, данные журналов и output `routes` сохраняют исходное соответствие.
 stages.0.objectives.2.text: OpenTofu не сообщает об ожидающих изменениях инфраструктуры.
+diagnostics.migration_bindings: Привязки модулей и сохранённый план должны сохранять все шесть исходных управляемых
+  объектов без замены.
+diagnostics.migration_identity: Живая топология, исходные тома, байты журналов и опубликованные ID должны сохранять
+  исходное соответствие.
+diagnostics.probe_0_0: Текущие данные не позволили проверить привязки модулей и сохранённый план.
+diagnostics.probe_0_1: Текущие данные не позволили проверить сохранённые живые ID, данные и outputs.
