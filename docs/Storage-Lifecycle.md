@@ -6,9 +6,9 @@ Stateful discovery связывает governing headless Service, ordinal Pod и
 
 PersistentVolume (PV) и PersistentVolumeClaim (PVC) — разные объекты. Политика возврата PV `Retain` сохраняет том для ручного восстановления после удаления claim; настройка StorageClass по умолчанию не меняет существующий PV задним числом. В задании восстановления изучите `volume-contract.json` и `original-claim-uid`, убедитесь, что старый claim удалён, и используйте UID-предусловия с выданными значениями перед удалением старой ссылки claim. Дождитесь привязки нового claim. Этот локальный учебный том не является резервной копией вне узла.
 
-Для синтетического ledger без одновременной записи `ledger.tar` должен содержать только `ledger.txt` и совпадать с `original-ledger.sha256`; после восстановления сравните также работающий файл и HTTP-байты. Работающей базе данных нужен согласованный с приложением метод резервного копирования; произвольная копия файлов не обязательно согласована.
+Точка восстановления охватывает все хранилища, участвующие в транзакции приложения. Две отдельно корректные копии могут объединить разные поколения, если процесс записи публикует файлы по очереди. Изучите протокол согласованного checkpoint приложения и сравните маркеры, поколения и итоги, не полагаясь на успешное завершение команд копирования. Исходный архив неизменяемого реестра остаётся отдельной проверкой целостности. При восстановлении сравните выбранный checkpoint со смонтированными файлами и ответами текущим потребителям, сохраняя идентичность PVC и нагрузок. Этот ограниченный синтетический протокол не заменяет резервное копирование работающей БД.
 
-Finalizer удерживает объект при удалении до завершения очистки. Изучите `cleanup-contract.json`, проверьте ожидаемые UID и связь объектов, удалите указанный ресурс и затем только известный finalizer с предусловиями. Никогда не удаляйте неизвестный finalizer только ради исчезновения объекта. Проверки текущих объектов не доказывают весь порядок прошлых команд.
+Finalizer обозначает обязательство очистки, а не просто флаг, мешающий удалению. Вывод из эксплуатации может затрагивать потребителей, чьи шаблоны ещё ссылаются на прежнюю конфигурацию. Существующие Pod могут сохранить спроецированные байты после удаления источника; это не обеспечивает запуск нового Pod. Проследите связи по UID, срок жизни преемника и источники в шаблонах и текущих Pod. Независимые контрольные данные должны сохраниться. Проверки текущего состояния подтверждают идентичность, доставку и отсутствие объектов, но не полный порядок прошлых команд.
 
 Источники: [StatefulSet](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/), [политика возврата PV](https://kubernetes.io/docs/tasks/administer-cluster/change-pv-reclaim-policy/), [finalizer](https://kubernetes.io/docs/concepts/overview/working-with-objects/finalizers/).
 
@@ -28,14 +28,26 @@ volume=$(jq -r .volume volume-contract.json)
 kubectl get pv "$volume" -o yaml
 ```
 
-В задании 128 для одного синтетического файла получите архив из Pod, изучите его и сравните сумму. На этапе восстановления отправьте его обратно только после проверки:
+Для задания 128 изучите формат checkpoint и сравните оба хранилища с архивными записями. Архив может пройти проверку целостности и всё же объединять несовместимые поколения данных приложения:
 
 ```sh
-kubectl exec deployment/ledger -- tar cf - -C /data ledger.txt > ledger.tar
+cd ~/quest
+cat checkpoint-contract.json
 tar tf ledger.tar
 tar xOf ledger.tar ledger.txt | sha256sum
-cat original-ledger.sha256
-kubectl exec -i deployment/ledger -- tar xf - -C /data < ledger.tar
+tar tf checkpoint.tar
+tar xOf checkpoint.tar orders.tsv
+tar xOf checkpoint.tar summary.json
+kubectl get deployment,pvc,pods -o yaml
+kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/orders.tsv
+kubectl exec deployment/client -- wget -qO- -T 3 http://summary:8080/summary.json
 ```
 
-В задании 129 перед очисткой изучите контракт и текущие объекты. Создайте DeleteOptions с сохранённым UID дочернего объекта и JSON Patch, который перед удалением проверяет UID родителя и весь ожидаемый массив finalizer. Отправьте DeleteOptions на endpoint Secret в namespace, затем примените patch к ConfigMap; при ошибке проверки остановитесь и выясните причину. Известный finalizer и метка родителя указаны в задании.
+Для задания 129 изучите контракты вывода из эксплуатации и метаданные без вывода данных Secret. Проследите ссылки потребителей и отпечатки смонтированных данных отдельно от состояния finalizer: одной работоспособности старых Pod недостаточно.
+
+```sh
+cat cleanup-contract.json retirement-contract.json
+kubectl get configmap,secret -o json | jq '.items[] | {kind,name:.metadata.name,uid:.metadata.uid,parentUID:.metadata.labels["training.devops-quests.local/parent-uid"],owners:.metadata.ownerReferences,deleting:.metadata.deletionTimestamp}'
+kubectl get deployments -o json | jq '.items[] | {name:.metadata.name,uid:.metadata.uid,volumes:.spec.template.spec.volumes,mounts:[.spec.template.spec.containers[] | {name,volumeMounts}]}'
+kubectl get pods -o wide
+```

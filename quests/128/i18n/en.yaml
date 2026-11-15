@@ -1,62 +1,52 @@
 title: Application backup and restore
 brief: |-
-  The ledger needs a verifiable archive and then a usable restored copy. Preserve the original claim identity throughout both stages.
+  The application needs a consistent recovery point across its order and summary stores, followed by a usable recovery.
 
   Work on the workstation in `~/quest` with the supplied files:
-  - `claim.yaml`, `ledger.yaml`, `service.yaml`, `client.yaml`.
+  - `checkpoint-contract.json`.
 
   **Requirements:**
 
   - Stage 1:
-    - `ledger.tar` in `~/quest` on the workstation contains exactly `ledger.txt`, preserving the original ledger bytes.
+    - `ledger.tar` in `~/quest` on the workstation contains exactly `ledger.txt`, preserving the original ledger bytes. A second archive, `checkpoint.tar` in `~/quest` on the workstation, contains exactly the regular files `orders.tsv` and `summary.json`: one matching generation and marker, positive units, all declared routes and the matching total specified by `checkpoint-contract.json`. Preserve the original claims, Deployments and provided worker images.
     - PVC `ledger` keeps its original nonempty UID.
-
   - Stage 2:
     - `ledger.tar` in `~/quest` on the workstation contains exactly `ledger.txt`, preserving the original ledger bytes.
     - PVC `ledger` keeps its original nonempty UID.
-    - Both `/data/ledger.txt` inside Deployment `ledger` and the bytes received by Deployment `client` at `http://ledger:8080/ledger.txt` match the original ledger bytes.
+    - Both `/data/ledger.txt` inside Deployment `ledger` and the bytes received by Deployment `client` at `http://ledger:8080/ledger.txt` match the original ledger bytes. The two current data files and both responses fetched by the existing requester match `checkpoint.tar`; current ready readers mount their original claims, and ingestion remains paused as specified by `checkpoint-contract.json`. Preserve the original claims, Deployments and provided worker images.
 
-  This uses one synthetic quiescent file, not a live database backup; checks observe current bytes and claim identity, not restoration history or whether the HTTP response came from the PVC.
-debrief: The checks compared the archive, live file, HTTP response and PVC identity.
-stages.0.brief: A complete archive must match the original ledger bytes.
-stages.1.brief: The restored file and served bytes must match the original ledger.
-hints.0.text: A successful archive command does not by itself prove recoverable bytes.
+  This is a bounded synthetic workload, not a live database backup. Checks observe archive consistency and current state; they do not prove capture or restoration history.
+debrief: The checks compared the original ledger archive, a consistent cross-store checkpoint, retained object identities,
+  current mounts, restored files and both HTTP views.
+stages.0.brief: Capture a consistent recovery point while retaining existing storage and workload identities.
+stages.1.brief: Recover both data stores and their current application views from that recovery point.
+hints.0.text: Separate successful copies can describe different transactions. A recovery point must remain consistent
+  across the stores, and recovery must reach the current application consumers.
 hints.1.text: |-
-  Verify the exact archive entry and frozen original checksum.
-
-  Inspect the supplied inputs and live observations:
+  Compare the writer protocol, both live stores, application mounts and supplied result contract. These are observations of existing state:
 
   ```sh
-  kubectl describe pvc
-  kubectl describe deployment ledger
+  cat checkpoint-contract.json
+  kubectl get deployment,pvc,pods -o yaml
+  kubectl exec deployment/ledger -- cat /data/writer-phase /data/orders.tsv
+  kubectl exec deployment/summary -- cat /data/summary.json
   ```
 hints.2.text: |-
-  Stream the verified file back into the existing volume and test the served content.
+  Verify archive members and transaction consistency, then compare the restored files, current claim identities and both application responses. In recovery, ingestion is paused:
 
-  Verify the result from `~/quest` on the workstation:
-
-  - The archive lists only `ledger.txt`, whose bytes have the original checksum.
-
-    ```sh
-    tar tf ledger.tar
-    tar xOf ledger.tar ledger.txt | sha256sum
-    cat original-ledger.sha256
-    ```
-
-  - Settings, identities and status match Requirements.
-
-    ```sh
-    kubectl get pvc ledger -o yaml
-    cat original-pvc-uid
-    ```
-
-  - In stage two, both live-file and received-byte checksums match the original.
-
-    ```sh
-    kubectl exec deployment/ledger -- sha256sum /data/ledger.txt
-    kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/ledger.txt | sha256sum
-    cat original-ledger.sha256
-    ```
+  ```sh
+  tar tf ledger.tar
+  tar xOf ledger.tar ledger.txt | sha256sum
+  cat original-ledger.sha256
+  tar tf checkpoint.tar
+  tar xOf checkpoint.tar orders.tsv
+  tar xOf checkpoint.tar summary.json
+  kubectl get deployment,pvc,pods -o yaml
+  kubectl exec deployment/ledger -- sha256sum /data/ledger.txt /data/orders.tsv
+  kubectl exec deployment/summary -- sha256sum /data/summary.json
+  kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/orders.tsv
+  kubectl exec deployment/client -- wget -qO- -T 3 http://summary:8080/summary.json
+  ```
 phrases.0: I compared the archive checksum.
 phrases.1: I checked the live file and PVC UID.
 phrases.2: I compared the HTTP response checksum.
@@ -71,15 +61,35 @@ diagnostics.archive_hash: ledger.tar ledger.txt SHA-256 must equal original-ledg
 diagnostics.pvc_uid: PVC/ledger UID must equal original-pvc-uid.
 diagnostics.file_hash: /data/ledger.txt SHA-256 must equal original-ledger.sha256.
 diagnostics.http_hash: http://ledger:8080/ledger.txt SHA-256 must equal original-ledger.sha256.
-stages.0.objectives.0.text: '`ledger.tar` in `~/quest` on the workstation contains exactly `ledger.txt`,
-  preserving the original ledger bytes.'
+stages.0.objectives.0.text: '`ledger.tar` in `~/quest` on the workstation contains exactly `ledger.txt`, preserving
+  the original ledger bytes. A second archive, `checkpoint.tar` in `~/quest` on the workstation, contains exactly
+  the regular files `orders.tsv` and `summary.json`: one matching generation and marker, positive units, all declared
+  routes and the matching total specified by `checkpoint-contract.json`. Preserve the original claims, Deployments
+  and provided worker images.'
 stages.0.objectives.1.text: PVC `ledger` keeps its original nonempty UID.
-stages.1.objectives.0.text: '`ledger.tar` in `~/quest` on the workstation contains exactly `ledger.txt`,
-  preserving the original ledger bytes.'
+stages.1.objectives.0.text: '`ledger.tar` in `~/quest` on the workstation contains exactly `ledger.txt`, preserving
+  the original ledger bytes.'
 stages.1.objectives.1.text: PVC `ledger` keeps its original nonempty UID.
-stages.1.objectives.2.text: Both `/data/ledger.txt` inside Deployment `ledger` and the bytes received
-  by Deployment `client` at `http://ledger:8080/ledger.txt` match the original ledger bytes.
-diagnostics.probe_0_0: 'The current inputs could not verify this objective: `ledger.tar` in `~/quest` on the workstation
-  contains exactly `ledger.txt`, preserving the original ledger bytes.'
+stages.1.objectives.2.text: Both `/data/ledger.txt` inside Deployment `ledger` and the bytes received by Deployment
+  `client` at `http://ledger:8080/ledger.txt` match the original ledger bytes. The two current data files and both
+  responses fetched by the existing requester match `checkpoint.tar`; current ready readers mount their original
+  claims, and ingestion remains paused as specified by `checkpoint-contract.json`. Preserve the original claims,
+  Deployments and provided worker images.
+diagnostics.probe_0_0: The checkpoint archive is missing, malformed or combines inconsistent transaction generations,
+  routes or totals.
 diagnostics.probe_1_0: 'The current inputs could not verify this objective: `ledger.tar` in `~/quest` on the workstation
   contains exactly `ledger.txt`, preserving the original ledger bytes.'
+diagnostics.checkpoint_archive: The checkpoint archive is missing, malformed or combines inconsistent transaction
+  generations, routes or totals.
+diagnostics.checkpoint_identity: An original claim or Deployment identity, or a provided worker image, differs from
+  the captured starting state.
+diagnostics.checkpoint_consumers: A required consumer does not have exactly one current ready Pod owned by its Deployment.
+diagnostics.checkpoint_quiescence: The writer is still desired or has a current active Pod; recovery must remain
+  paused.
+diagnostics.checkpoint_source: A current application workload or its template does not use the declared original
+  claim for the data path, or its observations are unavailable.
+diagnostics.checkpoint_file: A mounted data file differs from the verified checkpoint entry.
+diagnostics.checkpoint_http: The response received by the existing requester differs from the verified checkpoint
+  entry.
+diagnostics.probe_1_2: A current application workload or its template does not use the declared original claim for
+  the data path, or its observations are unavailable.

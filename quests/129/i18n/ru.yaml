@@ -1,39 +1,47 @@
 title: Finalizers и безопасная очистка
 brief: |-
-  Очистка station не завершилась. Добейтесь требуемого отсутствия ресурсов, сохранив посторонний Secret control.
+  Очистка станции ещё не завершена. Выведите конфигурацию из эксплуатации, сохранив работоспособность обоих существующих потребителей и посторонний контрольный Secret.
 
-  Работайте на workstation в `~/quest` с предоставленными файлами:
+  Работайте на рабочей станции в `~/quest` с предоставленными файлами:
   - `cleanup-contract.json`.
+  - `retirement-contract.json`.
 
-  **Requirements:**
+  **Требования:**
 
-  - Завершающая удаление конфигурация и связанная с ней запись отсутствуют, что подтверждается успешными запросами API.
+  - Завершающая удаление конфигурация и связанная с ней запись отсутствуют, что подтверждается успешными запросами API. Каждый существующий Deployment потребителя сохраняет идентичность и предоставленный образ и имеет один готовый текущий Pod. Его том с Secret-преемником доступен только для чтения и предоставляет `/config/value` с данными выводимой записи; `http://127.0.0.1:8080` внутри Pod возвращает соответствующий отпечаток. Преемник независим от выводимого родителя по `retirement-contract.json`.
   - Посторонний контрольный Secret сохраняет исходную идентичность и данные.
 
-  Проверки наблюдают конечное состояние, а не порядок действий; тип Secret control и прочие метаданные не сравниваются.
-debrief: Проверки установили отсутствие обоих ресурсов и сравнили UID и хеш данных Secret control.
-stages.0.brief: В конечном состоянии посторонний контрольный Secret сохранён.
-hints.0.text: DeletionTimestamp не означает выполнения обязательств finalizer.
+  Проверки наблюдают текущее состояние и идентичность, но не порядок очистки или полную историю команд. Тип контрольного Secret и посторонние метаданные не сравниваются.
+debrief: Проверки сравнили отсутствие выведенных объектов, идентичность и данные контрольного Secret, независимость
+  преемника, текущие источники потребителей, смонтированные байты и ответы с отпечатком.
+stages.0.brief: Завершите вывод из эксплуатации, сохранив зависимых потребителей и постороннюю контрольную конфигурацию.
+hints.0.text: Удаление конфигурационного объекта не переносит его потребителей. Работающий процесс может сохранять
+  старые байты, хотя следующий Pod уже не сможет запуститься. Проследите и идентичность объектов, и текущие зависимости
+  доставки.
 hints.1.text: |-
-  Сопоставьте и UID связанного Secret, и его метку parent-UID.
-
-  Изучите предоставленные файлы и живые наблюдения:
+  Изучите связь с родителем, шаблоны потребителей, текущие Pod и локальные контракты. Выводите метаданные объектов и ссылки на источники без раскрытия данных Secret:
 
   ```sh
-  kubectl get configmap,secret -o yaml
-  cat cleanup-contract.json
+  cat cleanup-contract.json retirement-contract.json
+  kubectl get configmap,secret -o json | jq '.items[] | {kind,name:.metadata.name,uid:.metadata.uid,parentUID:.metadata.labels["training.devops-quests.local/parent-uid"],owners:.metadata.ownerReferences,deleting:.metadata.deletionTimestamp}'
+  kubectl get deployments -o json | jq '.items[] | {name:.metadata.name,uid:.metadata.uid,volumes:.spec.template.spec.volumes,mounts:[.spec.template.spec.containers[] | {name,volumeMounts}],conditions:.status.conditions}'
+  kubectl get pods -o wide
   ```
-hints.2.text: "Уберите связанную запись до снятия только известного finalizer; сохраните контрольный объект.\
-  \ Завершающийся ConfigMap использует финализатор `training.devops-quests.local/cleanup`; связанный Secret\
-  \ не имеет ownerReference для сборки мусора. Сопоставьте его UID и метку `training.devops-quests.local/parent-uid`\
-  \ с замороженным контрактом, удалите только этот Secret с предусловием UID и снимите только этот финализатор\
-  \ с проверками UID/финализатора. Не снимайте посторонние финализаторы.\n\nПроверьте результат из `~/quest`\
-  \ на workstation:\n\n- Оба запроса успешны и не печатают имени ресурса.\n\n  ```sh\n  kubectl get configmap\
-  \ station --ignore-not-found -o name\n  kubectl get secret station-record --ignore-not-found -o name\n\
-  \  ```\n\n- Настройки, идентичности и состояние соответствуют требованиям.\n\n  ```sh\n  cat cleanup-contract.json\n\
-  \  kubectl get secret control -o json |\n    python3 -c 'import hashlib,json,sys; x=json.load(sys.stdin);\
-  \ print(x[\"metadata\"][\"uid\"]); print(hashlib.sha256(json.dumps(x[\"data\"],sort_keys=True).encode()).hexdigest())'\
-  \ \n  ```"
+hints.2.text: |-
+  Подтвердите отсутствие обоих выведенных объектов, сохранение UID и хеша данных контрольного Secret, а также доставку конфигурации и отпечатка обоим текущим потребителям:
+
+  Записанное обязательство обозначено finalizer `training.devops-quests.local/cleanup`; сверяйте его связь с объектом, а не посторонний finalizer.
+
+  ```sh
+  kubectl get configmap station --ignore-not-found -o name
+  kubectl get secret station-record --ignore-not-found -o name
+  kubectl get secret control -o json | python3 -c 'import hashlib,json,sys; x=json.load(sys.stdin); print(x["metadata"]["uid"]); print(hashlib.sha256(json.dumps(x["data"],sort_keys=True).encode()).hexdigest())'
+  kubectl get deployments,pods -o wide
+  kubectl exec deployment/dispatch -c worker -- sha256sum /config/value
+  kubectl exec deployment/reporter -c worker -- sha256sum /config/value
+  kubectl exec deployment/dispatch -c worker -- wget -qO- -T 2 http://127.0.0.1:8080
+  kubectl exec deployment/reporter -c worker -- wget -qO- -T 2 http://127.0.0.1:8080
+  ```
 phrases.0: Я проверил отсутствие родительского объекта и записи.
 phrases.1: Я проверил UID Secret control.
 phrases.2: Я сравнил хеш данных Secret control.
@@ -49,8 +57,22 @@ diagnostics.secret_query: kubectl get secret/station-record должен вып�
 diagnostics.secret_absent: secret/station-record должен отсутствовать.
 diagnostics.control_uid: secret/control UID должен совпадать с cleanup-contract.json control_uid.
 diagnostics.control_hash: secret/control data SHA-256 должен совпадать с cleanup-contract.json control_hash.
-stages.0.objectives.0.text: Завершающая удаление конфигурация и связанная с ней запись отсутствуют, что
-  подтверждается успешными запросами API.
+stages.0.objectives.0.text: Завершающая удаление конфигурация и связанная с ней запись отсутствуют, что подтверждается
+  успешными запросами API. Каждый существующий Deployment потребителя сохраняет идентичность и предоставленный образ
+  и имеет один готовый текущий Pod. Его том с Secret-преемником доступен только для чтения и предоставляет `/config/value`
+  с данными выводимой записи; `http://127.0.0.1:8080` внутри Pod возвращает соответствующий отпечаток. Преемник
+  независим от выводимого родителя по `retirement-contract.json`.
 stages.0.objectives.1.text: Посторонний контрольный Secret сохраняет исходную идентичность и данные.
 diagnostics.probe_0_1: 'Текущие данные не позволили проверить эту цель: Посторонний контрольный Secret сохраняет
   исходную идентичность и данные.'
+diagnostics.retirement_identity: Изменились идентичность Deployment потребителя, желаемое число реплик или предоставленный
+  образ.
+diagnostics.retirement_state: У потребителя нет единственного готового текущего Pod либо нельзя проверить принадлежность
+  Pod.
+diagnostics.retirement_source: Преемник может сохранять связь с выводимым родителем, отличаться данными от исходной
+  записи либо отсутствовать среди источников текущего Pod.
+diagnostics.retirement_delivery: Байты конфигурации в текущем потребителе не соответствуют сохранённому отпечатку
+  записи.
+diagnostics.retirement_fingerprint: Endpoint текущего потребителя не возвращает сохранённый отпечаток конфигурации.
+diagnostics.probe_0_0: У потребителя нет единственного готового текущего Pod либо нельзя проверить принадлежность
+  Pod.

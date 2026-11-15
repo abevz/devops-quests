@@ -8,9 +8,9 @@ text: |
 
   PersistentVolume (PV) und PersistentVolumeClaim (PVC) sind unterschiedliche Objekte. Die PV-Reclaim-Policy `Retain` bewahrt das Volume nach Entfernen eines Claims für manuelle Wiederherstellung; der Standard einer StorageClass ändert bestehende PVs nicht rückwirkend. Lies in der Wiederherstellungsquest `volume-contract.json` und `original-claim-uid`, prüfe, dass der alte Claim weg ist, und nutze UID-Vorbedingungen mit den bereitgestellten Werten vor dem Entfernen der alten Claim-Referenz. Warte, bis der Ersatz-Claim gebunden ist. Dieses lokale Übungs-Volume ist kein Backup außerhalb des Hosts.
 
-  Für das synthetische Ledger ohne gleichzeitige Schreibvorgänge muss `ledger.tar` nur `ledger.txt` enthalten und `original-ledger.sha256` entsprechen; vergleiche nach der Wiederherstellung auch die laufende Datei und HTTP-Bytes. Eine laufende Datenbank braucht eine anwendungskonsistente Backup-Methode; eine beliebige Dateikopie ist nicht automatisch konsistent.
+  Ein Wiederherstellungspunkt umfasst alle Speicher einer Anwendungstransaktion. Zwei einzeln gültige Kopien können verschiedene Generationen kombinieren, wenn ein Writer Dateien nacheinander veröffentlicht. Lies das Checkpoint-Protokoll und vergleiche Markierungen, Generationen und Aggregate statt nur erfolgreiche Kopierbefehle. Das ursprüngliche statische Ledger-Archiv bleibt eine eigene Integritätsprüfung. Vergleiche bei der Wiederherstellung den gewählten Checkpoint mit gemounteten Dateien und Antworten aktueller Verbraucher und erhalte PVC- und Workload-Identitäten. Dieses begrenzte synthetische Protokoll ersetzt kein Backup einer laufenden Datenbank.
 
-  Ein Finalizer hält ein Objekt während der Löschung zurück, bis die Bereinigung erledigt ist. Lies `cleanup-contract.json`, prüfe erwartete Objekt-UIDs und Zuordnung, bereinige den bezeichneten Datensatz und entferne dann nur den bekannten Finalizer mit Vorbedingungen. Entferne nie einen unbekannten Finalizer nur, damit ein Objekt verschwindet. Aktuelle Objektprüfungen beweisen nicht die vollständige Reihenfolge früherer Befehle.
+  Ein Finalizer steht für eine Bereinigungspflicht, nicht bloß ein Löschhindernis. Ausmusterung kann Verbraucher betreffen, deren Vorlagen noch die alte Konfiguration nennen. Bestehende Pods können projizierte Bytes nach Löschung der Quelle behalten; ein neuer Pod wird dadurch nicht startfähig. Verfolge UID-gebundene Beziehungen, Lebensdauer des Nachfolgers und Quellen in Vorlagen sowie aktuellen Pods. Unabhängige Kontrolldaten müssen erhalten bleiben. Aktuelle Prüfungen belegen Identitäten, Lieferung und Abwesenheit, aber keinen vollständigen Befehlsverlauf.
 
   Quellen: [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/), [PV-Reclaim-Policy](https://kubernetes.io/docs/tasks/administer-cluster/change-pv-reclaim-policy/), [Finalizer](https://kubernetes.io/docs/concepts/overview/working-with-objects/finalizers/).
 
@@ -30,15 +30,27 @@ text: |
   kubectl get pv "$volume" -o yaml
   ```
 
-  Streame in Quest 128 für die einzelne synthetische Datei ein Archiv aus dem Pod, prüfe es und vergleiche seine Prüfsumme. Streame es in der Wiederherstellungsphase erst nach der Prüfung zurück:
+  Prüfe für Quest 128 das Checkpoint-Format und vergleiche beide Speicher mit den Archiveinträgen. Ein Archiv kann eine Integritätsprüfung bestehen und trotzdem inkompatible Anwendungsgenerationen kombinieren:
 
   ```sh
-  kubectl exec deployment/ledger -- tar cf - -C /data ledger.txt > ledger.tar
+  cd ~/quest
+  cat checkpoint-contract.json
   tar tf ledger.tar
   tar xOf ledger.tar ledger.txt | sha256sum
-  cat original-ledger.sha256
-  kubectl exec -i deployment/ledger -- tar xf - -C /data < ledger.tar
+  tar tf checkpoint.tar
+  tar xOf checkpoint.tar orders.tsv
+  tar xOf checkpoint.tar summary.json
+  kubectl get deployment,pvc,pods -o yaml
+  kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/orders.tsv
+  kubectl exec deployment/client -- wget -qO- -T 3 http://summary:8080/summary.json
   ```
 
-  Prüfe in Quest 129 vor dem Aufräumen Vertrag und laufende Objekte. Erstelle DeleteOptions mit der gespeicherten Kind-UID und einen JSON Patch, der Eltern-UID und das gesamte erwartete Finalizer-Array vor dem Entfernen testet. Sende DeleteOptions an den Secret-Endpunkt des Namespace und wende danach den Patch auf die ConfigMap an; bei fehlgeschlagenem Test anhalten und untersuchen. Der bekannte Finalizer und das Eltern-Label stehen in der Aufgabe.
-source_hash: a905ad9495e79b03bbae5b661b27a657d37991a82b75914d91c6d8da837514fa
+  Prüfe für Quest 129 Ausmusterungsverträge und Metadaten ohne Ausgabe von Secret-Daten. Betrachte Verbraucherverweise und aktuelle Fingerabdrücke getrennt vom Finalizer-Zustand; gesunde alte Pods allein belegen keine sichere Ausmusterung.
+
+  ```sh
+  cat cleanup-contract.json retirement-contract.json
+  kubectl get configmap,secret -o json | jq '.items[] | {kind,name:.metadata.name,uid:.metadata.uid,parentUID:.metadata.labels["training.devops-quests.local/parent-uid"],owners:.metadata.ownerReferences,deleting:.metadata.deletionTimestamp}'
+  kubectl get deployments -o json | jq '.items[] | {name:.metadata.name,uid:.metadata.uid,volumes:.spec.template.spec.volumes,mounts:[.spec.template.spec.containers[] | {name,volumeMounts}]}'
+  kubectl get pods -o wide
+  ```
+source_hash: 811597b62a44cb1470f421c5072f87d1b0ca1145aac680d6100ac54d3a744da4

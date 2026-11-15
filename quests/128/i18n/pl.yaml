@@ -1,67 +1,56 @@
 title: Tworzenie kopii zapasowych i przywracanie aplikacji
 brief: |-
-  Rejestr wymaga sprawdzalnego archiwum, a potem użytecznej przywróconej kopii. Zachowaj oryginalną tożsamość claimu na obu etapach.
+  Aplikacja potrzebuje spójnego punktu odtwarzania zamówień i podsumowania, a następnie działającego odtworzenia obu magazynów.
 
-  Pracuj na workstation w `~/quest` z dostarczonymi plikami:
-  - `claim.yaml`, `ledger.yaml`, `service.yaml`, `client.yaml`.
+  Pracuj na stacji roboczej w `~/quest` z dostarczonymi plikami:
+  - `checkpoint-contract.json`.
 
-  **Requirements:**
+  **Wymagania:**
 
   - Etap 1:
-    - `ledger.tar` w `~/quest` na workstation zawiera dokładnie `ledger.txt` i zachowuje pierwotne bajty ledger.
+    - `ledger.tar` w `~/quest` na workstation zawiera dokładnie `ledger.txt` i zachowuje pierwotne bajty ledger. Drugie archiwum `checkpoint.tar` w `~/quest` na stacji roboczej zawiera dokładnie zwykłe pliki `orders.tsv` i `summary.json`: zgodną generację i znacznik, dodatnie ilości, wszystkie zadeklarowane trasy i odpowiadającą sumę według `checkpoint-contract.json`. Zachowaj pierwotne PVC, Deploymenty i dostarczone obrazy kontenerów worker.
     - PVC `ledger` zachowuje pierwotny niepusty UID.
-
   - Etap 2:
     - `ledger.tar` w `~/quest` na workstation zawiera dokładnie `ledger.txt` i zachowuje pierwotne bajty ledger.
     - PVC `ledger` zachowuje pierwotny niepusty UID.
-    - Zarówno `/data/ledger.txt` wewnątrz Deployment `ledger`, jak i bajty odebrane przez Deployment `client` pod `http://ledger:8080/ledger.txt` odpowiadają pierwotnym bajtom ledger.
+    - Zarówno `/data/ledger.txt` wewnątrz Deployment `ledger`, jak i bajty odebrane przez Deployment `client` pod `http://ledger:8080/ledger.txt` odpowiadają pierwotnym bajtom ledger. Dwa bieżące pliki danych i obie odpowiedzi pobrane przez istniejącego klienta odpowiadają `checkpoint.tar`; bieżący gotowi czytelnicy montują pierwotne PVC, a przyjmowanie danych pozostaje wstrzymane zgodnie z `checkpoint-contract.json`. Zachowaj pierwotne PVC, Deploymenty i dostarczone obrazy kontenerów worker.
 
-  Używany jest jeden syntetyczny niezmieniany podczas kopiowania plik, nie kopia działającej bazy; kontrole obserwują bieżące bajty i tożsamość claimu, nie historię odtwarzania ani pochodzenie odpowiedzi HTTP z PVC.
-debrief: Kontrole porównały archiwum, plik, odpowiedź HTTP i tożsamość PVC.
-stages.0.brief: Kompletne archiwum musi odpowiadać pierwotnym bajtom rejestru.
-stages.1.brief: Przywrócony plik i obsługiwane bajty muszą odpowiadać pierwotnemu rejestrowi.
-hints.0.text: Pomyślne polecenie archiwizacji samo w sobie nie gwarantuje odzyskania bajtów.
+  To ograniczone obciążenie syntetyczne, nie kopia działającej bazy danych. Kontrole obserwują spójność archiwum i bieżący stan; nie dowodzą historii tworzenia kopii ani odtwarzania.
+debrief: Kontrole porównały pierwotne archiwum, spójny checkpoint obu magazynów, zachowane tożsamości obiektów,
+  bieżące montowania, odtworzone pliki i obie odpowiedzi HTTP.
+stages.0.brief: Utwórz spójny punkt odtwarzania, zachowując tożsamość istniejących PVC i obiektów obciążeń.
+stages.1.brief: Odtwórz oba magazyny oraz ich bieżące widoki aplikacji z tego punktu.
+hints.0.text: Oddzielnie poprawne kopie mogą opisywać różne transakcje. Punkt odtwarzania musi być spójny między
+  magazynami, a odtworzenie musi dotrzeć do bieżących odbiorców aplikacji.
 hints.1.text: |-
-  Sprawdź dokładny wpis w archiwum i zamrożony oryginał checksum.
-
-  Sprawdź dostarczone dane i bieżące obserwacje:
+  Porównaj protokół zapisu, oba bieżące magazyny, montowania aplikacji i kontrakt wyniku. Poniższe obserwacje dotyczą istniejącego stanu:
 
   ```sh
-  kubectl describe pvc
-  kubectl describe deployment ledger
+  cat checkpoint-contract.json
+  kubectl get deployment,pvc,pods -o yaml
+  kubectl exec deployment/ledger -- cat /data/writer-phase /data/orders.tsv
+  kubectl exec deployment/summary -- cat /data/summary.json
   ```
 hints.2.text: |-
-  Przesyłaj strumieniowo zweryfikowany plik z powrotem do istniejącego wolumenu i przetestuj udostępnianą zawartość.
+  Sprawdź skład archiwów i spójność transakcji, a następnie odtworzone pliki, tożsamość PVC i obie odpowiedzi aplikacji. Podczas odtwarzania przyjmowanie danych jest wstrzymane:
 
-  Sprawdź wynik z `~/quest` na workstation:
-
-  - Archiwum zawiera tylko `ledger.txt`, którego bajty mają pierwotną sumę kontrolną.
-
-    ```sh
-    tar tf ledger.tar
-    tar xOf ledger.tar ledger.txt | sha256sum
-    cat original-ledger.sha256
-    ```
-
-  - Ustawienia, tożsamości i stan odpowiadają wymaganiom.
-
-    ```sh
-    kubectl get pvc ledger -o yaml
-    cat original-pvc-uid
-    ```
-
-  - W drugim etapie sumy bieżącego pliku i otrzymanych bajtów odpowiadają pierwotnej.
-
-    ```sh
-    kubectl exec deployment/ledger -- sha256sum /data/ledger.txt
-    kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/ledger.txt | sha256sum
-    cat original-ledger.sha256
-    ```
+  ```sh
+  tar tf ledger.tar
+  tar xOf ledger.tar ledger.txt | sha256sum
+  cat original-ledger.sha256
+  tar tf checkpoint.tar
+  tar xOf checkpoint.tar orders.tsv
+  tar xOf checkpoint.tar summary.json
+  kubectl get deployment,pvc,pods -o yaml
+  kubectl exec deployment/ledger -- sha256sum /data/ledger.txt /data/orders.tsv
+  kubectl exec deployment/summary -- sha256sum /data/summary.json
+  kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/orders.tsv
+  kubectl exec deployment/client -- wget -qO- -T 3 http://summary:8080/summary.json
+  ```
 phrases.0: Porównałem sumę archiwum.
 phrases.1: Sprawdziłem plik i UID PVC.
 phrases.2: Porównałem sumę odpowiedzi HTTP.
-questions.0.points.0: Dowodzi integralności bajtów w odniesieniu do odniesienia, a nie pełnego odzyskania
-  aplikacji.
+questions.0.points.0: Dowodzi integralności bajtów w odniesieniu do odniesienia, a nie pełnego odzyskania aplikacji.
 questions.0.points.1: Przetestuj także przywrócone dane za pośrednictwem aplikacji.
 questions.0.prompt: Czy checksum dowodzi, że kopia zapasowa może przywrócić usługę?
 questions.1.points.0: Transakcje, WAL i powiązane pliki mogą ulec zmianie podczas kopiowania.
@@ -72,15 +61,35 @@ diagnostics.archive_hash: ledger.tar ledger.txt SHA-256 musi być równe origina
 diagnostics.pvc_uid: PVC/ledger UID musi być równe original-pvc-uid.
 diagnostics.file_hash: /data/ledger.txt SHA-256 musi być równe original-ledger.sha256.
 diagnostics.http_hash: http://ledger:8080/ledger.txt SHA-256 musi być równe original-ledger.sha256.
-stages.0.objectives.0.text: '`ledger.tar` w `~/quest` na workstation zawiera dokładnie `ledger.txt` i
-  zachowuje pierwotne bajty ledger.'
+stages.0.objectives.0.text: '`ledger.tar` w `~/quest` na workstation zawiera dokładnie `ledger.txt` i zachowuje
+  pierwotne bajty ledger. Drugie archiwum `checkpoint.tar` w `~/quest` na stacji roboczej zawiera dokładnie zwykłe
+  pliki `orders.tsv` i `summary.json`: zgodną generację i znacznik, dodatnie ilości, wszystkie zadeklarowane trasy
+  i odpowiadającą sumę według `checkpoint-contract.json`. Zachowaj pierwotne PVC, Deploymenty i dostarczone obrazy
+  kontenerów worker.'
 stages.0.objectives.1.text: PVC `ledger` zachowuje pierwotny niepusty UID.
-stages.1.objectives.0.text: '`ledger.tar` w `~/quest` na workstation zawiera dokładnie `ledger.txt` i
-  zachowuje pierwotne bajty ledger.'
+stages.1.objectives.0.text: '`ledger.tar` w `~/quest` na workstation zawiera dokładnie `ledger.txt` i zachowuje
+  pierwotne bajty ledger.'
 stages.1.objectives.1.text: PVC `ledger` zachowuje pierwotny niepusty UID.
-stages.1.objectives.2.text: Zarówno `/data/ledger.txt` wewnątrz Deployment `ledger`, jak i bajty odebrane
-  przez Deployment `client` pod `http://ledger:8080/ledger.txt` odpowiadają pierwotnym bajtom ledger.
-diagnostics.probe_0_0: 'Bieżące dane nie pozwalają potwierdzić tego celu: `ledger.tar` w `~/quest` na workstation
-  zawiera dokładnie `ledger.txt` i zachowuje pierwotne bajty ledger.'
+stages.1.objectives.2.text: Zarówno `/data/ledger.txt` wewnątrz Deployment `ledger`, jak i bajty odebrane przez
+  Deployment `client` pod `http://ledger:8080/ledger.txt` odpowiadają pierwotnym bajtom ledger. Dwa bieżące pliki
+  danych i obie odpowiedzi pobrane przez istniejącego klienta odpowiadają `checkpoint.tar`; bieżący gotowi czytelnicy
+  montują pierwotne PVC, a przyjmowanie danych pozostaje wstrzymane zgodnie z `checkpoint-contract.json`. Zachowaj
+  pierwotne PVC, Deploymenty i dostarczone obrazy kontenerów worker.
+diagnostics.probe_0_0: Archiwum checkpoint nie istnieje, ma błędny format albo łączy niespójne generacje transakcji,
+  trasy lub sumy.
 diagnostics.probe_1_0: 'Bieżące dane nie pozwalają potwierdzić tego celu: `ledger.tar` w `~/quest` na workstation
   zawiera dokładnie `ledger.txt` i zachowuje pierwotne bajty ledger.'
+diagnostics.checkpoint_archive: Archiwum checkpoint nie istnieje, ma błędny format albo łączy niespójne generacje
+  transakcji, trasy lub sumy.
+diagnostics.checkpoint_identity: Tożsamość pierwotnego PVC lub Deploymentu albo dostarczony obraz kontenera worker
+  różni się od stanu początkowego.
+diagnostics.checkpoint_consumers: Wymagany odbiorca nie ma dokładnie jednego bieżącego gotowego Poda należącego
+  do jego Deploymentu.
+diagnostics.checkpoint_quiescence: Proces zapisujący nadal żąda replik lub ma bieżący aktywny Pod; odtwarzanie wymaga
+  wstrzymanego przyjmowania danych.
+diagnostics.checkpoint_source: Bieżący czytelnik lub jego szablon nie używa pierwotnego PVC dla wskazanej ścieżki
+  danych albo obserwacja jest niedostępna.
+diagnostics.checkpoint_file: Zamontowany plik danych różni się od sprawdzonego wpisu checkpointu.
+diagnostics.checkpoint_http: Odpowiedź otrzymana przez istniejącego klienta różni się od sprawdzonego wpisu checkpointu.
+diagnostics.probe_1_2: Bieżący czytelnik lub jego szablon nie używa pierwotnego PVC dla wskazanej ścieżki danych
+  albo obserwacja jest niedostępna.
