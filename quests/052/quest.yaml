@@ -135,8 +135,9 @@ stages:
 
       test "$dq_group_failed" -eq 0'
   - text: stages.0.objectives.2.text
-    check: "timeout --kill-after=1s 10s bash -euo pipefail <<'DQ_LEGACY_052'\ndq_group_failed=0\nset +e\n(\nset\
-      \ -e\ntest \"$(curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8080)\" = north-ready\n)\ndq_condition_rc=$?\n\
+    check: "dq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\ncd\
+      \ ~/quest\ntimeout --kill-after=1s 10s bash -euo pipefail <<'DQ_LEGACY_052'\ndq_group_failed=0\nset +e\n(\n\
+      set -e\ntest \"$(curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8080)\" = north-ready\n)\ndq_condition_rc=$?\n\
       if [ \"$dq_condition_rc\" -ne 0 ]; then\nprintf '%s\\n' 'Host app1 HTTP / on port 8080 = north-ready : ✗ [DQ:http_1]'\n\
       dq_group_failed=1\nfi\n(\nset -e\ntest \"$(curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8080)\"\
       \ = north-ready\n)\ndq_condition_rc=$?\nif [ \"$dq_condition_rc\" -ne 0 ]; then\nprintf '%s\\n' 'Host app2\
@@ -166,7 +167,10 @@ stages:
       \ application cache is stale: ✗ [DQ:consumer_cache]')\n                    sys.exit(1)\nexcept subprocess.TimeoutExpired:\n\
       \    print('Application observation timed out: ✗ [DQ:consumer_budget]')\n    sys.exit(1)\nexcept (OSError,\
       \ ValueError, KeyError, subprocess.CalledProcessError):\n    print('Application could not be observed: ✗ [DQ:consumer_observation]')\n\
-      \    sys.exit(1)\nDQ_CONSUMERS"
+      \    sys.exit(1)\nDQ_CONSUMERS\n) >\"$dq_probe_output\" 2>/dev/null\ndq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\
+      \nif [ \"$dq_probe_status\" -ne 0 ] && ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\n printf\
+      \ '%s\\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_2]'\nfi\nrm -f \"$dq_probe_output\"\
+      \ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0"
 hints:
 - text: hints.0.text
   guide: ansible-10

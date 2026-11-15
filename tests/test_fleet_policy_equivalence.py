@@ -31,7 +31,9 @@ def run_goal(tmp_path, number, objective, files=None, body="stable-63"):
     # This parser-equivalence test isolates the retained recap predicate.
     # Current-program replay is exercised by the consumer/recovery native matrix.
     if number == 74 and objective == 1:
-        code = code.split("\nDQ_LEGACY_CALLER\n", 1)[0] + "\nDQ_LEGACY_CALLER\n"
+        code = code.split("<<'DQ_LEGACY_CALLER'\n", 1)[1].split(
+            "\nDQ_LEGACY_CALLER", 1
+        )[0]
     return subprocess.run(
         ["bash", "-c", "set -euo pipefail\ncd ~/quest\n" + code],
         env={
