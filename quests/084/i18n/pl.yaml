@@ -1,45 +1,45 @@
-title: Refaktoryzuj do modułu z przeniesionymi blokami
+title: Refaktoryzacja modułów z zachowaniem tożsamości
 brief: |-
-  Odbiorca potrzebuje istniejącego kontenera przez wymagany interfejs modułu.
+  Działająca topologia usługi nie jest jeszcze dostępna przez wymagane granice modułów i stabilne klucze tras.
 
-  Pracuj na workstation w `~/quest` z plikami `main.tf`.
+  Pracuj na workstation w `~/quest` z `main.tf` i `module-contract.json`; zbuduj tam potrzebne moduły lokalne.
 
   **Wymagania:**
-  - Stan OpenTofu:
-    - Wymagane adresy: `module.station.docker_container.worker`.
-  - Kontener w prywatnym daemonie Docker:
-    - Nazwa: `rail-worker`.
-  - Tożsamość kontenera:
-    - Śledzony zasób: `module.station.docker_container.worker`.
-    - Istniejący kontener `rail-worker`, jego zarządzany zasób i wyjście główne `worker_id` zachowują pierwotny ID kontenera.
-    - ID kontenera i ID śledzonego zasobu są zgodne z tym potwierdzeniem.
-    - Zgodne wyjście główne: `worker_id`.
-  - Zbieżność infrastruktury:
-    - Brak oczekujących zmian infrastruktury; kod zakończenia szczegółowego planu `0`.
+  - Stan OpenTofu zawiera dokładnie sześć zarządzanych obiektów pod adresami z dostarczonego kontraktu, w tym `module.station.docker_container.worker`. Nie pozostają obce zarządzane wpisy; dopuszczalne są źródła danych tylko do odczytu.
+  - W prywatnym demonie Docker środowiska pierwotny kontener `rail-worker`, jego zasób w stanie i wyjście główne `worker_id` zachowują pierwotne ID kontenera. Pozostałe pierwotne kontenery i wspólna sieć zachowują tożsamości; istniejące wolumeny danych zachowują tożsamość utworzenia.
+  - Każdy działający kontener trasy zachowuje własny wolumen danych, wspólną sieć i pierwotne bajty rejestru. Wyjście główne `routes` przypisuje każdemu kluczowi pierwotne ID jego kontenera zgodnie z kontraktem.
+  - Na workstation plik `~/quest/migration-plan.json` zawiera dokładnie te sześć zarządzanych wpisów z działaniem `no-op` i pierwotnymi ID przed i po. Obce zarządzane wpisy są niedozwolone; dopuszczalne są źródła danych tylko do odczytu.
+  - Końcowy plan szczegółowy infrastruktury kończy się kodem `0` bez oczekujących zmian.
 
-  Sprawdzenie obserwuje bieżące wyniki; nie dowodzi użytej metody refaktoryzacji.
-stages.0.brief: Udostępnij zapisaną tożsamość kontenera przez wymagany interfejs modułu.
-hints.0.text: Refaktoryzacja powinna zachować istniejącą tożsamość kontenera.
+  Sprawdzenia obserwują bieżący stan, rzeczywiste ID, metadane utworzenia, dane i zapisane/nowe plany; nie dowodzą historii poleceń, użytej metody refaktoryzacji ani ciągłej dostępności.
+stages.0.brief: Udostępnij istniejącą topologię przez wymagane moduły, zachowując każdy obiekt i jego dane.
+hints.0.text: Adres jest powiązaniem zarządzania, a stabilny klucz reprezentuje rolę obiektu. Zmiana przypisania
+  pozycji nie może zamienić tożsamości ani utracić zachowanych danych.
 hints.1.text: |-
-  Miejscem docelowym jest module.station.docker_container.worker.
-
-  Sprawdź dostarczoną konfigurację i bieżące obserwacje na workstation:
+  Przed wyborem przejścia porównaj wymagane role z bieżącym stanem i rzeczywistymi obiektami. Sama nazwa zasobu lub pusty plan nie dowodzą zachowania właściwego obiektu i jego danych.
 
   ```sh
-  cat main.tf
+  cat main.tf module-contract.json
   tofu state list
-  docker inspect rail-worker
+  tofu show -no-color
+  docker ps --no-trunc
+  docker volume inspect rail-north-data rail-south-data
   ```
 hints.2.text: |-
-  Użyj głównego bloku moved, zainicjalizuj moduł lokalny i zastosuj przeniesienie. Dostawca potomny musi używać registry.terraform.io/kreuzwerker/docker w wersji 3.6.2 zgodnej z lustrem offline.
+  Sprawdź razem zapisany plan, adresy stanu i rzeczywiste obiekty. Każdy zarządzany wpis musi pozostać niezmieniony, publikowane ID muszą odpowiadać pierwotnym rolom, a działające kontenery tras nadal udostępniać zachowane rejestry.
 
-  Sprawdź wynik z `~/quest` na workstation:
-
-  - `docker inspect rail-worker --format '{{.Id}}'; cat original-id` — Bieżący ID kontenera jest zgodny z dostarczonym potwierdzeniem.
-  - `tofu show -no-color; tofu output -raw worker_id` — Pokazuje `module.station.docker_container.worker`; jego ID i `worker_id` są zgodne z `original-id`.
-  - `tofu plan -input=false -detailed-exitcode -no-color` — Kończy się kodem `0` i nie zgłasza oczekujących zmian infrastruktury.
-debrief: Zasób stanu modułu, główne wyjście i aktywny worker odpowiadają teraz zapisanemu ID, a końcowy
-  plan nie zawiera zmian.
+  ```sh
+  tofu show -json migration.plan > migration-plan.json
+  jq -r '.resource_changes[] | select(.mode=="managed") | [.address, (.change.actions | join(","))] | @tsv' migration-plan.json
+  tofu state list
+  tofu output -raw worker_id
+  tofu output -json routes
+  docker inspect rail-worker --format '{{.Id}}'
+  for route in north south; do docker exec "rail-$route" wget -qO- http://127.0.0.1:8080/ledger; done
+  tofu plan -input=false -detailed-exitcode -no-color
+  ```
+debrief: Powiązania modułów ze stabilnymi kluczami, zapisany plan, rzeczywiste tożsamości i pierwotne dane rejestrów
+  są zgodne; nowy plan nie zawiera oczekujących zmian.
 phrases.0: Przed dokonaniem zmiany sprawdziłem stan działania.
 phrases.1: Znalazłem przyczynę i zmieniałem jedną rzecz na raz.
 phrases.2: Porównałem aktywny zasób ID ze stanem OpenTofu.
@@ -49,7 +49,14 @@ diagnostics.condition_2: original-id musi być niepuste, a tofu show -json modul
   ID musi mu odpowiadać.
 diagnostics.condition_3: original-id musi być niepuste, a docker inspect rail-worker ID musi mu odpowiadać.
 diagnostics.condition_4: Plan OpenTofu z detailed-exitcode musi zakończyć się kodem 0.
-stages.0.objectives.0.text: Stan OpenTofu zawiera `module.station.docker_container.worker`.
-stages.0.objectives.1.text: Istniejący kontener `rail-worker`, jego zarządzany zasób i wyjście główne
-  `worker_id` zachowują pierwotny ID kontenera.
+stages.0.objectives.0.text: OpenTofu śledzi wszystkie pierwotne obiekty pod wymaganymi adresami modułów; zapisany
+  plan nie zmienia zarządzanych obiektów.
+stages.0.objectives.1.text: Pierwotny `rail-worker`, jego zasób w stanie i wyjście `worker_id` zachowują ID; kontenery
+  tras, sieć, wolumeny, dane rejestrów i wyjście `routes` zachowują pierwotną zgodność.
 stages.0.objectives.2.text: OpenTofu nie zgłasza oczekujących zmian infrastruktury.
+diagnostics.migration_bindings: Powiązania modułów i zapisany plan muszą zachować wszystkie sześć pierwotnych zarządzanych
+  obiektów bez zastępowania.
+diagnostics.migration_identity: Rzeczywista topologia, pierwotne wolumeny, bajty rejestrów i publikowane ID muszą
+  zachować pierwotną zgodność.
+diagnostics.probe_0_0: Bieżące dane nie pozwoliły potwierdzić powiązań modułów i zapisanego planu.
+diagnostics.probe_0_1: Bieżące dane nie pozwoliły potwierdzić zachowanych rzeczywistych ID, danych i wyjść.
