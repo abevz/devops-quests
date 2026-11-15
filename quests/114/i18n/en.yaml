@@ -1,9 +1,8 @@
 title: Service account token boundaries
 brief: |-
-  The reader cannot access its required API data. Restore narrowly scoped access without exposing its credential.
+  The workload cannot access its API data. Restore its short-lived identity and narrow access without exposing credentials.
 
-  Work on the workstation in `~/quest` with the supplied files:
-  - `reader-sa.yaml`, `role.yaml`, `binding.yaml`, `route.yaml`, `reader.yaml`, `api-ca.pem`, `api-endpoint`.
+  Work on the workstation in `~/quest`. The supplied connection inputs are `api-ca.pem` and `api-endpoint`. The live workload and access objects are available through Kubernetes.
 
   **Requirements:**
 
@@ -12,21 +11,45 @@ brief: |-
   - Using its mounted credential and CA verification, the reader receives HTTP `200` and route `north-114` from the existing route configuration.
   - The same reader credential receives HTTP `403` for ConfigMap lists, Secret lists and the separate protected configuration.
 
-  Checks cover these requests and the live Role, not every possible permission or command history.
-debrief: Short-lived projected credentials and least-privilege authorization solve different parts of
-  API access.
-stages.0.brief: Keep the reader credential private and verify the API CA.
-hints.0.text: Authentication checks audience before RBAC authorization.
+  Checks observe the declared projection, live Role and these exact API requests, not every possible permission or editing history.
+debrief: Recipient validation establishes where a credential can authenticate. A namespaced binding connects a workload
+  identity to a minimal Role; testing both allowed and denied requests exposes excessive access.
+stages.0.brief: Recover the workload identity and effective access while keeping credentials private.
+hints.0.text: An API request crosses authentication and authorization. A valid recipient does not grant permission;
+  a minimal Role grants nothing until it is attached to the acting identity.
 hints.1.text: |-
-  The projected volume requests a token for one intended recipient.
-
-  Inspect the supplied inputs and live observations:
+  Inspect the workload identity and its live access relationships. Compare only recipient metadata with the workstation context that already authenticates to this API; never print either bearer token.
 
   ```sh
   kubectl get deployment reader -o yaml
-    kubectl get role reader -o yaml
+  kubectl get role,rolebinding
+  decode_audience='import base64,json,sys; token=sys.stdin.read().strip(); print(json.dumps(json.loads(base64.urlsafe_b64decode(token.split(".")[1]+"==="))["aud"]))'
+  kubectl config view --raw --minify -o json |
+    python3 -I -c 'import json,sys; print(json.load(sys.stdin)["users"][0]["user"]["token"])' |
+    python3 -I -c "$decode_audience"
+  kubectl exec deployment/reader -c worker -- cat /credential/token |
+    python3 -I -c "$decode_audience"
+  unset decode_audience
   ```
-hints.2.text: "Repair only the audience, wait for replacement, and use the supplied CA for HTTPS. The supplied audience refers to a retired service. The API audience is `https://kubernetes.default.svc.cluster.local`.\n\nVerify the result from `~/quest` on the workstation:\n\n- The named route returns `north-114` and HTTP `200`; the other three requests return HTTP `403`. Do not print or save the token.\n\n  ```sh\n  api=$(cat api-endpoint)\n  token=$(kubectl exec deployment/reader -c worker -- cat /credential/token)\n  for path in configmaps/route configmaps secrets configmaps/offlimits; do\n    printf 'header = \"Authorization: Bearer %s\"\\n' \"$token\" |\n      curl --config - --cacert api-ca.pem -sS -w '\\nHTTP %{http_code}\\n' \\\n      \"$api/api/v1/namespaces/$DQ_NAMESPACE/$path\"\n  done\n  unset token\n  ```"
+hints.2.text: |-
+  Verify the allowed read and every denied request with the workload credential and the supplied CA. The route must return north-114 with HTTP 200; the other requests must return HTTP 403.
+
+  `kubectl get role,rolebinding`
+
+  ```sh
+  api=$(cat api-endpoint)
+  token=$(kubectl exec deployment/reader -c worker -- cat /credential/token)
+  printf 'header = "Authorization: Bearer %s"\n' "$token" |
+    curl --config - --cacert api-ca.pem -sS "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route" |
+    jq -r '.data.route // empty'
+  for path in configmaps/route configmaps secrets configmaps/offlimits; do
+    printf '%s ' "$path"
+    printf 'header = "Authorization: Bearer %s"\n' "$token" |
+      curl --config - --cacert api-ca.pem -sS -o /dev/null -w 'HTTP %{http_code}\n' \
+      "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
+  done
+  unset token
+  ```
 phrases.0: I checked the token audience without exposing credentials.
 phrases.1: I used CA-verified HTTPS for the real API request.
 phrases.2: I tested permitted and denied operations.
@@ -40,19 +63,20 @@ diagnostics.automount: Automatic credential mounting must be disabled for reader
 diagnostics.projection: reader projected token must equal path token, audience https://kubernetes.default.svc.cluster.local,
   expirationSeconds 600.
 diagnostics.role: role/reader rules must equal get configmaps resourceNames [route].
-diagnostics.allowed: reader GET configmaps/route must equal HTTP 200.
+diagnostics.allowed: A rejected named read may reflect an invalid recipient or a missing binding to the actual workload
+  identity. The workload must receive HTTP 200.
 diagnostics.value: configmaps/route data.route must equal north-114.
 diagnostics.denied_configmaps: reader GET configmaps must return HTTP 403.
 diagnostics.denied_secrets: reader GET secrets must return HTTP 403.
 diagnostics.denied_configmaps_offlimits: reader GET configmaps/offlimits must return HTTP 403.
-stages.0.objectives.0.text: Inside Deployment `reader`, the mounted API credential is a private projected
-  token at `/credential/token`, valid for the API and requested for `600` seconds; automatic credential
-  mounting remains disabled.
+stages.0.objectives.0.text: Inside Deployment `reader`, the mounted API credential is a private projected token
+  at `/credential/token`, valid for the API and requested for `600` seconds; automatic credential mounting remains
+  disabled.
 stages.0.objectives.1.text: The supplied Role grants only named-read access to the existing route configuration.
-stages.0.objectives.2.text: Using its mounted credential and CA verification, the reader receives HTTP
-  `200` and route `north-114` from the existing route configuration.
-stages.0.objectives.3.text: The same reader credential receives HTTP `403` for ConfigMap lists, Secret
-  lists and the separate protected configuration.
+stages.0.objectives.2.text: Using its mounted credential and CA verification, the reader receives HTTP `200` and
+  route `north-114` from the existing route configuration.
+stages.0.objectives.3.text: The same reader credential receives HTTP `403` for ConfigMap lists, Secret lists and
+  the separate protected configuration.
 diagnostics.probe_0_0: 'The current inputs could not verify this objective: Inside Deployment `reader`, the mounted
   API credential is a private projected token at `/credential/token`, valid for the API and requested for `600`
   seconds; automatic credential mounting remains disabled.'

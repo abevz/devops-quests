@@ -1,66 +1,39 @@
 title: Zasady ponawiania prób Job
-brief: 'Obciążenie wsadowe nadal kończy się błędem walidacji. Ogranicz obsługę niepowodzeń, zachowując tożsamość
-  i dowody awarii.
+brief: |-
+  Walidator kończy się błędem; trzeba przywrócić regularną walidację bez utraty istniejących dowodów awarii.
 
-
-  Pracuj w `~/quest` na workstation. Dostarczone pliki: `job.yaml`.
-
+  Pracuj na workstation w `~/quest` z `batch-contract.json`. Oryginalny Job jest dostępny przez Kubernetes; nie dostarczono kompletnego manifestu regularnego wykonania.
 
   **Wymagania:**
 
-  - Oryginalny Job walidacji zachowuje tożsamość i dostarczone polecenie, wykonuje po jednej próbie i nie uruchamia
-  ponownie uszkodzonego kontenera.
+  - Zachowaj tożsamość i podane polecenie oryginalnego Job walidacji, jedną próbę naraz oraz brak restartów kontenera.
+  - Ogranicz oryginalny Job i regularne wykonania do limitu ponowień `1` i czasu `30` sekund. Każde wykonanie używa podanego obrazu i polecenia dla jednej walidacji.
+  - Regularny walidator określony w kontrakcie jest włączony zgodnie z zadeklarowanym harmonogramem co minutę. Zachowaj aktywne wykonanie zamiast nakładać je lub anulować po kolejnym terminie.
+  - Oryginalny Job i co najmniej jeden bieżący zaplanowany podrzędny Job osiągają `Failed=True` z co najmniej `1` nieudaną próbą i własnym Podem `Failed`, którego `worker` kończy się kodem `1`.
 
-  - Job `importer` ogranicza ponowienia do `1`, a czas wykonania do `30` sekund.
-
-  - Job `importer` osiąga `Failed=True` z co najmniej `1` nieudaną próbą i kontrolowanym Podem `Failed`, którego
-  `worker` kończy się kodem `1`.
-
-
-  Kontroler może zapisywać różne powody lub liczby; sprawdzane są bieżąca tożsamość, ustawienia i dowody awarii,
-  a nie niezmienność polecenia w historii.
-
-  '
-debrief: Nieskuteczne obciążenie pracą zatrzymuje się w przewidywalny sposób, zachowując jednocześnie dowody
-  na potrzeby diagnozy.
-stages.0.brief: Oryginalne obciążenie wsadowe ma kończyć się przewidywalnie z obserwowalnymi dowodami awarii.
-hints.0.text: Trwałego błędu danych nie da się naprawić nieograniczoną liczbą ponownych prób.
-hints.1.text: 'backoffLimit i activeDeadlineSeconds ograniczają różne wymiary.
-
-
-  Sprawdź dostarczone definicje, bieżące zasoby i zdarzenia.
-
+  Testy obserwują bieżącą tożsamość, politykę i dowody awarii, a nie każde wcześniejsze wykonanie ani historię zmian. Zaplanowane wykonanie podrzędne może pojawić się po ponad minucie.
+debrief: Zmiana bieżącego Job nie dostarcza polityki regularnego wykonania. Budowa przyszłego kontrolera i kontrola
+  rzeczywistego nieudanego Job podrzędnego ustalają obie granice bez zastępowania oryginalnych dowodów.
+stages.0.brief: Ogranicz bieżącą awarię i zbuduj ograniczoną regularną walidację.
+hints.0.text: Istniejący Job i szablon przyszłych Job są odrębnymi granicami polityki. Zachowanie bieżącej awarii
+  samo nie ustanawia bezpiecznych regularnych wykonań.
+hints.1.text: |-
+  Sprawdź istniejący Job, jego nieudane Pody i kontrakt. Wykorzystaj obserwowane obciążenie przy budowie przyszłych wykonań; początkowo nie ma regularnego kontrolera.
 
   ```sh
-
-  cat job.yaml
-
+  cat batch-contract.json
+  kubectl get job importer -o yaml
   kubectl describe job importer
-
-  kubectl get pods -l job-name=importer -o yaml
-
-  ```'
-hints.2.text: 'Popraw istniejące limity Job i sprawdź Failed conditions oraz zakończone exit codes.
-
-
-  Sprawdź obserwowany wynik:
-
-
-  ```sh
-
-  kubectl get job importer
-
   kubectl get pods -l job-name=importer
-
+  kubectl logs -l job-name=importer --all-containers=true --prefix=true
   ```
+hints.2.text: |-
+  Sprawdź regularną politykę, zachowany oryginalny Job i ograniczony nieudany Job podrzędny. Powiąż własność z CronJob, a jego nieudany worker Pod z tym Job; worker musi kończyć się kodem 1.
 
-
-  Job ma stan Failed, a kontrolowany Pod zakończył się kodem worker 1; szczegóły zakończenia sprawdź przez
-  podpowiedź 2.
-
-
-  Dostarczone ograniczenia i szczegóły: Oryginalny Job `importer` zachowuje dostarczone polecenie walidacji
-  `worker`, równoległość `1` i zasadę restartu Podów `Never`.'
+  - `kubectl get cronjob validation-cycle -o yaml`
+  - `kubectl get job importer -o yaml`
+  - `kubectl get jobs -o yaml`
+  - `kubectl get pods -o yaml`
 phrases.0: Rozróżniłem liczbę ponownych prób od wykonania deadline.
 phrases.1: Zachowałem uszkodzony Job do diagnozy.
 phrases.2: Sprawdziłem terminal condition i faktyczny kontener exit code.
@@ -73,8 +46,8 @@ questions.1.points.1: activeDeadlineSeconds ogranicza okno wykonania Job.
 questions.1.points.2: Sprawdź sterownik conditions i zakończone kontenery.
 questions.1.prompt: Czy backoffLimit liczy sekundy, które upłynęły?
 diagnostics.uid: original-job-uid musi być niepusty i odpowiadać UID job/importer.
-diagnostics.worker_command: job/importer musi zawierać worker z poleceniem `["sh", "-c", "echo invalid-route
-  >&2; exit 1"]`.
+diagnostics.worker_command: job/importer musi zawierać worker z poleceniem `["sh", "-c", "echo invalid-route >&2;
+  exit 1"]`.
 diagnostics.restart: job/importer restartPolicy musi być równe Never.
 diagnostics.failed_count: job/importer status.failed musi wynosić co najmniej 1.
 diagnostics.failed_condition: job/importer Failed musi być równe True.
@@ -83,8 +56,21 @@ diagnostics.failed_pod: Pod w stanie Failed kontrolowany przez job/importer z pi
 diagnostics.field_backofflimit: job/importer backoffLimit musi być równe 1.
 diagnostics.field_activedeadlineseconds: job/importer activeDeadlineSeconds musi być równe 30.
 diagnostics.field_parallelism: job/importer parallelism musi być równe 1.
-stages.0.objectives.0.text: Oryginalny Job walidacji zachowuje tożsamość i dostarczone polecenie, wykonuje
-  po jednej próbie i nie uruchamia ponownie uszkodzonego kontenera.
-stages.0.objectives.1.text: Job `importer` ogranicza ponowienia do `1`, a czas wykonania do `30` sekund.
-stages.0.objectives.2.text: Job `importer` osiąga `Failed=True` z co najmniej `1` nieudaną próbą i kontrolowanym
-  Podem `Failed`, którego `worker` kończy się kodem `1`.
+stages.0.objectives.0.text: Oryginalny Job walidacji zachowuje tożsamość i dostarczone polecenie, wykonuje po jednej
+  próbie i nie uruchamia ponownie uszkodzonego kontenera.
+stages.0.objectives.1.text: Ogranicz oryginalny Job i regularne wykonania do limitu ponowień `1` i czasu `30` sekund.
+  Każde wykonanie używa podanego obrazu i polecenia dla jednej walidacji. Regularny walidator określony w kontrakcie
+  jest włączony zgodnie z zadeklarowanym harmonogramem co minutę. Zachowaj aktywne wykonanie zamiast nakładać je
+  lub anulować po kolejnym terminie.
+stages.0.objectives.2.text: Oryginalny Job i co najmniej jeden bieżący zaplanowany podrzędny Job osiągają `Failed=True`
+  z co najmniej `1` nieudaną próbą i własnym Podem `Failed`, którego `worker` kończy się kodem `1`.
+diagnostics.batch_current: Nie udało się zaobserwować oryginalnego Job.
+diagnostics.batch_original: Oryginalny Job musi zachować tożsamość i podane obciążenie.
+diagnostics.batch_recurrence: Regularny walidator musi być włączony co minutę i zachowywać aktywne wykonanie bez
+  nakładania.
+diagnostics.batch_template: Regularny szablon musi zachować podane obciążenie i wszystkie granice wykonania.
+diagnostics.batch_child: Nie zaobserwowano bieżącego ograniczonego nieudanego Job należącego do regularnego walidatora.
+diagnostics.batch_failed_pod: Nie zaobserwowano własnego Failed worker Pod z kodem zakończenia 1 dla tego ograniczonego
+  zaplanowanego Job.
+diagnostics.probe_0_1: Bieżące obserwacje nie potwierdzają polityki oryginalnych i regularnych wykonań.
+diagnostics.probe_0_2: Bieżące obserwacje nie potwierdzają oryginalnych i zaplanowanych dowodów awarii.

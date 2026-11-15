@@ -34,27 +34,6 @@ from pathlib import Path
 p=Path(sys.argv[1]);p.write_text(p.read_text().replace('__DQ_APP_IMAGE__',os.environ['DQ_APP_IMAGE']))
 DQ_IMAGE
 kubectl apply -f role.yaml
-cat > binding.yaml <<'DQ_ASSET'
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: reader
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: reader
-subjects:
-- kind: ServiceAccount
-  name: reader
-  namespace: __NAMESPACE__
-DQ_ASSET
-python3 - binding.yaml <<'DQ_IMAGE'
-import os,sys
-from pathlib import Path
-p=Path(sys.argv[1]);p.write_text(p.read_text().replace('__DQ_APP_IMAGE__',os.environ['DQ_APP_IMAGE']))
-DQ_IMAGE
-sed -i "s/__NAMESPACE__/$DQ_NAMESPACE/g" binding.yaml
-kubectl apply -f binding.yaml
 cat > route.yaml <<'DQ_ASSET'
 apiVersion: v1
 kind: ConfigMap
@@ -136,3 +115,6 @@ kubectl rollout status deployment/reader --timeout=90s
 kubectl config view --minify --raw -o json | jq -r '.clusters[0].cluster["certificate-authority-data"]' | base64 -d > api-ca.pem
 kubectl config view --minify -o json | jq -r '.clusters[0].cluster.server' > api-endpoint
 kubectl create configmap offlimits --from-literal=route=closed
+
+# Leave live objects for diagnosis; complete repair manifests are not working inputs.
+rm -f reader-sa.yaml role.yaml binding.yaml route.yaml reader.yaml
