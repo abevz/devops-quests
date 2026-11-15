@@ -1,69 +1,65 @@
-title: Odzyskiwanie modułu
+title: Odzyskiwanie modułów między stanami
 brief: |-
-  Rejestr jest niedostępny pod wymaganym zarządzanym adresem.
+  Odzyskiwanie po podziale modułów jest niepełne. Przywróć zadeklarowane moduły w obu głównych konfiguracjach stanu, zachowując ukończoną pracę.
 
-  Pracuj na workstation w `~/quest` z plikami `main.tf`, `modules/ledger/main.tf`, `safe-state.json`.
+  Pracuj w `~/quest` na stacji roboczej z `main.tf`, `modules/ledger/main.tf`, `safe-state.json`, `infra/main.tf`, `infra/runtime-inputs.json` i `infra/module-contract.json`.
 
   **Wymagania:**
-  - Kopia zapasowa na workstation:
-    - Ścieżka: `~/quest/safe-state.json`.
-    - Dostarczona kopia odzyskiwania `safe-state.json` na workstation pozostaje nienaruszona.
-  - Stan OpenTofu:
-    - Stan OpenTofu zawiera tylko skonfigurowany zasób rejestru.
-  - Wyjścia główne:
-    - Nazwa wyjścia: `ledger_id`.
-    - Wyjście `ledger_id` zachowuje ID zasobu pierwotnie nadany przez dostawcę.
-  - Pliki na workstation:
-    - `~/quest/ledger.txt`: `north-92`.
-  - Zapisany plan odzyskiwania na workstation:
-    - Ścieżka: `~/quest/recovery-plan.json`.
-    - Dokładnie `1` wpis zasobu z akcją `no-op`.
-  - Zbieżność infrastruktury:
-    - Brak oczekujących zmian infrastruktury; kod zakończenia szczegółowego planu `0`.
+  - Dostarczona kopia odzyskiwania `~/quest/safe-state.json` na stacji roboczej pozostaje bez zmian.
+  - Główny stan OpenTofu zawiera tylko skonfigurowany zasób ledger; główne wyjście `ledger_id` zachowuje pierwotne ID providera, a `~/quest/ledger.txt` na stacji roboczej zawiera `north-92`.
+  - Konfiguracja infrastruktury zachowuje nowszy ukończony rekord konserwacji i zarządza pierwotną siecią, wolumenem oraz działającym kontenerem przez dostarczony interfejs modułu. Zachowaj pierwotne rzeczywiste ID, tożsamość utworzenia wolumenu, połączenie z siecią, montowanie i wszystkie bajty pliku wolumenu `/data/ledger` wewnątrz zachowanego kontenera Docker. Zachowaj pierwotne ID providera i ukończone dane input/output rekordu konserwacji.
+  - Wyjście `runtime` infrastruktury podaje rzeczywiste `container_id`, `network_id` i `volume_name` opisane w `infra/module-contract.json`.
+  - Oba stany zachowują własną pierwotną lineage i serial nie mniejszy niż dostarczony. Zachowaj ich początkowe bieżące migawki w `~/quest/before-recovery.tfstate` i `~/quest/infra/before-recovery.tfstate` na stacji roboczej.
+  - Na stacji roboczej `~/quest/recovery-plan.json` zawiera dokładnie jeden pierwotny wpis ledger z akcją `no-op`; `~/quest/infra/recovery-plan.json` obejmuje wszystkie cztery pierwotne zarządzane powiązania z akcjami `no-op`. W planie infrastruktury dozwolone są wpisy data tylko do odczytu.
+  - Nowe szczegółowe plany w obu konfiguracjach kończą się kodem `0`.
 
-  Sprawdzenie bada kopię, bieżący stan i zapisany plan; nie dowodzi historii odzyskiwania ani czasu zapisania planu.
-debrief: Suma kopii, bieżący adres stanu, ID i plik ledger oraz zapisany plan odpowiadają wymaganiom odzyskiwania;
-  końcowy plan nie zawiera zmian.
-stages.0.brief: Rejestr musi spełniać kontrakt wyniku z zapisaną tożsamością i nienaruszoną kopią.
-hints.0.text: Kopia zapasowa stanu jest dowodem; przywrócenie całego pliku może odrzucić nowszy prawidłowy
-  stan.
-hints.1.text: |-
-  Porównaj module.north w backup z module.orphan w obecnym state.
-
-  Sprawdź dostarczoną konfigurację i bieżące obserwacje na workstation:
-
-  ```sh
-  cat main.tf modules/ledger/main.tf
-  tofu state list
-  ls -l safe-state.json
-  ```
-hints.2.text: |-
-  Przenieś bieżący adres modułu do module.station.
-  Zapisz plan binarny i wyeksportuj go przez tofu show -json do wymaganego artefaktu JSON.
-
-  Sprawdź wynik z `~/quest` na workstation:
-
-  - `sha256sum safe-state.json; cat /run/dq/facts/0/safe-state.sha256; jq -r '.resources[] | select(.type=="local_file" and .name=="ledger") | .module + "." + .type + "." + .name' safe-state.json` — Sumy są zgodne, a kopia zawiera `module.north.local_file.ledger`.
-  - `tofu output -raw ledger_id; printf '\n'; cat /run/dq/facts/0/original-id; cat ledger.txt; tofu show -no-color` — ID są zgodne; `ledger.txt` pokazuje `north-92`; stan zawiera tylko `module.station.local_file.ledger`.
-  - `jq -r '.resource_changes[] | .address + " " + (.change.actions | join(","))' recovery-plan.json; tofu plan -input=false -detailed-exitcode -no-color` — Dokładnie jeden zapisany wpis ma akcję `no-op`; bieżący plan kończy się kodem `0`.
+  Testy obserwują bieżącą zawartość kopii, granice stanów, wyjścia, plany oraz fizyczne tożsamości i dane. Nie potwierdzają nieprzerwanej historii ani czasu zapisania planu lub kopii.
+debrief: Odzyskiwanie odtworzyło interfejs modułu i uzgodniło pierwotne powiązania między niezależnymi stanami.
+  Zachowano nowszą konserwację, obie lineage oraz pierwotną fizyczną infrastrukturę i dane.
+stages.0.brief: Przywróć granice modułów i stanów, zachowując pierwotne obiekty i nowszą ukończoną pracę.
+hints.0.text: Pakiet modułu, powiązanie zasobu i granica stanu to różne zagadnienia odzyskiwania. Poprawna stara
+  kopia może pomijać pracę ukończoną w nowszym niezależnym stanie.
+hints.1.text: Porównaj `cat main.tf infra/main.tf infra/module-contract.json`, `find modules infra -type f`, `tofu
+  state list`, `tofu -chdir=infra state pull` i `jq . safe-state.json`. Sprawdź bieżące obiekty Docker i zawartość
+  wolumenu. Oddziel lineage, bieżące powiązania i ukończone ID każdego stanu od starszej kopii; użyj `tofu providers
+  schema -json` i natywnej pomocy dla interfejsów providera i modułu.
+hints.2.text: Odtwórz zadeklarowany interfejs modułu i zachowaj obie bieżące migawki przed zmianą powiązań. Pracuj
+  na kopiach starego backupu i bieżącego stanu docelowego; `tofu state mv -state=... -state-out=...` przenosi tylko
+  brakujące powiązania modułu bez nadpisywania nowszej pracy celu. Wyślij uzgodniony stan ze zwykłymi zabezpieczeniami
+  lineage/serial i popraw skonfigurowany adres głównego stanu. Zapisz i wyeksportuj plan w każdej konfiguracji;
+  sprawdź pierwotne ID i wyłącznie zarządzane akcje `no-op` przed zastosowaniem zmian samych wyjść. Następnie sprawdź
+  kod `0` obu nowych szczegółowych planów i niezmienione bajty wolumenu.
 phrases.0: Zweryfikowałem backup przed użyciem go jako dowodu odzyskiwania.
 phrases.1: Uzgodniłem adresy modułów bez wymiany zasobu.
 phrases.2: Zweryfikowałem identity, outputs i pusty końcowy plan.
-diagnostics.condition_0: /run/dq/facts/0/safe-state.sha256 musi być niepuste, a sha256(safe-state.json)
-  musi mu odpowiadać.
+diagnostics.condition_0: /run/dq/facts/0/safe-state.sha256 musi być niepuste, a sha256(safe-state.json) musi mu
+  odpowiadać.
 diagnostics.condition_1: safe-state.json resources musi zawierać module.north.local_file.ledger.
 diagnostics.condition_2: tofu state list musi być równe module.station.local_file.ledger.
-diagnostics.condition_3: /run/dq/facts/0/original-id musi być niepuste, a tofu output -raw ledger_id musi
-  mu odpowiadać.
+diagnostics.condition_3: /run/dq/facts/0/original-id musi być niepuste, a tofu output -raw ledger_id musi mu odpowiadać.
 diagnostics.condition_4: ledger.txt musi być równe north-92.
 diagnostics.condition_5: recovery-plan.json resource_changes length musi być równe 1.
 diagnostics.condition_6: Każdy wpis w recovery-plan.json resource_changes musi mieć actions ["no-op"].
 diagnostics.condition_7: Plan OpenTofu z detailed-exitcode musi zakończyć się kodem 0.
-stages.0.objectives.0.text: Dostarczona kopia odzyskiwania `safe-state.json` na workstation pozostaje
-  nienaruszona.
+stages.0.objectives.0.text: Dostarczona kopia odzyskiwania `safe-state.json` na workstation pozostaje nienaruszona.
 stages.0.objectives.1.text: Stan OpenTofu zawiera tylko skonfigurowany zasób rejestru.
 stages.0.objectives.2.text: Wyjście `ledger_id` zachowuje ID zasobu pierwotnie nadany przez dostawcę.
 stages.0.objectives.3.text: Na workstation `ledger.txt` zawiera `north-92`.
-stages.0.objectives.4.text: Plik `recovery-plan.json` na workstation zawiera dokładnie jeden wpis zasobu
-  z akcją `no-op`.
-stages.0.objectives.5.text: OpenTofu nie zgłasza oczekujących zmian infrastruktury.
+stages.0.objectives.4.text: Zapisany główny plan zawiera dokładnie jeden pierwotny ledger z `no-op`; plan infrastruktury
+  zawiera wszystkie cztery pierwotne zarządzane powiązania z `no-op`.
+stages.0.objectives.5.text: Oba stany osiągają zbieżność z zachowanymi lineage, początkowymi migawkami, nowszą tożsamością
+  konserwacji oraz pierwotną infrastrukturą i danymi.
+diagnostics.recovery_plans: Oba zapisane plany muszą obejmować bieżące pierwotne zarządzane powiązania z no-op i
+  pierwotnymi ID.
+diagnostics.recovery_target: Stan infrastruktury i interfejs runtime muszą zachować pierwotne zasoby modułu oraz
+  prawdziwy nowszy rekord konserwacji.
+diagnostics.recovery_identity: Zachowaj pierwotne ID ledger providera, rzeczywiste ID Docker, podłączoną sieć i
+  tożsamość utworzenia pierwotnego zamontowanego wolumenu.
+diagnostics.recovery_lineage: Zachowaj pierwotną lineage każdego stanu bez cofania serial.
+diagnostics.recovery_data: Zachowaj każdy pierwotny bajt pliku /data/ledger na zachowanym wolumenie.
+diagnostics.recovery_backups: Zachowaj każdą początkową bieżącą migawkę jako before-recovery.tfstate i infra/before-recovery.tfstate.
+diagnostics.recovery_convergence: Konfiguracja infrastruktury także musi zwracać kod 0 nowego szczegółowego planu.
+diagnostics.probe_0_4: Zapisany główny plan zawiera dokładnie jeden pierwotny ledger z `no-op`; plan infrastruktury
+  zawiera wszystkie cztery pierwotne zarządzane powiązania z `no-op`.
+diagnostics.probe_0_5: Oba stany osiągają zbieżność z zachowanymi lineage, początkowymi migawkami, nowszą tożsamością
+  konserwacji oraz pierwotną infrastrukturą i danymi.
