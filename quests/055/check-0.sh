@@ -4,6 +4,13 @@ failed=0
 set +e
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+cd ~/quest
+timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_ANSIBLE_055_0'
 dq_group_failed=0
 set +e
 (
@@ -35,6 +42,78 @@ dq_group_failed=1
 fi
 set -e
 test "$dq_group_failed" -eq 0
+DQ_LEGACY_ANSIBLE_055_0
+python3 -I - <<'DQ_PROFILE_SCOPE'
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+from dq_check import ansible_recap
+
+failed = False
+deadline = time.monotonic() + 10
+
+
+def require(value, marker):
+    global failed
+    if not value:
+        print('Input contract is unmet: ✗ [DQ:' + marker + ']')
+        failed = True
+
+
+def command(args, env=None):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ValueError('Observation budget exhausted')
+    return subprocess.run(args, env=env, capture_output=True, text=True, timeout=remaining)
+
+
+def supplied(name):
+    return json.loads((Path('/run/dq/facts/0') / name).read_text())
+
+
+def local_inventory(names):
+    return {'all': {'hosts': {name: {'ansible_connection': 'local', 'ansible_python_interpreter': '/usr/bin/python3'} for name in names}}}
+
+
+def subset(actual, expected):
+    return isinstance(actual, dict) and all(actual.get(key) == value for key, value in expected.items())
+try:
+    intent = supplied('profile-intent.json')
+    with tempfile.TemporaryDirectory(prefix='dq-profile-check-') as folder:
+        root = Path(folder)
+        task = {'name': 'Observe evaluated inventory inputs', 'delegate_to': 'localhost',
+                'vars': {'ansible_connection': 'local', 'ansible_python_interpreter': '/usr/bin/python3'},
+                'ansible.builtin.copy': {'dest': str(root) + '/{{ inventory_hostname }}.json',
+                    'content': "{{ {'route': route_version, 'profile': service_profile} | to_json }}", 'mode': '0600'}}
+        (root / 'play.json').write_text(json.dumps([{'hosts': 'fleet', 'gather_facts': False, 'become': False, 'tasks': [task]}]))
+        result = command(['/opt/ansible/bin/ansible-playbook', '-i', str(Path('inventory.ini').resolve()), str(root / 'play.json')], dict(os.environ, ANSIBLE_CONFIG=str(Path('ansible.cfg').resolve())))
+        require(result.returncode == 0, 'profile_inventory')
+        if result.returncode == 0:
+            for host, expected in intent['profiles'].items():
+                actual = json.loads((root / (host + '.json')).read_text())
+                require(actual.get('route') == intent['message'] and subset(actual.get('profile'), expected), 'profile_scope')
+        suffix = os.environ['DQ_NAMESPACE'].removeprefix('dq-')
+        for host, expected in intent['profiles'].items():
+            current = command(['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=1', '-o', 'ConnectionAttempts=1', '-p', '2222', 'root@' + host + '-' + suffix, 'cat', intent['profilePath']])
+            require(current.returncode == 0 and subset(json.loads(current.stdout), expected), 'profile_delivery')
+except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError):
+    require(False, 'profile_observation')
+sys.exit(int(failed))
+DQ_PROFILE_SCOPE
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
