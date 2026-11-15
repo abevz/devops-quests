@@ -1,46 +1,47 @@
 title: Service VIP и путь kube-proxy
 brief: |-
-  Путь через Service board недоступен. Определите неисправность по предоставленным данным и восстановите оба пути потребителя.
+  Путь через Service табло недоступен. Определите проблему по предоставленным наблюдениям и восстановите оба пути потребителя, сохранив идентичность управляемых объектов.
 
-  Работайте на workstation в `~/quest` с предоставленными файлами:
-  - `board.yaml`, `client.yaml`, `service.yaml`, `diagnosis.json`, `proxy-observation.json`.
+  Работайте на рабочей станции в `~/quest` с предоставленными файлами:
+  - `diagnosis.json`.
+  - `proxy-observation.json`.
+  - `vip-contract.json`.
 
-  **Requirements:**
+  **Требования:**
 
   - `diagnosis.json` на рабочей станции содержит неисправность, установленную по предоставленным данным.
-  - Существующий Service board достигает только предоставленной нагрузки board и имеет готовый endpoint EndpointSlice.
+  - Существующий Service board достигает только предоставленной нагрузки board и имеет готовый endpoint EndpointSlice. Сохраните исходные UID и VIP Service, исходные Deployment и предоставленные образы. Желаемая адресация Service и каждая действующая готовая цель EndpointSlice должны вести на объявленный интерфейс приложения; каждая цель принадлежит текущему готовому Pod предоставленной нагрузки по `vip-contract.json`.
   - Из Deployment `client` и IP Pod `board`, и VIP Service на порту `8080` возвращают `north-118`.
   - Предоставленное наблюдение прокси сообщает о готовности в режиме `iptables`, `nftables` или `ipvs`.
 
-  Готовая конечная точка не устанавливает идентичность её цели; текущие результаты не доказывают историю изменений узла или DNS. Не изменяйте kube-proxy, правила узла и глобальный DNS.
-debrief: Абстракция Service сама не запускает слушающий процесс. Реализация прокси и выбор endpoints —
-  разные уровни.
+  Запись диагноза — ограниченная классификация, а не полный разбор инцидента. Текущие проверки не доказывают историю изменений. Не меняйте kube-proxy, правила узла и глобальный DNS.
+debrief: Проверки сравнили ограниченную классификацию проблемы, идентичность Service/VIP и нагрузок, текущие принадлежащие
+  им endpoint, соответствие интерфейсов и оба реальных пути потребителя.
 stages.0.brief: Ограничьте восстановление путём Service в этом bay.
-hints.0.text: Рабочий прямой запрос к Pod отделяет здоровье приложения от выбора Service.
+hints.0.text: Селектор Service, готовый endpoint и работающий интерфейс приложения описывают разные слои. Готовность
+  endpoint не проверяет listener и не устанавливает принадлежность. Сопоставьте весь путь, прежде чем обвинять proxy.
 hints.1.text: |-
-  Service без готовых endpoints не направит запрос к нужному backend.
-
-  Изучите предоставленные файлы и живые наблюдения:
+  Сопоставьте предоставленное наблюдение proxy с выбором Service, текущими портами и идентичностью целей EndpointSlice и путём приложения:
 
   ```sh
-  cat diagnosis.json proxy-observation.json
-    kubectl get service board -o yaml
-    kubectl get endpointslices -l kubernetes.io/service-name=board -o yaml
+  cat diagnosis.json proxy-observation.json vip-contract.json
+  kubectl get service board -o yaml
+  kubectl get endpointslices -l kubernetes.io/service-name=board -o yaml
+  kubectl get deployment,replicaset,pods -o yaml
   ```
 hints.2.text: |-
-  Прочитайте неизменяемое наблюдение прокси, запишите selector и исправьте локальный Service.
+  Проверьте сохранённые VIP и идентичность нагрузок, реальную принадлежность endpoint и соответствие интерфейсов, затем ответы по прямому Pod IP и Service VIP:
 
-  Проверьте результат из `~/quest` на workstation:
-
-  - Оба пути потребителя возвращают `north-118`.
-
-    ```sh
-    ip=$(kubectl get pods -l app=board -o jsonpath='{.items[0].status.podIP}')
-    vip=$(kubectl get service board -o jsonpath='{.spec.clusterIP}')
-    for address in "$ip" "$vip"; do
-      kubectl exec deployment/client -- wget -qO- -T 3 "http://$address:8080"
-    done
-    ```
+  ```sh
+  kubectl get service board -o yaml
+  kubectl get endpointslices -l kubernetes.io/service-name=board -o yaml
+  kubectl get deployment,replicaset,pods -o yaml
+  ip=$(kubectl get pods -l app=board -o jsonpath='{.items[0].status.podIP}')
+  vip=$(kubectl get service board -o jsonpath='{.spec.clusterIP}')
+  for address in "$ip" "$vip"; do
+   kubectl exec deployment/client -- wget -qO- -T 3 "http://$address:8080"
+  done
+  ```
 phrases.0: Я сравнил трафик к Pod IP и Service VIP.
 phrases.1: Я изучил готовые endpoints до обвинения прокси.
 phrases.2: Я сохранил правила маршрутизации узла.
@@ -57,13 +58,19 @@ diagnostics.pod: Запрос к IP Pod board на порту 8080 должен 
 diagnostics.vip: Запрос к VIP Service board на порту 8080 должен вернуть north-118.
 diagnostics.proxy_ready: proxy observation ready должен совпадать с true.
 diagnostics.proxy_mode: Наблюдаемый режим proxy должен быть iptables, nftables или ipvs.
-stages.0.objectives.0.text: '`diagnosis.json` на рабочей станции содержит неисправность, установленную
-  по предоставленным данным.'
-stages.0.objectives.1.text: Существующий Service board достигает только предоставленной нагрузки board
-  и имеет готовый endpoint EndpointSlice.
-stages.0.objectives.2.text: Из Deployment `client` и IP Pod `board`, и VIP Service на порту `8080` возвращают
-  `north-118`.
-stages.0.objectives.3.text: Предоставленное наблюдение прокси сообщает о готовности в режиме `iptables`,
-  `nftables` или `ipvs`.
-diagnostics.probe_0_1: 'Текущие данные не позволили проверить эту цель: Существующий Service board достигает только
-  предоставленной нагрузки board и имеет готовый endpoint EndpointSlice.'
+stages.0.objectives.0.text: '`diagnosis.json` на рабочей станции содержит неисправность, установленную по предоставленным
+  данным.'
+stages.0.objectives.1.text: Существующий Service board достигает только предоставленной нагрузки board и имеет готовый
+  endpoint EndpointSlice. Сохраните исходные UID и VIP Service, исходные Deployment и предоставленные образы. Желаемая
+  адресация Service и каждая действующая готовая цель EndpointSlice должны вести на объявленный интерфейс приложения;
+  каждая цель принадлежит текущему готовому Pod предоставленной нагрузки по `vip-contract.json`.
+stages.0.objectives.2.text: Из Deployment `client` и IP Pod `board`, и VIP Service на порту `8080` возвращают `north-118`.
+stages.0.objectives.3.text: Предоставленное наблюдение прокси сообщает о готовности в режиме `iptables`, `nftables`
+  или `ipvs`.
+diagnostics.probe_0_1: Не удалось проверить текущий Service и соответствие endpoint.
+diagnostics.vip_identity: Изменились исходные UID/VIP Service, идентичность предоставленной нагрузки или образ приложения.
+diagnostics.vip_interface: Желаемая цель Service или действующий порт endpoint не соответствует объявленному интерфейсу
+  приложения.
+diagnostics.vip_owner: Действующий EndpointSlice не принадлежит исходному Service.
+diagnostics.vip_target: Действующий endpoint не указывает на текущий готовый Pod предоставленного приложения и его
+  реальный адрес.

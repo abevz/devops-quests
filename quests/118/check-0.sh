@@ -19,6 +19,12 @@ trap 'rm -f "$dq_probe_output"' EXIT
 set +e
 (
 set -euo pipefail
+timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_NETWORK_118_1'
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -57,6 +63,151 @@ set -e
 cat "$dq_probe_output"
 if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
 printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
+DQ_LEGACY_NETWORK_118_1
+python3 -I - <<'DQ_VIP_ENDPOINTS'
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from dq_check import current_pods, pod_worker, selector_matches, workload_worker
+
+failed = False
+deadline = time.monotonic() + 10
+namespace = os.environ['DQ_NAMESPACE']
+
+
+def require(value, marker):
+    global failed
+    if not value:
+        print('Network condition is unmet: ✗ [DQ:' + marker + ']')
+        failed = True
+
+
+def command(arguments):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ValueError('Observation budget exhausted')
+    result = subprocess.run(arguments, capture_output=True, text=True,
+                            timeout=min(6, remaining))
+    if result.returncode:
+        raise ValueError('Observation unavailable')
+    return result.stdout
+
+
+def get(kind, name=None):
+    args = ['kubectl', 'get', kind]
+    if name is not None:
+        args.append(name)
+    return json.loads(command(args + ['-o', 'json']))
+
+
+def resource(items, name):
+    matches = [item for item in items if item.get('metadata', {}).get('name') == name]
+    if len(matches) != 1:
+        raise ValueError('Resource identity')
+    return matches[0]
+
+
+def same_image(actual, expected):
+    digest = expected.partition('@')[2]
+    return actual == expected or (bool(digest) and isinstance(actual, str)
+                                  and actual.partition('@')[2] == digest)
+
+
+def preserved(facts, deployments, replicasets=None, pods=None):
+    for name, identity in facts['deployments'].items():
+        deployment = resource(deployments['items'], name)
+        if deployment['metadata']['uid'] != identity['uid'] or not same_image(workload_worker(deployment).get('image'), identity['image']):
+            return False
+        if replicasets is not None and pods is not None:
+            if any(not same_image(pod_worker(pod).get('image'), identity['image'])
+                   for pod in current_pods(deployment, replicasets, pods)):
+                return False
+    return True
+
+
+def ready(pod):
+    return pod.get('status', {}).get('phase') == 'Running' and any(
+        condition.get('type') == 'Ready' and condition.get('status') == 'True'
+        for condition in pod.get('status', {}).get('conditions', []))
+try:
+    facts = json.loads(Path('/run/dq/facts/0/vip-identities.json').read_text())
+    contract = facts['contract']
+    service = get('service', contract['service'])
+    deployments = get('deployments')
+    replicasets = get('replicasets')
+    pods = get('pods')
+    slices = get('endpointslices')
+    require(service['metadata']['uid'] == facts['serviceUID']
+            and service['spec']['clusterIP'] == facts['vip']
+            and preserved(facts, deployments, replicasets, pods), 'vip_identity')
+    ports = [port for port in service['spec']['ports']
+             if port.get('port') == contract['servicePort']
+             and port.get('protocol', 'TCP') == 'TCP']
+    require(len(ports) == 1, 'vip_interface')
+    board = resource(deployments['items'], contract['protectedWorkload'])
+    targets = {pod['metadata']['uid']: pod for pod in current_pods(board, replicasets, pods)
+               if ready(pod)}
+    def maps_to_application(spec, target):
+        if type(target) is int:
+            return target == contract['applicationPort']
+        if not isinstance(target, str):
+            return False
+        matches = [port.get('containerPort') for container in spec.get('containers', [])
+                   for port in container.get('ports', [])
+                   if port.get('name') == target and port.get('protocol', 'TCP') == 'TCP']
+        return matches == [contract['applicationPort']]
+
+    if len(ports) == 1:
+        desired = ports[0].get('targetPort', ports[0]['port'])
+        require(maps_to_application(board['spec']['template']['spec'], desired)
+                and all(maps_to_application(pod['spec'], desired) for pod in targets.values()),
+                'vip_interface')
+    active = 0
+    for item in slices['items']:
+        if item.get('metadata', {}).get('labels', {}).get('kubernetes.io/service-name') != contract['service']:
+            continue
+        for endpoint in item.get('endpoints', []):
+            condition = endpoint.get('conditions', {})
+            if condition.get('ready') is False or condition.get('terminating') is True:
+                continue
+            active += 1
+            require(any(owner.get('kind') == 'Service' and owner.get('controller') is True
+                        and owner.get('uid') == facts['serviceUID']
+                        for owner in item['metadata'].get('ownerReferences', [])), 'vip_owner')
+            target = endpoint.get('targetRef', {})
+            pod = targets.get(target.get('uid'))
+            require(pod is not None and target.get('kind', 'Pod') == 'Pod'
+                    and target.get('namespace') in (None, '', namespace), 'vip_target')
+            if pod is not None:
+                addresses = {entry['ip'] for entry in pod.get('status', {}).get('podIPs', [])}
+                if pod.get('status', {}).get('podIP'):
+                    addresses.add(pod['status']['podIP'])
+                require(bool(endpoint.get('addresses')) and set(endpoint['addresses']) <= addresses,
+                        'vip_target')
+            if len(ports) == 1:
+                require(any(port.get('port') == contract['applicationPort']
+                            and port.get('protocol', 'TCP') == 'TCP'
+                            and port.get('name') == ports[0].get('name')
+                            for port in item.get('ports', [])), 'vip_interface')
+    require(active > 0, 'vip_target')
+except (KeyError, ValueError, TypeError, AttributeError, OSError, subprocess.SubprocessError):
+    require(False, 'vip_target')
+sys.exit(failed)
+DQ_VIP_ENDPOINTS
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
 fi
 rm -f "$dq_probe_output"
 trap - EXIT

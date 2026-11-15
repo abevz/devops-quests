@@ -83,7 +83,7 @@ spec:
     metadata:
       labels:
         app: dispatcher
-        role: dispatcher
+        role: retired
     spec:
       securityContext:
         runAsNonRoot: true
@@ -111,6 +111,7 @@ spec:
           capabilities:
             drop:
             - ALL
+      terminationGracePeriodSeconds: 1
 DQ_ASSET
 python3 - dispatcher.yaml <<'DQ_IMAGE'
 import os,sys
@@ -197,3 +198,27 @@ kubectl rollout status deployment/board --timeout=60s
 kubectl rollout status deployment/dispatcher --timeout=60s
 kubectl rollout status deployment/visitor --timeout=60s
 sleep 3
+python3 -I - <<'DQ_ISOLATION_SEED'
+import json,subprocess
+from pathlib import Path
+def get(kind,name):
+    return json.loads(subprocess.check_output(['kubectl','get',kind,name,'-o','json'],text=True))
+def deployments(names):
+    result={}
+    for name in names:
+        value=get('deployment',name)
+        result[name]={'uid':value['metadata']['uid'],
+                      'image':next(item['image'] for item in value['spec']['template']['spec']['containers'] if item['name']=='worker')}
+    return result
+
+contract={'schema':1,'policy':'board-ingress','permittedCaller':'dispatcher',
+          'protectedWorkload':'board','excludedCaller':'visitor',
+          'preserveExistingPolicyAndWorkloads':True,'preserveProvidedWorkerImages':True,
+          'desiredAndCurrentCallerMatchRetainedPolicy':True,'currentCallerPodsReady':True,
+          'observesCurrentStateOnly':True}
+facts={'contract':contract,'policyUID':get('networkpolicy','board-ingress')['metadata']['uid'],
+       'deployments':deployments(['board','dispatcher','visitor'])}
+Path('isolation-contract.json').write_text(json.dumps(contract,indent=2)+'\n')
+Path('isolation-identities.json').write_text(json.dumps(facts)+'\n')
+DQ_ISOLATION_SEED
+rm -f board.yaml service.yaml dispatcher.yaml visitor.yaml policy.yaml

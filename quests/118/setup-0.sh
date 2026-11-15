@@ -110,7 +110,7 @@ spec:
   ports:
   - name: http
     port: 8080
-    targetPort: 8080
+    targetPort: 8099
 DQ_ASSET
 python3 - service.yaml <<'DQ_IMAGE'
 import os,sys
@@ -123,3 +123,27 @@ kubectl rollout status deployment/client --timeout=90s
 cat > diagnosis.json <<'DIAGNOSIS'
 {"fault":"proxy-down"}
 DIAGNOSIS
+python3 -I - <<'DQ_VIP_SEED'
+import json,subprocess
+from pathlib import Path
+def get(kind,name):
+    return json.loads(subprocess.check_output(['kubectl','get',kind,name,'-o','json'],text=True))
+def deployments(names):
+    result={}
+    for name in names:
+        value=get('deployment',name)
+        result[name]={'uid':value['metadata']['uid'],
+                      'image':next(item['image'] for item in value['spec']['template']['spec']['containers'] if item['name']=='worker')}
+    return result
+
+service=get('service','board')
+contract={'schema':1,'service':'board','protectedWorkload':'board','caller':'client',
+          'servicePort':8080,'applicationPort':8080,'preserveServiceUIDAndVIP':True,
+          'preserveExistingWorkloads':True,'preserveProvidedWorkerImages':True,
+          'currentOwnedEndpointTargets':True,'desiredAndEffectiveTargetMapping':True,'observesCurrentStateOnly':True}
+facts={'contract':contract,'serviceUID':service['metadata']['uid'],'vip':service['spec']['clusterIP'],
+       'deployments':deployments(['board','client'])}
+Path('vip-contract.json').write_text(json.dumps(contract,indent=2)+'\n')
+Path('vip-identities.json').write_text(json.dumps(facts)+'\n')
+DQ_VIP_SEED
+rm -f board.yaml service.yaml client.yaml

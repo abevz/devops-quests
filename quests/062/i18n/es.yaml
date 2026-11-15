@@ -1,50 +1,55 @@
 title: NetworkPolicy
 brief: |-
-  El endpoint HTTP debe estar disponible para la carga permitida y aislado de otros solicitantes. La red de la bahía aplica el aislamiento del tráfico.
+  El tablero protegido no es accesible para el solicitante permitido. Recupera un acceso limitado conservando el aislamiento del invitado.
 
-  Trabaja en la workstation en `~/quest` con los archivos suministrados:
-  - `board.yaml`, `service.yaml`, `dispatcher.yaml`, `visitor.yaml`, `policy.yaml`.
+  Trabaja en la estación de trabajo, en `~/quest`, con los archivos suministrados:
+  - `isolation-contract.json`.
 
   **Requisitos:**
 
-  - Permanece exactamente una NetworkPolicy en la bahía.
-  - La política existente conserva la carga protegida y el ámbito de clientes permitidos:
-    - Solo se permite tráfico HTTP entrante hacia ese servicio.
-    - La política se aplica solo a ingress.
-  - Desde el Deployment `dispatcher`, `http://board:8080` devuelve `north-62`; desde el Deployment `visitor`, el mismo endpoint está bloqueado.
+  - La NetworkPolicy existente conserva su carga protegida y el ámbito de clientes permitidos, autorizando solo tráfico HTTP entrante para ese servicio. Conserva las identidades de la política y Deployments originales y las imágenes suministradas. La plantilla de Pod deseada del solicitante permitido y cada Pod actual listo deben pertenecer al ámbito de origen de la política conservada según `isolation-contract.json`.
+  - Existe exactamente una NetworkPolicy en el entorno.
+  - HTTP desde Deployment `dispatcher` a `http://board:8080` devuelve `north-62`.
+  - HTTP desde el Deployment `visitor` a `http://board:8080` está bloqueado.
 
-  Las pruebas de tráfico cubren los dos clientes suministrados; no prueban todos los clientes posibles ni rutas salientes.
-debrief: El servicio route se restableció mientras que un client no relacionado permaneció aislado.
+  Las comprobaciones observan estado deseado actual, pertenencia de Pods y tráfico, no el historial de etiquetas. Conserva el límite original solo de entrada y cambia únicamente este bay.
+debrief: Las comprobaciones compararon la política limitada original, identidades conservadas, pertenencia deseada
+  y actual del solicitante y tráfico real permitido y denegado.
 stages.0.brief: Conserva el límite de aislamiento de la política solo para tráfico entrante.
-stages.0.objectives.0.text: La NetworkPolicy existente conserva su carga protegida y el ámbito de clientes
-  permitidos, autorizando solo tráfico HTTP entrante para ese servicio.
+stages.0.objectives.0.text: La NetworkPolicy existente conserva su carga protegida y el ámbito de clientes permitidos,
+  autorizando solo tráfico HTTP entrante para ese servicio. Conserva las identidades de la política y Deployments
+  originales y las imágenes suministradas. La plantilla de Pod deseada del solicitante permitido y cada Pod actual
+  listo deben pertenecer al ámbito de origen de la política conservada según `isolation-contract.json`.
 stages.0.objectives.1.text: Existe exactamente una NetworkPolicy en el entorno.
 stages.0.objectives.2.text: HTTP desde Deployment `dispatcher` a `http://board:8080` devuelve `north-62`.
 stages.0.objectives.3.text: HTTP desde el Deployment `visitor` a `http://board:8080` está bloqueado.
-hints.0.text: Un Service en buen estado no omite Pod ingress policy.
+hints.0.text: Una política selecciona Pods destino y permite fuentes mediante otro selector. Las etiquetas de un
+  Pod actual y de una plantilla de Deployment tienen vidas distintas; ampliar el límite oculta la dependencia en
+  vez de repararla.
 hints.1.text: |-
-  Policies son aditivos; allow-all rompería el aislamiento.
-
-  Inspecciona los datos suministrados y las observaciones activas:
+  Compara el ámbito completo de la política, la plantilla deseada del solicitante y sus Pods actuales. Estos objetos ya existen:
 
   ```sh
+  cat isolation-contract.json
   kubectl get networkpolicy -o yaml
+  kubectl get deployments -o yaml
   kubectl get pods --show-labels
   ```
 hints.2.text: |-
-  La política suministrada permite Pods dispatcher en TCP 9090 en lugar de HTTP 8080. Cambia el puerto permitido a 8080 y prueba clientes permitidos y bloqueados.
+  Verifica cantidad e identidades de políticas, pertenencia deseada y actual del solicitante, respuesta permitida y rechazo de la petición del invitado:
 
-  Verifica el resultado desde `~/quest` en la workstation:
-
-  Ejecuta estos comandos de observación desde `~/quest` en la workstation.
-  - `kubectl exec deployment/dispatcher -c worker -- wget -qO- -T 3 http://board:8080` — El solicitante permitido recibe `north-62`.
-  - `kubectl exec deployment/visitor -c worker -- wget -qO- -T 2 http://board:8080` — El solicitante aislado no puede conectarse; el comando debe fallar.
-  - Existe exactamente una política y su destino, fuentes permitidas, dirección y puerto coinciden con Requisitos.
-
-    ```sh
-    kubectl get networkpolicy
-    kubectl get networkpolicy board-ingress -o yaml
-    ```
+  ```sh
+  kubectl get networkpolicy -o name
+  kubectl get deployment dispatcher -o yaml
+  kubectl get pods -l app=dispatcher --show-labels
+  kubectl rollout status deployment/dispatcher --timeout=90s
+  kubectl exec deployment/dispatcher -- wget -qO- -T 3 http://board:8080
+  if kubectl exec deployment/visitor -- wget -qO- -T 3 http://board:8080; then
+   printf '%s\n' 'unexpected guest access'
+  else
+   printf '%s\n' 'guest denied'
+  fi
+  ```
 phrases.0: Verifiqué la fuente selectors, la dirección y los puertos por separado.
 phrases.1: Probé un client denegado y uno permitido.
 phrases.2: Evité el aditivo allow-all policies durante la recuperación.
@@ -56,5 +61,11 @@ questions.1.points.0: La disponibilidad no prueba el límite de acceso.
 questions.1.points.1: Selectors puede incluir Pods adicionales.
 questions.1.points.2: El CNI debe aplicar policy en el tráfico real.
 questions.1.prompt: ¿Por qué probar un client rechazado después de abrir una ruta de servicio?
-diagnostics.probe_0_0: 'Los datos actuales no permiten verificar este objetivo: La NetworkPolicy existente conserva
-  su carga protegida y el ámbito de clientes permitidos, autorizando solo tráfico HTTP entrante para ese servicio.'
+diagnostics.probe_0_0: No se pudo verificar el ámbito limitado de entrada o la pertenencia deseada y actual del
+  solicitante.
+diagnostics.isolation_identity: Cambió la política de entrada original, una identidad de carga suministrada o una
+  imagen de aplicación.
+diagnostics.isolation_template: La plantilla deseada del solicitante no coincide con el selector de fuentes permitidas
+  de la política conservada.
+diagnostics.isolation_current: Faltan Pods actuales del solicitante, no están listos o quedan fuera del ámbito de
+  origen conservado.

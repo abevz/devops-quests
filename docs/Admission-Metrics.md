@@ -2,7 +2,7 @@
 
 ResourceQuota учитывает всех admitted-потребителей namespace. LimitRange задаёт defaults при admission; его изменение не переписывает существующие Pod. Замена Deployment или surge может потребовать бюджет, пока старые Pod его занимают. Сопоставляйте использование квоты, оба шаблона, admitted-ресурсы и сообщения условий ReplicaSet. Согласуйте поколения ресурсов в фиксированном бюджете. CPU defaults и текущая admitted-память — отдельные наблюдения, не доказательство истории или node capacity.
 
-В задании 127 Service сопоставляет свой порт с целевым портом подходящих Pod. Prometheus периодически опрашивает настроенный endpoint и сохраняет временные ряды, различаемые метками. Gauge — текущее значение: используйте `sum` и `count` для `station_queue_depth{job="board",route="north"}`, а не `rate`. Изучите `metrics.yaml`, Service и `prometheus-target.json`, исправьте порт и дождитесь опроса. Запросите `up`, сумму и число gauge и состояние цели по приватному URL. Один готовый Pod не доказывает опрос или сохранённую метрику. Текущие результаты не доказывают, какая правка сделана.
+В задании 127 транспорт scrape, метки сохранённых рядов и смысл запросов потребителей имеют разные сроки жизни. Gauge описывает текущее значение; count и sum должны относиться к нужной области рядов. Здоровые scrape targets не обновляют старую конфигурацию потребителя. Проследите работающий exporter, приватный Prometheus и обоих потребителей: желаемые входы, окружение текущих Pod, предоставленный код опроса, выдаваемый агрегат и растущий счётчик наблюдений. Текущие снимки и прогресс подтверждают текущую работу, но не всю историю запросов.
 
 Источники: [LimitRange](https://kubernetes.io/docs/concepts/policy/limit-range/), [ResourceQuota](https://kubernetes.io/docs/concepts/policy/resource-quotas/), [запросы Prometheus](https://prometheus.io/docs/prometheus/latest/querying/basics/).
 
@@ -23,6 +23,8 @@ cd ~/quest
 kubectl get service board -o yaml
 url=$(jq -r .url prometheus-target.json)
 kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
+cat observer-contract.json
+kubectl get deployment,configmap,pods -o yaml
 ```
 
 В квесте 121 fail-closed admission отклоняет запросы, если validating webhook недоступен; это отличается от явного отказа. Запросите ограниченное исправление restore-path, не меняя конфигурацию только для чтения, сохраните CA и область namespace и примените north-121. Проверьте готовность и HTTP, затем серверными dry-run проверьте допустимый маршрут и отказ для closed.

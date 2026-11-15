@@ -1,47 +1,48 @@
 title: Ruta de datos Service VIP y kube-proxy
 brief: |-
-  La ruta por el Service board no está disponible. Identifique el fallo con las pruebas suministradas y restaure ambas rutas del consumidor.
+  La ruta del Service del tablero no está disponible. Identifica el fallo mediante las observaciones suministradas y recupera ambos caminos conservando las identidades gestionadas.
 
-  Trabaja en la workstation en `~/quest` con los archivos suministrados:
-  - `board.yaml`, `client.yaml`, `service.yaml`, `diagnosis.json`, `proxy-observation.json`.
+  Trabaja en la estación de trabajo, en `~/quest`, con los archivos suministrados:
+  - `diagnosis.json`.
+  - `proxy-observation.json`.
+  - `vip-contract.json`.
 
-  **Requirements:**
+  **Requisitos:**
 
   - `diagnosis.json` en la estación de trabajo registra el fallo identificado a partir de las pruebas suministradas.
-  - El Service board existente alcanza solo la carga board suministrada y tiene un endpoint EndpointSlice listo.
+  - El Service board existente alcanza solo la carga board suministrada y tiene un endpoint EndpointSlice listo. Conserva UID y VIP originales del Service, Deployments originales e imágenes suministradas. El destino deseado del Service y cada destino listo efectivo de EndpointSlice deben corresponder a la interfaz declarada; cada destino pertenece a un Pod actual listo de la carga suministrada según `vip-contract.json`.
   - Desde el Deployment `client`, tanto una IP de Pod `board` como la VIP del Service en el puerto `8080` devuelven `north-118`.
   - La observación suministrada del proxy indica disponibilidad en modo `iptables`, `nftables` o `ipvs`.
 
-  Un endpoint listo no establece la identidad de su destino; los resultados actuales no prueban el historial del nodo o DNS. No modifique kube-proxy, reglas del nodo ni DNS global.
-debrief: La abstracción Service no inicia por sí misma un proceso de escucha. La implementación de proxy
-  y la selección de puntos finales son capas diferentes.
+  El registro de diagnóstico es una clasificación acotada, no un análisis completo del incidente. Las comprobaciones actuales no prueban el historial. No cambies kube-proxy, reglas del nodo ni DNS global.
+debrief: Las comprobaciones compararon diagnóstico acotado, identidades de Service/VIP y cargas, endpoints actuales
+  pertenecientes, correspondencia de interfaces y ambos caminos reales.
 stages.0.brief: Limita la recuperación a la ruta del Service de este bay.
-hints.0.text: Una solicitud Pod directa que funcione separa el estado de la aplicación de la selección
-  de Service.
+hints.0.text: Selector de Service, endpoint listo e interfaz de aplicación funcional describen capas distintas.
+  La disponibilidad del endpoint no prueba un listener ni su pertenencia. Compara todo el camino antes de culpar
+  al proxy.
 hints.1.text: |-
-  Un Service sin endpoints listo no puede route a su backend previsto.
-
-  Inspecciona los datos suministrados y las observaciones activas:
+  Compara la observación de proxy suministrada con la selección del Service, puertos e identidades actuales de EndpointSlice y el camino de la aplicación:
 
   ```sh
-  cat diagnosis.json proxy-observation.json
-    kubectl get service board -o yaml
-    kubectl get endpointslices -l kubernetes.io/service-name=board -o yaml
+  cat diagnosis.json proxy-observation.json vip-contract.json
+  kubectl get service board -o yaml
+  kubectl get endpointslices -l kubernetes.io/service-name=board -o yaml
+  kubectl get deployment,replicaset,pods -o yaml
   ```
 hints.2.text: |-
-  Lea la observación del proxy inmutable, registre selector y luego repare el Service local.
+  Verifica VIP e identidades conservados, pertenencia real de endpoints y correspondencia de interfaces; después las respuestas por Pod directo y Service VIP:
 
-  Verifica el resultado desde `~/quest` en la workstation:
-
-  - Ambas rutas del consumidor devuelven `north-118`.
-
-    ```sh
-    ip=$(kubectl get pods -l app=board -o jsonpath='{.items[0].status.podIP}')
-    vip=$(kubectl get service board -o jsonpath='{.spec.clusterIP}')
-    for address in "$ip" "$vip"; do
-      kubectl exec deployment/client -- wget -qO- -T 3 "http://$address:8080"
-    done
-    ```
+  ```sh
+  kubectl get service board -o yaml
+  kubectl get endpointslices -l kubernetes.io/service-name=board -o yaml
+  kubectl get deployment,replicaset,pods -o yaml
+  ip=$(kubectl get pods -l app=board -o jsonpath='{.items[0].status.podIP}')
+  vip=$(kubectl get service board -o jsonpath='{.spec.clusterIP}')
+  for address in "$ip" "$vip"; do
+   kubectl exec deployment/client -- wget -qO- -T 3 "http://$address:8080"
+  done
+  ```
 phrases.0: Comparé el tráfico Pod-IP y Service-VIP.
 phrases.1: Inspeccioné el endpoints listo antes de culpar al proxy.
 phrases.2: Mantuve las reglas de enrutamiento de nodos sin cambios.
@@ -58,13 +59,19 @@ diagnostics.pod: La petición a la IP del Pod board en el puerto 8080 debe devol
 diagnostics.vip: La petición a la VIP del Service board en el puerto 8080 debe devolver north-118.
 diagnostics.proxy_ready: proxy observation ready debe ser igual a true.
 diagnostics.proxy_mode: El modo observado del proxy debe ser iptables, nftables o ipvs.
-stages.0.objectives.0.text: '`diagnosis.json` en la estación de trabajo registra el fallo identificado
-  a partir de las pruebas suministradas.'
-stages.0.objectives.1.text: El Service board existente alcanza solo la carga board suministrada y tiene
-  un endpoint EndpointSlice listo.
-stages.0.objectives.2.text: Desde el Deployment `client`, tanto una IP de Pod `board` como la VIP del
-  Service en el puerto `8080` devuelven `north-118`.
-stages.0.objectives.3.text: La observación suministrada del proxy indica disponibilidad en modo `iptables`,
-  `nftables` o `ipvs`.
-diagnostics.probe_0_1: 'Los datos actuales no permiten verificar este objetivo: El Service board existente alcanza
-  solo la carga board suministrada y tiene un endpoint EndpointSlice listo.'
+stages.0.objectives.0.text: '`diagnosis.json` en la estación de trabajo registra el fallo identificado a partir
+  de las pruebas suministradas.'
+stages.0.objectives.1.text: El Service board existente alcanza solo la carga board suministrada y tiene un endpoint
+  EndpointSlice listo. Conserva UID y VIP originales del Service, Deployments originales e imágenes suministradas.
+  El destino deseado del Service y cada destino listo efectivo de EndpointSlice deben corresponder a la interfaz
+  declarada; cada destino pertenece a un Pod actual listo de la carga suministrada según `vip-contract.json`.
+stages.0.objectives.2.text: Desde el Deployment `client`, tanto una IP de Pod `board` como la VIP del Service en
+  el puerto `8080` devuelven `north-118`.
+stages.0.objectives.3.text: La observación suministrada del proxy indica disponibilidad en modo `iptables`, `nftables`
+  o `ipvs`.
+diagnostics.probe_0_1: No se pudo verificar el Service actual y su correspondencia con endpoints.
+diagnostics.vip_identity: Cambió UID/VIP original del Service, identidad de carga suministrada o imagen de aplicación.
+diagnostics.vip_interface: El destino deseado del Service o puerto efectivo del endpoint no corresponde a la interfaz
+  declarada de la aplicación.
+diagnostics.vip_owner: Un EndpointSlice efectivo no pertenece al Service original.
+diagnostics.vip_target: Un endpoint efectivo no identifica un Pod actual listo de la aplicación y su dirección real.

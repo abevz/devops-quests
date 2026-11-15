@@ -1,46 +1,48 @@
 title: Service VIP and kube-proxy datapath
 brief: |-
-  The board Service path is unavailable. Identify the fault from the supplied evidence and restore both consumer paths.
+  The application Service path is unavailable. Identify the fault from the supplied evidence and restore both consumer paths while retaining the managed identities.
 
   Work on the workstation in `~/quest` with the supplied files:
-  - `board.yaml`, `client.yaml`, `service.yaml`, `diagnosis.json`, `proxy-observation.json`.
+  - `diagnosis.json`.
+  - `proxy-observation.json`.
+  - `vip-contract.json`.
 
   **Requirements:**
 
   - `diagnosis.json` on the workstation records the fault identified from the supplied evidence.
-  - The existing board Service reaches only the supplied board workload and has a ready EndpointSlice endpoint.
+  - The existing board Service reaches only the supplied board workload and has a ready EndpointSlice endpoint. Retain the Service’s original UID and VIP, the original Deployments and provided images. The desired Service mapping and every effective ready EndpointSlice target must map to the declared application interface; each target belongs to a current ready Pod of the supplied workload, as specified by `vip-contract.json`.
   - From Deployment `client`, both a `board` Pod IP and the Service VIP on port `8080` return `north-118`.
   - The supplied proxy observation reports readiness in mode `iptables`, `nftables` or `ipvs`.
 
-  A ready endpoint does not establish its target identity; current results do not prove node or DNS edit history. Do not modify kube-proxy, node rules or global DNS.
-debrief: The Service abstraction does not itself start a listening process. Proxy implementation and endpoint
-  selection are different layers.
+  The diagnosis record is a bounded classification, not a complete incident analysis. Current checks do not prove edit history. Keep kube-proxy, node rules and global DNS unchanged.
+debrief: The checks compared the bounded diagnosis, retained Service/VIP and workloads, current owned endpoints,
+  interface mapping and both actual consumer paths.
 stages.0.brief: Keep recovery within this bay’s Service path.
-hints.0.text: A working direct Pod request separates application health from Service selection.
+hints.0.text: A Service selector, a ready endpoint and a working application interface describe different layers.
+  Endpoint readiness does not test a listener or establish ownership. Compare the complete path before blaming the
+  proxy.
 hints.1.text: |-
-  A Service without ready endpoints cannot route to its intended backend.
-
-  Inspect the supplied inputs and live observations:
+  Compare the supplied proxy observation with Service selection, current EndpointSlice ports and target identities, and the application path:
 
   ```sh
-  cat diagnosis.json proxy-observation.json
-    kubectl get service board -o yaml
-    kubectl get endpointslices -l kubernetes.io/service-name=board -o yaml
+  cat diagnosis.json proxy-observation.json vip-contract.json
+  kubectl get service board -o yaml
+  kubectl get endpointslices -l kubernetes.io/service-name=board -o yaml
+  kubectl get deployment,replicaset,pods -o yaml
   ```
 hints.2.text: |-
-  Read the immutable proxy observation, record selector, then repair the local Service.
+  Verify the retained VIP and workload identities, actual endpoint ownership and interface mapping, then both direct Pod and Service-VIP responses:
 
-  Verify the result from `~/quest` on the workstation:
-
-  - Both consumer paths return `north-118`.
-
-    ```sh
-    ip=$(kubectl get pods -l app=board -o jsonpath='{.items[0].status.podIP}')
-    vip=$(kubectl get service board -o jsonpath='{.spec.clusterIP}')
-    for address in "$ip" "$vip"; do
-      kubectl exec deployment/client -- wget -qO- -T 3 "http://$address:8080"
-    done
-    ```
+  ```sh
+  kubectl get service board -o yaml
+  kubectl get endpointslices -l kubernetes.io/service-name=board -o yaml
+  kubectl get deployment,replicaset,pods -o yaml
+  ip=$(kubectl get pods -l app=board -o jsonpath='{.items[0].status.podIP}')
+  vip=$(kubectl get service board -o jsonpath='{.spec.clusterIP}')
+  for address in "$ip" "$vip"; do
+   kubectl exec deployment/client -- wget -qO- -T 3 "http://$address:8080"
+  done
+  ```
 phrases.0: I compared Pod-IP and Service-VIP traffic.
 phrases.1: I inspected ready endpoints before blaming the proxy.
 phrases.2: I kept node routing rules unchanged.
@@ -57,13 +59,19 @@ diagnostics.pod: The request to the board Pod IP on port 8080 must return north-
 diagnostics.vip: The request to the board Service VIP on port 8080 must return north-118.
 diagnostics.proxy_ready: proxy observation ready must equal true.
 diagnostics.proxy_mode: The proxy observation mode must be iptables, nftables or ipvs.
-stages.0.objectives.0.text: '`diagnosis.json` on the workstation records the fault identified from the
-  supplied evidence.'
-stages.0.objectives.1.text: The existing board Service reaches only the supplied board workload and has
-  a ready EndpointSlice endpoint.
-stages.0.objectives.2.text: From Deployment `client`, both a `board` Pod IP and the Service VIP on port
-  `8080` return `north-118`.
-stages.0.objectives.3.text: The supplied proxy observation reports readiness in mode `iptables`, `nftables`
-  or `ipvs`.
-diagnostics.probe_0_1: 'The current inputs could not verify this objective: The existing board Service reaches only
-  the supplied board workload and has a ready EndpointSlice endpoint.'
+stages.0.objectives.0.text: '`diagnosis.json` on the workstation records the fault identified from the supplied
+  evidence.'
+stages.0.objectives.1.text: The existing board Service reaches only the supplied board workload and has a ready
+  EndpointSlice endpoint. Retain the Service’s original UID and VIP, the original Deployments and provided images.
+  The desired Service mapping and every effective ready EndpointSlice target must map to the declared application
+  interface; each target belongs to a current ready Pod of the supplied workload, as specified by `vip-contract.json`.
+stages.0.objectives.2.text: From Deployment `client`, both a `board` Pod IP and the Service VIP on port `8080` return
+  `north-118`.
+stages.0.objectives.3.text: The supplied proxy observation reports readiness in mode `iptables`, `nftables` or `ipvs`.
+diagnostics.probe_0_1: Current Service and endpoint mapping could not be verified.
+diagnostics.vip_identity: The original Service UID/VIP or supplied workload identity or application image changed.
+diagnostics.vip_interface: The desired Service target or effective endpoint port does not match the declared application
+  interface.
+diagnostics.vip_owner: An effective EndpointSlice is not owned by the original Service.
+diagnostics.vip_target: An effective endpoint does not identify a current ready owned application Pod and its actual
+  address.

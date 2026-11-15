@@ -1,51 +1,45 @@
 title: Gateway-API-Routenanbindung
 brief: |-
-  Das private Gateway bedient die erforderliche Route nicht. Stellen Sie akzeptiertes Routing und korrekte Antworten wieder her.
+  Das private Gateway bedient die erforderliche Anwendungsroute nicht. Stelle akzeptierte Anbindung, aufgelöste Referenzen und die geforderten Antworten wieder her.
 
-  Arbeiten Sie auf der Workstation in `~/quest` mit den bereitgestellten Dateien:
-  - `board.yaml`, `service.yaml`, `client.yaml`, `gateway.yaml`, `route.yaml`, `gateway-target.json`.
+  Arbeite auf der Workstation in `~/quest` mit den bereitgestellten Dateien:
+  - `gateway-target.json`.
+  - `attachment-contract.json`.
 
-  **Requirements:**
+  **Anforderungen:**
 
   - Gateway `station` nutzt die bereitgestellte private GatewayClass und ist für seine aktuelle Generation akzeptiert.
-  - Die bereitgestellte HTTPRoute bedient nur `north.station.internal` über das vorhandene Gateway und board-Backend; ein Parent akzeptiert die Route und löst ihre Referenzen auf.
+  - Die bereitgestellte HTTPRoute bedient nur `north.station.internal` über das vorhandene Gateway und board-Backend; ein Parent akzeptiert die Route und löst ihre Referenzen auf. Erhalte ursprüngliche Identitäten von Gateway, HTTPRoute, Backend-Service und Deployments sowie bereitgestellte Images; ändere die Gateway-Listenerdefinitionen nicht. Der zuständige Controller muss beide Bedingungen für einen angefragten, zum erhaltenen Listener passenden Parent und die aktuelle Routengeneration gemäß `attachment-contract.json` melden.
   - Von Deployment `client` liefert die bereitgestellte private Gateway-URL mit Host `north.station.internal` den Wert `north-113`.
   - Dieselbe private Gateway-Anfrage mit Host `closed.station.internal` schlägt fehl.
 
-  Eine fehlgeschlagene Anfrage allein belegt nicht ihre Ursache; die Prüfungen belegen nicht, welcher Parent oder welche Generation den Routenstatus lieferte.
-debrief: GatewayClass, Gateway und HTTPRoute teilen Controller-Auswahl, listener-Besitz und Anwendungsrouting
-  auf.
+  Prüfungen belegen aktuelle Anbindung, Referenzen und Verkehr, nicht den Änderungsverlauf. Nutze nur den bereitgestellten privaten Gateway-Endpunkt.
+debrief: Die Prüfungen verglichen erhaltene Routing-Identitäten und Listener, aktuellen Controller-/Parent-/Generationskontext
+  sowie reale Antworten für passenden und geschlossenen Host.
 stages.0.brief: Verwenden Sie nur den bereitgestellten privaten Gateway-Endpunkt.
-hints.0.text: Ein HTTPRoute-Backend-Port bezieht sich auf den Service-Port. GatewayClass wählt einen Controller,
-  Gateway besitzt einen Listener und HTTPRoute bindet Routing-Regeln an.
+hints.0.text: Listener-Anbindung und Backend-Referenzauflösung beantworten verschiedene Fragen. Eine Bedingung kann
+  zu einem anderen Parent oder einer älteren Generation gehören; kläre den Kontext vor der Bewertung aktueller Routengesundheit.
 hints.1.text: |-
-  Accepted und ResolvedRefs beantworten unterschiedliche Fragen.
+  Vergleiche bestehende Gateway-Listener, angefragte Parents, Service-Schnittstelle und aktuelle Controller-Bedingungen:
 
-  Prüfen Sie die bereitgestellten Eingaben und laufenden Beobachtungen:
+  ```sh
+  cat gateway-target.json attachment-contract.json
+  kubectl get gateway,httproute,service,pods -o yaml
+  ```
+hints.2.text: |-
+  Prüfe erhaltene Listener und Identitäten, beide Parent-Bedingungen der aktuellen Generation und realen Verkehr mit passendem sowie geschlossenem Host:
 
   ```sh
   kubectl get gateway station -o yaml
-    kubectl get httproute board -o yaml
-    cat gateway-target.json
+  kubectl get httproute board -o json | jq '{generation:.metadata.generation,parents:.status.parents}'
+  url=$(jq -r .url gateway-target.json)
+  kubectl exec deployment/client -- wget -qO- -T 3 --header='Host: north.station.internal' "$url"
+  if kubectl exec deployment/client -- wget -qO- -T 3 --header='Host: closed.station.internal' "$url"; then
+   printf '%s\n' 'unexpected closed Host response'
+  else
+   printf '%s\n' 'closed Host denied'
+  fi
   ```
-hints.2.text: |-
-  Reparieren Sie den backend-Port und testen Sie den eingefrorenen privaten endpoint mit explizitem Host.
-
-  Prüfen Sie das Ergebnis in `~/quest` auf der Workstation:
-
-  - Der Gateway-Verbraucher erhält `north-113`.
-
-    ```sh
-    url=$(jq -r .url gateway-target.json)
-    kubectl exec deployment/client -- wget -qO- -T 3 --header='Host: north.station.internal' "$url"
-    ```
-
-  - Die Anfrage mit dem anderen Host schlägt fehl (Exit ungleich null).
-
-    ```sh
-    url=$(jq -r .url gateway-target.json)
-    kubectl exec deployment/client -- wget -qO- -T 3 --header='Host: closed.station.internal' "$url"
-    ```
 phrases.0: Ich habe den route auf den tatsächlichen Service-Port zurückgeführt.
 phrases.1: Ich habe die Annahme- und Referenzbedingungen eingesehen.
 phrases.2: Ich habe passende und nicht passende Hosts getestet.
@@ -66,11 +60,21 @@ diagnostics.parent_resolved: Ein HTTPRoute-Parent muss ResolvedRefs=True haben.
 diagnostics.parent_both: Ein HTTPRoute-Parent muss sowohl Accepted=True als auch ResolvedRefs=True haben.
 diagnostics.http: Die Anfrage mit Host north.station.internal muss north-113 liefern.
 diagnostics.wrong: Die Anfrage mit Host closed.station.internal muss fehlschlagen.
-stages.0.objectives.0.text: Gateway `station` nutzt die bereitgestellte private GatewayClass und ist für
-  seine aktuelle Generation akzeptiert.
-stages.0.objectives.1.text: Die bereitgestellte HTTPRoute bedient nur `north.station.internal` über das
-  vorhandene Gateway und board-Backend; ein Parent akzeptiert die Route und löst ihre Referenzen auf.
-stages.0.objectives.2.text: Von Deployment `client` liefert die bereitgestellte private Gateway-URL mit
-  Host `north.station.internal` den Wert `north-113`.
-stages.0.objectives.3.text: Dieselbe private Gateway-Anfrage mit Host `closed.station.internal` schlägt
-  fehl.
+stages.0.objectives.0.text: Gateway `station` nutzt die bereitgestellte private GatewayClass und ist für seine aktuelle
+  Generation akzeptiert.
+stages.0.objectives.1.text: Die bereitgestellte HTTPRoute bedient nur `north.station.internal` über das vorhandene
+  Gateway und board-Backend; ein Parent akzeptiert die Route und löst ihre Referenzen auf. Erhalte ursprüngliche
+  Identitäten von Gateway, HTTPRoute, Backend-Service und Deployments sowie bereitgestellte Images; ändere die Gateway-Listenerdefinitionen
+  nicht. Der zuständige Controller muss beide Bedingungen für einen angefragten, zum erhaltenen Listener passenden
+  Parent und die aktuelle Routengeneration gemäß `attachment-contract.json` melden.
+stages.0.objectives.2.text: Von Deployment `client` liefert die bereitgestellte private Gateway-URL mit Host `north.station.internal`
+  den Wert `north-113`.
+stages.0.objectives.3.text: Dieselbe private Gateway-Anfrage mit Host `closed.station.internal` schlägt fehl.
+diagnostics.attachment_identity: Eine ursprüngliche Routing- oder Workload-Identität oder ein bereitgestelltes Anwendungsimage
+  wurde geändert.
+diagnostics.attachment_listener: Die erhaltenen Gateway-Listenerdefinitionen wurden geändert.
+diagnostics.attachment_parent: Kein gemeldeter angefragter Parent passt zum zuständigen Controller und erhaltenen
+  Gateway-Listener.
+diagnostics.attachment_generation: Ein geeigneter Parent meldet nicht gleichzeitig Accepted und ResolvedRefs für
+  die aktuelle Routengeneration.
+diagnostics.probe_0_1: Aktuelle Beobachtungen zu Routenanbindung und Referenzen fehlen oder sind inkonsistent.

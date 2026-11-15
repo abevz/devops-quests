@@ -81,3 +81,5 @@ The resource and diagnosis lessons explain phase-specific memory, memory-backed 
 The configuration guides also discuss controller acknowledgement versus downstream delivery. Existing configuration Labs exercise projection behavior; the complete custom-resource-driven recovery across generated source and consumer is qualified by the quest sandbox matrix, not by those Labs.
 
 Resource guides also explain effective requests across startup phases; storage guides distinguish usable capacity from restored regular files on the intended claim. Existing Labs cover resource behavior, binding and persistence; complete coupled CPU-phase recovery and provisioning-plus-copy recovery are qualified in quest sandboxes rather than those Labs. Namespace-limited observation is a conceptual troubleshooting extension.
+
+Networking guide text also distinguishes policy/caller template lifetimes and effective EndpointSlice identity/port mapping. Existing networking Lab code and reference-block order are unchanged; complete coupled recovery and downstream query-consumer migration are qualified in quest sandboxes rather than claimed as additional Lab experiments.

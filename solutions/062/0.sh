@@ -27,3 +27,16 @@ p=Path(sys.argv[1]);p.write_text(p.read_text().replace('__DQ_APP_IMAGE__',os.env
 DQ_IMAGE
 kubectl apply -f policy.yaml
 sleep 3
+python3 -I - <<'DQ_CALLER_REFERENCE'
+import json,subprocess
+policy=json.loads(subprocess.check_output(['kubectl','get','networkpolicy','board-ingress','-o','json'],text=True))
+labels=policy['spec']['ingress'][0]['from'][0]['podSelector']['matchLabels']
+patch={'spec':{'template':{'metadata':{'labels':labels}}}}
+subprocess.run(['kubectl','patch','deployment','dispatcher','--type=merge','-p',json.dumps(patch)],check=True)
+subprocess.run(['kubectl','rollout','status','deployment/dispatcher','--timeout=90s'],check=True)
+DQ_CALLER_REFERENCE
+for i in $(seq 1 30); do
+ if test "$(kubectl exec deployment/dispatcher -- wget -qO- -T 2 http://board:8080)" = north-62; then exit 0; fi
+ sleep 1
+done
+exit 1
