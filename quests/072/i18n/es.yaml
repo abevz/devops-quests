@@ -1,67 +1,39 @@
 title: Política de reintento Job
-brief: 'La carga por lotes sigue fallando en la validación. Limita la gestión de fallos conservando su identidad
-  y las pruebas del fallo.
+brief: |-
+  El validador falla y debe recuperarse la validación regular sin perder la evidencia de fallo existente.
 
-
-  Trabaja en `~/quest` en la workstation. Archivos suministrados: `job.yaml`.
-
+  Trabaja en la workstation en `~/quest` con `batch-contract.json`. El Job original está disponible mediante Kubernetes; no se suministra un manifiesto completo para ejecución regular.
 
   **Requisitos:**
 
-  - El Job de validación original conserva su identidad y el comando suministrado, ejecuta un intento a la
-  vez y no reinicia un contenedor fallido.
+  - Conserva identidad y comando suministrado del Job de validación original, un intento cada vez y ningún reinicio del contenedor.
+  - Limita el Job original y las ejecuciones regulares al límite de reintentos `1` y duración `30` segundos. Cada ejecución utiliza imagen y comando suministrados para una validación.
+  - El validador regular definido en el contrato está habilitado con su horario cada minuto. Conserva una ejecución activa en lugar de solaparla o cancelarla cuando llegue otro horario.
+  - El Job original y al menos un Job hijo programado actual alcanzan `Failed=True` con al menos `1` intento fallido y un Pod `Failed` propio cuyo `worker` termina con código `1`.
 
-  - El Job `importer` limita los reintentos a `1` y el tiempo de ejecución a `30` segundos.
-
-  - El Job `importer` alcanza `Failed=True` con al menos `1` intento fallido y un Pod `Failed` controlado cuyo
-  `worker` termina con código `1`.
-
-
-  El controlador puede registrar motivos o cantidades distintos; las comprobaciones observan identidad, ajustes
-  y fallos actuales, no que el comando nunca cambiara.
-
-  '
-debrief: La carga de trabajo fallida se detiene de manera predecible mientras se conserva la evidencia para
-  el diagnóstico.
-stages.0.brief: La carga por lotes original debe detenerse de forma predecible con pruebas observables del
-  fallo.
-hints.0.text: Un error de datos permanente no se repara con reintentos ilimitados.
-hints.1.text: 'backoffLimit y activeDeadlineSeconds restringen diferentes dimensiones.
-
-
-  Inspecciona las definiciones suministradas, los recursos actuales y los eventos.
-
+  Las comprobaciones observan identidad, política y evidencia de fallo actuales, no cada ejecución anterior ni el historial de cambios. Un hijo programado puede tardar más de un minuto en aparecer.
+debrief: Cambiar un Job actual no proporciona política de ejecución regular. Construir el controlador futuro e inspeccionar
+  un hijo fallido real establece ambos límites sin sustituir la evidencia original.
+stages.0.brief: Limita el fallo actual y construye validación regular acotada.
+hints.0.text: Un Job existente y la plantilla de futuros Jobs son límites de política distintos. Conservar el fallo
+  actual no establece por sí solo una ejecución regular segura.
+hints.1.text: |-
+  Inspecciona el Job existente, sus Pods fallidos y el contrato. Usa la carga observada al construir la ejecución futura; inicialmente no se suministra un controlador regular.
 
   ```sh
-
-  cat job.yaml
-
+  cat batch-contract.json
+  kubectl get job importer -o yaml
   kubectl describe job importer
-
-  kubectl get pods -l job-name=importer -o yaml
-
-  ```'
-hints.2.text: 'Parchee los límites existentes de Job y inspect Failed conditions más el exit codes terminado.
-
-
-  Verifica el resultado observado:
-
-
-  ```sh
-
-  kubectl get job importer
-
   kubectl get pods -l job-name=importer
-
+  kubectl logs -l job-name=importer --all-containers=true --prefix=true
   ```
+hints.2.text: |-
+  Verifica política regular, Job original conservado y un hijo fallido acotado. Relaciona la propiedad del hijo con el CronJob y su worker Pod fallido con ese hijo; worker debe terminar con código 1.
 
-
-  El Job está Failed y un Pod controlado falló con código worker 1; consulta los detalles de terminación mediante
-  la pista 2.
-
-
-  Restricciones y detalles suministrados: El Job `importer` original conserva el comando de validación suministrado
-  de `worker`, paralelismo `1` y política de reinicio de Pods `Never`.'
+  - `kubectl get cronjob validation-cycle -o yaml`
+  - `kubectl get job importer -o yaml`
+  - `kubectl get jobs -o yaml`
+  - `kubectl get pods -o yaml`
 phrases.0: Distinguí el recuento de reintentos de la ejecución deadline.
 phrases.1: Conservé el Job fallido para el diagnóstico.
 phrases.2: Verifiqué la terminal condition y el contenedor real exit code.
@@ -74,18 +46,31 @@ questions.1.points.1: activeDeadlineSeconds limita la ventana de ejecución Job.
 questions.1.points.2: Inspeccione el controlador conditions y los contenedores terminados.
 questions.1.prompt: ¿backoffLimit cuenta los segundos transcurridos?
 diagnostics.uid: original-job-uid no debe estar vacío y debe coincidir con el UID de job/importer.
-diagnostics.worker_command: job/importer debe contener worker con el comando `["sh", "-c", "echo invalid-route
-  >&2; exit 1"]`.
+diagnostics.worker_command: job/importer debe contener worker con el comando `["sh", "-c", "echo invalid-route >&2;
+  exit 1"]`.
 diagnostics.restart: job/importer restartPolicy debe ser igual a Never.
 diagnostics.failed_count: job/importer status.failed debe ser al menos 1.
 diagnostics.failed_condition: job/importer Failed debe ser igual a True.
-diagnostics.failed_pod: Un Pod Failed controlado por job/importer con el UID original debe tener un contenedor
-  worker terminado con código 1.
+diagnostics.failed_pod: Un Pod Failed controlado por job/importer con el UID original debe tener un contenedor worker
+  terminado con código 1.
 diagnostics.field_backofflimit: job/importer backoffLimit debe ser igual a 1.
 diagnostics.field_activedeadlineseconds: job/importer activeDeadlineSeconds debe ser igual a 30.
 diagnostics.field_parallelism: job/importer parallelism debe ser igual a 1.
-stages.0.objectives.0.text: El Job de validación original conserva su identidad y el comando suministrado,
-  ejecuta un intento a la vez y no reinicia un contenedor fallido.
-stages.0.objectives.1.text: El Job `importer` limita los reintentos a `1` y el tiempo de ejecución a `30` segundos.
-stages.0.objectives.2.text: El Job `importer` alcanza `Failed=True` con al menos `1` intento fallido y un Pod
-  `Failed` controlado cuyo `worker` termina con código `1`.
+stages.0.objectives.0.text: El Job de validación original conserva su identidad y el comando suministrado, ejecuta
+  un intento a la vez y no reinicia un contenedor fallido.
+stages.0.objectives.1.text: Limita el Job original y las ejecuciones regulares al límite de reintentos `1` y duración
+  `30` segundos. Cada ejecución utiliza imagen y comando suministrados para una validación. El validador regular
+  definido en el contrato está habilitado con su horario cada minuto. Conserva una ejecución activa en lugar de
+  solaparla o cancelarla cuando llegue otro horario.
+stages.0.objectives.2.text: El Job original y al menos un Job hijo programado actual alcanzan `Failed=True` con
+  al menos `1` intento fallido y un Pod `Failed` propio cuyo `worker` termina con código `1`.
+diagnostics.batch_current: No pudo observarse el Job original.
+diagnostics.batch_original: El Job original debe conservar identidad y carga suministrada.
+diagnostics.batch_recurrence: El validador regular debe estar habilitado cada minuto y conservar la ejecución activa
+  sin solapamiento.
+diagnostics.batch_template: La plantilla regular debe conservar la carga suministrada y todos los límites de ejecución.
+diagnostics.batch_child: No se observó un Job fallido actual acotado perteneciente al validador regular.
+diagnostics.batch_failed_pod: No se observó un Failed worker Pod propio con código de salida 1 para ese Job programado
+  acotado.
+diagnostics.probe_0_1: Las observaciones actuales no verifican la política de ejecución original y regular.
+diagnostics.probe_0_2: Las observaciones actuales no verifican la evidencia de fallo original y programado.

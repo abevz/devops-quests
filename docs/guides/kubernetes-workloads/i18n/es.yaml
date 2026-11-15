@@ -1,44 +1,30 @@
 heading: Recuperación de cargas de Kubernetes
-text: '# Recuperación de cargas de Kubernetes
+text: |-
+  # Recuperación de cargas de Kubernetes
 
-
-  Estos pasos son solo para la bahía desechable de la misión. Un controlador crea Pods a partir de una plantilla; los cambios y la disponibilidad tardan. Inspecciona los manifiestos suministrados antes de cambiar objetos activos, después espera y verifica los Pods y respuestas reales.
-
+  Usa la bahía desechable. Un controlador crea Pods desde una plantilla; cambios y disponibilidad necesitan tiempo. Inspecciona entradas suministradas y definiciones actuales antes de modificar objetos; después espera y verifica Pods y respuestas reales.
 
   ## Contenedores init y sidecars nativos
 
-
   Los contenedores init ordinarios de `initContainers` se ejecutan en orden y deben terminar antes de iniciar los contenedores normales de la aplicación. Un sidecar nativo es un contenedor init con `restartPolicy: Always`; puede seguir ejecutándose junto a la aplicación. Su `startupProbe` puede bloquear el siguiente contenedor. Los contenedores pueden intercambiar archivos mediante un `emptyDir` compartido que dura lo que el Pod. Usa `kubectl get pods` y `kubectl describe pod` para inspeccionar estados y eventos; compara probe, comandos y volúmenes con `board.yaml`. Un proceso en ejecución por sí solo no demuestra que la aplicación pueda leer su entrada.
-
 
   ## Rollout y rollback de Deployment
 
-
   Un Deployment gestiona réplicas y revisiones de la plantilla del Pod. `Recreate` elimina los Pods antiguos antes de sustituirlos; `RollingUpdate` controla la sustitución con `maxUnavailable` y `maxSurge`. Inspecciona `kubectl rollout history deployment/board` y el `healthy-revision` suministrado antes de revertir con `kubectl rollout undo deployment/board --to-revision=N`, reemplazando N por la revisión registrada. Espera con `kubectl rollout status deployment/board --timeout=90s` y comprueba disponibilidad y respuesta del servicio. Conservar el UID de `original-deployment-uid` mantiene el mismo objeto Deployment. El número de réplicas listas no garantiza por sí solo un servicio ininterrumpido.
-
 
   ## Ubicación de DaemonSet
 
-
   Un DaemonSet crea un Pod en cada nodo elegible. Un `nodeSelector` limita la selección; inspecciona `kubectl get nodes --show-labels` y el `relay.yaml` suministrado. No cambies las etiquetas de nodos para forzar una coincidencia. Espera con `kubectl rollout status daemonset/relay --timeout=90s`, compara los números desired, ready y available e inspecciona propietario y nodo del Pod. Comprueba la respuesta tanto del Pod como del Service. La seguridad del Pod en el manifiesto, incluidos ejecución non-root, seccomp y capabilities, sigue siendo importante con una ubicación correcta.
-
 
   Referencias: [init y sidecars nativos](https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/), [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/), [DaemonSets](https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/).
 
-
   En el ejercicio 101, un contenedor init normal debe terminar antes de la inicialización posterior; un sidecar nativo es un contenedor init reiniciable que puede seguir ejecutándose. Corrige la ruta de entrada de `prepare`, conserva watcher y el orden de los volúmenes, y comprueba el estado del Pod, el heartbeat no vacío y la respuesta de board. Configura `prepare` para copiar `/input/route` a `/shared/route` y conserva la startup probe del watcher `test -s /shared/heartbeat`. La probe usa `periodSeconds: 1` y `failureThreshold: 10`; un Pod sin marca de eliminación debe tener prepare exitoso, watcher iniciado y ejecutándose y un contenedor normal listo. Comprueba que `board:8080/route` devuelve `north-101`; la comprobación del heartbeat no demuestra que usara ese mismo Pod.
-
 
   En el ejercicio 102, usa la revisión sana registrada para deshacer la plantilla de Pod rota. La estrategia del Deployment es un campo separado: configura los límites RollingUpdate indicados, conserva UID y dos réplicas, y verifica disponibilidad y respuesta. En la etapa siguiente repara la readiness probe conservando el contenido nuevo. Un presupuesto unavailable cero por sí solo no garantiza ausencia de interrupción. Usa `maxUnavailable: 0` y `maxSurge: 1` numéricos; las respuestas esperadas son `north-102` y luego `north-102-v3`. El puerto HTTP de readiness debe ser `8080`.
 
-
-  En el ejercicio 104, un CronJob suspendido no crea nuevos Jobs programados. Establece `suspend: false` y `concurrencyPolicy: Forbid`, conservando el horario y los demás campos pedidos. Espera un Job exitoso creado por el controlador cuyo scheduled timestamp coincida con el último `lastScheduleTime` y revisa sus logs. Un Job manual no demuestra la programación; al cambiar el minuto puede ser necesario esperar otra vez. Sus logs deben ser exactamente `north-104`. Conserva `* * * * *`, `Etc/UTC`, deadline `20` y límites de historial exitoso/fallido `1`.
-
+  Un CronJob programa una plantilla Job. La suspensión afecta a programaciones futuras; la concurrencia controla Jobs solapados de ese controlador. Cambiar la plantilla no cambia Jobs existentes. Inspecciona ejecuciones vinculadas al controlador; un Job manual solo no demuestra programación recurrente. Horario, zona, plazos e historial son ajustes separados.
 
   En el ejercicio 040, tras la etapa serial de fleet, conserva el Service board y su selector al desplegar dos réplicas listas que respondan `north-40`. Establece `maxUnavailable: 0` y `maxSurge: 1`. El presupuesto del controlador depende de disponibilidad y capacidad; por sí solo no demuestra ausencia de solicitudes perdidas.
 
-
-  En el ejercicio 072, un Job crea Pods y registra intentos fallidos. Conserva el Job original y el comando que falla, establece `backoffLimit` en 1 y `activeDeadlineSeconds` en 30, y mantén `parallelism` en 1 y `restartPolicy` en `Never`. Compara el UID del Job con `/run/dq/facts/0/original-job-uid`; verifica que el contador de fallos sea al menos 1, la condición `Failed` y un Pod fallido perteneciente al Job con código de salida 1 de worker. El número de reintentos y el plazo limitan cosas diferentes.
-
-  '
-source_hash: b831f26de14c4e0ac0ca30aee0a0f527183f0c5284f25f2f7af3cf70d0503652
+  Un Job actual y la plantilla de un controlador gobiernan ejecuciones diferentes. Reintentos, plazo y reinicios del contenedor limitan fallos distintos. Construye la ejecución futura desde la carga observada y revisa política y cadena de propiedad Job/Pod. Una condición terminal sin el fallo previsto del worker es evidencia incompleta. Son observaciones actuales, no un historial completo.
+source_hash: 89e389a0642966970174f18132cd798c94a9949d1f3aaf4f5600201806bae52d

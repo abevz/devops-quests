@@ -33,6 +33,12 @@ exit "$failed"
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_BATCH_1'
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -51,10 +57,118 @@ field=activeDeadlineSeconds
   fi
 exit "$failed"
 
+DQ_LEGACY_BATCH_1
+python3 -I - <<'DQ_BATCH_POLICY'
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from dq_check import named, workload_worker
+
+failed = False
+deadline = time.monotonic() + 10
+
+def require(value, marker):
+    global failed
+    if not value:
+        print('Batch recovery condition is unmet: ✗ [DQ:' + marker + ']')
+        failed = True
+
+def get(kind, name, marker):
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError('Observation budget exhausted')
+        result = subprocess.run(
+            ['kubectl', 'get', kind] + ([name] if name else []) + ['-o', 'json'],
+            capture_output=True, text=True, timeout=min(6, remaining),
+        )
+        if result.returncode:
+            raise ValueError('API observation failed')
+        return json.loads(result.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        print('Current batch observation is unavailable: ✗ [DQ:' + marker + ']')
+        sys.exit(1)
+
+facts = json.loads(Path('/run/dq/facts/0/batch-identities.json').read_text())
+contract = facts['contract']
+execution = contract['execution']
+
+def same_image(actual):
+    expected = facts['workerImage']
+    digest = expected.partition('@')[2]
+    return actual == expected or (
+        bool(digest) and isinstance(actual, str) and actual.partition('@')[2] == digest
+    )
+
+def original_workload(spec):
+    try:
+        worker = workload_worker({'spec': spec})
+        return (
+            same_image(worker.get('image'))
+            and worker.get('command') == facts['workerCommand']
+            and spec['template']['spec'].get('restartPolicy') == execution['restartPolicy']
+        )
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+
+def bounded(spec):
+    return (
+        all(type(spec.get(key)) is int and spec[key] == execution[key]
+            for key in ('backoffLimit', 'activeDeadlineSeconds', 'parallelism', 'completions'))
+        and original_workload(spec)
+    )
+
+def owned(resource, kind, uid):
+    return bool(uid) and any(
+        owner.get('kind') == kind and owner.get('uid') == uid and owner.get('controller') is True
+        for owner in resource.get('metadata', {}).get('ownerReferences', [])
+    )
+
+def failed_job(job):
+    status = job.get('status', {})
+    return (
+        type(status.get('failed')) is int and status['failed'] >= 1
+        and any(c.get('type') == 'Failed' and c.get('status') == 'True'
+                for c in status.get('conditions', []))
+    )
+current = get('job', contract['currentJob'], 'batch_current')
+cron = get('cronjob', contract['recurringValidator'], 'batch_recurrence')
+spec = cron.get('spec', {})
+require(current.get('metadata', {}).get('uid') == facts['originalJobUID']
+        and original_workload(current.get('spec', {})), 'batch_original')
+require(
+    bool(cron.get('metadata', {}).get('uid'))
+    and spec.get('schedule') == contract['schedule']
+    and spec.get('suspend') is not True
+    and spec.get('concurrencyPolicy') == 'Forbid',
+    'batch_recurrence',
+)
+require(bounded(spec.get('jobTemplate', {}).get('spec', {})), 'batch_template')
+sys.exit(int(failed))
+DQ_BATCH_POLICY
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_BATCH_2'
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -74,6 +188,122 @@ if ! kubectl get pods -l job-name=importer -o json 2>/dev/null | jq -e --arg uid
 fi
 exit "$failed"
 
+DQ_LEGACY_BATCH_2
+python3 -I - <<'DQ_BATCH_EVIDENCE'
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from dq_check import named, workload_worker
+
+failed = False
+deadline = time.monotonic() + 10
+
+def require(value, marker):
+    global failed
+    if not value:
+        print('Batch recovery condition is unmet: ✗ [DQ:' + marker + ']')
+        failed = True
+
+def get(kind, name, marker):
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError('Observation budget exhausted')
+        result = subprocess.run(
+            ['kubectl', 'get', kind] + ([name] if name else []) + ['-o', 'json'],
+            capture_output=True, text=True, timeout=min(6, remaining),
+        )
+        if result.returncode:
+            raise ValueError('API observation failed')
+        return json.loads(result.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        print('Current batch observation is unavailable: ✗ [DQ:' + marker + ']')
+        sys.exit(1)
+
+facts = json.loads(Path('/run/dq/facts/0/batch-identities.json').read_text())
+contract = facts['contract']
+execution = contract['execution']
+
+def same_image(actual):
+    expected = facts['workerImage']
+    digest = expected.partition('@')[2]
+    return actual == expected or (
+        bool(digest) and isinstance(actual, str) and actual.partition('@')[2] == digest
+    )
+
+def original_workload(spec):
+    try:
+        worker = workload_worker({'spec': spec})
+        return (
+            same_image(worker.get('image'))
+            and worker.get('command') == facts['workerCommand']
+            and spec['template']['spec'].get('restartPolicy') == execution['restartPolicy']
+        )
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+
+def bounded(spec):
+    return (
+        all(type(spec.get(key)) is int and spec[key] == execution[key]
+            for key in ('backoffLimit', 'activeDeadlineSeconds', 'parallelism', 'completions'))
+        and original_workload(spec)
+    )
+
+def owned(resource, kind, uid):
+    return bool(uid) and any(
+        owner.get('kind') == kind and owner.get('uid') == uid and owner.get('controller') is True
+        for owner in resource.get('metadata', {}).get('ownerReferences', [])
+    )
+
+def failed_job(job):
+    status = job.get('status', {})
+    return (
+        type(status.get('failed')) is int and status['failed'] >= 1
+        and any(c.get('type') == 'Failed' and c.get('status') == 'True'
+                for c in status.get('conditions', []))
+    )
+cron = get('cronjob', contract['recurringValidator'], 'batch_recurrence')
+uid = cron.get('metadata', {}).get('uid')
+jobs = get('jobs', '', 'batch_child').get('items', [])
+pods = get('pods', '', 'batch_failed_pod').get('items', [])
+candidates = [
+    job for job in jobs
+    if owned(job, 'CronJob', uid) and bounded(job.get('spec', {})) and failed_job(job)
+]
+require(bool(candidates), 'batch_child')
+evidence = False
+for job in candidates:
+    job_uid = job.get('metadata', {}).get('uid')
+    for pod in pods:
+        if not owned(pod, 'Job', job_uid) or pod.get('status', {}).get('phase') != 'Failed':
+            continue
+        try:
+            worker = named(pod.get('spec', {}).get('containers', []), 'worker')
+            status = named(pod.get('status', {}).get('containerStatuses', []), 'worker')
+            if (same_image(worker.get('image'))
+                    and worker.get('command') == facts['workerCommand']
+                    and pod.get('spec', {}).get('restartPolicy') == execution['restartPolicy']
+                    and type(status.get('state', {}).get('terminated', {}).get('exitCode')) is int
+                    and status['state']['terminated']['exitCode'] == 1):
+                evidence = True
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+require(evidence, 'batch_failed_pod')
+sys.exit(int(failed))
+DQ_BATCH_EVIDENCE
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_2]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

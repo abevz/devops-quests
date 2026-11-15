@@ -49,3 +49,31 @@ p=Path(sys.argv[1]);p.write_text(p.read_text().replace('__DQ_APP_IMAGE__',os.env
 DQ_IMAGE
 kubectl apply -f job.yaml
 kubectl get job importer -o jsonpath='{.metadata.uid}' > original-job-uid
+
+cat > batch-contract.json <<'DQ_BATCH_CONTRACT'
+{
+  "schema": 1,
+  "currentJob": "importer",
+  "recurringValidator": "validation-cycle",
+  "schedule": "* * * * *",
+  "execution": {
+    "backoffLimit": 1,
+    "activeDeadlineSeconds": 30,
+    "parallelism": 1,
+    "completions": 1,
+    "restartPolicy": "Never"
+  },
+  "preserveActiveExecution": true,
+  "sameOriginalWorkload": true,
+  "requireFailedChild": true
+}
+DQ_BATCH_CONTRACT
+python3 -I - <<'DQ_BATCH_FACTS'
+import json,subprocess
+from pathlib import Path
+job=json.loads(subprocess.check_output(['kubectl','get','job','importer','-o','json'],text=True))
+worker=next(c for c in job['spec']['template']['spec']['containers'] if c['name']=='worker')
+facts={'contract':json.loads(Path('batch-contract.json').read_text()),'originalJobUID':job['metadata']['uid'],'workerImage':worker['image'],'workerCommand':worker['command']}
+Path('batch-identities.json').write_text(json.dumps(facts)+'\n')
+DQ_BATCH_FACTS
+rm -f job.yaml

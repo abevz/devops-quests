@@ -1,32 +1,55 @@
 title: Service account Tokengrenzen
 brief: |-
-  Der Reader kann seine benötigten API-Daten nicht lesen. Stellen Sie eng begrenzten Zugriff her, ohne die Zugangsdaten offenzulegen.
+  Der Leser erhält seine API-Daten nicht. Stelle seine kurzlebige Identität und eng begrenzten Zugriff wieder her, ohne Zugangsdaten offenzulegen.
 
-  Arbeiten Sie auf der Workstation in `~/quest` mit den bereitgestellten Dateien:
-  - `reader-sa.yaml`, `role.yaml`, `binding.yaml`, `route.yaml`, `reader.yaml`, `api-ca.pem`, `api-endpoint`.
+  Arbeite auf der Workstation in `~/quest`. Die Verbindungsdaten sind `api-ca.pem` und `api-endpoint`. Live-Workload und Zugriffsobjekte sind über Kubernetes verfügbar.
 
-  **Requirements:**
+  **Anforderungen:**
 
   - In Deployment `reader` ist der eingebundene API-Zugang ein privater projizierter Token unter `/credential/token`, gültig für die API und für `600` Sekunden angefordert; automatisches Einbinden bleibt deaktiviert.
   - Die bereitgestellte Role erlaubt nur benannten Lesezugriff auf die vorhandene Routenkonfiguration.
   - Mit eingebundenem Zugang und CA-Prüfung erhält der Reader HTTP `200` und Route `north-114` aus der vorhandenen Routenkonfiguration.
   - Derselbe Reader-Zugang erhält HTTP `403` für ConfigMap-Listen, Secret-Listen und die separate geschützte Konfiguration.
 
-  Die Prüfungen betreffen diese Anfragen und die aktuelle Role, nicht alle möglichen Berechtigungen oder den Befehlsverlauf.
-debrief: Das kurzlebige projected credentials und die Least-Privilege-Autorisierung lösen verschiedene
-  Teile des API-Zugriffs.
-stages.0.brief: Halten Sie den Reader-Zugang privat und prüfen Sie die API-CA.
-hints.0.text: Die Authentifizierung prüft audience vor der RBAC-Autorisierung.
+  Prüfungen beobachten die deklarierte Projektion, die aktuelle Role und genau diese API-Anfragen, nicht alle möglichen Berechtigungen oder den Änderungsverlauf.
+debrief: Die Empfängerprüfung bestimmt, wo sich ein Credential authentifizieren kann. Eine namespaced Bindung verbindet
+  die Workload-Identität mit einer minimalen Role; erlaubte und verweigerte Anfragen zeigen übermäßigen Zugriff.
+stages.0.brief: Stelle Workload-Identität und wirksamen Zugriff wieder her; halte Zugangsdaten geheim.
+hints.0.text: Eine API-Anfrage durchläuft Authentifizierung und Autorisierung. Ein gültiger Empfänger erteilt keine
+  Rechte; eine minimale Role erlaubt ohne Bindung an die handelnde Identität nichts.
 hints.1.text: |-
-  Das projizierte Volume fordert ein Token für einen bestimmten Empfänger an.
-
-  Prüfen Sie die bereitgestellten Eingaben und laufenden Beobachtungen:
+  Untersuche Workload-Identität und aktuelle Zugriffsbeziehungen. Vergleiche nur Empfänger-Metadaten mit dem Workstation-Client, der sich bereits an dieser API authentifiziert; gib keines der Bearer-Token aus.
 
   ```sh
   kubectl get deployment reader -o yaml
-    kubectl get role reader -o yaml
+  kubectl get role,rolebinding
+  decode_audience='import base64,json,sys; token=sys.stdin.read().strip(); print(json.dumps(json.loads(base64.urlsafe_b64decode(token.split(".")[1]+"==="))["aud"]))'
+  kubectl config view --raw --minify -o json |
+    python3 -I -c 'import json,sys; print(json.load(sys.stdin)["users"][0]["user"]["token"])' |
+    python3 -I -c "$decode_audience"
+  kubectl exec deployment/reader -c worker -- cat /credential/token |
+    python3 -I -c "$decode_audience"
+  unset decode_audience
   ```
-hints.2.text: "Reparieren Sie nur audience, warten Sie auf den Austausch und verwenden Sie das mitgelieferte CA für HTTPS. Die bereitgestellte Audience verweist auf einen stillgelegten Dienst. Die API-Audience ist `https://kubernetes.default.svc.cluster.local`.\n\nPrüfen Sie das Ergebnis in `~/quest` auf der Workstation:\n\n- Die benannte Route liefert `north-114` und HTTP `200`; die anderen drei Anfragen liefern HTTP `403`. Token nicht ausgeben oder speichern.\n\n  ```sh\n  api=$(cat api-endpoint)\n  token=$(kubectl exec deployment/reader -c worker -- cat /credential/token)\n  for path in configmaps/route configmaps secrets configmaps/offlimits; do\n    printf 'header = \"Authorization: Bearer %s\"\\n' \"$token\" |\n      curl --config - --cacert api-ca.pem -sS -w '\\nHTTP %{http_code}\\n' \\\n      \"$api/api/v1/namespaces/$DQ_NAMESPACE/$path\"\n  done\n  unset token\n  ```"
+hints.2.text: |-
+  Prüfe erlaubtes Lesen und jede verweigerte Anfrage mit Workload-Zugangsdaten und vorgegebener CA. Die Route muss north-114 und HTTP 200 liefern, die anderen Anfragen HTTP 403.
+
+  `kubectl get role,rolebinding`
+
+  ```sh
+  api=$(cat api-endpoint)
+  token=$(kubectl exec deployment/reader -c worker -- cat /credential/token)
+  printf 'header = "Authorization: Bearer %s"\n' "$token" |
+    curl --config - --cacert api-ca.pem -sS "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route" |
+    jq -r '.data.route // empty'
+  for path in configmaps/route configmaps secrets configmaps/offlimits; do
+    printf '%s ' "$path"
+    printf 'header = "Authorization: Bearer %s"\n' "$token" |
+      curl --config - --cacert api-ca.pem -sS -o /dev/null -w 'HTTP %{http_code}\n' \
+      "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
+  done
+  unset token
+  ```
 phrases.0: Ich habe das Token audience überprüft, ohne credentials offenzulegen.
 phrases.1: Für die echte API-Anfrage habe ich CA-verifiziertes HTTPS verwendet.
 phrases.2: Ich habe erlaubte und verweigerte Operationen getestet.
@@ -40,20 +63,20 @@ diagnostics.automount: Das automatische Einbinden von Anmeldedaten muss für rea
 diagnostics.projection: reader projected token muss path token, audience https://kubernetes.default.svc.cluster.local,
   expirationSeconds 600 entsprechen.
 diagnostics.role: role/reader rules muss get configmaps resourceNames [route] entsprechen.
-diagnostics.allowed: reader GET configmaps/route muss HTTP 200 entsprechen.
+diagnostics.allowed: Verweigertes Lesen nach Name kann einen ungültigen Empfänger oder eine fehlende Bindung an
+  die tatsächliche Workload-Identität bedeuten. Der Leser muss HTTP 200 erhalten.
 diagnostics.value: configmaps/route data.route muss north-114 entsprechen.
 diagnostics.denied_configmaps: reader GET configmaps muss HTTP 403 liefern.
 diagnostics.denied_secrets: reader GET secrets muss HTTP 403 liefern.
 diagnostics.denied_configmaps_offlimits: reader GET configmaps/offlimits muss HTTP 403 liefern.
-stages.0.objectives.0.text: In Deployment `reader` ist der eingebundene API-Zugang ein privater projizierter
-  Token unter `/credential/token`, gültig für die API und für `600` Sekunden angefordert; automatisches
-  Einbinden bleibt deaktiviert.
-stages.0.objectives.1.text: Die bereitgestellte Role erlaubt nur benannten Lesezugriff auf die vorhandene
-  Routenkonfiguration.
-stages.0.objectives.2.text: Mit eingebundenem Zugang und CA-Prüfung erhält der Reader HTTP `200` und Route
-  `north-114` aus der vorhandenen Routenkonfiguration.
-stages.0.objectives.3.text: Derselbe Reader-Zugang erhält HTTP `403` für ConfigMap-Listen, Secret-Listen
-  und die separate geschützte Konfiguration.
+stages.0.objectives.0.text: In Deployment `reader` ist der eingebundene API-Zugang ein privater projizierter Token
+  unter `/credential/token`, gültig für die API und für `600` Sekunden angefordert; automatisches Einbinden bleibt
+  deaktiviert.
+stages.0.objectives.1.text: Die bereitgestellte Role erlaubt nur benannten Lesezugriff auf die vorhandene Routenkonfiguration.
+stages.0.objectives.2.text: Mit eingebundenem Zugang und CA-Prüfung erhält der Reader HTTP `200` und Route `north-114`
+  aus der vorhandenen Routenkonfiguration.
+stages.0.objectives.3.text: Derselbe Reader-Zugang erhält HTTP `403` für ConfigMap-Listen, Secret-Listen und die
+  separate geschützte Konfiguration.
 diagnostics.probe_0_0: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: In Deployment `reader`
   ist der eingebundene API-Zugang ein privater projizierter Token unter `/credential/token`, gültig für die API
   und für `600` Sekunden angefordert; automatisches Einbinden bleibt deaktiviert.'

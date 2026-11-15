@@ -1,67 +1,39 @@
 title: Job Wiederholungsrichtlinie
-brief: 'Der Batch-Workload scheitert wiederholt an der Validierung. Begrenzen Sie die Fehlerbehandlung und
-  bewahren Sie Identität und Fehlernachweise.
+brief: |-
+  Der Validator schlägt fehl; regelmäßige Validierung muss wiederhergestellt werden, ohne vorhandene Fehlerbelege zu verlieren.
 
-
-  Arbeiten Sie in `~/quest` auf der Workstation. Bereitgestellte Dateien: `job.yaml`.
-
+  Arbeite auf der Workstation in `~/quest` mit `batch-contract.json`. Der ursprüngliche Job ist über Kubernetes verfügbar; ein vollständiges Manifest für regelmäßige Ausführung wird nicht geliefert.
 
   **Anforderungen:**
 
-  - Der ursprüngliche Validierungs-Job behält seine Identität und den mitgelieferten Befehl, führt jeweils
-  einen Versuch aus und startet fehlgeschlagene Container nicht neu.
+  - Erhalte Identität und vorgegebenen Befehl des ursprünglichen Validierungs-Jobs, einen Versuch gleichzeitig und keine Container-Neustarts.
+  - Begrenze ursprünglichen Job und regelmäßige Ausführungen auf Wiederholungslimit `1` und Laufzeit `30` Sekunden. Jede Ausführung nutzt vorgegebenes Workload-Image und Befehl für eine Validierung.
+  - Der im Vertrag bestimmte regelmäßige Validator ist mit dem angegebenen minütlichen Zeitplan aktiviert. Erhalte eine aktive Ausführung, statt sie bei einem weiteren Termin zu überlappen oder abzubrechen.
+  - Ursprünglicher Job und mindestens ein aktueller geplanter Kind-Job erreichen `Failed=True` mit mindestens `1` fehlgeschlagenem Versuch und einem eigenen `Failed` Pod, dessen `worker` mit Code `1` endet.
 
-  - Job `importer` begrenzt Wiederholungen auf `1` und die Ausführungszeit auf `30` Sekunden.
-
-  - Job `importer` erreicht `Failed=True` mit mindestens `1` fehlgeschlagenem Versuch und einem kontrollierten
-  Pod `Failed`, dessen `worker` mit Code `1` endet.
-
-
-  Der Controller kann verschiedene Gründe oder Zähler erfassen; geprüft werden aktuelle Identität, Einstellungen
-  und Fehlernachweise, nicht die unveränderte Befehlshistorie.
-
-  '
-debrief: Die fehlgeschlagene Arbeitsbelastung stoppt vorhersehbar, während Beweise für die Diagnose erhalten
-  bleiben.
-stages.0.brief: Der ursprüngliche Batch-Workload muss vorhersehbar mit beobachtbaren Fehlernachweisen enden.
-hints.0.text: Ein dauerhafter Datenfehler kann nicht durch unbegrenzte Wiederholungsversuche behoben werden.
-hints.1.text: 'Für backoffLimit und activeDeadlineSeconds gelten unterschiedliche Abmessungen.
-
-
-  Prüfen Sie die mitgelieferten Definitionen, aktuellen Ressourcen und Ereignisse.
-
+  Prüfungen beobachten aktuelle Identität, Richtlinie und Fehlerbelege, nicht jede frühere Ausführung oder den Änderungsverlauf. Ein geplantes Kind kann erst nach mehr als einer Minute erscheinen.
+debrief: Die Änderung eines aktuellen Jobs liefert keine regelmäßige Ausführungsrichtlinie. Der zukünftige Controller
+  und ein tatsächlich fehlgeschlagenes Kind belegen beide Grenzen, ohne ursprüngliche Belege zu ersetzen.
+stages.0.brief: Begrenze den aktuellen Fehler und konstruiere begrenzte regelmäßige Validierung.
+hints.0.text: Ein bestehender Job und die Vorlage zukünftiger Jobs sind getrennte Richtliniengrenzen. Das Erhalten
+  des aktuellen Fehlers schafft noch keine sichere regelmäßige Ausführung.
+hints.1.text: |-
+  Untersuche bestehenden Job, fehlgeschlagene Pods und Vertrag. Verwende den beobachteten Workload für zukünftige Ausführungen; anfangs ist kein regelmäßiger Controller vorhanden.
 
   ```sh
-
-  cat job.yaml
-
+  cat batch-contract.json
+  kubectl get job importer -o yaml
   kubectl describe job importer
-
-  kubectl get pods -l job-name=importer -o yaml
-
-  ```'
-hints.2.text: 'Patchen Sie die vorhandenen Grenzwerte Job und inspect Failed conditions sowie das terminierte
-  exit codes.
-
-
-  Prüfen Sie das beobachtete Ergebnis:
-
-
-  ```sh
-
-  kubectl get job importer
-
   kubectl get pods -l job-name=importer
-
+  kubectl logs -l job-name=importer --all-containers=true --prefix=true
   ```
+hints.2.text: |-
+  Prüfe regelmäßige Richtlinie, erhaltenen ursprünglichen Job und ein begrenztes fehlgeschlagenes Kind. Ordne die Kind-Eigentümerschaft dem CronJob zu und dessen fehlgeschlagenen worker Pod dem Kind; worker muss mit Code 1 enden.
 
-
-  Der Job ist Failed und ein kontrollierter Pod scheiterte mit Worker-Exitcode 1; die Terminierungsdetails
-  stehen über Hinweis 2 bereit.
-
-
-  Mitgelieferte Einschränkungen und Details: Der ursprüngliche Job `importer` behält den bereitgestellten Validierungsbefehl
-  von `worker`, Parallelität `1` und Pod-Neustartrichtlinie `Never`.'
+  - `kubectl get cronjob validation-cycle -o yaml`
+  - `kubectl get job importer -o yaml`
+  - `kubectl get jobs -o yaml`
+  - `kubectl get pods -o yaml`
 phrases.0: Ich habe die Anzahl der Wiederholungsversuche von der Ausführung deadline unterschieden.
 phrases.1: Ich habe den ausgefallenen Job zur Diagnose aufbewahrt.
 phrases.2: Ich habe das Terminal condition und den tatsächlichen Container exit code überprüft.
@@ -74,19 +46,32 @@ questions.1.points.1: activeDeadlineSeconds begrenzt das Ausführungsfenster Job
 questions.1.points.2: Überprüfen Sie den Controller conditions und die abgeschlossenen Container.
 questions.1.prompt: Zählt backoffLimit die verstrichenen Sekunden?
 diagnostics.uid: Die original-job-uid darf nicht leer sein und muss der UID von job/importer entsprechen.
-diagnostics.worker_command: job/importer muss worker mit dem Befehl `["sh", "-c", "echo invalid-route >&2;
-  exit 1"]` enthalten.
+diagnostics.worker_command: job/importer muss worker mit dem Befehl `["sh", "-c", "echo invalid-route >&2; exit
+  1"]` enthalten.
 diagnostics.restart: job/importer restartPolicy muss Never entsprechen.
 diagnostics.failed_count: job/importer status.failed muss mindestens 1 sein.
 diagnostics.failed_condition: job/importer Failed muss True entsprechen.
-diagnostics.failed_pod: Ein Failed-Pod, der von job/importer mit der ursprünglichen UID kontrolliert wird,
-  muss einen mit Code 1 beendeten worker-Container haben.
+diagnostics.failed_pod: Ein Failed-Pod, der von job/importer mit der ursprünglichen UID kontrolliert wird, muss
+  einen mit Code 1 beendeten worker-Container haben.
 diagnostics.field_backofflimit: job/importer backoffLimit muss 1 entsprechen.
 diagnostics.field_activedeadlineseconds: job/importer activeDeadlineSeconds muss 30 entsprechen.
 diagnostics.field_parallelism: job/importer parallelism muss 1 entsprechen.
-stages.0.objectives.0.text: Der ursprüngliche Validierungs-Job behält seine Identität und den mitgelieferten
-  Befehl, führt jeweils einen Versuch aus und startet fehlgeschlagene Container nicht neu.
-stages.0.objectives.1.text: Job `importer` begrenzt Wiederholungen auf `1` und die Ausführungszeit auf `30`
-  Sekunden.
-stages.0.objectives.2.text: Job `importer` erreicht `Failed=True` mit mindestens `1` fehlgeschlagenem Versuch
-  und einem kontrollierten Pod `Failed`, dessen `worker` mit Code `1` endet.
+stages.0.objectives.0.text: Der ursprüngliche Validierungs-Job behält seine Identität und den mitgelieferten Befehl,
+  führt jeweils einen Versuch aus und startet fehlgeschlagene Container nicht neu.
+stages.0.objectives.1.text: Begrenze ursprünglichen Job und regelmäßige Ausführungen auf Wiederholungslimit `1`
+  und Laufzeit `30` Sekunden. Jede Ausführung nutzt vorgegebenes Workload-Image und Befehl für eine Validierung.
+  Der im Vertrag bestimmte regelmäßige Validator ist mit dem angegebenen minütlichen Zeitplan aktiviert. Erhalte
+  eine aktive Ausführung, statt sie bei einem weiteren Termin zu überlappen oder abzubrechen.
+stages.0.objectives.2.text: Ursprünglicher Job und mindestens ein aktueller geplanter Kind-Job erreichen `Failed=True`
+  mit mindestens `1` fehlgeschlagenem Versuch und einem eigenen `Failed` Pod, dessen `worker` mit Code `1` endet.
+diagnostics.batch_current: Der ursprüngliche Job konnte nicht beobachtet werden.
+diagnostics.batch_original: Der ursprüngliche Job muss Identität und vorgegebenen Workload erhalten.
+diagnostics.batch_recurrence: Der regelmäßige Validator muss jede Minute aktiviert sein und eine aktive Ausführung
+  ohne Überlappung erhalten.
+diagnostics.batch_template: Die regelmäßige Vorlage muss vorgegebenen Workload und alle Ausführungsgrenzen erhalten.
+diagnostics.batch_child: Kein aktueller begrenzter fehlgeschlagener Job unter dem regelmäßigen Validator wurde beobachtet.
+diagnostics.batch_failed_pod: Kein eigener Failed worker Pod mit Exit-Code 1 für diesen begrenzten geplanten Job
+  wurde beobachtet.
+diagnostics.probe_0_1: Aktuelle Beobachtungen konnten die Richtlinie für ursprüngliche und regelmäßige Ausführung
+  nicht bestätigen.
+diagnostics.probe_0_2: Aktuelle Beobachtungen konnten ursprüngliche und geplante Fehlerbelege nicht bestätigen.
