@@ -1,33 +1,56 @@
 set -euo pipefail
 cd ~/quest
 cat > rollout.yml <<'DQ_ASSET'
-- name: SignalRail station configuration
-  hosts: fleet
+- hosts: fleet
   gather_facts: false
-  handlers:
-  - name: Reload banner
-    ansible.builtin.command: dq-service reload
+  vars:
+    delivery_root: /srv/site
+    expected_message: north-79
+    expected_route: route=north
+    service_observe:
+    - curl
+    - -fsS
+    - --max-time
+    - '2'
+    - http://127.0.0.1:8080/
+    service_reload:
+    - dq-service
+    - reload
   tasks:
-  - name: Create station configuration directory
+  - name: Construct configuration directory
     ansible.builtin.file:
-      path: /srv/site/config
+      path: '{{ delivery_root }}/config'
       state: directory
       mode: '0755'
-  - name: Restore station banner
+  - name: Deliver banner
     ansible.builtin.copy:
-      dest: /srv/site/message
-      content: 'north-79
+      dest: '{{ delivery_root }}/message'
+      content: '{{ expected_message }}
 
         '
       mode: '0644'
-    notify: Reload banner
-  - name: Write station route
+    notify: Refresh consumer
+  - name: Deliver route
     ansible.builtin.copy:
-      dest: /srv/site/config/route
-      content: 'route=north
+      dest: '{{ delivery_root }}/config/route'
+      content: '{{ expected_route }}
 
         '
       mode: '0644'
+    notify: Refresh consumer
+  - name: Observe actual consumer
+    ansible.builtin.command:
+      argv: '{{ service_observe }}'
+    register: consumer_observation
+    changed_when: false
+  - name: Recover stale live state even without a file change
+    ansible.builtin.command:
+      argv: '{{ service_reload }}'
+    when: consumer_observation.stdout | trim != expected_message
+  handlers:
+  - name: Refresh consumer
+    ansible.builtin.command:
+      argv: '{{ service_reload }}'
 DQ_ASSET
 ansible-playbook rollout.yml > repair.log
 ansible-playbook rollout.yml > second.log

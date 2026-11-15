@@ -7,104 +7,189 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: |-
-      dq_group_failed=0
-      set +e
-      (
-      set -e
-      ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/release.txt)" = release-89'
-      )
-      dq_condition_rc=$?
-      if [ "$dq_condition_rc" -ne 0 ]; then
-      printf '%s\n' 'Host app1 /srv/site/release.txt: content = release-89 : ✗ [DQ:release_1]'
-      dq_group_failed=1
-      fi
-      (
-      set -e
-      ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/release.txt)" = release-89'
-      )
-      dq_condition_rc=$?
-      if [ "$dq_condition_rc" -ne 0 ]; then
-      printf '%s\n' 'Host app2 /srv/site/release.txt: content = release-89 : ✗ [DQ:release_2]'
-      dq_group_failed=1
-      fi
-      (
-      set -e
-      ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/release.txt)" = release-89'
-      )
-      dq_condition_rc=$?
-      if [ "$dq_condition_rc" -ne 0 ]; then
-      printf '%s\n' 'Host app3 /srv/site/release.txt: content = release-89 : ✗ [DQ:release_3]'
-      dq_group_failed=1
-      fi
-      set -e
-      test "$dq_group_failed" -eq 0
+    check: "dq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\ncd\
+      \ ~/quest\ntimeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_PUBLICATION'\ndq_group_failed=0\nset\
+      \ +e\n(\nset -e\nssh -n -o BatchMode=yes -p 2222 root@app1-\"${DQ_NAMESPACE#dq-}\" 'test \"$(cat /srv/site/release.txt)\"\
+      \ = release-89'\n)\ndq_condition_rc=$?\nif [ \"$dq_condition_rc\" -ne 0 ]; then\nprintf '%s\\n' 'Host app1\
+      \ /srv/site/release.txt: content = release-89 : ✗ [DQ:release_1]'\ndq_group_failed=1\nfi\n(\nset -e\nssh -n\
+      \ -o BatchMode=yes -p 2222 root@app2-\"${DQ_NAMESPACE#dq-}\" 'test \"$(cat /srv/site/release.txt)\" = release-89'\n\
+      )\ndq_condition_rc=$?\nif [ \"$dq_condition_rc\" -ne 0 ]; then\nprintf '%s\\n' 'Host app2 /srv/site/release.txt:\
+      \ content = release-89 : ✗ [DQ:release_2]'\ndq_group_failed=1\nfi\n(\nset -e\nssh -n -o BatchMode=yes -p 2222\
+      \ root@app3-\"${DQ_NAMESPACE#dq-}\" 'test \"$(cat /srv/site/release.txt)\" = release-89'\n)\ndq_condition_rc=$?\n\
+      if [ \"$dq_condition_rc\" -ne 0 ]; then\nprintf '%s\\n' 'Host app3 /srv/site/release.txt: content = release-89\
+      \ : ✗ [DQ:release_3]'\ndq_group_failed=1\nfi\nset -e\ntest \"$dq_group_failed\" -eq 0\nDQ_LEGACY_PUBLICATION\n\
+      python3 -I - <<'DQ_PUBLICATION'\nimport hashlib\nimport json\nimport os\nimport shlex\nimport subprocess\n\
+      import sys\nimport time\nimport urllib.error\nimport urllib.parse\nimport urllib.request\nfrom pathlib import\
+      \ Path\n\nobserver = \"import hashlib\\nimport json\\nimport sys\\nfrom pathlib import Path\\n\\nresult =\
+      \ {}\\nfor item in json.loads(sys.argv[1]):\\n    pid = Path(item['pidFile']).read_text().strip()\\n    proc\
+      \ = Path('/proc') / pid\\n    status = dict(line.split(':', 1) for line in (proc / 'status').read_text().splitlines()\
+      \ if ':' in line)\\n    result[item['name']] = {\\n        'pid': pid,\\n        'starttime': (proc / 'stat').read_text().rsplit(')\
+      \ ', 1)[1].split()[19],\\n        'uid': status['Uid'].split(),\\n        'gid': status['Gid'].split(),\\\
+      n        'groups': status['Groups'].split(),\\n        'caps': {key: status[key].strip() for key in ('CapInh',\
+      \ 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb')},\\n        'command': (proc / 'cmdline').read_bytes().decode().split(chr(0)),\\\
+      n        'code': hashlib.sha256(Path(item['programPath']).read_bytes()).hexdigest(),\\n    }\\nprint(json.dumps(result))\\\
+      n\"\ndeadline = time.monotonic() + 10\nfailed = False\nfacts = Path('/run/dq/facts/0')\nactive_index = None\n\
+      \n\ndef reject(marker):\n    global failed\n    print('Observed application contract is unmet: ✗ [DQ:' + marker\
+      \ + ']')\n    failed = True\n\n\ndef remaining():\n    value = deadline - time.monotonic()\n    if value <=\
+      \ 0:\n        raise subprocess.TimeoutExpired('application observation', 10)\n    return value\n\n\ndef command(args):\n\
+      \    return subprocess.run(args, capture_output=True, text=True, check=True, timeout=remaining())\n\n\ndef\
+      \ addresses(host):\n    programme = 'import json,socket,sys; print(json.dumps(sorted({item[4][0] for item\
+      \ in socket.getaddrinfo(sys.argv[1],None,type=socket.SOCK_STREAM)})))'\n    return set(json.loads(command(['/usr/bin/python3',\
+      \ '-I', '-c', programme, host]).stdout))\n\n\ntry:\n    contract = json.loads((facts / 'application-contract.json').read_text())\n\
+      \    original = json.loads((facts / 'original-application-identities.json').read_text())\n    controller =\
+      \ Path(contract['controllerArtifact'])\n    if hashlib.sha256(controller.read_bytes()).hexdigest() != contract['publication']['sha256']:\n\
+      \        reject('controller_artifact')\n    headers = {}\n    if contract['authentication']:\n        import\
+      \ yaml\n        token = yaml.safe_load((facts / 'credentials.yml').read_text())['reader_token']\n        headers\
+      \ = {'Authorization': 'Bearer ' + token}\n    suffix = os.environ['DQ_NAMESPACE'][3:]\n    source_host = contract['sourceHost']\
+      \ + '-' + suffix\n    source_addresses = addresses(source_host)\n    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))\n\
+      \    for active_index, host in enumerate(('app1', 'app2', 'app3'), 1):\n        address = host + '-' + suffix\n\
+      \        remote = '/usr/bin/python3 -I -c ' + shlex.quote(observer) + ' ' + shlex.quote(json.dumps([contract['process']]))\n\
+      \        identity = json.loads(command(['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=1', '-o',\
+      \ 'ConnectionAttempts=1', '-p', '2222', 'root@' + address, remote]).stdout)\n        if identity != original[host]:\n\
+      \            reject('application_identity_' + str(active_index))\n        try:\n            request = urllib.request.Request('http://'\
+      \ + address + ':' + str(contract['port']) + '/', headers=headers)\n            with opener.open(request, timeout=remaining())\
+      \ as response:\n                value = json.loads(response.read(65536))\n        except urllib.error.HTTPError:\n\
+      \            reject('application_ready_' + str(active_index))\n            continue\n        data = value.get('data')\
+      \ or {}\n        if value.get('ready') is not True or value.get('role') != contract['roles'][host] or any(data.get(key)\
+      \ != wanted for key, wanted in contract['publication'].items()):\n            reject('application_ready_'\
+      \ + str(active_index))\n            continue\n        if host == contract['sourceHost']:\n            if data.get('origin')\
+      \ != 'local':\n                reject('application_origin_' + str(active_index))\n        else:\n        \
+      \    origin = urllib.parse.urlsplit(data.get('origin', ''))\n            if origin.scheme != 'http' or origin.port\
+      \ != contract['port'] or not origin.hostname or not (addresses(origin.hostname) & source_addresses):\n   \
+      \             reject('application_origin_' + str(active_index))\nexcept subprocess.TimeoutExpired:\n    reject('application_budget')\n\
+      except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, RuntimeError):\n    reject('application_observation'\
+      \ + ('_' + str(active_index) if active_index else ''))\nsys.exit(int(failed))\nDQ_PUBLICATION\n) >\"$dq_probe_output\"\
+      \ 2>/dev/null\ndq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\nif [ \"$dq_probe_status\" -ne 0 ] &&\
+      \ ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\n printf '%s\\n' 'Current inputs could not verify\
+      \ this objective: ✗ [DQ:probe_0_0]'\nfi\nrm -f \"$dq_probe_output\"\ntrap - EXIT\ntest \"$dq_probe_status\"\
+      \ -eq 0"
   - text: stages.0.objectives.1.text
-    check: |-
-      dq_group_failed=0
+    check: 'dq_group_failed=0
+
       set +e
+
       (
+
       set -e
-      ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/reader.token)" = game-only-reader'
+
+      ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" ''test "$(cat /srv/site/reader.token)" = game-only-reader''
+
       )
+
       dq_condition_rc=$?
+
       if [ "$dq_condition_rc" -ne 0 ]; then
-      printf '%s\n' 'Host app1 /srv/site/reader.token: content = game-only-reader : ✗ [DQ:token_1]'
+
+      printf ''%s\n'' ''Host app1 /srv/site/reader.token: content = game-only-reader : ✗ [DQ:token_1]''
+
       dq_group_failed=1
+
       fi
+
       (
+
       set -e
-      ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/reader.token)" = game-only-reader'
+
+      ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" ''test "$(cat /srv/site/reader.token)" = game-only-reader''
+
       )
+
       dq_condition_rc=$?
+
       if [ "$dq_condition_rc" -ne 0 ]; then
-      printf '%s\n' 'Host app2 /srv/site/reader.token: content = game-only-reader : ✗ [DQ:token_2]'
+
+      printf ''%s\n'' ''Host app2 /srv/site/reader.token: content = game-only-reader : ✗ [DQ:token_2]''
+
       dq_group_failed=1
+
       fi
+
       (
+
       set -e
-      ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/reader.token)" = game-only-reader'
+
+      ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" ''test "$(cat /srv/site/reader.token)" = game-only-reader''
+
       )
+
       dq_condition_rc=$?
+
       if [ "$dq_condition_rc" -ne 0 ]; then
-      printf '%s\n' 'Host app3 /srv/site/reader.token: content = game-only-reader : ✗ [DQ:token_3]'
+
+      printf ''%s\n'' ''Host app3 /srv/site/reader.token: content = game-only-reader : ✗ [DQ:token_3]''
+
       dq_group_failed=1
+
       fi
+
       set -e
-      test "$dq_group_failed" -eq 0
+
+      test "$dq_group_failed" -eq 0'
   - text: stages.0.objectives.2.text
-    check: |-
-      dq_group_failed=0
+    check: 'dq_group_failed=0
+
       set +e
+
       (
+
       set -e
-      ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/reader.token)" = 600'
+
+      ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" ''test "$(stat -c %a /srv/site/reader.token)"
+      = 600''
+
       )
+
       dq_condition_rc=$?
+
       if [ "$dq_condition_rc" -ne 0 ]; then
-      printf '%s\n' 'Host app1 /srv/site/reader.token: mode = 600 : ✗ [DQ:token_mode_1]'
+
+      printf ''%s\n'' ''Host app1 /srv/site/reader.token: mode = 600 : ✗ [DQ:token_mode_1]''
+
       dq_group_failed=1
+
       fi
+
       (
+
       set -e
-      ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/reader.token)" = 600'
+
+      ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" ''test "$(stat -c %a /srv/site/reader.token)"
+      = 600''
+
       )
+
       dq_condition_rc=$?
+
       if [ "$dq_condition_rc" -ne 0 ]; then
-      printf '%s\n' 'Host app2 /srv/site/reader.token: mode = 600 : ✗ [DQ:token_mode_2]'
+
+      printf ''%s\n'' ''Host app2 /srv/site/reader.token: mode = 600 : ✗ [DQ:token_mode_2]''
+
       dq_group_failed=1
+
       fi
+
       (
+
       set -e
-      ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(stat -c %a /srv/site/reader.token)" = 600'
+
+      ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" ''test "$(stat -c %a /srv/site/reader.token)"
+      = 600''
+
       )
+
       dq_condition_rc=$?
+
       if [ "$dq_condition_rc" -ne 0 ]; then
-      printf '%s\n' 'Host app3 /srv/site/reader.token: mode = 600 : ✗ [DQ:token_mode_3]'
+
+      printf ''%s\n'' ''Host app3 /srv/site/reader.token: mode = 600 : ✗ [DQ:token_mode_3]''
+
       dq_group_failed=1
+
       fi
+
       set -e
-      test "$dq_group_failed" -eq 0
+
+      test "$dq_group_failed" -eq 0'
 hints:
 - text: hints.0.text
   guide: ansible-13
@@ -129,4 +214,13 @@ facts:
   - ansible.cfg
   - release.txt
   - rollout.yml
+  - provided-application.py
+  - application-contract.json
+  - original-application-identities.json
+  - credentials.yml
   services: []
+immutable:
+  0:
+  - application-contract.json
+  - original-application-identities.json
+  - credentials.yml

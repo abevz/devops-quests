@@ -111,6 +111,10 @@ def test_096_current_file_contract_does_not_require_one_restore_source_shape(
     check = yaml.safe_load((ROOT / "quests/096/quest.yaml").read_text())["stages"][0][
         "objectives"
     ][2]["check"]
+    # Isolate the retained file-result predicate. Application identity and
+    # current-program replay have their own native regression matrix.
+    marker = "DQ_LEGACY_RESTORE"
+    check = check.split("<<'" + marker + "'\n", 1)[1].split("\n" + marker, 1)[0]
     result = subprocess.run(
         ["bash", "-c", "set -euo pipefail\ncd ~/quest\n" + check],
         env={

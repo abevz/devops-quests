@@ -248,6 +248,13 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+cd ~/quest
+timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_RESTORE'
 dq_result_failed=0
 set +e
 (
@@ -357,6 +364,106 @@ test "$dq_group_failed" -eq 0
 [ $? -eq 0 ] || dq_result_failed=1
 set -e
 test "$dq_result_failed" -eq 0
+DQ_LEGACY_RESTORE
+python3 -I - <<'DQ_RESTORE_IDENTITY'
+import json
+import os
+import shlex
+import stat
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+observer = "import hashlib\nimport json\nimport sys\nfrom pathlib import Path\n\nresult = {}\nfor item in json.loads(sys.argv[1]):\n    pid = Path(item['pidFile']).read_text().strip()\n    proc = Path('/proc') / pid\n    status = dict(line.split(':', 1) for line in (proc / 'status').read_text().splitlines() if ':' in line)\n    result[item['name']] = {\n        'pid': pid,\n        'starttime': (proc / 'stat').read_text().rsplit(') ', 1)[1].split()[19],\n        'uid': status['Uid'].split(),\n        'gid': status['Gid'].split(),\n        'groups': status['Groups'].split(),\n        'caps': {key: status[key].strip() for key in ('CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb')},\n        'command': (proc / 'cmdline').read_bytes().decode().split(chr(0)),\n        'code': hashlib.sha256(Path(item['programPath']).read_bytes()).hexdigest(),\n    }\nprint(json.dumps(result))\n"
+file_observer = "import hashlib,json,stat\nfrom pathlib import Path\nresult={}\nfor name in ['consumer-binding.json','tenant.json']:\n p=Path('/srv/site')/name;s=p.stat();result[name]={'inode':s.st_ino,'mtime':s.st_mtime_ns,'mode':stat.S_IMODE(s.st_mode),'uid':s.st_uid,'gid':s.st_gid,'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'json':json.loads(p.read_text())}\nprint(json.dumps(result))\n"
+caller_program = 'import json,os,stat,subprocess,tempfile,time\nfrom pathlib import Path\nstart=time.monotonic()\nwith tempfile.TemporaryDirectory(prefix=\'.dq-restore-construction-\', dir=Path.cwd()) as folder:\n root=Path(folder);destination=root/\'live\';destination.mkdir();binary=root/\'bin\';binary.mkdir()\n message=destination/\'message\';binding=destination/\'consumer-binding.json\';ledger=destination/\'tenant.json\';cache=root/\'cache\';control=destination/\'retained-control\'\n message.write_text(\'retired-caller\\n\');cache.write_text(\'retired-caller\\n\');binding.write_text(json.dumps({\'pid\':91,\'instance\':\'caller-live\'})+\'\\n\');ledger.write_text(json.dumps({\'account\':\'caller\',\'balance\':4711})+\'\\n\');ledger.chmod(0o600);control.write_text(\'retain unrelated caller data\\n\')\n def state(path):\n  s=path.stat();return (s.st_ino,s.st_mtime_ns,stat.S_IMODE(s.st_mode),s.st_uid,s.st_gid,path.read_bytes())\n original={p:state(p) for p in [binding,ledger,control]}\n callback=binary/\'dq-service\';callback.write_text(\'#!/usr/bin/python3\\nimport sys\\nfrom pathlib import Path\\nassert sys.argv[1:] == ["reload"]\\nPath(\'+repr(str(cache))+\').write_bytes(Path(\'+repr(str(message))+\').read_bytes())\\n\');callback.chmod(0o555);assert os.access(callback,os.X_OK), \'Caller callback must use the existing executable workspace\'\n (root/\'ansible.cfg\').write_text(\'[defaults]\\ninterpreter_python=/usr/bin/python3\\n\')\n (root/\'inventory.json\').write_text(json.dumps({\'all\':{\'children\':{\'fleet\':{\'hosts\':{\'caller\':{\'ansible_connection\':\'local\',\'ansible_python_interpreter\':\'/usr/bin/python3\'}}}}}}))\n args={\'restore_root\':str(destination),\'restore_owner\':str(os.getuid()),\'restore_group\':str(os.getgid()),\'ansible_connection\':\'local\',\'ansible_python_interpreter\':\'/usr/bin/python3\',\'ansible_become\':False}\n r=subprocess.run([\'ansible-playbook\',\'-i\',str(root/\'inventory.json\'),str(Path(\'rollout.yml\').resolve()),\'-e\',json.dumps(args)],env=dict(os.environ,ANSIBLE_CONFIG=str(root/\'ansible.cfg\'),PATH=str(binary)+\':\'+os.environ[\'PATH\']),capture_output=True,text=True,timeout=max(.01,deadline-time.monotonic()))\n valid=r.returncode==0 and message.read_text()==\'north-96\\n\' and cache.read_bytes()==message.read_bytes() and all(p.is_file() and state(p)==before for p,before in original.items()) and stat.S_IMODE(message.stat().st_mode)==0o644 and message.stat().st_uid==os.getuid()\n if not valid:print(\'Current restore program did not satisfy caller effects: ✗ [DQ:restore_effects]\')\n raise SystemExit(not valid)\n'
+deadline = time.monotonic() + 12
+failed = False
+facts = Path('/run/dq/facts/0')
+active_index = None
+
+
+def reject(marker):
+    global failed
+    print('Restore observation is unmet: ✗ [DQ:' + marker + ']')
+    failed = True
+
+
+def remaining():
+    value = deadline - time.monotonic()
+    if value <= 0:
+        raise subprocess.TimeoutExpired('restore observation', 12)
+    return value
+
+
+def remote(address, programme, args=None):
+    command = '/usr/bin/python3 -I -c ' + shlex.quote(programme)
+    if args is not None:
+        command += ' ' + shlex.quote(json.dumps(args))
+    result = subprocess.run(['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=1', '-o', 'ConnectionAttempts=1', '-p', '2222', 'root@' + address, command], check=True, capture_output=True, text=True, timeout=remaining())
+    return json.loads(result.stdout)
+
+
+try:
+    contract = json.loads((facts / 'application-contract.json').read_text())
+    identities = json.loads((facts / 'original-application-identities.json').read_text())
+    original = json.loads((facts / 'original-live-data.json').read_text())
+    suffix = os.environ['DQ_NAMESPACE'][3:]
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    for active_index, host in enumerate(('app1', 'app2', 'app3'), 1):
+        address = host + '-' + suffix
+        if remote(address, observer, [contract['process']]) != identities[host]:
+            reject('application_identity_' + str(active_index))
+        current = remote(address, file_observer)
+        for name in ('consumer-binding.json', 'tenant.json'):
+            previous = original[host][name]
+            value = current[name]
+            metadata_matches = all(value.get(key) == previous[key] for key in ('uid', 'gid', 'mode'))
+            if name == 'consumer-binding.json':
+                content_matches = value.get('json') == previous['json']
+                marker = 'live_binding_'
+            else:
+                content_matches = isinstance(value.get('json'), dict) and all(value['json'].get(key) == wanted for key, wanted in previous['json'].items())
+                marker = 'live_data_'
+            if not metadata_matches or not content_matches:
+                reject(marker + str(active_index))
+        try:
+            with opener.open('http://' + address + ':' + str(contract['port']) + '/', timeout=remaining()) as response:
+                value = json.loads(response.read(65536))
+        except urllib.error.HTTPError:
+            reject('application_ready_' + str(active_index))
+            continue
+        expected_binding = original[host]['consumer-binding.json']['json']
+        expected_ledger = original[host]['tenant.json']['json']
+        expected = {'message': 'north-96', 'instance': expected_binding['instance'], 'account': expected_ledger['account'], 'balance': expected_ledger['balance']}
+        if any(value.get(key) != wanted for key, wanted in expected.items()):
+            reject('application_ready_' + str(active_index))
+    # Execute the current certified program with a caller-owned destination and service.
+    scope = {'deadline': deadline}
+    try:
+        exec(compile(caller_program, 'restore-caller-effect', 'exec'), scope)
+    except SystemExit as result:
+        if result.code:
+            failed = True
+except subprocess.TimeoutExpired:
+    reject('restore_budget')
+except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, RuntimeError):
+    reject('restore_observation' + ('_' + str(active_index) if active_index else ''))
+sys.exit(int(failed))
+DQ_RESTORE_IDENTITY
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_2]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
