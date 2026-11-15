@@ -74,6 +74,7 @@ test "$dq_group_failed" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+timeout --kill-after=1s 10s bash -euo pipefail <<'DQ_LEGACY_052'
 dq_group_failed=0
 set +e
 (
@@ -105,6 +106,37 @@ dq_group_failed=1
 fi
 set -e
 test "$dq_group_failed" -eq 0
+DQ_LEGACY_052
+python3 -I - <<'DQ_CONSUMERS'
+import json, os, shlex, subprocess, sys, time, urllib.request
+from pathlib import Path
+
+deadline = time.monotonic() + 10
+observer = "import hashlib\nimport json\nimport sys\nfrom pathlib import Path\n\nresult = {}\nfor item in json.loads(sys.argv[1]):\n    pid = Path(item['pidFile']).read_text().strip()\n    proc = Path('/proc') / pid\n    status = dict(line.split(':', 1) for line in (proc / 'status').read_text().splitlines() if ':' in line)\n    result[item['name']] = {\n        'pid': pid,\n        'starttime': (proc / 'stat').read_text().rsplit(') ', 1)[1].split()[19],\n        'uid': status['Uid'].split(),\n        'gid': status['Gid'].split(),\n        'groups': status['Groups'].split(),\n        'caps': {key: status[key].strip() for key in ('CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb')},\n        'command': (proc / 'cmdline').read_bytes().decode().split(chr(0)),\n        'code': hashlib.sha256(Path(item['programPath']).read_bytes()).hexdigest(),\n    }\nprint(json.dumps(result))\n"
+facts = Path('/run/dq/facts/0')
+try:
+    contract = json.loads((facts / 'consumer-contract.json').read_text())
+    expected = json.loads((facts / 'consumer-identities.json').read_text())
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    for host in ('app1', 'app2', 'app3'):
+        address = host + '-' + os.environ['DQ_NAMESPACE'][3:]
+        remote = '/usr/bin/python3 -c ' + shlex.quote(observer) + ' ' + shlex.quote(json.dumps(contract['consumers']))
+        result = subprocess.run(['ssh', '-n', '-o', 'BatchMode=yes', '-p', '2222', 'root@' + address, remote], check=True, capture_output=True, text=True, timeout=max(.01, deadline-time.monotonic()))
+        if json.loads(result.stdout) != expected[host]:
+            print('Provided application identity changed: ✗ [DQ:consumer_identity]')
+            sys.exit(1)
+        for item in contract['consumers']:
+            with opener.open('http://' + address + ':' + str(item['port']) + '/', timeout=max(.01, deadline-time.monotonic())) as response:
+                if response.read(65536).decode().strip() != contract['response']:
+                    print('Live application cache is stale: ✗ [DQ:consumer_cache]')
+                    sys.exit(1)
+except subprocess.TimeoutExpired:
+    print('Application observation timed out: ✗ [DQ:consumer_budget]')
+    sys.exit(1)
+except (OSError, ValueError, KeyError, subprocess.CalledProcessError):
+    print('Application could not be observed: ✗ [DQ:consumer_observation]')
+    sys.exit(1)
+DQ_CONSUMERS
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

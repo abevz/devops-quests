@@ -47,6 +47,7 @@ test "$dq_result_failed" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_069'
 dq_group_failed=0
 set +e
 (
@@ -78,6 +79,44 @@ dq_group_failed=1
 fi
 set -e
 test "$dq_group_failed" -eq 0
+DQ_LEGACY_069
+python3 -I - <<'DQ_CREDENTIAL_CONSUMERS'
+import json, os, shlex, subprocess, sys, time, urllib.request
+from pathlib import Path
+import yaml
+observer = "import hashlib\nimport json\nimport sys\nfrom pathlib import Path\n\nresult = {}\nfor item in json.loads(sys.argv[1]):\n    pid = Path(item['pidFile']).read_text().strip()\n    proc = Path('/proc') / pid\n    status = dict(line.split(':', 1) for line in (proc / 'status').read_text().splitlines() if ':' in line)\n    result[item['name']] = {\n        'pid': pid,\n        'starttime': (proc / 'stat').read_text().rsplit(') ', 1)[1].split()[19],\n        'uid': status['Uid'].split(),\n        'gid': status['Gid'].split(),\n        'groups': status['Groups'].split(),\n        'caps': {key: status[key].strip() for key in ('CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb')},\n        'command': (proc / 'cmdline').read_bytes().decode().split(chr(0)),\n        'code': hashlib.sha256(Path(item['programPath']).read_bytes()).hexdigest(),\n    }\nprint(json.dumps(result))\n"
+access = 'import json, os, pwd, subprocess, sys\nitems=json.loads(sys.argv[1]);result=[]\nfor actor in (\'credential-a\',\'credential-b\',\'credential-outsider\'):\n    principal=pwd.getpwuid({"credential-a":1001,"credential-b":1002,"credential-outsider":1003}[actor])\n    groups=os.getgrouplist(principal.pw_name,principal.pw_gid)\n    for item in items:\n        if item[\'name\']==actor:continue\n        probe="""import json,os,sys\nresult=[]\nfor flags in (os.O_RDONLY|os.O_NONBLOCK,os.O_WRONLY|os.O_APPEND|os.O_NONBLOCK):\n    try:\n        fd=os.open(sys.argv[1],flags);os.close(fd);result.append(True)\n    except PermissionError:result.append(False)\nprint(json.dumps(result))\n"""\n        out=subprocess.run([\'/usr/bin/python3\',\'-I\',\'-c\',probe,item[\'inputPath\']],user=principal.pw_uid,group=principal.pw_gid,extra_groups=groups,capture_output=True,text=True,timeout=1,check=True)\n        result.append([actor,item[\'name\'],json.loads(out.stdout)])\nprint(json.dumps(result))\n'
+deadline=time.monotonic()+10
+facts=Path('/run/dq/facts/0')
+try:
+    contract=json.loads((facts/'consumer-contract.json').read_text())
+    expected=json.loads((facts/'consumer-identities.json').read_text())
+    if Path('credentials.yml').read_bytes() != (facts/'credentials.yml').read_bytes():
+        print('Original credential input changed: ✗ [DQ:credential_original]');sys.exit(1)
+    token=yaml.safe_load((facts/'credentials.yml').read_text())['station_token']
+    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    for host in ('app1','app2','app3'):
+        address=host+'-'+os.environ['DQ_NAMESPACE'][3:]
+        def remote(program):
+            command='/usr/bin/python3 -I -c '+shlex.quote(program)+' '+shlex.quote(json.dumps(contract['consumers']))
+            result=subprocess.run(['ssh','-n','-o','BatchMode=yes','-p','2222','root@'+address,command],check=True,capture_output=True,text=True,timeout=max(.01,deadline-time.monotonic()))
+            return json.loads(result.stdout)
+        if remote(observer)!=expected[host]:
+            print('Provided application identity changed: ✗ [DQ:consumer_identity]');sys.exit(1)
+        observed=remote(access)
+        pairs={(actor,item['name']) for actor in ('credential-a','credential-b','credential-outsider') for item in contract['consumers'] if actor!=item['name']}
+        if len(observed)!=len(pairs) or {(row[0],row[1]) for row in observed}!=pairs or any(row[2]!=[False,False] for row in observed):
+            print('Credential access is not private: ✗ [DQ:credential_access]');sys.exit(1)
+        for item in contract['consumers']:
+            request=urllib.request.Request('http://'+address+':'+str(item['port'])+'/',headers={'Authorization':'Bearer '+token})
+            with opener.open(request,timeout=max(.01,deadline-time.monotonic())) as response:
+                if response.status!=200 or response.read(65536).decode().strip()!=contract['response']:
+                    print('Credential consumer is not ready: ✗ [DQ:credential_auth]');sys.exit(1)
+except subprocess.TimeoutExpired:
+    print('Credential observation timed out: ✗ [DQ:consumer_budget]');sys.exit(1)
+except (OSError,ValueError,KeyError,subprocess.CalledProcessError):
+    print('Credential consumer could not be observed: ✗ [DQ:consumer_observation]');sys.exit(1)
+DQ_CREDENTIAL_CONSUMERS
 )
 [ $? -eq 0 ] || failed=1
 (

@@ -28,6 +28,10 @@ def run_goal(tmp_path, number, objective, files=None, body="stable-63"):
     code = yaml.safe_load((ROOT / f"quests/{number:03}/quest.yaml").read_text())[
         "stages"
     ][0]["objectives"][objective]["check"]
+    # This parser-equivalence test isolates the retained recap predicate.
+    # Current-program replay is exercised by the consumer/recovery native matrix.
+    if number == 74 and objective == 1:
+        code = code.split("\nDQ_LEGACY_CALLER\n", 1)[0] + "\nDQ_LEGACY_CALLER\n"
     return subprocess.run(
         ["bash", "-c", "set -euo pipefail\ncd ~/quest\n" + code],
         env={
