@@ -1,60 +1,73 @@
 title: Admisión webhook recuperación
-brief: |-
-  Las actualizaciones de ruta no llegan a la carga. Restaure el contrato privado de admisión y los resultados permitidos y rechazados esperados.
+brief: 'Las actualizaciones de ruta no llegan a la carga. Restaure el contrato privado de admisión y los resultados
+  permitidos y rechazados esperados.
+
 
   Trabaja en la workstation en `~/quest` con los archivos suministrados:
+
   - `board.yaml`, `service.yaml`, `client.yaml`, `route.yaml`, `webhook-repair.json`, `admission-ca.pem`, `admission-target.json`.
+
 
   La interfaz de control de la estación está documentada en `~/quest/control/README.md`.
 
+
   **Requirements:**
 
-  - El callback de admisión del bay conserva la identidad suministrada, CA privada, límite de namespace y contrato de timeout con fallo cerrado, y alcanza su endpoint privado previsto.
+
+  - El callback de admisión del bay conserva la identidad suministrada, CA privada, límite de namespace y contrato
+  de timeout con fallo cerrado, y alcanza su endpoint privado previsto.
+
   - La configuración de ruta existente contiene `north-121` y su simulación de admisión en el servidor tiene éxito.
-  - La simulación de admisión en el servidor de la ruta cerrada se rechaza con el error de validación de ruta del webhook privado.
+
+  - La simulación de admisión en el servidor de la ruta cerrada se rechaza con el error de validación de ruta del
+  webhook privado.
+
   - El Deployment `board` tiene una réplica lista y `http://board:8080` devuelve `north-121` al Deployment `client`.
+  Ambos consumidores descritos en `adoption-contract.json` usan el registro y la clave validados por la política
+  en la configuración deseada y en los Pods actuales listos, leen y sirven la ruta admitida y conservan programas
+  de inicio, identidades de cargas e imágenes. El registro provisional no cambia; la entrada de archivo sigue siendo
+  de solo lectura.
 
-  Las comprobaciones observan la configuración actual del callback y las decisiones de admisión, no todo el historial de recuperación.
-debrief: La configuración actual del webhook, la ruta, la respuesta y las pruebas dry-run válida e inválida
-  coincidieron con las comprobaciones.
-stages.0.brief: La configuración de admisión sigue siendo de solo lectura; la recuperación queda dentro
-  del adaptador suministrado.
-hints.0.text: Fail-closed distingue un webhook inalcanzable de un objeto rechazado. La URL suministrada
-  del callback apunta a una ruta retirada, por lo que admisión fail-closed bloquea el ConfigMap antes
-  de llegar a la carga.
-hints.1.text: |-
-  La configuración es de sólo lectura; la solicitud de reparación no puede cambiar el alcance de namespace, CA o el servidor.
 
-  Inspecciona los datos suministrados y las observaciones activas:
+  Las comprobaciones observan la configuración actual del callback y las decisiones de admisión, no todo el historial
+  de recuperación.
+
+
+  Los roles de consumidores, las rutas de entrada y las restricciones de conservación se describen en `adoption-contract.json`.'
+debrief: El callback protegido, ambos resultados de admission y la adopción actual de los consumidores superaron
+  las comprobaciones. Las instantáneas y respuestas describen el funcionamiento actual, no toda la historia de recuperación.
+stages.0.brief: La configuración de admisión sigue siendo de solo lectura; la recuperación queda dentro del adaptador
+  suministrado.
+hints.0.text: Un fallo de transporte con fail-closed y un rechazo de la política son resultados distintos. Admission
+  controla una escritura de API; no actualiza un entorno capturado al iniciar ni un archivo enlazado mediante subPath.
+  Sigue la publicación y las generaciones de ambos consumidores como límites separados.
+hints.1.text: 'Compara callback, decisiones de admission, fuentes de entrada de los consumidores y Pods actuales.
+  El contrato describe vidas de las entradas y controles conservados; un recibo solo describe la solicitud de control.
+
 
   ```sh
+
+  cd ~/quest
+
+  cat adoption-contract.json webhook-agent-status.json admission-target.json
+
   name="dq-webhook-${DQ_NAMESPACE#dq-}"
-    kubectl get validatingwebhookconfiguration "$name" -o yaml
-    kubectl get namespace "$DQ_NAMESPACE" -o yaml
-    kubectl get deployment board -o yaml
-    cat admission-target.json admission-ca.pem webhook-agent-status.json
-  ```
-hints.2.text: |-
-  Solicite restore-path, repare data.route y luego pruebe ambos resultados de admisión. Escriba `{"action":"restore-path"}` en `webhook-repair.json` y espere al agente limitado; solo restaura la ruta del servidor suministrada.
 
-  Verifica el resultado desde `~/quest` en la workstation:
+  kubectl get validatingwebhookconfiguration "$name" -o yaml
 
-  - La ruta actual se admite sin guardar cambios; el consumidor recibe `north-121`.
+  kubectl get deployment,replicaset,pods,configmap -o yaml
 
-    ```sh
-    kubectl get configmap route -o json |
-      jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' |
-      kubectl apply --dry-run=server -f -
-    kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
-    ```
-
-  - La simulación falla con `Station route must be north-121` y no cambia ningún objeto guardado (dry-run).
-
-    ```sh
-    kubectl get configmap route -o json |
-      jq '.data.route="closed" | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' |
-      kubectl apply --dry-run=server -f -
-    ```
+  ```'
+hints.2.text: "Verifica los dry-runs de servidor aceptados y rechazados, la respuesta de la aplicación y ambos consumidores.\
+  \ Las referencias deseadas y las entradas de Pods en ejecución deben corresponder al registro validado por la\
+  \ política; un HTTP correcto por sí solo no prueba la adopción.\n\n```sh\ncd ~/quest\nkubectl get configmap route\
+  \ -o json |\n  jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)'\
+  \ |\n  kubectl apply --dry-run=server -f -\nkubectl get configmap route -o json |\n  jq '.data.route=\"closed\"\
+  \ | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' |\n  kubectl\
+  \ apply --dry-run=server -f -\nkubectl exec deployment/client -- wget -qO- -T 3 http://board:8080\nkubectl exec\
+  \ deployment/route-env -- printenv ROUTE\nkubectl exec deployment/route-file -- cat /config/route\nfor name in\
+  \ route-env route-file; do\n  kubectl exec \"deployment/$name\" -- wget -qO- -T 3 http://127.0.0.1:8080\ndone\n\
+  kubectl get deployment,replicaset,pods -o yaml\n```"
 phrases.0: Distinguí la falla de transporte webhook de la denegación de policy.
 phrases.1: Conservé la validación fail-closed y el alcance namespace.
 phrases.2: Probé solicitudes API admitidas y denegadas.
@@ -68,11 +81,11 @@ diagnostics.count: webhook configuration webhooks length debe ser igual a 1.
 diagnostics.name: webhook name debe ser igual a route.training.devops-quests.local.
 diagnostics.failure_policy: webhook failurePolicy debe ser igual a Fail.
 diagnostics.timeout: webhook timeoutSeconds debe ser igual a 2.
-diagnostics.url: webhook clientConfig.url debe ser `https://dq-webhook-<bay>:8443/validate` para esta
-  bahía.
-diagnostics.ca: webhook caBundle debe contener el mismo certificado único que admission-ca.pem, independientemente del formato PEM.
-diagnostics.namespace: La etiqueta de instalación de la bahía no debe estar vacía y webhook namespaceSelector
-  debe coincidir exactamente con sus etiquetas de instalación y ejecución.
+diagnostics.url: webhook clientConfig.url debe ser `https://dq-webhook-<bay>:8443/validate` para esta bahía.
+diagnostics.ca: webhook caBundle debe contener el mismo certificado único que admission-ca.pem, independientemente
+  del formato PEM.
+diagnostics.namespace: La etiqueta de instalación de la bahía no debe estar vacía y webhook namespaceSelector debe
+  coincidir exactamente con sus etiquetas de instalación y ejecución.
 diagnostics.route: configmap/route data.route debe ser igual a north-121.
 diagnostics.ready: deployment/board readyReplicas debe ser igual a 1.
 diagnostics.http: La petición a board:8080 debe devolver north-121.
@@ -80,14 +93,37 @@ diagnostics.valid: La preparación de route y su dry-run del servidor deben tene
 diagnostics.invalid_input: La preparación de la entrada dry-run para route closed debe tener éxito.
 diagnostics.denial: El dry-run del servidor debe rechazar route closed.
 diagnostics.denial_text: El rechazo debe contener Station route must be north-121.
-stages.0.objectives.0.text: El callback de admisión del bay conserva la identidad suministrada, CA privada,
-  límite de namespace y contrato de timeout con fallo cerrado, y alcanza su endpoint privado previsto.
-stages.0.objectives.1.text: La configuración de ruta existente contiene `north-121` y su simulación de
-  admisión en el servidor tiene éxito.
-stages.0.objectives.2.text: La simulación de admisión en el servidor de la ruta cerrada se rechaza con
-  el error de validación de ruta del webhook privado.
-stages.0.objectives.3.text: El Deployment `board` tiene una réplica lista y `http://board:8080` devuelve
-  `north-121` al Deployment `client`.
+stages.0.objectives.0.text: El callback de admisión del bay conserva la identidad suministrada, CA privada, límite
+  de namespace y contrato de timeout con fallo cerrado, y alcanza su endpoint privado previsto.
+stages.0.objectives.1.text: La configuración de ruta existente contiene `north-121` y su simulación de admisión
+  en el servidor tiene éxito.
+stages.0.objectives.2.text: La simulación de admisión en el servidor de la ruta cerrada se rechaza con el error
+  de validación de ruta del webhook privado.
+stages.0.objectives.3.text: El Deployment `board` tiene una réplica lista y `http://board:8080` devuelve `north-121`
+  al Deployment `client`. Ambos consumidores descritos en `adoption-contract.json` usan el registro y la clave validados
+  por la política en la configuración deseada y en los Pods actuales listos, leen y sirven la ruta admitida y conservan
+  programas de inicio, identidades de cargas e imágenes. El registro provisional no cambia; la entrada de archivo
+  sigue siendo de solo lectura.
 diagnostics.probe_0_0: 'Los datos actuales no permiten verificar este objetivo: El callback de admisión del bay
   conserva la identidad suministrada, CA privada, límite de namespace y contrato de timeout con fallo cerrado, y
   alcanza su endpoint privado previsto.'
+diagnostics.adoption_identity: Una identidad original de carga o imagen suministrada difiere. Recrear un Deployment
+  o cambiar la imagen de la plantilla/Pod actual no conserva la topología existente.
+diagnostics.adoption_staging: Cambiaron la identidad o los datos del registro provisional. Es un control conservado;
+  editar una copia no adopta la fuente validada.
+diagnostics.adoption_record: El registro protegido no contiene la ruta admitida. Restaurar el callback no publica
+  por sí solo datos admisibles.
+diagnostics.adoption_current: Un consumidor no tiene exactamente un Pod actual propio y listo. Un rollout pendiente
+  o un Pod ajeno no demuestra la adopción actual.
+diagnostics.adoption_program: Cambiaron el comando o los argumentos de inicio del consumidor. Conserva el programa
+  suministrado para que entradas y respuestas correspondan a su comportamiento declarado.
+diagnostics.adoption_source: Una entrada deseada o actual no referencia el registro y la clave validados. Un literal
+  copiado o una clave no validada no demuestra adopción.
+diagnostics.adoption_input: Un consumidor en ejecución todavía lee otra ruta. El entorno y subPath pueden conservar
+  su estado inicial después de cambiar la fuente.
+diagnostics.adoption_output: Una respuesta de consumidor difiere de la ruta admitida. Su instantánea de inicio puede
+  contener datos antiguos aunque el objeto API sea correcto.
+diagnostics.adoption_observation: No se pudo observar la adopción actual dentro del tiempo limitado. Espera a que
+  las cargas estén disponibles y compara los objetos y entradas actuales.
+diagnostics.probe_0_3: No se pudo observar la adopción actual dentro del tiempo limitado. Espera a que las cargas
+  estén disponibles y compara los objetos y entradas actuales.

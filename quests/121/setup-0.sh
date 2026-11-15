@@ -198,3 +198,40 @@ if kubectl apply -f route.yaml >/tmp/initial-admission.log 2>&1; then
  echo 'The broken webhook unexpectedly admitted the route' >&2; exit 1
 fi
 grep -E 'failed calling webhook|failed to call webhook' /tmp/initial-admission.log >/dev/null
+
+python3 -I - <<'DQ_ADOPTION_SEED'
+import copy,json,subprocess
+from pathlib import Path
+def get(kind,name):
+ return json.loads(subprocess.check_output(['kubectl','get',kind,name,'-o','json'],text=True))
+def create(obj):
+ subprocess.run(['kubectl','create','-f','-'],input=json.dumps(obj),text=True,check=True)
+create({'apiVersion':'v1','kind':'ConfigMap','metadata':{'name':'staged-route'},'data':{'route':'retired'}})
+base=get('deployment','client')
+consumers=[]
+for name,mode in [('route-env','environment'),('route-file','mounted-file')]:
+ dep=copy.deepcopy(base);dep.pop('status',None);dep['metadata']={'name':name}
+ dep['spec']['selector']={'matchLabels':{'app':name}}
+ dep['spec']['template']['metadata']={'labels':{'app':name}}
+ spec=dep['spec']['template']['spec'];spec['automountServiceAccountToken']=False
+ c=spec['containers'][0]
+ if mode=='environment':
+  c['env']=[{'name':'ROUTE','valueFrom':{'configMapKeyRef':{'name':'staged-route','key':'route'}}}]
+  action='printf \'%s\\n\' "$ROUTE" > /tmp/status/index.html'
+ else:
+  spec['volumes']=[{'name':'input','configMap':{'name':'staged-route'}}]
+  c['volumeMounts']=[{'name':'input','mountPath':'/config/route','subPath':'route','readOnly':True}]
+  action='cat /config/route > /tmp/status/index.html'
+ c['command']=['sh','-c','set -eu; mkdir -p /tmp/status; '+action+'; exec httpd -f -p 8080 -h /tmp/status']
+ c['readinessProbe']={'httpGet':{'path':'/','port':8080},'periodSeconds':1}
+ create(dep)
+ subprocess.run(['kubectl','rollout','status','deployment/'+name,'--timeout=90s'],check=True)
+ consumers.append({'deployment':name,'mode':mode,'input': 'ROUTE' if mode=='environment' else '/config/route','output':'http://127.0.0.1:8080'})
+contract={'schema':1,'consumers':consumers,'preserveWorkloadIdentitiesAndImages':True,'preserveStagedRecord':True,'adoptPolicyValidatedRecordAndKey':True,'currentDesiredAndRunningInputs':True,'preserveProvidedStartupProgram':True,'oneCurrentReadyPodPerConsumer':True,'mountedInputReadOnly':True,'observesCurrentStateOnly':True}
+facts={'contract':contract,'deployments':{},'staging':get('configmap','staged-route')}
+for name in ['board','client','route-env','route-file']:
+ dep=get('deployment',name);c=dep['spec']['template']['spec']['containers'][0]
+ facts['deployments'][name]={'uid':dep['metadata']['uid'],'image':c['image'],'command':c['command'],'args':c.get('args',[])}
+Path('adoption-contract.json').write_text(json.dumps(contract,indent=2)+'\n')
+Path('adoption-identities.json').write_text(json.dumps(facts)+'\n')
+DQ_ADOPTION_SEED
