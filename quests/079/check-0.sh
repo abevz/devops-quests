@@ -14,6 +14,13 @@ trap 'rm -f "$dq_probe_output"' EXIT
 set +e
 (
 set -euo pipefail
+cd ~/quest
+timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_FLEET'
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
 dq_result_failed=0
 set +e
 (
@@ -54,6 +61,29 @@ fi
 rm -f "$dq_probe_output"
 trap - EXIT
 test "$dq_probe_status" -eq 0
+DQ_LEGACY_FLEET
+python3 -I - <<'DQ_FLEET_CALLER'
+import subprocess
+import sys
+try:
+    exec(compile("import hashlib,json,os,stat,subprocess,tempfile,time\nfrom pathlib import Path\nfrom dq_check import ansible_recap\nstarted=time.monotonic();deadline=started+14\nwith tempfile.TemporaryDirectory(prefix='dq-fleet-check-') as folder:\n root=Path(folder);names=['mixed-a'];wanted='south-probe'\n (root/'ansible.cfg').write_text('[defaults]\\ninterpreter_python=/usr/bin/python3\\n')\n (root/'inventory.json').write_text(json.dumps({'all':{'children':{'fleet':{'hosts':{name:{'ansible_connection':'local','ansible_python_interpreter':'/usr/bin/python3'} for name in names}}}}}))\n def state(p):\n  s=p.stat();return (s.st_ino,s.st_mtime_ns,stat.S_IMODE(s.st_mode),hashlib.sha256(p.read_bytes()).hexdigest())\n controls={};healthy={}\n for name in names:\n  place=root/name;place.mkdir();(place/'retained').write_text('preserve caller data\\n');controls[place/'retained']=state(place/'retained')\n  (place/'cache').write_text((wanted if name=='healthy-c' else 'retired-probe')+'\\n')\n  if name!='mixed-b':\n   (place/'config').mkdir(mode=0o700 if name=='mixed-a' else 0o755)\n   (place/'message').write_text(wanted+'\\n');(place/'message').chmod(0o644)\n   (place/'config/route').write_text('route=south\\n')\n  else:(place/'message').write_text('retired-probe\\n');(place/'message').chmod(0o600)\n  if name=='healthy-c':healthy={p:state(p) for p in [place/'message',place/'config/route',place/'cache']}\n inputs={'delivery_root':str(root/'{{ inventory_hostname }}'),'expected_message':wanted,'expected_route':'route=south','service_observe':['/usr/bin/cat','{{ delivery_root }}/cache'],'service_reload':['/usr/bin/python3','/run/dq/facts/0/caller-cache.py','{{ delivery_root }}/message','{{ delivery_root }}/cache'],'ansible_connection':'local','ansible_python_interpreter':'/usr/bin/python3','ansible_become':False}\n results=[];converged=None\n for index in range(2):\n  r=subprocess.run(['ansible-playbook','-i',str(root/'inventory.json'),str(Path('rollout.yml').resolve()),'-e',json.dumps(inputs)],env=dict(os.environ,ANSIBLE_CONFIG=str(root/'ansible.cfg')),capture_output=True,text=True,timeout=max(.01,deadline-time.monotonic()))\n  rows=ansible_recap(r.stdout)\n  valid=r.returncode==0 and set(rows)==set(names) and all(row.get('failed')==0 and row.get('unreachable')==0 for row in rows.values())\n  for name in names:\n   place=root/name;valid=valid and (place/'config').is_dir() and stat.S_IMODE((place/'config').stat().st_mode)==0o755\n   for path,value in [(place/'message',wanted),(place/'config/route','route=south'),(place/'cache',wanted)]:valid=valid and path.is_file() and path.read_text().strip()==value\n   for path in [place/'message',place/'config/route']:valid=valid and path.is_file() and stat.S_IMODE(path.stat().st_mode)==0o644\n  valid=valid and all(p.is_file() and state(p)==before for p,before in controls.items()) and all(p.is_file() and state(p)==before for p,before in healthy.items())\n  valid=valid and (index==0 or all(row.get('changed')==0 for row in rows.values()))\n  observed_paths=[path for name in names for path in [root/name/'message',root/name/'config/route',root/name/'cache']]\n  if index==1:valid=valid and all(path.is_file() and state(path)==converged[path] for path in observed_paths)\n  elif valid:converged={path:state(path) for path in observed_paths}\n  results.append({'apply':index,'exit':r.returncode,'recaps':rows,'passed':valid})\n  if not valid:print('Fleet caller result is incomplete: ✗ [DQ:fleet_effects]');break\n raise SystemExit(not valid)\n", 'fleet-caller-observation', 'exec'), {})
+except subprocess.TimeoutExpired:
+    print('Fleet caller observation exceeded its budget: ✗ [DQ:fleet_budget]')
+    sys.exit(1)
+except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, RuntimeError):
+    print('Fleet caller could not be observed: ✗ [DQ:fleet_observation]')
+    sys.exit(1)
+DQ_FLEET_CALLER
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+ printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -63,7 +93,7 @@ set +e
 (
 set -e
 dq_remote_output=$(mktemp)
-if ! ssh -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/config 2>/dev/null)" = 755; then printf '"'"'%s\n'"'"' '"'"'app1 /srv/site/config: ✗ [DQ:host_1_dir_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
+if ! ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/config 2>/dev/null)" = 755; then printf '"'"'%s\n'"'"' '"'"'app1 /srv/site/config: ✗ [DQ:host_1_dir_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
 if ! test -s "$dq_remote_output"; then printf '%s\n' 'app1 SSH: ✗ [DQ:ssh_1]'; fi
 cat "$dq_remote_output"
 rm -f "$dq_remote_output"
@@ -78,7 +108,7 @@ fi
 (
 set -e
 dq_remote_output=$(mktemp)
-if ! ssh -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/config 2>/dev/null)" = 755; then printf '"'"'%s\n'"'"' '"'"'app2 /srv/site/config: ✗ [DQ:host_2_dir_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
+if ! ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/config 2>/dev/null)" = 755; then printf '"'"'%s\n'"'"' '"'"'app2 /srv/site/config: ✗ [DQ:host_2_dir_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
 if ! test -s "$dq_remote_output"; then printf '%s\n' 'app2 SSH: ✗ [DQ:ssh_2]'; fi
 cat "$dq_remote_output"
 rm -f "$dq_remote_output"
@@ -93,7 +123,7 @@ fi
 (
 set -e
 dq_remote_output=$(mktemp)
-if ! ssh -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/config 2>/dev/null)" = 755; then printf '"'"'%s\n'"'"' '"'"'app3 /srv/site/config: ✗ [DQ:host_3_dir_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
+if ! ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/config 2>/dev/null)" = 755; then printf '"'"'%s\n'"'"' '"'"'app3 /srv/site/config: ✗ [DQ:host_3_dir_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
 if ! test -s "$dq_remote_output"; then printf '%s\n' 'app3 SSH: ✗ [DQ:ssh_3]'; fi
 cat "$dq_remote_output"
 rm -f "$dq_remote_output"
@@ -116,7 +146,7 @@ set +e
 (
 set -e
 dq_remote_output=$(mktemp)
-if ! ssh -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/message 2>/dev/null)" = 644; then printf '"'"'%s\n'"'"' '"'"'app1 /srv/site/message: ✗ [DQ:host_1_banner_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
+if ! ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/message 2>/dev/null)" = 644; then printf '"'"'%s\n'"'"' '"'"'app1 /srv/site/message: ✗ [DQ:host_1_banner_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
 if ! test -s "$dq_remote_output"; then printf '%s\n' 'app1 SSH: ✗ [DQ:ssh_1]'; fi
 cat "$dq_remote_output"
 rm -f "$dq_remote_output"
@@ -131,7 +161,7 @@ fi
 (
 set -e
 dq_remote_output=$(mktemp)
-if ! ssh -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/config/route 2>/dev/null)" = 644; then printf '"'"'%s\n'"'"' '"'"'app1 /srv/site/config/route: ✗ [DQ:host_1_route_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
+if ! ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/config/route 2>/dev/null)" = 644; then printf '"'"'%s\n'"'"' '"'"'app1 /srv/site/config/route: ✗ [DQ:host_1_route_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
 if ! test -s "$dq_remote_output"; then printf '%s\n' 'app1 SSH: ✗ [DQ:ssh_1]'; fi
 cat "$dq_remote_output"
 rm -f "$dq_remote_output"
@@ -146,7 +176,7 @@ fi
 (
 set -e
 dq_remote_output=$(mktemp)
-if ! ssh -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/message 2>/dev/null)" = 644; then printf '"'"'%s\n'"'"' '"'"'app2 /srv/site/message: ✗ [DQ:host_2_banner_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
+if ! ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/message 2>/dev/null)" = 644; then printf '"'"'%s\n'"'"' '"'"'app2 /srv/site/message: ✗ [DQ:host_2_banner_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
 if ! test -s "$dq_remote_output"; then printf '%s\n' 'app2 SSH: ✗ [DQ:ssh_2]'; fi
 cat "$dq_remote_output"
 rm -f "$dq_remote_output"
@@ -161,7 +191,7 @@ fi
 (
 set -e
 dq_remote_output=$(mktemp)
-if ! ssh -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/config/route 2>/dev/null)" = 644; then printf '"'"'%s\n'"'"' '"'"'app2 /srv/site/config/route: ✗ [DQ:host_2_route_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
+if ! ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/config/route 2>/dev/null)" = 644; then printf '"'"'%s\n'"'"' '"'"'app2 /srv/site/config/route: ✗ [DQ:host_2_route_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
 if ! test -s "$dq_remote_output"; then printf '%s\n' 'app2 SSH: ✗ [DQ:ssh_2]'; fi
 cat "$dq_remote_output"
 rm -f "$dq_remote_output"
@@ -176,7 +206,7 @@ fi
 (
 set -e
 dq_remote_output=$(mktemp)
-if ! ssh -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/message 2>/dev/null)" = 644; then printf '"'"'%s\n'"'"' '"'"'app3 /srv/site/message: ✗ [DQ:host_3_banner_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
+if ! ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/message 2>/dev/null)" = 644; then printf '"'"'%s\n'"'"' '"'"'app3 /srv/site/message: ✗ [DQ:host_3_banner_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
 if ! test -s "$dq_remote_output"; then printf '%s\n' 'app3 SSH: ✗ [DQ:ssh_3]'; fi
 cat "$dq_remote_output"
 rm -f "$dq_remote_output"
@@ -191,60 +221,7 @@ fi
 (
 set -e
 dq_remote_output=$(mktemp)
-if ! ssh -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/config/route 2>/dev/null)" = 644; then printf '"'"'%s\n'"'"' '"'"'app3 /srv/site/config/route: ✗ [DQ:host_3_route_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
-if ! test -s "$dq_remote_output"; then printf '%s\n' 'app3 SSH: ✗ [DQ:ssh_3]'; fi
-cat "$dq_remote_output"
-rm -f "$dq_remote_output"
-exit 1
-fi
-rm -f "$dq_remote_output"
-)
-dq_condition_rc=$?
-if [ "$dq_condition_rc" -ne 0 ]; then
-dq_group_failed=1
-fi
-set -e
-test "$dq_group_failed" -eq 0
-)
-[ $? -eq 0 ] || failed=1
-(
-set -e
-dq_group_failed=0
-set +e
-(
-set -e
-dq_remote_output=$(mktemp)
-if ! ssh -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'if ! test "$(cat /srv/site/message 2>/dev/null)" = north-79; then printf '"'"'%s\n'"'"' '"'"'app1 /srv/site/message: ✗ [DQ:host_1_banner_content]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
-if ! test -s "$dq_remote_output"; then printf '%s\n' 'app1 SSH: ✗ [DQ:ssh_1]'; fi
-cat "$dq_remote_output"
-rm -f "$dq_remote_output"
-exit 1
-fi
-rm -f "$dq_remote_output"
-)
-dq_condition_rc=$?
-if [ "$dq_condition_rc" -ne 0 ]; then
-dq_group_failed=1
-fi
-(
-set -e
-dq_remote_output=$(mktemp)
-if ! ssh -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'if ! test "$(cat /srv/site/message 2>/dev/null)" = north-79; then printf '"'"'%s\n'"'"' '"'"'app2 /srv/site/message: ✗ [DQ:host_2_banner_content]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
-if ! test -s "$dq_remote_output"; then printf '%s\n' 'app2 SSH: ✗ [DQ:ssh_2]'; fi
-cat "$dq_remote_output"
-rm -f "$dq_remote_output"
-exit 1
-fi
-rm -f "$dq_remote_output"
-)
-dq_condition_rc=$?
-if [ "$dq_condition_rc" -ne 0 ]; then
-dq_group_failed=1
-fi
-(
-set -e
-dq_remote_output=$(mktemp)
-if ! ssh -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'if ! test "$(cat /srv/site/message 2>/dev/null)" = north-79; then printf '"'"'%s\n'"'"' '"'"'app3 /srv/site/message: ✗ [DQ:host_3_banner_content]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
+if ! ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'if ! test "$(stat -c %a /srv/site/config/route 2>/dev/null)" = 644; then printf '"'"'%s\n'"'"' '"'"'app3 /srv/site/config/route: ✗ [DQ:host_3_route_mode]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
 if ! test -s "$dq_remote_output"; then printf '%s\n' 'app3 SSH: ✗ [DQ:ssh_3]'; fi
 cat "$dq_remote_output"
 rm -f "$dq_remote_output"
@@ -267,7 +244,7 @@ set +e
 (
 set -e
 dq_remote_output=$(mktemp)
-if ! ssh -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'if ! test "$(cat /srv/site/config/route 2>/dev/null)" = route=north; then printf '"'"'%s\n'"'"' '"'"'app1 /srv/site/config/route: ✗ [DQ:host_1_route_content]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
+if ! ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'if ! test "$(cat /srv/site/message 2>/dev/null)" = north-79; then printf '"'"'%s\n'"'"' '"'"'app1 /srv/site/message: ✗ [DQ:host_1_banner_content]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
 if ! test -s "$dq_remote_output"; then printf '%s\n' 'app1 SSH: ✗ [DQ:ssh_1]'; fi
 cat "$dq_remote_output"
 rm -f "$dq_remote_output"
@@ -282,7 +259,7 @@ fi
 (
 set -e
 dq_remote_output=$(mktemp)
-if ! ssh -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'if ! test "$(cat /srv/site/config/route 2>/dev/null)" = route=north; then printf '"'"'%s\n'"'"' '"'"'app2 /srv/site/config/route: ✗ [DQ:host_2_route_content]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
+if ! ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'if ! test "$(cat /srv/site/message 2>/dev/null)" = north-79; then printf '"'"'%s\n'"'"' '"'"'app2 /srv/site/message: ✗ [DQ:host_2_banner_content]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
 if ! test -s "$dq_remote_output"; then printf '%s\n' 'app2 SSH: ✗ [DQ:ssh_2]'; fi
 cat "$dq_remote_output"
 rm -f "$dq_remote_output"
@@ -297,7 +274,60 @@ fi
 (
 set -e
 dq_remote_output=$(mktemp)
-if ! ssh -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'if ! test "$(cat /srv/site/config/route 2>/dev/null)" = route=north; then printf '"'"'%s\n'"'"' '"'"'app3 /srv/site/config/route: ✗ [DQ:host_3_route_content]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
+if ! ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'if ! test "$(cat /srv/site/message 2>/dev/null)" = north-79; then printf '"'"'%s\n'"'"' '"'"'app3 /srv/site/message: ✗ [DQ:host_3_banner_content]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
+if ! test -s "$dq_remote_output"; then printf '%s\n' 'app3 SSH: ✗ [DQ:ssh_3]'; fi
+cat "$dq_remote_output"
+rm -f "$dq_remote_output"
+exit 1
+fi
+rm -f "$dq_remote_output"
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+dq_group_failed=1
+fi
+set -e
+test "$dq_group_failed" -eq 0
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+dq_group_failed=0
+set +e
+(
+set -e
+dq_remote_output=$(mktemp)
+if ! ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'if ! test "$(cat /srv/site/config/route 2>/dev/null)" = route=north; then printf '"'"'%s\n'"'"' '"'"'app1 /srv/site/config/route: ✗ [DQ:host_1_route_content]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
+if ! test -s "$dq_remote_output"; then printf '%s\n' 'app1 SSH: ✗ [DQ:ssh_1]'; fi
+cat "$dq_remote_output"
+rm -f "$dq_remote_output"
+exit 1
+fi
+rm -f "$dq_remote_output"
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+dq_group_failed=1
+fi
+(
+set -e
+dq_remote_output=$(mktemp)
+if ! ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'if ! test "$(cat /srv/site/config/route 2>/dev/null)" = route=north; then printf '"'"'%s\n'"'"' '"'"'app2 /srv/site/config/route: ✗ [DQ:host_2_route_content]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
+if ! test -s "$dq_remote_output"; then printf '%s\n' 'app2 SSH: ✗ [DQ:ssh_2]'; fi
+cat "$dq_remote_output"
+rm -f "$dq_remote_output"
+exit 1
+fi
+rm -f "$dq_remote_output"
+)
+dq_condition_rc=$?
+if [ "$dq_condition_rc" -ne 0 ]; then
+dq_group_failed=1
+fi
+(
+set -e
+dq_remote_output=$(mktemp)
+if ! ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'if ! test "$(cat /srv/site/config/route 2>/dev/null)" = route=north; then printf '"'"'%s\n'"'"' '"'"'app3 /srv/site/config/route: ✗ [DQ:host_3_route_content]'"'"'; exit 1; fi' > "$dq_remote_output" 2>/dev/null; then
 if ! test -s "$dq_remote_output"; then printf '%s\n' 'app3 SSH: ✗ [DQ:ssh_3]'; fi
 cat "$dq_remote_output"
 rm -f "$dq_remote_output"
