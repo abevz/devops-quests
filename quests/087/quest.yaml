@@ -66,12 +66,64 @@ stages:
       test "$dq_probe_status" -eq 0
   - text: stages.0.objectives.2.text
     check: |-
-      failed=0
-      if ! tofu plan -input=false -detailed-exitcode -no-color >/dev/null 2>&1; then
-        printf '%s\n' 'tofu plan -input=false -detailed-exitcode -no-color → 0: ✗ [DQ:condition_2]'
-        failed=1
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
+      python3 -I - <<'DQ_PROPERTY'
+      import hashlib
+      import json
+      import subprocess
+      import sys
+      import urllib.request
+      from pathlib import Path
+
+      from dq_check import tofu_json
+
+      failed = False
+
+      def require(value, marker):
+          global failed
+          if not value:
+              print('Recovery requirement is unmet: ✗ [DQ:' + marker + ']')
+              failed = True
+
+      facts = json.loads(Path('/run/dq/locking-identities.json').read_text())
+      current = json.loads(subprocess.run(['tofu', 'state', 'pull'], check=True, capture_output=True, text=True, timeout=30).stdout)
+      records = [r for r in current.get('resources', []) if r.get('mode') == 'managed']
+      def ids(kind):
+          return [i.get('attributes', {}).get('id') for r in records if r.get('type') == kind for i in r.get('instances', [])]
+      require(facts['container_id'] in ids('docker_container'), 'locking_binding')
+      require(facts['progress_id'] in ids('terraform_data'), 'locking_progress')
+      require(current.get('lineage') == facts['lineage'] and type(current.get('serial')) is int and current['serial'] >= facts['serial'], 'locking_lineage')
+      physical = json.loads(subprocess.run(['docker', 'inspect', facts['container_id']], check=True, capture_output=True, text=True, timeout=10).stdout)[0]
+      require(physical.get('Id') == facts['container_id'] and physical.get('State', {}).get('Running') is True and physical['State'].get('Health', {}).get('Status') == 'healthy', 'locking_binding')
+      checkpoint = Path('errored.tfstate')
+      require(checkpoint.is_file() and hashlib.sha256(checkpoint.read_bytes()).hexdigest() == facts['checkpoint_sha256'], 'locking_checkpoint')
+      try:
+          backup = json.loads(Path('before-recovery.tfstate').read_text())
+          require(hashlib.sha256(json.dumps(backup, sort_keys=True, separators=(',', ':')).encode()).hexdigest() == facts['backup_sha256'], 'locking_backup')
+      except (ValueError, OSError):
+          require(False, 'locking_backup')
+      with urllib.request.urlopen('http://127.0.0.1:18787/owner', timeout=3) as response:
+          owner = json.load(response)
+      require(owner.get('completed') is True and owner.get('running') is False, 'locking_owner')
+      # Retain the original fresh detailed-plan predicate, including its marker.
+      result = subprocess.run(['tofu', 'plan', '-input=false', '-detailed-exitcode', '-no-color'], capture_output=True, text=True, timeout=60)
+      require(result.returncode == 0, 'condition_2')
+      sys.exit(int(failed))
+      DQ_PROPERTY
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+        printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_2]'
       fi
-      exit "$failed"
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
 hints:
 - text: hints.0.text
   guide: terraform-4
@@ -96,5 +148,7 @@ facts:
   - DOCKER_CERT_PATH
   files:
   - main.tf
-  - hold-state.py
+  - incident.txt
+  - failed-apply.log
+  - errored.tfstate
   services: []

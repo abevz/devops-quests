@@ -1,49 +1,55 @@
-title: State locking
+title: State ownership and concurrent recovery
 brief: |-
-  Normal OpenTofu operations cannot complete.
+  Infrastructure planning is blocked after overlapping state operations. Restore convergence without losing completed work.
 
-  Work on the workstation in `~/quest` with `main.tf`, `lock-probe.log`.
+  Work in `~/quest` on the workstation with `main.tf`, `incident.txt`, `failed-apply.log` and `errored.tfstate`.
 
   **Requirements:**
-  - Files on the workstation:
-    - `~/quest/notice.txt`: `north-ready`.
-  - OpenTofu state:
-    - The configured notice file remains tracked in OpenTofu state.
-  - Infrastructure convergence:
-    - No pending infrastructure changes; detailed-plan exit code `0`.
+  - Workstation `~/quest/notice.txt` contains `north-ready` and remains managed in the root state.
+  - The state retains the completed maintenance record and tracks the original healthy Docker container without recreating either identity.
+  - Keep the original `~/quest/errored.tfstate` unchanged. Retain the backend snapshot from before recovery writes in `~/quest/before-recovery.tfstate`, with its original lineage and completed work.
+  - The registered maintenance console completes normally, releasing its own lock.
+  - The recovered backend retains its original lineage and at least its supplied serial; a fresh detailed plan exits `0`.
 
-  The check observes the current file, state and planning result; it does not establish the unlocking history or method.
-stages.0.brief: Normal infrastructure planning must complete with the notice available.
-hints.0.text: State locking coordinates concurrent writers and protects ongoing state operations.
-hints.1.text: |-
-  Inspect lock-probe.log and the local holder PID. The state file must remain intact; deleting it does not release the original lock safely. The check observes the file, state and plan; it does not directly prove which process stopped or whether force-unlock was used.
+  **Bay service contract:**
+  - `main.tf` names a workstation-local HTTP backend. State reads use GET; writes use POST with the native lock ID query, and LOCK/UNLOCK exchange native lock information. Conflicting locks return `423`; an unmatched unlock returns `409`. State deletion is unavailable.
+  - `GET http://127.0.0.1:18787/diagnostic` exposes current lock information and backend events. Earlier logs describe their own operation, not necessarily the current owner.
+  - `GET http://127.0.0.1:18787/owner` exposes the registered console's `handle`, `running`, `eof_requested`, `completed`, and final native `exit`/`stderr` when available.
+  - `POST http://127.0.0.1:18787/owner/finish` accepts only a JSON object with the string field `handle`, at most 16384 bytes, for that registered handle. It requests stdin EOF for that original console, then waits for its actual exit and native lock release; it executes no supplied command or PID. Status `202` acknowledges the request; `400` rejects malformed input and `409` an unknown handle. Repeating the same request is allowed.
+  - `completed` requires requested EOF, actual exit zero, no native stderr and a successful unlock by the registered owner. It cannot certify an unrelated operation.
 
-  Inspect the supplied configuration and live observations on the workstation:
-
-  ```sh
-  cat lock-probe.log
-  tofu state list
-  ```
-hints.2.text: |-
-  Stop the process recorded in lock-holder.pid and retain state. The maintenance process owns the lock; force-unlock is not a replacement for stopping that live process.
-
-  Verify the result from `~/quest` on the workstation:
-
-  - `cat notice.txt; tofu show -no-color` — Shows `north-ready` and tracked resource `notice.txt`.
-  - `tofu plan -input=false -detailed-exitcode -no-color` — Exits `0` and reports no pending infrastructure changes.
-
-  State still tracks the configured notice.txt file.
-debrief: The notice file and state address are present, and planning succeeds with no changes.
+  The trusted service records EOF, the actual registered child exit and its native unlock; other checks observe current files, state and Docker identity, not general command history.
+stages.0.brief: Recover consistent state and normal ownership while retaining both completed identities.
+hints.0.text: Lock ownership and resource ownership can diverge. A recovery snapshot may be internally valid and
+  still omit a later completed operation.
+hints.1.text: Compare `cat incident.txt failed-apply.log`, `tofu state pull`, `cat errored.tfstate`, `docker ps
+  -a` and the current service observations. Compare lineage, serial, resource IDs and lock ownership separately;
+  an earlier error is not a current-owner observation.
+hints.2.text: 'Coordinate normal completion of the registered current owner through the documented contract. Preserve
+  a current backend backup, then reconcile the missing original binding in offline working copies rather than replacing
+  newer work with an older whole snapshot. `tofu state mv -state=... -state-out=...` can move a native binding between
+  local copies; push only the reconciled snapshot with normal backend safeguards. Verify both original IDs, unchanged
+  recovery evidence, `completed: true`, and `tofu plan -input=false -detailed-exitcode -no-color` exiting `0`.'
+debrief: A lock handover allowed two clients to diverge. Recovery preserved newer completed state and the original
+  physical resource, and the genuine current owner released its own lock.
 phrases.0: I checked the running state before making a change.
 phrases.1: I found the cause and changed one thing at a time.
 phrases.2: I compared the live resource ID with the OpenTofu state.
 diagnostics.condition_0: notice.txt must equal north-ready.
-diagnostics.condition_1: |-
-  OpenTofu state must track the managed producer file notice.txt.
-
+diagnostics.condition_1: OpenTofu state must track the managed producer file notice.txt.
 diagnostics.condition_2: The OpenTofu detailed plan must exit with code 0.
 stages.0.objectives.0.text: On the workstation, `notice.txt` contains `north-ready`.
 stages.0.objectives.1.text: The configured notice file remains tracked in OpenTofu state.
-stages.0.objectives.2.text: OpenTofu reports no pending infrastructure changes.
+stages.0.objectives.2.text: State convergence preserves both completed identities, recovery evidence and normal
+  completion of the registered owner.
 diagnostics.probe_0_1: 'The current inputs could not verify this objective: The configured notice file remains tracked
   in OpenTofu state.'
+diagnostics.locking_binding: Track the original healthy Docker container and retain its physical ID.
+diagnostics.locking_progress: Retain the genuine completed maintenance record ID.
+diagnostics.locking_lineage: Retain the original backend lineage and do not roll back its serial.
+diagnostics.locking_checkpoint: Keep the supplied native errored.tfstate bytes unchanged.
+diagnostics.locking_backup: Retain the original current backend snapshot as before-recovery.tfstate.
+diagnostics.locking_owner: The registered owner must complete through EOF, actual exit zero and its own successful
+  native unlock.
+diagnostics.probe_0_2: State convergence preserves both completed identities, recovery evidence and normal completion
+  of the registered owner.
