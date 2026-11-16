@@ -20,40 +20,28 @@ brief: 'La versión `board` administrada mediante Git no está disponible.
 
   - Dentro de un Pod del Deployment `board`, `http://board:8080` devuelve `north-61`.
 
-  '
-debrief: Se reparó un repositorio exclusivo de juegos credential sin acceso a la plataforma general Secret.
+
+  Consulta también `delivery-access.json`. Restaura el acceso del cliente Git de la estación y del controlador de
+  entrega al repositorio privado original y a la referencia publicada. Conserva las identidades de la Application
+  y del Secret de credenciales originales y los permisos restringidos existentes. Las credenciales del controlador
+  deben mantener su vinculación canónica al repositorio y su valor original. Solo el propietario debe poder acceder
+  a los archivos de configuración Git que contienen las credenciales actuales.
+
+
+  El registro inicial en `/run/dq/facts/0/` es la referencia; los archivos de `~/quest` son copias de trabajo. Las
+  reescrituras de URL no deben sustituir al servidor original.'
+debrief: Recuperaste dos contextos independientes de autenticación Git, conservaste las vinculaciones e identidades
+  y mantuviste los permisos restringidos.
 stages.0.brief: La versión publicada debe estar disponible dentro del ámbito de credenciales permitido.
-hints.0.text: Un controlador de entrega necesita su propio acceso al repositorio de origen.
-hints.1.text: 'Separe la autenticación Git de la ruta de origen y los errores de workload.
-
-
-  La contraseña retirada está en el Secret nombrado station-repository de ARGO_NAMESPACE; cambiar la carga
-  de trabajo no repara esa autenticación. Nunca muestres la contraseña.
-
-
-  Inspecciona las entradas suministradas y el estado observado:
-
-
-  ```sh
-
-  cat application.yaml
-
-  source platform.env
-
-  kubectl -n "$ARGO_NAMESPACE" describe secret station-repository
-
-  kubectl describe application board
-
-  ```'
-hints.2.text: |-
-  Aplica patch a stringData.password y solicita un hard refresh.
-
-  Verifica el resultado observado:
-
-  - `source platform.env; kubectl auth can-i patch secret/station-repository -n "$ARGO_NAMESPACE"; kubectl auth can-i list secrets -n "$ARGO_NAMESPACE" || true; kubectl auth can-i patch secret/unrelated -n "$ARGO_NAMESPACE" || true; kubectl -n "$ARGO_NAMESPACE" get secret station-repository -o json | jq -e '(.data.password|@base64d)==env.GIT_PASSWORD'` — Las respuestas de autorización son `yes`, `no`, `no`; la comparación de credenciales imprime `true` sin revelar la contraseña.
-  - `kubectl get application board -o custom-columns=NAME:.metadata.name,PROJECT:.spec.project,REPO:.spec.source.repoURL,PATH:.spec.source.path,BRANCH:.spec.source.targetRevision,NAMESPACE:.spec.destination.namespace,SERVER:.spec.destination.server,SYNC:.status.sync.status,HEALTH:.status.health.status,REVISION:.status.sync.revision; cat release-commit` — Muestra el repositorio suministrado, `main` / `manifests`, `Synced` / `Healthy` y una revisión igual al commit registrado.
-  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -c worker -- wget -qO- -T 3 http://board:8080` — El rollout se completa; HTTP devuelve `north-61`.
-
+hints.0.text: La estación y el controlador de entrega se autentican de forma independiente. Reparar un cliente no
+  demuestra el acceso del otro.
+hints.1.text: Compara `delivery-access.json`, las ubicaciones de la configuración Git efectiva de la estación, los
+  metadatos del Secret existente y los errores de descarga de la Application. Inspecciona nombres y permisos sin
+  imprimir valores de autenticación.
+hints.2.text: Restaura la vinculación al repositorio y las credenciales actuales en ambos contextos, protege la
+  configuración que las contiene y solicita hard refresh. Verifica `git -C repository ls-remote $GIT_URL refs/heads/main`,
+  la revisión publicada original, la salud de la Application y HTTP real. Revisa de nuevo los permisos restringidos
+  y los UID originales.
 phrases.0: Diagnostiqué la autenticación del repositorio antes de cambiar la aplicación.
 phrases.1: Limité la reparación de credential a una llamada Secret.
 phrases.2: Verifiqué el Git revision y el endpoint real después de la conciliación.
@@ -65,12 +53,30 @@ questions.1.points.0: Restrinja un Role por resourceNames a un Secret.
 questions.1.points.1: Vincula solo el reproductor de bahía ServiceAccount.
 questions.1.points.2: Verificar la denegación de listados y secretos no relacionados.
 questions.1.prompt: ¿Cuál es el permiso mínimo necesario para esta reparación?
-stages.0.objectives.0.text: En el namespace del controlador, el jugador puede actualizar el Secret existente
-  de credenciales del repositorio, pero no listar Secrets ni actualizar uno ajeno.
-stages.0.objectives.1.text: El Secret existente de credenciales del repositorio coincide con las credenciales
-  Git privadas suministradas.
-stages.0.objectives.2.text: La Application `board` despliega la versión suministrada desde el repositorio Git
-  privado.
+stages.0.objectives.0.text: En el namespace del controlador, el jugador puede actualizar el Secret existente de
+  credenciales del repositorio, pero no listar Secrets ni actualizar uno ajeno.
+stages.0.objectives.1.text: El Secret existente de credenciales del repositorio coincide con las credenciales Git
+  privadas suministradas. Se conservan la vinculación original de credenciales y las identidades de los objetos.
+  Ambos clientes Git acceden a la referencia publicada original y la configuración con credenciales permanece privada.
+stages.0.objectives.2.text: La Application `board` despliega la versión suministrada desde el repositorio Git privado.
 stages.0.objectives.3.text: La Application `board` indica `Synced` y `Healthy` para la versión publicada original.
 stages.0.objectives.4.text: El Deployment `board` completa su rollout en el namespace de la bahía.
 stages.0.objectives.5.text: Dentro de un Pod del Deployment `board`, `http://board:8080` devuelve `north-61`.
+diagnostics.credential_identity: Se sustituyó el Secret original de credenciales. Compara su UID con el registro
+  inicial.
+diagnostics.credential_binding: La vinculación de credenciales del controlador es incorrecta. Compara URL, usuario,
+  tipo y etiqueta de descubrimiento con el registro.
+diagnostics.credential_value: Las credenciales del controlador difieren del registro original. Restaura el valor
+  actual suministrado sin imprimirlo.
+diagnostics.application_identity: Se sustituyó la Application original. Compara su UID con el registro inicial.
+diagnostics.git_storage: Otra identidad puede acceder a una configuración Git con credenciales actuales. Limita
+  el acceso a su propietario.
+diagnostics.git_target: El cliente Git redirige el servidor del repositorio. Revisa las reescrituras de URL y contacta
+  con el repositorio privado original.
+diagnostics.git_access: La estación no puede leer la referencia Git publicada original. Inspecciona su contexto
+  de autenticación y el error del repositorio sin revelar credenciales.
+diagnostics.git_budget: La observación superó su tiempo disponible. Revisa solicitudes Git/API bloqueadas y conectividad.
+diagnostics.git_observation: No se pudo observar el estado actual. Revisa los registros necesarios, la disponibilidad
+  de recursos y los formatos de entrada.
+diagnostics.probe_0_1: No se pudo observar el estado actual. Revisa los registros necesarios, la disponibilidad
+  de recursos y los formatos de entrada.

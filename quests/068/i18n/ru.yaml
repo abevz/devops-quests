@@ -24,37 +24,31 @@ brief: 'Управляемый через Git выпуск `board` не гото
 
   Данные setup в `/run/dq/facts/0/` на workstation авторитетны; совпадающие файлы в `~/quest` — рабочие копии.
 
-  '
-debrief: Git и исправность workload согласованы; прямой live patch был бы отменён self-heal.
+
+  Дополнительные входные файлы: `publication/index.html`, `publication/contract.json`, `publication-contract.json`.
+
+
+  Предоставленный HTTP-сервер должен обслуживать одобренную публикацию из проекции ConfigMap только для чтения в
+  корне документов. Опубликованные манифесты Git и действующая проекция должны совпадать, а реальный HTTP должен
+  показывать одобренные метаданные вместе с баннером. Сохраните идентичности исходных Application и Deployment и
+  предоставленный образ контейнера. Эталоном является зафиксированная исходная запись; рабочие файлы её не заменяют.'
+debrief: Вы создали доставку конфигурации через Git, согласовали проверку здоровья и проверили реальную публикацию,
+  сохранив существующие идентичности.
 stages.0.brief: Опубликованная ревизия Git должна быть готова для своих потребителей.
-hints.0.text: Sync сравнивает желаемые ресурсы; health описывает их состояние.
-hints.1.text: 'Закоммиченный readiness probe направлен на 9090, а HTTP слушает 8080. Во время неуспешного rollout
-  application-controller может кратко сообщать Progressing.
+hints.0.text: Готовность, доставленная конфигурация и реальный ответ приложения описывают разные стороны здоровья.
+  Готовый процесс может продолжать обслуживать прежний источник.
+hints.1.text: Сопоставьте `publication-contract.json`, файлы публикации, закоммиченные манифесты, действующие монтирования,
+  корень документов сервера, события и ответы HTTP. Проследите, какие данные доходят до процесса и какой путь наблюдает
+  проверка здоровья.
+hints.2.text: 'Создайте публикацию ConfigMap и её проекцию только для чтения в корне документов предоставленного
+  сервера, согласуйте проверку здоровья с реальным сервисом. Сделайте commit и push, обновите запись публикации
+  и запросите обновление Argo. Проверьте удалённую ревизию, исходные UID и образ, `/` и `/contract.json`, сравните
+  метаданные с зафиксированной записью. Сохраните исходную ревизию в истории.
 
 
-  Изучите поставленные входные данные и наблюдаемое состояние:
-
-
-  ```sh
-
-  cat application.yaml repository/manifests/board.yaml
-
-  kubectl describe application board
-
-  kubectl describe pod -l app=board
-
-  ```'
-hints.2.text: |-
-  Исправьте repository/manifests/board.yaml, закоммитьте и отправьте в приватную ветку main, затем обновите Argo. Сохраните историю baseline-commit.
-
-  Проверьте наблюдаемый результат:
-
-  - `kubectl get application board -o custom-columns=NAME:.metadata.name,PROJECT:.spec.project,REPO:.spec.source.repoURL,PATH:.spec.source.path,BRANCH:.spec.source.targetRevision,NAMESPACE:.spec.destination.namespace,SERVER:.spec.destination.server,SYNC:.status.sync.status,HEALTH:.status.health.status,REVISION:.status.sync.revision; cat release-commit` — Показывает предоставленный репозиторий, `main` / `manifests`, `Synced` / `Healthy` и ревизию, совпадающую с записанным коммитом.
-  - `git -C repository ls-remote origin refs/heads/main; cat release-commit /run/dq/facts/0/baseline-commit; git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/baseline-commit)" origin/main; printf "ancestry status: %s\n" "$?"; git -C repository diff --stat "$(cat /run/dq/facts/0/baseline-commit)" origin/main` — ID удалённого коммита и выпуска совпадают и отличаются от исходного; ancestry status равен `0`; сводка изменений включает `manifests/board.yaml`.
-  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -c worker -- wget -qO- -T 3 http://board:8080` — Rollout завершается, HTTP возвращает `north-68`.
-
-  Согласуйте запись о публикации release-commit на рабочей станции с опубликованным коммитом.
-
+  `kubectl get application board; kubectl rollout status deployment/board --timeout=10s; kubectl exec deployment/board
+  -c worker -- wget -qO- -T 3 http://board:8080/contract.json` — Ожидаются Synced/Healthy, завершённый rollout и
+  метаданные, соответствующие зафиксированной записи публикации.'
 phrases.0: Я разделил синхронизацию и исправность приложения.
 phrases.1: Я исправил исходный commit вместо борьбы с self-heal.
 phrases.2: Я проверил наблюдаемый revision и реальный HTTP-ответ.
@@ -71,9 +65,21 @@ stages.0.objectives.1.text: Application `board` сообщает `Synced` и `He
   восстанавливает желаемое состояние из Git и удаляет ресурсы, удалённые из Git.
 stages.0.objectives.2.text: Deployment `board` завершает rollout в namespace песочницы.
 stages.0.objectives.3.text: Внутри Pod Deployment `board` адрес `http://board:8080` возвращает `north-68`.
-stages.0.objectives.4.text: Удалённая ветка `origin/main` и запись о публикации на рабочей станции указывают
-  на одного и того же нового потомка исходного релиза.
-stages.0.objectives.5.text: Опубликованный Git-релиз и работающий Deployment `board` соответствуют требуемому
-  контракту состояния потребителя.
-diagnostics.probe_0_5: 'Текущие данные не позволили проверить эту цель: Опубликованный Git-релиз и работающий Deployment
-  `board` соответствуют требуемому контракту состояния потребителя.'
+stages.0.objectives.4.text: Удалённая ветка `origin/main` и запись о публикации на рабочей станции указывают на
+  одного и того же нового потомка исходного релиза.
+stages.0.objectives.5.text: Опубликованный Git-релиз и работающий Deployment `board` соответствуют требуемому контракту
+  состояния потребителя. Одобренная публикация проецируется только для чтения в корень документов предоставленного
+  HTTP-сервера и доступна через HTTP; исходные идентичности Application, Deployment и образа сохранены.
+diagnostics.probe_0_5: Не удалось наблюдать публикацию. Проверьте исходные записи, форматы манифестов, монтируемые
+  данные и предоставленный HTTP-сервер.
+diagnostics.publication_identity: Исходный Application или Deployment заменён. Сравните UID с записью публикации.
+diagnostics.publication_source: Опубликованное состояние, действующая конфигурация или предоставленный образ расходятся.
+  Сравните ревизию Git, образ и данные ConfigMap.
+diagnostics.publication_projection: Одобренные данные не проецируются в фактический корень документов HTTP-сервера.
+  Изучите монтирования, их источники и работающий сервер.
+diagnostics.publication_http: Метаданные реального HTTP отличаются от одобренной публикации. После согласования
+  сравните поля с исходной записью.
+diagnostics.publication_budget: Наблюдение публикации превысило лимит времени. Проверьте блокирующие запросы API
+  и доступность конечной точки.
+diagnostics.publication_observation: Не удалось наблюдать публикацию. Проверьте исходные записи, форматы манифестов,
+  монтируемые данные и предоставленный HTTP-сервер.

@@ -1,53 +1,71 @@
 title: Argo rollback
-brief: |-
-  The latest private Git release is not healthy. Restore the known healthy release content while retaining the incident history.
+brief: 'The latest private Git release is not healthy. Restore the known healthy release content while retaining
+  the incident history.
 
-  Work on the workstation in `~/quest` with `platform.env`, `application.yaml`, `healthy-commit`, `faulty-commit`, `release-commit`, `repository/`.
 
-  Unless stated otherwise, Kubernetes resources live in the bay namespace (`DQ_NAMESPACE`); `~/quest` paths are on the workstation.
+  Work on the workstation in `~/quest` with `platform.env`, `application.yaml`, `healthy-commit`, `faulty-commit`,
+  `release-commit`, `repository/`.
+
+
+  Unless stated otherwise, Kubernetes resources live in the bay namespace (`DQ_NAMESPACE`); `~/quest` paths are
+  on the workstation.
+
 
   **Requirements:**
 
-  - Published `origin/main` equals workstation `release-commit`, differs from the frozen faulty commit, and retains that commit as an ancestor.
+
+  - Published `origin/main` equals workstation `release-commit`, differs from the frozen faulty commit, and retains
+  that commit as an ancestor.
+
   - Application `board` retains the supplied private Git source, release branch and existing workload directory.
+
   - Application `board` reports `Synced` and `Healthy` at the commit in workstation `~/quest/release-commit`.
+
   - Deployment `board` completes its rollout in the bay namespace.
+
   - Inside a Pod of Deployment `board`, `http://board:8080` returns `north-95`.
+
   - Published Git `manifests/board.yaml` restores the known healthy workload configuration.
 
+
   Current Git content and ancestry do not prove which recovery command was used.
-debrief: Rollback was expressed as a forward change to desired state, retaining the faulty revision for
-  investigation.
+
+
+  Additional inputs: `rollback-contract.json`, `current-publication.json`, `consumer-baseline-commit`, `original-release-identities.json`,
+  `repository/readers/`.
+
+
+  Recover the known healthy producer configuration while delivering the current approved publication to the existing
+  independently pinned consumers. Each consumer must retain an immutable commit pin to the published release. Preserve
+  the original Application and Deployment identities and the supplied consumer images and programs. Every owned
+  active consumer Pod and its Service endpoint must serve the approved publication from the Git-managed read-only
+  projection. Retain the recorded consumer baseline in Git history.
+
+
+  The frozen setup receipt is authoritative; working copies do not replace it. Checks observe current state and
+  ancestry, not the recovery command history.'
+debrief: You restored healthy producer configuration and propagated the current publication to independently pinned
+  consumers while preserving their identities and Git history.
 stages.0.brief: Retain the faulty commit in published history.
-hints.0.text: Self-heal reconciles Git desired state, including mistakes.
-hints.1.text: |-
-  Inspect the release history and the workload’s current failure symptoms.
-
-  ```bash
-  git -C repository log --oneline -5
-  kubectl describe deployment board
-  ```
-hints.2.text: |-
-  Revert the frozen faulty commit, push main and verify the observed revision and health. A revert records a new corrective commit and keeps incident history.
-
-  Verify from `~/quest` on the workstation:
-
-  - `source platform.env`
-  - `git -C repository ls-remote origin refs/heads/main`
-  - `cat release-commit`
-  - `git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/faulty-commit)" "$(cat release-commit)"`
-  - `git -C repository show --stat --oneline "$(cat release-commit)"`
-
-  The remote `main` hash equals `release-commit`. The ancestry read exits `0`; the new commit retains incident history.
-
-  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
-
-  `Synced`, `Healthy`, and the revision from `release-commit`. The source is the supplied private repository, `manifests`, `main`.
-
-  - `kubectl rollout status deployment/board --timeout=3s`
-  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`
-
-  The rollout completes; `north-95`.
+hints.0.text: A healthy historical producer release and the current obligations of its consumers can have different
+  lifetimes. Recovering one does not automatically advance independently pinned consumers.
+hints.1.text: Compare `rollback-contract.json`, `current-publication.json`, the recorded commits, consumer manifests,
+  Application sources and observed revisions. Follow the publication through the actual owned Pods and Service responses.
+hints.2.text: "Restore the known healthy producer configuration while forward-porting the approved consumer publication.\
+  \ Commit and push without discarding the incident or consumer baseline. Advance each existing consumer's immutable\
+  \ commit pin to the published release, refresh the Applications and wait for actual projection adoption. Verify\
+  \ original UIDs and programs, current observed revisions, readiness and HTTP from every owned consumer Pod and\
+  \ Service.\n\nVerify each Pod owned through the existing Deployment/ReplicaSet chain, then each Service:\n\n```sh\n\
+  set -euo pipefail\nkubectl get applications board reader-a reader-b\nfor name in reader-a reader-b; do\n  deployment_uid=$(kubectl\
+  \ get deployment \"$name\" -o jsonpath='{.metadata.uid}')\n  replica_uids=$(kubectl get replicasets -o json |\
+  \ jq -c --arg uid \"$deployment_uid\" '[.items[] | select(any(.metadata.ownerReferences[]?; .kind==\"Deployment\"\
+  \ and .controller==true and .uid==$uid)) | .metadata.uid]')\n  kubectl get pods -o json | jq -r --argjson owners\
+  \ \"$replica_uids\" '.items[] | select(.metadata.deletionTimestamp==null and .status.phase!=\"Failed\" and .status.phase!=\"\
+  Succeeded\") | select(any(.metadata.ownerReferences[]?; .kind==\"ReplicaSet\" and .controller==true and (.uid\
+  \ as $uid | $owners | index($uid)!=null))) | .metadata.name' |\n    while IFS= read -r pod; do\n      kubectl\
+  \ exec \"$pod\" -c worker -- wget -qO- -T 3 http://127.0.0.1:8080\n    done\n  kubectl exec \"deployment/$name\"\
+  \ -c worker -- wget -qO- -T 3 \"http://$name:8080\"\ndone\n```\n\nExpect all Applications Synced/Healthy and both\
+  \ consumer responses matching the current approved publication."
 phrases.0: I restored desired state with a Git revert.
 phrases.1: I kept reconciliation enabled during recovery.
 phrases.2: I verified the observed revision and application health.
@@ -57,14 +75,39 @@ questions.0.prompt: Why can a live rollout undo be temporary under GitOps?
 questions.1.points.0: The faulty commit remains reachable in the main history.
 questions.1.points.1: The recovery is a reviewable new change.
 questions.1.prompt: What does revert preserve that reset loses?
-stages.0.objectives.0.text: Published `origin/main` equals workstation `release-commit`, differs from
-  the frozen faulty commit, and retains that commit as an ancestor.
-stages.0.objectives.1.text: Application `board` retains the supplied private Git source, release branch
-  and existing workload directory.
-stages.0.objectives.2.text: Application `board` reports `Synced` and `Healthy` at the commit in workstation
-  `~/quest/release-commit`.
+stages.0.objectives.0.text: Published `origin/main` equals workstation `release-commit`, differs from the frozen
+  faulty commit, and retains that commit as an ancestor.
+stages.0.objectives.1.text: Application `board` retains the supplied private Git source, release branch and existing
+  workload directory.
+stages.0.objectives.2.text: Application `board` reports `Synced` and `Healthy` at the commit in workstation `~/quest/release-commit`.
 stages.0.objectives.3.text: Deployment `board` completes its rollout in the bay namespace.
 stages.0.objectives.4.text: Inside a Pod of Deployment `board`, `http://board:8080` returns `north-95`.
 stages.0.objectives.5.text: Published Git `manifests/board.yaml` restores the known healthy workload configuration.
-diagnostics.probe_0_5: 'The current inputs could not verify this objective: Published Git `manifests/board.yaml`
-  restores the known healthy workload configuration.'
+  The existing pinned consumers adopt the current approved publication on their original programs and identities.
+  Their owned Pods and Service endpoints agree with the Git-managed projection and current immutable release pins.
+diagnostics.probe_0_5: The rollback publication could not be observed. Inspect receipts, manifests, ownership and
+  current consumer inputs.
+diagnostics.rollback_identity_board: '`board`: The original Application or Deployment was replaced. Compare its
+  UID with the frozen release receipt.'
+diagnostics.rollback_history: Published history or repository authority differs from the recovery contract. Preserve
+  the recorded consumer baseline and compare the current release.
+diagnostics.rollback_budget: Rollback observation exceeded its budget. Inspect blocking Git/API requests and endpoint
+  availability.
+diagnostics.rollback_observation: The rollback publication could not be observed. Inspect receipts, manifests, ownership
+  and current consumer inputs.
+diagnostics.rollback_identity_a: '`reader-a`: The original Application or Deployment was replaced. Compare its UID
+  with the frozen release receipt.'
+diagnostics.rollback_source_a: '`reader-a`: The consumer has not adopted the current immutable publication pin.
+  Compare repository, directory, pin, observed revision and health.'
+diagnostics.rollback_delivery_a: '`reader-a`: The consumer does not retain its supplied program, ready owned Pods
+  or approved projection. Compare its profile, ConfigMap source and ownership chain.'
+diagnostics.rollback_http_a: '`reader-a`: An owned Pod or Service endpoint has not adopted the approved publication.
+  Compare actual HTTP fields with the receipt after projection refresh.'
+diagnostics.rollback_identity_b: '`reader-b`: The original Application or Deployment was replaced. Compare its UID
+  with the frozen release receipt.'
+diagnostics.rollback_source_b: '`reader-b`: The consumer has not adopted the current immutable publication pin.
+  Compare repository, directory, pin, observed revision and health.'
+diagnostics.rollback_delivery_b: '`reader-b`: The consumer does not retain its supplied program, ready owned Pods
+  or approved projection. Compare its profile, ConfigMap source and ownership chain.'
+diagnostics.rollback_http_b: '`reader-b`: An owned Pod or Service endpoint has not adopted the approved publication.
+  Compare actual HTTP fields with the receipt after projection refresh.'

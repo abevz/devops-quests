@@ -8,91 +8,120 @@ stages:
   objectives:
   - text: stages.0.objectives.0.text
     keep: true
-    check: |-
-      source platform.env
-      kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" 'def same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url and (.spec.source.path | same_dir("manifests")) and .spec.source.targetRevision=="main"' >/dev/null
+    check: 'source platform.env
+
+      kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" ''def
+      same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!=""
+      and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url
+      and (.spec.source.path | same_dir("manifests")) and .spec.source.targetRevision=="main"'' >/dev/null'
   - text: stages.0.objectives.1.text
-    check: |-
-      source platform.env
-      kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" '.status.sync.status=="Synced" and .status.health.status=="Healthy" and .status.sync.revision==$rev' >/dev/null
-      kubectl get application board -o json | jq -e '.spec.syncPolicy.automated.selfHeal==true and .spec.syncPolicy.automated.prune==true' >/dev/null
+    check: 'source platform.env
+
+      kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" ''.status.sync.status=="Synced"
+      and .status.health.status=="Healthy" and .status.sync.revision==$rev'' >/dev/null
+
+      kubectl get application board -o json | jq -e ''.spec.syncPolicy.automated.selfHeal==true and .spec.syncPolicy.automated.prune==true''
+      >/dev/null'
   - text: stages.0.objectives.2.text
     check: kubectl rollout status deployment/board --timeout=3s >/dev/null
   - text: stages.0.objectives.3.text
-    check: |-
-      test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-68
-
+    check: test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-68
   - text: stages.0.objectives.4.text
-    check: |-
-      source platform.env
+    check: 'source platform.env
+
       git -C repository fetch origin main >/dev/null 2>&1
+
       test "$(git -C repository rev-parse origin/main)" = "$(cat release-commit)"
+
       git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/baseline-commit)" origin/main
-      test "$(git -C repository rev-parse origin/main)" != "$(cat /run/dq/facts/0/baseline-commit)"
+
+      test "$(git -C repository rev-parse origin/main)" != "$(cat /run/dq/facts/0/baseline-commit)"'
   - text: stages.0.objectives.5.text
-    check: |-
-      dq_probe_output=$(mktemp)
-      trap 'rm -f "$dq_probe_output"' EXIT
-      set +e
-      (
-      set -euo pipefail
-      python3 -I - <<'DQ_GIT_HEALTH'
-      import json,re,subprocess,sys,yaml
-      from pathlib import Path
-      from decimal import Decimal
-
-      def execute(args):return subprocess.check_output(args,stderr=subprocess.DEVNULL,timeout=4)
-      def deployment(text):
-          found=[]
-          def visit(value,depth=0):
-              if depth>64:raise ValueError('manifest nesting')
-              if isinstance(value,list):
-                  for entry in value:visit(entry,depth+1)
-              elif isinstance(value,dict):
-                  if value.get('kind')=='List':visit(value.get('items',[]),depth+1)
-                  elif value.get('kind')=='Deployment' and value.get('metadata',{}).get('name')=='board':found.append(value)
-          for value in yaml.safe_load_all(text):visit(value)
-          if len(found)!=1:raise ValueError('board Deployment identity')
-          return found[0]
-      from dq_check import workload_worker as _dq_worker
-
-      def worker(document):
-          return _dq_worker(document, error="application worker identity")
-      from dq_check import quantity as _dq_quantity
-
-      def quantity(value):
-          return _dq_quantity(value, dialect='unicode_finite')
-
-      from dq_check import resource_subset as subset
-
-
-      from dq_check import health_probe as probe
-
-      from dq_check import env_values as env
-
-      from dq_check import workload_agreement as agreement
-
-      from dq_check import workload_safety as safety
-
-      try:
-          desired=deployment(execute(['git','-C','repository','show','origin/main:manifests/board.yaml']))
-          live=json.loads(execute(['kubectl','get','deployment','board','-o','json']))
-          assert agreement(desired,live)
-          execute(['kubectl','rollout','status','deployment/board','--timeout=3s'])
-          assert execute(['timeout','4s','kubectl','exec','--pod-running-timeout=2s','deployment/board','-c','worker','--','wget','-qO-','-T','3','http://board:8080']).rstrip(b'\n')==b'north-68'
-      except Exception:
-          sys.exit(1)
-      DQ_GIT_HEALTH
-      ) >"$dq_probe_output" 2>/dev/null
-      dq_probe_status=$?
-      set -e
-      cat "$dq_probe_output"
-      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
-      printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_5]'
-      fi
-      rm -f "$dq_probe_output"
-      trap - EXIT
-      test "$dq_probe_status" -eq 0
+    check: "dq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\ndq_result_failed=0\n\
+      set +e\n(\nset -euo pipefail\ntimeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_PUBLICATION'\ndq_probe_output=$(mktemp)\n\
+      trap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\npython3 -I - <<'DQ_GIT_HEALTH'\nimport\
+      \ json,re,subprocess,sys,yaml\nfrom pathlib import Path\nfrom decimal import Decimal\n\ndef execute(args):return\
+      \ subprocess.check_output(args,stderr=subprocess.DEVNULL,timeout=4)\ndef deployment(text):\n    found=[]\n\
+      \    def visit(value,depth=0):\n        if depth>64:raise ValueError('manifest nesting')\n        if isinstance(value,list):\n\
+      \            for entry in value:visit(entry,depth+1)\n        elif isinstance(value,dict):\n            if\
+      \ value.get('kind')=='List':visit(value.get('items',[]),depth+1)\n            elif value.get('kind')=='Deployment'\
+      \ and value.get('metadata',{}).get('name')=='board':found.append(value)\n    for value in yaml.safe_load_all(text):visit(value)\n\
+      \    if len(found)!=1:raise ValueError('board Deployment identity')\n    return found[0]\nfrom dq_check import\
+      \ workload_worker as _dq_worker\n\ndef worker(document):\n    return _dq_worker(document, error=\"application\
+      \ worker identity\")\nfrom dq_check import quantity as _dq_quantity\n\ndef quantity(value):\n    return _dq_quantity(value,\
+      \ dialect='unicode_finite')\n\nfrom dq_check import resource_subset as subset\n\n\nfrom dq_check import health_probe\
+      \ as probe\n\nfrom dq_check import env_values as env\n\nfrom dq_check import workload_agreement as agreement\n\
+      \nfrom dq_check import workload_safety as safety\n\ntry:\n    desired=deployment(execute(['git','-C','repository','show','origin/main:manifests/board.yaml']))\n\
+      \    live=json.loads(execute(['kubectl','get','deployment','board','-o','json']))\n    assert agreement(desired,live)\n\
+      \    execute(['kubectl','rollout','status','deployment/board','--timeout=3s'])\n    assert execute(['timeout','4s','kubectl','exec','--pod-running-timeout=2s','deployment/board','-c','worker','--','wget','-qO-','-T','3','http://board:8080']).rstrip(b'\\\
+      n')==b'north-68'\nexcept Exception:\n    sys.exit(1)\nDQ_GIT_HEALTH\n) >\"$dq_probe_output\" 2>/dev/null\n\
+      dq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\nif [ \"$dq_probe_status\" -ne 0 ] && ! grep -Eq '\\\
+      [DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\nprintf '%s\\n' 'Current inputs could not verify this objective:\
+      \ ✗ [DQ:probe_0_5]'\nfi\nrm -f \"$dq_probe_output\"\ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0\nDQ_LEGACY_PUBLICATION\n\
+      )\n[ $? -eq 0 ] || dq_result_failed=1\n(\nset -euo pipefail\nsource platform.env\npython3 -I - <<'DQ_PUBLICATION'\n\
+      import json\nimport posixpath\nimport subprocess\nimport time\nfrom pathlib import Path\nimport yaml\nfrom\
+      \ dq_check import workload_worker\n\ndeadline = time.monotonic() + 14\nfailed = False\n\n\ndef reject(marker):\n\
+      \    global failed\n    failed = True\n    print('Consumer publication is incomplete: ✗ [DQ:' + marker + ']')\n\
+      \n\ndef execute(args):\n    remaining = deadline - time.monotonic()\n    if remaining <= 0:\n        raise\
+      \ subprocess.TimeoutExpired(args[0], 0)\n    return subprocess.check_output(args, stderr=subprocess.DEVNULL,\
+      \ timeout=min(3, remaining))\n\n\ndef documents(value):\n    if isinstance(value, dict):\n        if value.get('kind')\
+      \ == 'List':\n            for item in value.get('items', []):\n                yield from documents(item)\n\
+      \        elif value.get('kind'):\n            yield value\n\n\ndef projection(document, filename, maps):\n\
+      \    worker = workload_worker(document)\n    result = []\n    volumes = {v['name']: v for v in document['spec']['template']['spec'].get('volumes',\
+      \ [])}\n    for mount in worker.get('volumeMounts', []):\n        base = mount['mountPath'].rstrip('/') or\
+      \ '/'\n        if 'subPath' in mount:\n            if filename != mount['mountPath']:\n                continue\n\
+      \        elif filename != base and not filename.startswith(base.rstrip('/') + '/'):\n            continue\n\
+      \        volume = volumes[mount['name']]\n        sources = [volume['configMap']] if 'configMap' in volume\
+      \ else [\n            item['configMap'] for item in volume.get('projected', {}).get('sources', []) if 'configMap'\
+      \ in item]\n        for source in sources:\n            name = source['name']\n            data = maps[name].get('data',\
+      \ {})\n            items = source.get('items', [{'key': key, 'path': key} for key in data])\n            for\
+      \ item in items:\n                if 'subPath' in mount:\n                    path = mount['mountPath'] if\
+      \ item['path'] == mount['subPath'] else None\n                else:\n                    path = posixpath.normpath(posixpath.join(mount['mountPath'],\
+      \ item['path']))\n                if path == filename:\n                    result.append((name, item['key']))\n\
+      \    return result\n\n\ntry:\n    receipt = json.loads(Path('/run/dq/facts/0/publication-contract.json').read_text())\n\
+      \    snapshot = json.loads(execute(['kubectl', '--request-timeout=2s', 'get', 'application/board',\n     \
+      \                              'deployment/board', '-o', 'json']))\n    observed = {item['kind']: item for\
+      \ item in snapshot['items']}\n    app, live = observed['Application'], observed['Deployment']\n    if app['metadata']['uid']\
+      \ != receipt['applicationUID'] or live['metadata']['uid'] != receipt['deploymentUID']:\n        reject('publication_identity')\n\
+      \    if (app['spec']['source'].get('repoURL') != receipt['repoURL']\n            or workload_worker(live).get('image')\
+      \ != receipt['image']):\n        reject('publication_source')\n    revision = execute(['git', '-C', 'repository',\
+      \ 'rev-parse', 'origin/main']).decode().strip()\n    if app.get('status', {}).get('sync', {}).get('revision')\
+      \ != revision:\n        reject('publication_source')\n    paths = execute(['git', '-C', 'repository', 'ls-tree',\
+      \ '-r', '--name-only', revision, '--', 'manifests']).decode().splitlines()\n    desired = {}\n    recurse\
+      \ = app['spec']['source'].get('directory', {}).get('recurse', False)\n    for path in paths:\n        if Path(path).suffix\
+      \ not in ('.yaml', '.yml', '.json') or (not recurse and len(path.split('/')) != 2):\n            continue\n\
+      \        text = execute(['git', '-C', 'repository', 'show', revision + ':' + path]).decode()\n        for\
+      \ root in yaml.safe_load_all(text):\n            for item in documents(root):\n                identity =\
+      \ item['kind'], item.get('metadata', {}).get('name')\n                if identity in desired:\n          \
+      \          raise ValueError('duplicate manifest identity')\n                desired[identity] = item\n   \
+      \ declared = desired['Deployment', 'board']\n    names = set()\n    for volume in live['spec']['template']['spec'].get('volumes',\
+      \ []):\n        if 'configMap' in volume:\n            names.add(volume['configMap']['name'])\n        names.update(item['configMap']['name']\
+      \ for item in volume.get('projected', {}).get('sources', [])\n                     if 'configMap' in item)\n\
+      \    if not names:\n        reject('publication_projection')\n    else:\n        maps = {}\n        for name\
+      \ in names:\n            maps[name] = json.loads(execute(['kubectl', '--request-timeout=2s', 'get', 'configmap',\
+      \ name, '-o', 'json']))\n            if desired['ConfigMap', name].get('data') != maps[name].get('data'):\n\
+      \                reject('publication_source')\n        roots = execute(['kubectl', '--request-timeout=2s',\
+      \ 'exec', 'deployment/board', '-c', 'worker',\n                         '--', 'sh', '-c', 'for pid in $(pidof\
+      \ httpd); do readlink \"/proc/$pid/cwd\"; done']).decode().splitlines()\n        roots = set(roots)\n    \
+      \    adopted = False\n        declared_maps = {name: desired['ConfigMap', name] for name in names}\n     \
+      \   for root in roots:\n            files = {}\n            for name in ('index.html', 'contract.json'):\n\
+      \                target = posixpath.join(root, name)\n                actual = projection(live, target, maps)\n\
+      \                intended = projection(declared, target, declared_maps)\n                if len(actual) !=\
+      \ 1 or intended != actual:\n                    break\n                cm, key = actual[0]\n             \
+      \   files[name] = maps[cm]['data'][key]\n            else:\n                body = json.loads(files['contract.json'])\n\
+      \                if (files['index.html'].rstrip('\\n') == receipt['index'].rstrip('\\n')\n               \
+      \         and all(body.get(k) == v for k, v in receipt['contract'].items())):\n                    adopted\
+      \ = True\n        if not adopted:\n            reject('publication_projection')\n    response = execute(['kubectl',\
+      \ '--request-timeout=2s', 'exec', 'deployment/board', '-c', 'worker',\n                        '--', 'wget',\
+      \ '-qO-', '-T', '2', 'http://board:8080/contract.json'])\n    payload = json.loads(response)\n    if not isinstance(payload,\
+      \ dict) or not all(payload.get(k) == v for k, v in receipt['contract'].items()):\n        reject('publication_http')\n\
+      except subprocess.TimeoutExpired:\n    reject('publication_budget')\nexcept (OSError, ValueError, KeyError,\
+      \ TypeError, subprocess.SubprocessError, yaml.YAMLError):\n    reject('publication_observation')\nraise SystemExit(failed)\n\
+      DQ_PUBLICATION\n)\n[ $? -eq 0 ] || dq_result_failed=1\nset -e\ntest \"$dq_result_failed\" -eq 0\n) >\"$dq_probe_output\"\
+      \ 2>/dev/null\ndq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\nif [ \"$dq_probe_status\" -ne 0 ] &&\
+      \ ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\nprintf '%s\\n' 'Current inputs could not verify\
+      \ this objective: ✗ [DQ:probe_0_5]'\nfi\nrm -f \"$dq_probe_output\"\ntrap - EXIT\ntest \"$dq_probe_status\"\
+      \ -eq 0"
 hints:
 - text: hints.0.text
   guide: gitops-delivery
@@ -129,6 +158,9 @@ facts:
   - repository/manifests/service.yaml
   - baseline-commit
   - release-commit
+  - publication/index.html
+  - publication/contract.json
+  - publication-contract.json
   services: []
 book:
   chapter: 11
@@ -140,3 +172,4 @@ book:
 immutable:
   0:
   - baseline-commit
+  - publication-contract.json

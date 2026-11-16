@@ -1,53 +1,73 @@
 title: Reversión de Argo
-brief: |-
-  La última versión del Git privado no está sana. Recupera el contenido conocido como sano conservando el historial del incidente.
+brief: 'La última versión del Git privado no está sana. Recupera el contenido conocido como sano conservando el
+  historial del incidente.
 
-  Trabaja en la workstation en `~/quest` con `platform.env`, `application.yaml`, `healthy-commit`, `faulty-commit`, `release-commit`, `repository/`.
 
-  Salvo indicación contraria, los recursos Kubernetes están en el namespace de la bahía (`DQ_NAMESPACE`); las rutas bajo `~/quest` están en la workstation.
+  Trabaja en la workstation en `~/quest` con `platform.env`, `application.yaml`, `healthy-commit`, `faulty-commit`,
+  `release-commit`, `repository/`.
+
+
+  Salvo indicación contraria, los recursos Kubernetes están en el namespace de la bahía (`DQ_NAMESPACE`); las rutas
+  bajo `~/quest` están en la workstation.
+
 
   **Requirements:**
 
-  - El `origin/main` publicado coincide con `release-commit` en la workstation, difiere del commit defectuoso congelado y lo conserva como ancestro.
-  - La Application `board` conserva la fuente Git privada suministrada, la rama de la versión y el directorio existente de la carga.
+
+  - El `origin/main` publicado coincide con `release-commit` en la workstation, difiere del commit defectuoso congelado
+  y lo conserva como ancestro.
+
+  - La Application `board` conserva la fuente Git privada suministrada, la rama de la versión y el directorio existente
+  de la carga.
+
   - La Application `board` informa `Synced` y `Healthy` en el commit de `~/quest/release-commit` en la workstation.
+
   - El Deployment `board` completa su rollout en el namespace de la bahía.
+
   - Dentro de un Pod del Deployment `board`, `http://board:8080` devuelve `north-95`.
+
   - El archivo Git publicado `manifests/board.yaml` recupera la configuración de carga conocida como sana.
 
+
   El contenido y la ascendencia actuales de Git no demuestran qué comando de recuperación se utilizó.
-debrief: La reversión se expresó como un cambio hacia adelante al estado desired, reteniendo la revisión
-  defectuosa para su investigación.
+
+
+  Entradas adicionales: `rollback-contract.json`, `current-publication.json`, `consumer-baseline-commit`, `original-release-identities.json`,
+  `repository/readers/`.
+
+
+  Recupera la configuración sana conocida del productor y entrega la publicación aprobada actual a los consumidores
+  existentes fijados de forma independiente. Cada consumidor debe conservar una referencia inmutable al commit de
+  la versión publicada. Conserva las identidades de Application y Deployment originales y las imágenes y programas
+  suministrados. Cada Pod activo que les pertenezca y su destino Service deben servir la publicación desde la proyección
+  Git de solo lectura. Conserva la revisión inicial registrada de los consumidores en Git.
+
+
+  El registro inicial congelado es la referencia; las copias de trabajo no lo sustituyen. Se comprueban el estado
+  actual y la ascendencia, no los comandos usados para recuperar.'
+debrief: Restauraste la configuración sana del productor y propagaste la publicación actual a consumidores fijados
+  de forma independiente, conservando identidades e historia Git.
 stages.0.brief: Conserva el commit defectuoso en el historial publicado.
-hints.0.text: Self-heal concilia el estado de Git desired, incluidos los errores.
-hints.1.text: |-
-  Inspecciona el historial de la versión y los síntomas actuales de fallo de la carga.
-
-  ```bash
-  git -C repository log --oneline -5
-  kubectl describe deployment board
-  ```
-hints.2.text: |-
-  Revierte el commit defectuoso registrado, haz push de main y verifica la revisión observada y el estado. Una reversión registra una nueva confirmación correctiva y mantiene el historial de incidentes.
-
-  Verifica desde `~/quest` en la workstation:
-
-  - `source platform.env`
-  - `git -C repository ls-remote origin refs/heads/main`
-  - `cat release-commit`
-  - `git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/faulty-commit)" "$(cat release-commit)"`
-  - `git -C repository show --stat --oneline "$(cat release-commit)"`
-
-  El hash de `main` remoto coincide con `release-commit`. La lectura de ascendencia termina con código `0`; el nuevo commit conserva el historial del incidente.
-
-  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
-
-  `Synced`, `Healthy` y la revisión de `release-commit`. La fuente es el repositorio privado suministrado, `manifests`, `main`.
-
-  - `kubectl rollout status deployment/board --timeout=3s`
-  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`
-
-  El rollout termina; `north-95`.
+hints.0.text: Una versión histórica sana del productor y las obligaciones actuales de sus consumidores pueden tener
+  vidas distintas. Recuperar una no actualiza automáticamente a consumidores fijados de forma independiente.
+hints.1.text: Compara `rollback-contract.json`, `current-publication.json`, los commits registrados, los manifiestos
+  de consumidores, las fuentes Application y las revisiones observadas. Sigue la publicación a través de los Pods
+  que realmente les pertenecen y las respuestas Service.
+hints.2.text: "Restaura la configuración sana del productor e incorpora la publicación aprobada actual de los consumidores.\
+  \ Realiza commit y push sin descartar el incidente ni la revisión inicial de consumidores. Avanza la referencia\
+  \ inmutable de cada consumidor existente al commit publicado, refresca las Applications y espera la adopción real\
+  \ de la proyección. Verifica UID y programas originales, revisiones observadas, disponibilidad y HTTP de cada\
+  \ Pod y Service perteneciente al consumidor.\n\nVerifica cada Pod perteneciente a la cadena Deployment/ReplicaSet\
+  \ existente y después cada Service:\n\n```sh\nset -euo pipefail\nkubectl get applications board reader-a reader-b\n\
+  for name in reader-a reader-b; do\n  deployment_uid=$(kubectl get deployment \"$name\" -o jsonpath='{.metadata.uid}')\n\
+  \  replica_uids=$(kubectl get replicasets -o json | jq -c --arg uid \"$deployment_uid\" '[.items[] | select(any(.metadata.ownerReferences[]?;\
+  \ .kind==\"Deployment\" and .controller==true and .uid==$uid)) | .metadata.uid]')\n  kubectl get pods -o json\
+  \ | jq -r --argjson owners \"$replica_uids\" '.items[] | select(.metadata.deletionTimestamp==null and .status.phase!=\"\
+  Failed\" and .status.phase!=\"Succeeded\") | select(any(.metadata.ownerReferences[]?; .kind==\"ReplicaSet\" and\
+  \ .controller==true and (.uid as $uid | $owners | index($uid)!=null))) | .metadata.name' |\n    while IFS= read\
+  \ -r pod; do\n      kubectl exec \"$pod\" -c worker -- wget -qO- -T 3 http://127.0.0.1:8080\n    done\n  kubectl\
+  \ exec \"deployment/$name\" -c worker -- wget -qO- -T 3 \"http://$name:8080\"\ndone\n```\n\nSe esperan todas las\
+  \ Applications Synced/Healthy y ambas respuestas de consumidores coincidentes con la publicación aprobada actual."
 phrases.0: Restauré el estado desired con un Git revert.
 phrases.1: Mantuve reconciliation habilitado durante la recuperación.
 phrases.2: Verifiqué la revisión observada y el estado de la aplicación.
@@ -57,15 +77,40 @@ questions.0.prompt: ¿Por qué un rollout undo activo puede ser temporal en GitO
 questions.1.points.0: La confirmación defectuosa sigue siendo accesible en el historial main.
 questions.1.points.1: La recuperación es un nuevo cambio reseñable.
 questions.1.prompt: ¿Qué preserva revert que pierde reset?
-stages.0.objectives.0.text: El `origin/main` publicado coincide con `release-commit` en la workstation,
-  difiere del commit defectuoso congelado y lo conserva como ancestro.
-stages.0.objectives.1.text: La Application `board` conserva la fuente Git privada suministrada, la rama
-  de la versión y el directorio existente de la carga.
+stages.0.objectives.0.text: El `origin/main` publicado coincide con `release-commit` en la workstation, difiere
+  del commit defectuoso congelado y lo conserva como ancestro.
+stages.0.objectives.1.text: La Application `board` conserva la fuente Git privada suministrada, la rama de la versión
+  y el directorio existente de la carga.
 stages.0.objectives.2.text: La Application `board` informa `Synced` y `Healthy` en el commit de `~/quest/release-commit`
   en la workstation.
 stages.0.objectives.3.text: El Deployment `board` completa su rollout en el namespace de la bahía.
 stages.0.objectives.4.text: Dentro de un Pod del Deployment `board`, `http://board:8080` devuelve `north-95`.
-stages.0.objectives.5.text: El archivo Git publicado `manifests/board.yaml` recupera la configuración
-  de carga conocida como sana.
-diagnostics.probe_0_5: 'Los datos actuales no permiten verificar este objetivo: El archivo Git publicado `manifests/board.yaml`
-  recupera la configuración de carga conocida como sana.'
+stages.0.objectives.5.text: El archivo Git publicado `manifests/board.yaml` recupera la configuración de carga conocida
+  como sana. Los consumidores existentes adoptan la publicación aprobada actual con sus programas e identidades
+  originales. Sus Pods y destinos Service concuerdan con la proyección Git y las referencias inmutables actuales.
+diagnostics.probe_0_5: No se pudo observar la publicación tras el rollback. Revisa registros, manifiestos, propiedad
+  y entradas actuales de consumidores.
+diagnostics.rollback_identity_board: '`board`: Se sustituyó la Application o el Deployment original. Compara su
+  UID con el registro congelado de la versión.'
+diagnostics.rollback_history: La historia publicada o el servidor del repositorio difieren del contrato de recuperación.
+  Conserva la revisión inicial de consumidores y compara la versión actual.
+diagnostics.rollback_budget: La observación del rollback superó su tiempo. Revisa solicitudes Git/API bloqueadas
+  y disponibilidad de los destinos.
+diagnostics.rollback_observation: No se pudo observar la publicación tras el rollback. Revisa registros, manifiestos,
+  propiedad y entradas actuales de consumidores.
+diagnostics.rollback_identity_a: '`reader-a`: Se sustituyó la Application o el Deployment original. Compara su UID
+  con el registro congelado de la versión.'
+diagnostics.rollback_source_a: '`reader-a`: El consumidor no adoptó la referencia inmutable de la publicación actual.
+  Compara repositorio, directorio, referencia, revisión observada y salud.'
+diagnostics.rollback_delivery_a: '`reader-a`: El consumidor no conserva su programa suministrado, Pods propios disponibles
+  o proyección aprobada. Compara perfil, fuente ConfigMap y cadena de propietarios.'
+diagnostics.rollback_http_a: '`reader-a`: Un Pod propio o destino Service no ha adoptado la publicación aprobada.
+  Compara los campos HTTP reales con el registro después de refrescar la proyección.'
+diagnostics.rollback_identity_b: '`reader-b`: Se sustituyó la Application o el Deployment original. Compara su UID
+  con el registro congelado de la versión.'
+diagnostics.rollback_source_b: '`reader-b`: El consumidor no adoptó la referencia inmutable de la publicación actual.
+  Compara repositorio, directorio, referencia, revisión observada y salud.'
+diagnostics.rollback_delivery_b: '`reader-b`: El consumidor no conserva su programa suministrado, Pods propios disponibles
+  o proyección aprobada. Compara perfil, fuente ConfigMap y cadena de propietarios.'
+diagnostics.rollback_http_b: '`reader-b`: Un Pod propio o destino Service no ha adoptado la publicación aprobada.
+  Compara los campos HTTP reales con el registro después de refrescar la proyección.'
