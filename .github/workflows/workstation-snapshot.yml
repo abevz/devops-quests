@@ -1,0 +1,83 @@
+name: Workstation dependency snapshot
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: workstation-snapshot-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Refuse changes outside the supported workstation inputs
+        run: |
+          python - <<'PYCODE'
+          import hashlib, json, pathlib
+          lock = json.load(open('build-images.lock.json'))
+          supported = {'images/Workstation.Dockerfile', 'images/bashrc', 'scripts/bootstrap.py', 'dq_check.py'}
+          changed = {name for name, checksum in lock['inputs'].items()
+                     if hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest() != checksum}
+          if changed - supported:
+              raise RuntimeError('Other image inputs changed; refusing workstation-only snapshot: ' + str(sorted(changed - supported)))
+          PYCODE
+      - name: Fetch checksum-verified project tools
+        run: python -c 'from scripts.prepare_assets import tools_only; tools_only(project_only=True)'
+      - name: Build only the workstation from pinned source inputs
+        run: |
+          python - <<'PY'
+          import json, subprocess
+          lock = json.load(open('images.lock.json'))
+          subprocess.run([
+              'docker', 'build', '--platform=linux/amd64',
+              '--build-arg', 'BASE=' + lock['base'],
+              '--build-arg', 'DOCKER_CLI=' + lock['docker_cli'],
+              '-t', 'dq-workstation-snapshot', '-f', 'images/Workstation.Dockerfile', '.',
+          ], check=True)
+          PY
+      - name: Verify both offline Python environments and embedded source hashes
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL --entrypoint /bin/bash dq-workstation-snapshot -ec '
+            /usr/bin/python3 -c "import dq_check"
+            /opt/ansible/bin/python3 -c "import dq_check"
+          '
+          docker run --rm --network none --read-only --cap-drop ALL --entrypoint sha256sum dq-workstation-snapshot /opt/dq/dq_check.py /etc/dq-bashrc > embedded.sha256
+          python - <<'PY'
+          import hashlib
+          expected = [hashlib.sha256(open(p, 'rb').read()).hexdigest() for p in ('dq_check.py', 'images/bashrc')]
+          assert [line.split()[0] for line in open('embedded.sha256')] == expected
+          PY
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Publish a new immutable snapshot and report its digest
+        env:
+          SNAPSHOT_COMMIT: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import json, os, subprocess
+          commit = os.environ['SNAPSHOT_COMMIT']
+          tag = 'snapshot-' + commit
+          target = 'ghcr.io/abevz/devops-quests-workstation:' + tag
+          check = subprocess.run(['bin/crane', 'digest', target], capture_output=True, text=True)
+          if check.returncode == 0 or not any(s in check.stderr for s in ('MANIFEST_UNKNOWN', 'NAME_UNKNOWN')):
+              raise RuntimeError('Snapshot exists or absence is uncertain; refusing publication')
+          subprocess.run(['docker', 'tag', 'dq-workstation-snapshot', target], check=True)
+          subprocess.run(['docker', 'push', target], check=True)
+          digest = subprocess.check_output(['bin/crane', 'digest', target], text=True).strip()
+          print(json.dumps({
+              'source_commit': commit, 'tag': target,
+              'reference': target.split(':', 1)[0] + '@' + digest,
+              'config_id': subprocess.check_output(['docker', 'image', 'inspect', target, '--format={{.Id}}'], text=True).strip(),
+          }, indent=2))
+          PY
