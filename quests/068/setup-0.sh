@@ -109,3 +109,30 @@ p=Path('application.yaml');p.write_text(p.read_text().replace('__GIT_URL__',os.e
 APP
 kubectl apply -f application.yaml
 cp release-commit baseline-commit
+
+
+mkdir -p publication
+printf 'north-68\n' > publication/index.html
+printf '%s\n' '{"generation":"approved-68","route":"north","consumer":"board"}' > publication/contract.json
+for _ in $(seq 1 60); do
+ if kubectl get deployment board >/dev/null 2>&1; then break; fi
+ sleep 1
+done
+kubectl get deployment board -o jsonpath='{.metadata.uid}' > original-deployment-uid
+
+python3 -I - <<'DQ_PUBLICATION_RECEIPT'
+import json,os,subprocess
+from pathlib import Path
+deployment=json.loads(subprocess.check_output(['kubectl','get','deployment','board','-o','json']))
+app=json.loads(subprocess.check_output(['kubectl','get','application','board','-o','json']))
+worker=next(c for c in deployment['spec']['template']['spec']['containers'] if c['name']=='worker')
+receipt={'index':Path('publication/index.html').read_text(),
+ 'contract':json.loads(Path('publication/contract.json').read_text()),
+ 'applicationUID':app['metadata']['uid'],'deploymentUID':deployment['metadata']['uid'],
+ 'image':worker['image'],'repoURL':os.environ['GIT_URL'],
+ 'sourceDirectory':'manifests','providedServer':'httpd','publicationAtServerDocumentRoot':True,
+ 'publicationFiles':['index.html','contract.json'],'sourceTypes':['configMap','projected'],
+ 'readOnlyPublicationProjection':True,'publishedAndLiveProjectionAgree':True,
+ 'preserveApplicationDeploymentAndImage':True,'observesCurrentStateOnly':True}
+Path('publication-contract.json').write_text(json.dumps(receipt,indent=2)+'\n')
+DQ_PUBLICATION_RECEIPT

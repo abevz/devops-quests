@@ -104,3 +104,24 @@ from pathlib import Path
 p=Path('application.yaml');p.write_text(p.read_text().replace('__GIT_URL__',os.environ['GIT_URL']).replace('__NAMESPACE__',os.environ['DQ_NAMESPACE']))
 APP
 kubectl apply -f application.yaml
+
+python3 -I - <<'DQ_ACCESS_RECEIPT'
+import hashlib,json,os,subprocess
+from pathlib import Path
+ns=os.environ['ARGO_NAMESPACE']
+secret=json.loads(subprocess.check_output(['kubectl','-n',ns,'get','secret','station-repository','-o','json']))
+app=json.loads(subprocess.check_output(['kubectl','get','application','board','-o','json']))
+receipt={'repoURL':os.environ['GIT_URL'],'username':os.environ['GIT_USER'],
+ 'passwordSha256':hashlib.sha256(os.environ['GIT_PASSWORD'].encode()).hexdigest(),
+ 'revision':Path('release-commit').read_text().strip(),
+ 'credentialName':'station-repository','credentialNamespace':ns,'credentialUID':secret['metadata']['uid'],
+ 'applicationName':'board','applicationUID':app['metadata']['uid'],
+ 'workstationGitTarget':'refs/heads/main','contactOriginalRepositoryDirectly':True,
+ 'credentialBearingGitConfigurationPrivate':True,
+ 'configurationPaths':['~/.gitconfig','repository/.git/config']}
+Path('delivery-access.json').write_text(json.dumps(receipt,indent=2)+'\n')
+Path('credential-retirement.json').write_text(json.dumps({'stringData':{'url':os.environ['GIT_URL'].removesuffix('.git')+'-retired.git'}}))
+DQ_ACCESS_RECEIPT
+kubectl -n "$ARGO_NAMESPACE" patch secret station-repository --type merge --patch-file credential-retirement.json
+rm credential-retirement.json
+git config --global --replace-all http.extraHeader 'Authorization: Basic cmV0aXJlZDpyZXRpcmVk'

@@ -7,99 +7,154 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: |-
-      source platform.env
+    check: 'source platform.env
+
       git -C repository fetch origin main >/dev/null 2>&1
+
       test "$(git -C repository rev-parse origin/main)" = "$(cat release-commit)"
+
       faulty=$(cat /run/dq/facts/0/faulty-commit)
+
       test "$(cat release-commit)" != "$faulty"
-      git -C repository merge-base --is-ancestor "$faulty" origin/main
+
+      git -C repository merge-base --is-ancestor "$faulty" origin/main'
   - text: stages.0.objectives.1.text
     keep: true
-    check: |-
-      source platform.env
-      kubectl get application board -o json | jq -e --arg url "$GIT_URL" 'def same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url and (.spec.source.path | same_dir("manifests")) and .spec.source.targetRevision=="main"' >/dev/null
+    check: 'source platform.env
+
+      kubectl get application board -o json | jq -e --arg url "$GIT_URL" ''def same_dir($want): if type!="string"
+      then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts
+      | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url and (.spec.source.path | same_dir("manifests"))
+      and .spec.source.targetRevision=="main"'' >/dev/null'
   - text: stages.0.objectives.2.text
-    check: |-
-      source platform.env
-      kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" '.spec.syncPolicy.automated.selfHeal==true and .spec.syncPolicy.automated.prune==true and .status.sync.status=="Synced" and .status.health.status=="Healthy" and .status.sync.revision==$rev' >/dev/null
+    check: 'source platform.env
+
+      kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" ''.spec.syncPolicy.automated.selfHeal==true
+      and .spec.syncPolicy.automated.prune==true and .status.sync.status=="Synced" and .status.health.status=="Healthy"
+      and .status.sync.revision==$rev'' >/dev/null'
   - text: stages.0.objectives.3.text
     check: kubectl rollout status deployment/board --timeout=3s >/dev/null
   - text: stages.0.objectives.4.text
     keep: true
-    check: |-
-      test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-95
-
+    check: test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3
+      http://board:8080)" = north-95
   - text: stages.0.objectives.5.text
-    check: |-
-      dq_probe_output=$(mktemp)
-      trap 'rm -f "$dq_probe_output"' EXIT
-      set +e
-      (
-      set -euo pipefail
-      python3 -I - <<'DQ_GIT_HEALTH'
-      import json,re,subprocess,sys,yaml
-      from pathlib import Path
-      from decimal import Decimal
-
-      def execute(args):return subprocess.check_output(args,stderr=subprocess.DEVNULL,timeout=4)
-      def deployment(text):
-          found=[]
-          def visit(value,depth=0):
-              if depth>64:raise ValueError('manifest nesting')
-              if isinstance(value,list):
-                  for entry in value:visit(entry,depth+1)
-              elif isinstance(value,dict):
-                  if value.get('kind')=='List':visit(value.get('items',[]),depth+1)
-                  elif value.get('kind')=='Deployment' and value.get('metadata',{}).get('name')=='board':found.append(value)
-          for value in yaml.safe_load_all(text):visit(value)
-          if len(found)!=1:raise ValueError('board Deployment identity')
-          return found[0]
-      from dq_check import workload_worker as _dq_worker
-
-      def worker(document):
-          return _dq_worker(document, error="application worker identity")
-      from dq_check import quantity as _dq_quantity
-
-      def quantity(value):
-          return _dq_quantity(value, dialect='unicode_finite')
-
-      from dq_check import resource_subset as subset
-
-
-      from dq_check import health_probe as probe
-
-      from dq_check import env_values as env
-
-      from dq_check import workload_agreement as agreement
-
-      from dq_check import workload_safety as safety
-
-      try:
-          desired=deployment(execute(['git','-C','repository','show','origin/main:manifests/board.yaml']))
-          live=json.loads(execute(['kubectl','get','deployment','board','-o','json']))
-          healthy=Path('/run/dq/facts/0/healthy-commit').read_text().strip()
-          reference=deployment(execute(['git','-C','repository','show',healthy+':manifests/board.yaml']))
-          assert subset(reference,desired,ignore_behavior=True) and subset(reference,live,ignore_behavior=True)
-          assert safety(reference,desired) and safety(reference,live)
-          for field in ('livenessProbe','startupProbe'):
-              assert probe(worker(reference),field)==probe(worker(desired),field)==probe(worker(live),field)
-          assert agreement(desired,live)
-          execute(['kubectl','rollout','status','deployment/board','--timeout=3s'])
-          assert execute(['timeout','4s','kubectl','exec','--pod-running-timeout=2s','deployment/board','-c','worker','--','wget','-qO-','-T','3','http://board:8080']).rstrip(b'\n')==b'north-95'
-      except Exception:
-          sys.exit(1)
-      DQ_GIT_HEALTH
-      ) >"$dq_probe_output" 2>/dev/null
-      dq_probe_status=$?
-      set -e
-      cat "$dq_probe_output"
-      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
-      printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_5]'
-      fi
-      rm -f "$dq_probe_output"
-      trap - EXIT
-      test "$dq_probe_status" -eq 0
+    check: "dq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\ndq_result_failed=0\n\
+      set +e\n(\nset -euo pipefail\ntimeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_ROLLBACK_ADOPTION'\n\
+      dq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\npython3 -I\
+      \ - <<'DQ_GIT_HEALTH'\nimport json,re,subprocess,sys,yaml\nfrom pathlib import Path\nfrom decimal import Decimal\n\
+      \ndef execute(args):return subprocess.check_output(args,stderr=subprocess.DEVNULL,timeout=4)\ndef deployment(text):\n\
+      \    found=[]\n    def visit(value,depth=0):\n        if depth>64:raise ValueError('manifest nesting')\n \
+      \       if isinstance(value,list):\n            for entry in value:visit(entry,depth+1)\n        elif isinstance(value,dict):\n\
+      \            if value.get('kind')=='List':visit(value.get('items',[]),depth+1)\n            elif value.get('kind')=='Deployment'\
+      \ and value.get('metadata',{}).get('name')=='board':found.append(value)\n    for value in yaml.safe_load_all(text):visit(value)\n\
+      \    if len(found)!=1:raise ValueError('board Deployment identity')\n    return found[0]\nfrom dq_check import\
+      \ workload_worker as _dq_worker\n\ndef worker(document):\n    return _dq_worker(document, error=\"application\
+      \ worker identity\")\nfrom dq_check import quantity as _dq_quantity\n\ndef quantity(value):\n    return _dq_quantity(value,\
+      \ dialect='unicode_finite')\n\nfrom dq_check import resource_subset as subset\n\n\nfrom dq_check import health_probe\
+      \ as probe\n\nfrom dq_check import env_values as env\n\nfrom dq_check import workload_agreement as agreement\n\
+      \nfrom dq_check import workload_safety as safety\n\ntry:\n    desired=deployment(execute(['git','-C','repository','show','origin/main:manifests/board.yaml']))\n\
+      \    live=json.loads(execute(['kubectl','get','deployment','board','-o','json']))\n    healthy=Path('/run/dq/facts/0/healthy-commit').read_text().strip()\n\
+      \    reference=deployment(execute(['git','-C','repository','show',healthy+':manifests/board.yaml']))\n   \
+      \ assert subset(reference,desired,ignore_behavior=True) and subset(reference,live,ignore_behavior=True)\n\
+      \    assert safety(reference,desired) and safety(reference,live)\n    for field in ('livenessProbe','startupProbe'):\n\
+      \        assert probe(worker(reference),field)==probe(worker(desired),field)==probe(worker(live),field)\n\
+      \    assert agreement(desired,live)\n    execute(['kubectl','rollout','status','deployment/board','--timeout=3s'])\n\
+      \    assert execute(['timeout','4s','kubectl','exec','--pod-running-timeout=2s','deployment/board','-c','worker','--','wget','-qO-','-T','3','http://board:8080']).rstrip(b'\\\
+      n')==b'north-95'\nexcept Exception:\n    sys.exit(1)\nDQ_GIT_HEALTH\n) >\"$dq_probe_output\" 2>/dev/null\n\
+      dq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\nif [ \"$dq_probe_status\" -ne 0 ] && ! grep -Eq '\\\
+      [DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\nprintf '%s\\n' 'Current inputs could not verify this objective:\
+      \ ✗ [DQ:probe_0_5]'\nfi\nrm -f \"$dq_probe_output\"\ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0\nDQ_LEGACY_ROLLBACK_ADOPTION\n\
+      )\n[ $? -eq 0 ] || dq_result_failed=1\n(\nset -euo pipefail\nsource platform.env\npython3 -I - <<'DQ_ROLLBACK_ADOPTION'\n\
+      import json\nimport posixpath\nimport subprocess\nimport time\nfrom pathlib import Path\nimport yaml\nfrom\
+      \ dq_check import workload_worker, current_pods, ready_image, pod_worker\n\ndeadline = time.monotonic() +\
+      \ 14\nfailed = False\n\n\ndef reject(marker):\n    global failed\n    failed = True\n    print('Rollback propagation\
+      \ is incomplete: ✗ [DQ:' + marker + ']')\n\n\ndef execute(args):\n    remaining = deadline - time.monotonic()\n\
+      \    if remaining <= 0:\n        raise subprocess.TimeoutExpired(args[0], 0)\n    return subprocess.check_output(args,\
+      \ stderr=subprocess.DEVNULL, timeout=min(3, remaining))\n\n\ndef documents(value):\n    if isinstance(value,\
+      \ dict):\n        if value.get('kind') == 'List':\n            for item in value.get('items', []):\n     \
+      \           yield from documents(item)\n        elif value.get('kind'):\n            yield value\n\n\ndef\
+      \ same_dir(value, wanted):\n    if not isinstance(value, str) or value.startswith('/'):\n        return False\n\
+      \    parts = [part for part in value.split('/') if part not in ('', '.')]\n    return '..' not in parts and\
+      \ '/'.join(parts) == wanted\n\n\ndef projection(document, filename, maps):\n    worker = workload_worker(document)\n\
+      \    result = []\n    volumes = {v['name']: v for v in document['spec']['template']['spec'].get('volumes',\
+      \ [])}\n    for mount in worker.get('volumeMounts', []):\n        base = mount['mountPath'].rstrip('/') or\
+      \ '/'\n        if 'subPath' in mount:\n            if filename != mount['mountPath']:\n                continue\n\
+      \        elif filename != base and not filename.startswith(base.rstrip('/') + '/'):\n            continue\n\
+      \        volume = volumes[mount['name']]\n        sources = [volume['configMap']] if 'configMap' in volume\
+      \ else [\n            item['configMap'] for item in volume.get('projected', {}).get('sources', []) if 'configMap'\
+      \ in item]\n        for source in sources:\n            name = source['name']\n            data = maps[name].get('data',\
+      \ {})\n            items = source.get('items', [{'key': key, 'path': key} for key in data])\n            for\
+      \ item in items:\n                if 'subPath' in mount:\n                    path = mount['mountPath'] if\
+      \ item['path'] == mount['subPath'] else None\n                else:\n                    path = posixpath.normpath(posixpath.join(mount['mountPath'],\
+      \ item['path']))\n                if path == filename:\n                    result.append((name, item['key']))\n\
+      \    return result\n\n\ntry:\n    receipt = json.loads(Path('/run/dq/facts/0/rollback-contract.json').read_text())\n\
+      \    resources = list(receipt['originalIdentities'])\n    snapshot = json.loads(execute(['kubectl', '--request-timeout=2s',\
+      \ 'get', *resources, '-o', 'json']))\n    observed = {(item['kind'].lower(), item['metadata']['name']): item\
+      \ for item in snapshot['items']}\n    for name in ('board', 'reader-a', 'reader-b'):\n        suffix = 'board'\
+      \ if name == 'board' else name[-1]\n        if any(observed[kind, name]['metadata']['uid'] != receipt['originalIdentities'][kind\
+      \ + '/' + name]\n               for kind in ('application', 'deployment')):\n            reject('rollback_identity_'\
+      \ + suffix)\n    revision = execute(['git', '-C', 'repository', 'rev-parse', 'origin/main']).decode().strip()\n\
+      \    execute(['git', '-C', 'repository', 'merge-base', '--is-ancestor', receipt['baselineCommit'], revision])\n\
+      \    if revision == receipt['baselineCommit']:\n        reject('rollback_history')\n    parent = observed['application',\
+      \ 'board']\n    if parent['spec']['source'].get('repoURL') != receipt['repoURL']:\n        reject('rollback_history')\n\
+      \    names = execute(['git', '-C', 'repository', 'ls-tree', '-r', '--name-only', revision, '--', 'readers']).decode().splitlines()\n\
+      \    desired = {}\n    for path in names:\n        if Path(path).suffix not in ('.yaml', '.yml', '.json'):\n\
+      \            continue\n        text = execute(['git', '-C', 'repository', 'show', revision + ':' + path]).decode()\n\
+      \        for root in yaml.safe_load_all(text):\n            for item in documents(root):\n               \
+      \ identity = item['kind'], item.get('metadata', {}).get('name')\n                if identity in desired:\n\
+      \                    raise ValueError('duplicate consumer manifest identity')\n                desired[identity]\
+      \ = item\n    ownership = json.loads(execute(['kubectl', '--request-timeout=2s', 'get', 'replicasets,pods',\
+      \ '-o', 'json']))\n    replicasets = {'items': [item for item in ownership['items'] if item['kind'] == 'ReplicaSet']}\n\
+      \    pods = {'items': [item for item in ownership['items'] if item['kind'] == 'Pod']}\n    map_names = set()\n\
+      \    for profile in receipt['consumers']:\n        live = observed['deployment', profile['name']]\n      \
+      \  for volume in live['spec']['template']['spec'].get('volumes', []):\n            if 'configMap' in volume:\n\
+      \                map_names.add(volume['configMap']['name'])\n            map_names.update(item['configMap']['name']\
+      \ for item in volume.get('projected', {}).get('sources', [])\n                             if 'configMap'\
+      \ in item)\n    if not map_names:\n        raise ValueError('consumer publication sources')\n    maps_snapshot\
+      \ = json.loads(execute(['kubectl', '--request-timeout=2s', 'get',\n                                      \
+      \  *['configmap/' + name for name in sorted(map_names)], '-o', 'json']))\n    maps_items = maps_snapshot.get('items',\
+      \ [maps_snapshot])\n    maps = {item['metadata']['name']: item for item in maps_items}\n    for profile in\
+      \ receipt['consumers']:\n        name, lane = profile['name'], profile['lane']\n        app, live = observed['application',\
+      \ name], observed['deployment', name]\n        source = app['spec'].get('source', {})\n        if (source.get('repoURL')\
+      \ != receipt['repoURL'] or not same_dir(source.get('path'), profile['path'])\n                or source.get('targetRevision',\
+      \ '').lower() != revision\n                or app['spec'].get('project') != profile['project']\n         \
+      \       or app['spec'].get('destination') != profile['destination']\n                or app.get('status',\
+      \ {}).get('sync', {}).get('revision') != revision\n                or app.get('status', {}).get('sync', {}).get('status')\
+      \ != 'Synced'\n                or app.get('status', {}).get('health', {}).get('status') != 'Healthy'):\n \
+      \           reject('rollback_source_' + lane)\n        worker = workload_worker(live)\n        declared =\
+      \ desired['Deployment', name]\n        expected = profile['program']\n        if any(worker.get(key) != expected.get(key)\
+      \ or workload_worker(declared).get(key) != expected.get(key)\n               for key in ('image', 'command',\
+      \ 'args')):\n            reject('rollback_delivery_' + lane)\n        count = live['spec'].get('replicas',\
+      \ 1)\n        status = live.get('status', {})\n        owned = current_pods(live, replicasets, pods)\n   \
+      \     if (count < 1 or status.get('observedGeneration', 0) < live['metadata']['generation']\n            \
+      \    or status.get('updatedReplicas', 0) != count or status.get('readyReplicas', 0) != count\n           \
+      \     or status.get('unavailableReplicas', 0) != 0 or len(owned) != count\n                or any(not ready_image(pod,\
+      \ expected['image']) for pod in owned)):\n            reject('rollback_delivery_' + lane)\n        target\
+      \ = posixpath.join(profile['documentRoot'], 'index.html')\n        bindings = projection(live, target, maps)\n\
+      \        declared_maps = {key[1]: value for key, value in desired.items() if key[0] == 'ConfigMap'}\n    \
+      \    if len(bindings) != 1 or projection(declared, target, declared_maps) != bindings:\n            reject('rollback_delivery_'\
+      \ + lane)\n        else:\n            cm, key = bindings[0]\n            body = json.loads(maps[cm]['data'][key])\n\
+      \            if (not isinstance(body, dict) or not all(body.get(k) == v for k, v in receipt['publication'].items())\n\
+      \                    or declared_maps[cm].get('data') != maps[cm].get('data')):\n                reject('rollback_delivery_'\
+      \ + lane)\n        for pod in owned:\n            if any(pod_worker(pod).get(key) != expected.get(key) for\
+      \ key in ('image', 'command', 'args')):\n                reject('rollback_delivery_' + lane)\n           \
+      \ actual_pod = {'spec': {'template': {'spec': pod['spec']}}}\n            if projection(actual_pod, target,\
+      \ maps) != bindings:\n                reject('rollback_delivery_' + lane)\n            body = json.loads(execute(['kubectl',\
+      \ '--request-timeout=2s', 'exec', pod['metadata']['name'],\n                                       '-c', 'worker',\
+      \ '--', 'wget', '-qO-', '-T', '2', 'http://127.0.0.1:8080']))\n            if not isinstance(body, dict) or\
+      \ not all(body.get(k) == v for k, v in receipt['publication'].items()):\n                reject('rollback_http_'\
+      \ + lane)\n        if owned:\n            body = json.loads(execute(['kubectl', '--request-timeout=2s', 'exec',\
+      \ owned[0]['metadata']['name'],\n                                       '-c', 'worker', '--', 'wget', '-qO-',\
+      \ '-T', '2', 'http://' + name + ':8080']))\n            if not isinstance(body, dict) or not all(body.get(k)\
+      \ == v for k, v in receipt['publication'].items()):\n                reject('rollback_http_' + lane)\nexcept\
+      \ subprocess.TimeoutExpired:\n    reject('rollback_budget')\nexcept (OSError, ValueError, KeyError, TypeError,\
+      \ subprocess.SubprocessError, yaml.YAMLError):\n    reject('rollback_observation')\nraise SystemExit(failed)\n\
+      DQ_ROLLBACK_ADOPTION\n)\n[ $? -eq 0 ] || dq_result_failed=1\nset -e\ntest \"$dq_result_failed\" -eq 0\n) >\"\
+      $dq_probe_output\" 2>/dev/null\ndq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\nif [ \"$dq_probe_status\"\
+      \ -ne 0 ] && ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\nprintf '%s\\n' 'Current inputs could\
+      \ not verify this objective: ✗ [DQ:probe_0_5]'\nfi\nrm -f \"$dq_probe_output\"\ntrap - EXIT\ntest \"$dq_probe_status\"\
+      \ -eq 0"
 hints:
 - text: hints.0.text
   guide: gitops-delivery
@@ -133,6 +188,12 @@ facts:
   - faulty-commit
   - release-commit
   - repository/manifests/board.yaml
+  - current-publication.json
+  - consumer-baseline-commit
+  - original-release-identities.json
+  - rollback-contract.json
+  - repository/readers/a/resources.yaml
+  - repository/readers/b/resources.yaml
   services: []
 book:
   chapter: 11
@@ -141,3 +202,4 @@ immutable:
   0:
   - healthy-commit
   - faulty-commit
+  - rollback-contract.json

@@ -1,53 +1,72 @@
 title: Powrót Argo
-brief: |-
-  Najnowsze wydanie z prywatnego Git nie działa poprawnie. Przywróć znaną poprawną zawartość, zachowując historię incydentu.
+brief: 'Najnowsze wydanie z prywatnego Git nie działa poprawnie. Przywróć znaną poprawną zawartość, zachowując historię
+  incydentu.
 
-  Pracuj na workstation w `~/quest` z plikami `platform.env`, `application.yaml`, `healthy-commit`, `faulty-commit`, `release-commit`, `repository/`.
 
-  O ile nie wskazano inaczej, zasoby Kubernetes znajdują się w przestrzeni nazw zatoki (`DQ_NAMESPACE`); ścieżki w `~/quest` są na workstation.
+  Pracuj na workstation w `~/quest` z plikami `platform.env`, `application.yaml`, `healthy-commit`, `faulty-commit`,
+  `release-commit`, `repository/`.
+
+
+  O ile nie wskazano inaczej, zasoby Kubernetes znajdują się w przestrzeni nazw zatoki (`DQ_NAMESPACE`); ścieżki
+  w `~/quest` są na workstation.
+
 
   **Requirements:**
 
-  - Opublikowane `origin/main` odpowiada plikowi `release-commit` na workstation, różni się od zamrożonego wadliwego commita i zachowuje go jako przodka.
+
+  - Opublikowane `origin/main` odpowiada plikowi `release-commit` na workstation, różni się od zamrożonego wadliwego
+  commita i zachowuje go jako przodka.
+
   - Application `board` zachowuje dostarczone prywatne źródło Git, gałąź wydania i istniejący katalog obciążenia.
+
   - Application `board` zgłasza `Synced` i `Healthy` dla commita w `~/quest/release-commit` na workstation.
+
   - Deployment `board` kończy rollout w przestrzeni nazw zatoki.
+
   - Wewnątrz Poda Deployment `board` adres `http://board:8080` zwraca `north-95`.
+
   - Opublikowany plik Git `manifests/board.yaml` przywraca znaną poprawną konfigurację obciążenia.
 
+
   Bieżąca zawartość i historia przodków Git nie dowodzą, którego polecenia odzyskiwania użyto.
-debrief: Wycofanie zostało wyrażone jako zmiana w przód w stosunku do desired state, zachowując błędną
-  wersję do zbadania.
+
+
+  Dodatkowe dane wejściowe: `rollback-contract.json`, `current-publication.json`, `consumer-baseline-commit`, `original-release-identities.json`,
+  `repository/readers/`.
+
+
+  Przywróć znaną zdrową konfigurację producenta i dostarcz bieżącą zatwierdzoną publikację istniejącym niezależnie
+  przypiętym odbiorcom. Każdy odbiorca ma zachować niezmienne przypięcie do commita opublikowanego wydania. Zachowaj
+  tożsamości pierwotnych Application i Deployment oraz dostarczone obrazy i programy odbiorców. Każdy należący do
+  nich aktywny Pod i punkt Service mają udostępniać zatwierdzoną publikację z projekcji Git tylko do odczytu. Zachowaj
+  zapisaną rewizję początkową odbiorców w historii Git.
+
+
+  Zamrożony zapis początkowy jest wiążący; kopie robocze go nie zastępują. Sprawdzany jest bieżący stan i historia
+  commitów, a nie użyte polecenia naprawcze.'
+debrief: Przywrócono zdrową konfigurację producenta i przekazano bieżącą publikację niezależnie przypiętym odbiorcom,
+  zachowując tożsamości oraz historię Git.
 stages.0.brief: Zachowaj wadliwy commit w opublikowanej historii.
-hints.0.text: Self-heal uzgadnia Git desired state, łącznie z błędami.
-hints.1.text: |-
-  Sprawdź historię wydania i bieżące objawy awarii obciążenia.
-
-  ```bash
-  git -C repository log --oneline -5
-  kubectl describe deployment board
-  ```
-hints.2.text: |-
-  Cofnij zamrożone błędne zatwierdzenie, wciśnij main i sprawdź zaobserwowane revision i health. Przywrócenie rejestruje nowe zatwierdzenie korygujące i przechowuje historię incydentów.
-
-  Sprawdź z `~/quest` na workstation:
-
-  - `source platform.env`
-  - `git -C repository ls-remote origin refs/heads/main`
-  - `cat release-commit`
-  - `git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/faulty-commit)" "$(cat release-commit)"`
-  - `git -C repository show --stat --oneline "$(cat release-commit)"`
-
-  Hash zdalnego `main` odpowiada `release-commit`. Odczyt przodka kończy się kodem `0`; nowy commit zachowuje historię incydentu.
-
-  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
-
-  `Synced`, `Healthy` i rewizja z `release-commit`. Źródłem jest dostarczone prywatne repozytorium, `manifests`, `main`.
-
-  - `kubectl rollout status deployment/board --timeout=3s`
-  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`
-
-  Rollout kończy się; `north-95`.
+hints.0.text: Zdrowe historyczne wydanie producenta i bieżące zobowiązania odbiorców mogą mieć różne okresy życia.
+  Przywrócenie jednego nie aktualizuje automatycznie niezależnie przypiętych odbiorców.
+hints.1.text: Porównaj `rollback-contract.json`, `current-publication.json`, zapisane commity, manifesty odbiorców,
+  źródła Application i obserwowane rewizje. Prześledź publikację przez rzeczywiście należące do nich Pody i odpowiedzi
+  Service.
+hints.2.text: "Przywróć zdrową konfigurację producenta, przenosząc bieżącą zatwierdzoną publikację odbiorców do\
+  \ nowego stanu. Wykonaj commit i push bez odrzucania incydentu ani rewizji początkowej odbiorców. Zaktualizuj\
+  \ niezmienne przypięcie każdego istniejącego odbiorcy do opublikowanego commita, odśwież Application i poczekaj\
+  \ na rzeczywiste przyjęcie projekcji. Sprawdź pierwotne UID i programy, obserwowane rewizje, gotowość oraz HTTP\
+  \ każdego należącego do odbiorcy Pod i Service.\n\nSprawdź każdy Pod należący do istniejącego łańcucha Deployment/ReplicaSet,\
+  \ a następnie każdy Service:\n\n```sh\nset -euo pipefail\nkubectl get applications board reader-a reader-b\nfor\
+  \ name in reader-a reader-b; do\n  deployment_uid=$(kubectl get deployment \"$name\" -o jsonpath='{.metadata.uid}')\n\
+  \  replica_uids=$(kubectl get replicasets -o json | jq -c --arg uid \"$deployment_uid\" '[.items[] | select(any(.metadata.ownerReferences[]?;\
+  \ .kind==\"Deployment\" and .controller==true and .uid==$uid)) | .metadata.uid]')\n  kubectl get pods -o json\
+  \ | jq -r --argjson owners \"$replica_uids\" '.items[] | select(.metadata.deletionTimestamp==null and .status.phase!=\"\
+  Failed\" and .status.phase!=\"Succeeded\") | select(any(.metadata.ownerReferences[]?; .kind==\"ReplicaSet\" and\
+  \ .controller==true and (.uid as $uid | $owners | index($uid)!=null))) | .metadata.name' |\n    while IFS= read\
+  \ -r pod; do\n      kubectl exec \"$pod\" -c worker -- wget -qO- -T 3 http://127.0.0.1:8080\n    done\n  kubectl\
+  \ exec \"deployment/$name\" -c worker -- wget -qO- -T 3 \"http://$name:8080\"\ndone\n```\n\nOczekiwane: wszystkie\
+  \ Application Synced/Healthy i odpowiedzi obu odbiorców zgodne z bieżącą zatwierdzoną publikacją."
 phrases.0: Przywróciłem desired state za pomocą Git revert.
 phrases.1: Podczas odzyskiwania miałem włączone reconciliation.
 phrases.2: Sprawdziłem zaobserwowaną wersję i stan aplikacji.
@@ -57,15 +76,40 @@ questions.0.prompt: Dlaczego live rollout undo może być tymczasowy w ramach Gi
 questions.1.points.0: Błędne zatwierdzenie pozostaje osiągalne w historii main.
 questions.1.points.1: Powrót do zdrowia to nowa zmiana, którą można sprawdzić.
 questions.1.prompt: Co zachowuje revert, co traci reset?
-stages.0.objectives.0.text: Opublikowane `origin/main` odpowiada plikowi `release-commit` na workstation,
-  różni się od zamrożonego wadliwego commita i zachowuje go jako przodka.
-stages.0.objectives.1.text: Application `board` zachowuje dostarczone prywatne źródło Git, gałąź wydania
-  i istniejący katalog obciążenia.
+stages.0.objectives.0.text: Opublikowane `origin/main` odpowiada plikowi `release-commit` na workstation, różni
+  się od zamrożonego wadliwego commita i zachowuje go jako przodka.
+stages.0.objectives.1.text: Application `board` zachowuje dostarczone prywatne źródło Git, gałąź wydania i istniejący
+  katalog obciążenia.
 stages.0.objectives.2.text: Application `board` zgłasza `Synced` i `Healthy` dla commita w `~/quest/release-commit`
   na workstation.
 stages.0.objectives.3.text: Deployment `board` kończy rollout w przestrzeni nazw zatoki.
 stages.0.objectives.4.text: Wewnątrz Poda Deployment `board` adres `http://board:8080` zwraca `north-95`.
-stages.0.objectives.5.text: Opublikowany plik Git `manifests/board.yaml` przywraca znaną poprawną konfigurację
-  obciążenia.
-diagnostics.probe_0_5: 'Bieżące dane nie pozwalają potwierdzić tego celu: Opublikowany plik Git `manifests/board.yaml`
-  przywraca znaną poprawną konfigurację obciążenia.'
+stages.0.objectives.5.text: Opublikowany plik Git `manifests/board.yaml` przywraca znaną poprawną konfigurację obciążenia.
+  Istniejący przypięci odbiorcy przyjmują bieżącą zatwierdzoną publikację z zachowaniem programów i tożsamości.
+  Ich Pody i punkty Service są zgodne z projekcją Git i bieżącymi niezmiennymi przypięciami wydania.
+diagnostics.probe_0_5: Nie można zaobserwować publikacji po rollbacku. Sprawdź zapisy, manifesty, właścicieli i
+  bieżące dane wejściowe odbiorców.
+diagnostics.rollback_identity_board: '`board`: Zastąpiono pierwotną Application lub Deployment. Porównaj UID z zamrożonym
+  zapisem wydania.'
+diagnostics.rollback_history: Opublikowana historia lub serwer repozytorium różnią się od kontraktu odtwarzania.
+  Zachowaj rewizję początkową odbiorców i porównaj bieżące wydanie.
+diagnostics.rollback_budget: Obserwacja rollbacku przekroczyła limit czasu. Sprawdź blokujące żądania Git/API i
+  dostępność punktów końcowych.
+diagnostics.rollback_observation: Nie można zaobserwować publikacji po rollbacku. Sprawdź zapisy, manifesty, właścicieli
+  i bieżące dane wejściowe odbiorców.
+diagnostics.rollback_identity_a: '`reader-a`: Zastąpiono pierwotną Application lub Deployment. Porównaj UID z zamrożonym
+  zapisem wydania.'
+diagnostics.rollback_source_a: '`reader-a`: Odbiorca nie przyjął bieżącego niezmiennego przypięcia publikacji. Porównaj
+  repozytorium, katalog, przypięcie, obserwowaną rewizję i zdrowie.'
+diagnostics.rollback_delivery_a: '`reader-a`: Odbiorca nie zachowuje dostarczonego programu, gotowych własnych Podów
+  lub zatwierdzonej projekcji. Porównaj profil, źródło ConfigMap i łańcuch właścicieli.'
+diagnostics.rollback_http_a: '`reader-a`: Własny Pod lub punkt Service nie przyjął zatwierdzonej publikacji. Porównaj
+  rzeczywiste pola HTTP z zapisem po odświeżeniu projekcji.'
+diagnostics.rollback_identity_b: '`reader-b`: Zastąpiono pierwotną Application lub Deployment. Porównaj UID z zamrożonym
+  zapisem wydania.'
+diagnostics.rollback_source_b: '`reader-b`: Odbiorca nie przyjął bieżącego niezmiennego przypięcia publikacji. Porównaj
+  repozytorium, katalog, przypięcie, obserwowaną rewizję i zdrowie.'
+diagnostics.rollback_delivery_b: '`reader-b`: Odbiorca nie zachowuje dostarczonego programu, gotowych własnych Podów
+  lub zatwierdzonej projekcji. Porównaj profil, źródło ConfigMap i łańcuch właścicieli.'
+diagnostics.rollback_http_b: '`reader-b`: Własny Pod lub punkt Service nie przyjął zatwierdzonej publikacji. Porównaj
+  rzeczywiste pola HTTP z zapisem po odświeżeniu projekcji.'

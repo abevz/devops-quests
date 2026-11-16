@@ -8,30 +8,70 @@ stages:
   objectives:
   - text: stages.0.objectives.0.text
     keep: true
-    check: |-
-      source platform.env
+    check: 'source platform.env
+
       test "$(kubectl auth can-i patch secret/station-repository -n "$ARGO_NAMESPACE")" = yes
+
       test "$(kubectl auth can-i list secrets -n "$ARGO_NAMESPACE")" = no
-      test "$(kubectl auth can-i patch secret/unrelated -n "$ARGO_NAMESPACE")" = no
+
+      test "$(kubectl auth can-i patch secret/unrelated -n "$ARGO_NAMESPACE")" = no'
   - text: stages.0.objectives.1.text
-    check: |-
-      source platform.env
-      kubectl -n "$ARGO_NAMESPACE" get secret station-repository -o json | jq -e --arg password "$GIT_PASSWORD" '(.data.password|@base64d)==$password' >/dev/null
+    check: "dq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\ndq_result_failed=0\n\
+      set +e\n(\nset -euo pipefail\ntimeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY_ACCESS'\nsource platform.env\n\
+      kubectl -n \"$ARGO_NAMESPACE\" get secret station-repository -o json | jq -e --arg password \"$GIT_PASSWORD\"\
+      \ '(.data.password|@base64d)==$password' >/dev/null\nDQ_LEGACY_ACCESS\n)\n[ $? -eq 0 ] || dq_result_failed=1\n\
+      (\nset -euo pipefail\nsource platform.env\npython3 -I - <<'DQ_GIT_ACCESS'\nimport base64\nimport hashlib\n\
+      import json\nimport os\nimport stat\nimport subprocess\nimport time\nfrom pathlib import Path\nfrom urllib.parse\
+      \ import urlsplit\n\ndeadline = time.monotonic() + 12\nfailed = False\n\n\ndef reject(marker):\n    global\
+      \ failed\n    failed = True\n    print('Git delivery access is incomplete: ✗ [DQ:' + marker + ']')\n\n\ndef\
+      \ execute(args):\n    remaining = deadline - time.monotonic()\n    if remaining <= 0:\n        raise subprocess.TimeoutExpired(args[0],\
+      \ 0)\n    return subprocess.check_output(args, stderr=subprocess.DEVNULL,\n                              \
+      \     timeout=min(3, remaining),\n                                   env=dict(os.environ, GIT_TERMINAL_PROMPT='0'))\n\
+      \n\ndef authority(value):\n    parsed = urlsplit(value)\n    if parsed.query or parsed.fragment:\n       \
+      \ raise ValueError('not a direct repository URI')\n    return parsed.scheme, parsed.hostname, parsed.port,\
+      \ parsed.path.rstrip('/')\n\n\ntry:\n    receipt = json.loads(Path('/run/dq/facts/0/delivery-access.json').read_text())\n\
+      \    secret = json.loads(execute(['kubectl', '--request-timeout=2s', '-n', receipt['credentialNamespace'],\n\
+      \                                 'get', 'secret', receipt['credentialName'], '-o', 'json']))\n    if secret['metadata']['uid']\
+      \ != receipt['credentialUID']:\n        reject('credential_identity')\n    data = {key: base64.b64decode(value,\
+      \ validate=True).decode()\n            for key, value in secret.get('data', {}).items()}\n    if (data.get('url')\
+      \ != receipt['repoURL'] or data.get('username') != receipt['username']\n            or data.get('type') !=\
+      \ 'git'\n            or secret['metadata'].get('labels', {}).get('argocd.argoproj.io/secret-type') != 'repository'):\n\
+      \        reject('credential_binding')\n    password = data.get('password', '')\n    if hashlib.sha256(password.encode()).hexdigest()\
+      \ != receipt['passwordSha256']:\n        reject('credential_value')\n    application = json.loads(execute(['kubectl',\
+      \ '--request-timeout=2s', 'get', 'application',\n                                      receipt['applicationName'],\
+      \ '-o', 'json']))\n    if application['metadata']['uid'] != receipt['applicationUID']:\n        reject('application_identity')\n\
+      \    basic = base64.b64encode((receipt['username'] + ':' + password).encode())\n    for path in (Path.home()\
+      \ / '.gitconfig', Path('repository/.git/config')):\n        if path.exists():\n            contents = path.read_bytes()\n\
+      \            if (password.encode() in contents or basic in contents) and stat.S_IMODE(path.stat().st_mode)\
+      \ & 0o077:\n                reject('git_storage')\n                break\n    try:\n        resolved = execute(['git',\
+      \ '-C', 'repository', 'ls-remote', '--get-url', receipt['repoURL']]).decode().strip()\n        if authority(resolved)\
+      \ != authority(receipt['repoURL']):\n            reject('git_target')\n        else:\n            rows = execute(['git',\
+      \ '-C', 'repository', 'ls-remote', receipt['repoURL'], 'refs/heads/main']).decode().splitlines()\n       \
+      \     if rows != [receipt['revision'] + '\\trefs/heads/main']:\n                reject('git_access')\n   \
+      \ except subprocess.CalledProcessError:\n        reject('git_access')\nexcept subprocess.TimeoutExpired:\n\
+      \    reject('git_budget')\nexcept (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):\n\
+      \    reject('git_observation')\nraise SystemExit(failed)\nDQ_GIT_ACCESS\n)\n[ $? -eq 0 ] || dq_result_failed=1\n\
+      set -e\ntest \"$dq_result_failed\" -eq 0\n) >\"$dq_probe_output\" 2>/dev/null\ndq_probe_status=$?\nset -e\n\
+      cat \"$dq_probe_output\"\nif [ \"$dq_probe_status\" -ne 0 ] && ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"\
+      ; then\nprintf '%s\\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'\nfi\nrm -f \"$dq_probe_output\"\
+      \ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0"
   - text: stages.0.objectives.2.text
     keep: true
-    check: |-
-      source platform.env
-      kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" 'def same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url and (.spec.source.path | same_dir("manifests")) and .spec.source.targetRevision=="main"' >/dev/null
+    check: 'source platform.env
+
+      kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" ''def
+      same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!=""
+      and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url
+      and (.spec.source.path | same_dir("manifests")) and .spec.source.targetRevision=="main"'' >/dev/null'
   - text: stages.0.objectives.3.text
-    check: |-
-      source platform.env
-      kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" '.status.sync.status=="Synced" and .status.health.status=="Healthy" and .status.sync.revision==$rev' >/dev/null
+    check: 'source platform.env
+
+      kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" ''.status.sync.status=="Synced"
+      and .status.health.status=="Healthy" and .status.sync.revision==$rev'' >/dev/null'
   - text: stages.0.objectives.4.text
     check: kubectl rollout status deployment/board --timeout=3s >/dev/null
   - text: stages.0.objectives.5.text
-    check: |-
-      test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-61
-
+    check: test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-61
 hints:
 - text: hints.0.text
   guide: gitops-delivery
@@ -67,6 +107,7 @@ facts:
   - repository/manifests/service.yaml
   - release-commit
   - application.yaml
+  - delivery-access.json
   services: []
 book:
   chapter: 11
@@ -75,3 +116,6 @@ book:
   - argocd
   - gitops
   - credentials
+immutable:
+  0:
+  - delivery-access.json

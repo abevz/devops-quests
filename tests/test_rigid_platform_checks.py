@@ -323,7 +323,12 @@ def test_git_health_uses_semantic_configuration_and_observed_consumer(tmp_path, 
     frozen.write_text(healthy + '\n')
     configuration = {'deployment': live, 'http': 'wrong' if case == 'wrong_http' else f'north-{number}', 'rollout_failed': case == 'rollout_failed'}
     environment = fake_kubectl(tmp_path, configuration)
-    code = goal(number, 5).replace('/run/dq/facts/0/healthy-commit', str(frozen))
+    # This fixture observes only the retained semantic health predicate.
+    # Publication projection and pinned-consumer adoption run in the native
+    # matrix with actual setup receipts, applications and owned Pods.
+    marker = 'DQ_LEGACY_PUBLICATION' if number == 68 else 'DQ_LEGACY_ROLLBACK_ADOPTION'
+    code = goal(number, 5).split("<<'" + marker + "'\n", 1)[1].split("\n" + marker, 1)[0]
+    code = code.replace('/run/dq/facts/0/healthy-commit', str(frozen))
     result = subprocess.run(['bash', '-c', code], cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=10)
     assert (result.returncode == 0) is good, result.stdout + result.stderr
 
