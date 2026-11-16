@@ -1,46 +1,49 @@
 title: Vault versiegelter Zustand
-brief: 'Die bereitgestellte Vault-Identität kann die erforderliche Konfiguration nicht lesen.
+brief: 'Stellen Sie den bestehenden initialisierten Vault und seine Anwendung wieder her. Bewahren Sie Speicher,
+  Entsiegelungsquorum, aufgezeichnete Clusteridentität und die verschiedenen privaten Schlüsselanteile.
 
 
-  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `unseal-shares.json`, `reader.hcl`.
+  Arbeiten Sie in `~/quest`. Das Verbraucherverzeichnis enthält Konfiguration, PID und Anwendungsprotokoll. `consumer/README.md`
+  beschreibt die Schnittstelle; `consumer-contract.json` dokumentiert ursprüngliche Prozesse, freigegebene Quelle,
+  Publikationshash und Version. Bewahren Sie Programm, Prozessidentität und Rechte. Jeder Verbraucher muss die freigegebene
+  Publikation über seinen vorhandenen HTTP-Endpunkt mit der ursprünglichen Quelle und privaten Reader-Identität
+  liefern. Ein manueller Quellenabruf reicht nicht. Zugangsdaten müssen reguläre Dateien des Workstation-Benutzers
+  mit Modus `0600` bleiben. Keine Geheimnisse oder Zugangsdaten ausgeben.
 
 
   **Anforderungen:**
 
+
   - Der vorhandene initialisierte Vault ist entsiegelt und behält sein ursprüngliches Wiederherstellungsquorum.
+  Bewahren Sie die aufgezeichnete ursprüngliche Clusteridentität.
 
   - `~/quest/unseal-shares.json` auf der Workstation ist ein Array mit der mitgelieferten Anzahl unterschiedlicher
   String-Anteile; nur der Eigentümer darf die Datei lesen und schreiben, sie ist nicht ausführbar.
 
-  - Die mitgelieferte Leseridentität kann die vorhandene Dispatch-Konfiguration aus dem ursprünglichen Vault-Speicher
-  lesen.
+  - Die ursprüngliche Anwendung übernimmt und liefert die freigegebene Quellenpublikation mit der privaten Reader-Identität.'
+debrief: Quellen- und Verbraucheridentitäten blieben erhalten; laufende Anwendungen übernahmen die freigegebene
+  Publikation.
+stages.0.brief: Stellen Sie den bestehenden initialisierten Vault und seine Anwendung wieder her. Bewahren Sie Speicher,
+  Entsiegelungsquorum, aufgezeichnete Clusteridentität und die verschiedenen privaten Schlüsselanteile.
+hints.0.text: Serververfügbarkeit, Berechtigung und übernommene Verbraucherpublikation sind getrennte Beobachtungen.
+hints.1.text: 'Vergleichen Sie Live-Antwort, Quellenprofile, Anwendungsprotokolle und ursprünglichen Vertrag. Verfolgen
+  Sie zuerst die fehlerhafte Grenze.
 
 
-  Die Prüfung beobachtet aktuellen Seal-Status, Dateieigenschaften und Zugriff; sie beweist nicht die Speicherhistorie.
+  ```bash
 
-  '
-debrief: Spiel-Vault-Status, Anteildatei und reader-Zugriff entsprachen den Wiederherstellungsprüfungen.
-stages.0.brief: Die bestehende Vault-Konfiguration muss mit privaten Wiederherstellungsdaten lesbar sein.
-hints.0.text: Versiegelt und nicht initialisiert sind unterschiedliche Zustände.
-hints.1.text: 'Prüfen Sie die mitgelieferten Eingaben und den beobachteten Zustand:
+  cat consumer/source.json consumer/application.log consumer-contract.json
 
-
-  ```sh
-
-  cat initial-seal-status.json reader.hcl
-
-  source platform.env
-
-  curl -fsS "$VAULT_ADDR/v1/sys/seal-status"
+  curl -fsS --max-time 2 http://127.0.0.1:18081/status
 
   ```'
-hints.2.text: 'Unseal-Fortschritt erfordert unterschiedliche bereitgestellte Anteile; derselbe Anteil zweimal
-  bringt keinen Fortschritt.
+hints.2.text: 'Unseal-Fortschritt erfordert unterschiedliche bereitgestellte Anteile; derselbe Anteil zweimal bringt
+  keinen Fortschritt.
 
 
-  Sende zwei unterschiedliche bereitgestellte Anteile an /v1/sys/unseal und lies den bestehenden KV-Wert mit
-  dem ursprünglichen Zugriffstoken. Gib Anteile oder Token nie aus, initialisiere den Speicher nicht neu und
-  erstelle kein Ersatzgeheimnis.
+  Sende zwei unterschiedliche bereitgestellte Anteile an /v1/sys/unseal und lies den bestehenden KV-Wert mit dem
+  ursprünglichen Zugriffstoken. Gib Anteile oder Token nie aus, initialisiere den Speicher nicht neu und erstelle
+  kein Ersatzgeheimnis.
 
 
   Prüfen Sie das beobachtete Ergebnis:
@@ -53,7 +56,46 @@ hints.2.text: 'Unseal-Fortschritt erfordert unterschiedliche bereitgestellte Ant
   initialized `true`, sealed `false`, `t=2`, `n=3`.
 
   - `source platform.env; curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
-  | jq -e ''.data.data.value=="north-secret"''` — Gibt `true` aus, ohne die geheime Antwort anzuzeigen.'
+  | jq -e ''.data.data.value=="north-secret"''` — Gibt `true` aus, ohne die geheime Antwort anzuzeigen.
+
+
+  Profil auf freigegebene API-Quelle und Reader-Zugangsdaten einstellen. Private Datei bewahren und SIGHUP an die
+  bestehende PID senden; Manager ist eine andere Identität. HTTP-Publikation prüfen. Erwartet: OK.
+
+
+  ```bash
+
+  set -euo pipefail
+
+  cd ~/quest
+
+  curl -fsS --max-time 2 http://127.0.0.1:18081/ > observed-publication.json
+
+  python3 -I - <<''VERIFY_PUBLICATION''
+
+  import json
+
+  from pathlib import Path
+
+  contract=json.loads(Path(''consumer-contract.json'').read_text())
+
+  observed=json.loads(Path(''observed-publication.json'').read_text())
+
+  assert observed[''ready''] is True
+
+  assert observed[''source'']==contract[''vault_url'']
+
+  assert observed[''path'']==contract[''path'']
+
+  assert observed[''value_sha256'']==contract[''value_sha256'']
+
+  assert observed[''version'']==contract[''version'']
+
+  print(''OK'')
+
+  VERIFY_PUBLICATION
+
+  ```'
 phrases.0: Ich habe versiegelten Speicher von einem nicht initialisierten Server unterschieden.
 phrases.1: Ich habe die erforderliche Anzahl von Spielanteilen verwendet.
 phrases.2: Ich habe vorhandene Daten geprüft, statt einen Ersatz zu erstellen.
@@ -67,10 +109,16 @@ diagnostics.length: unseal-shares.json muss ein Array mit Länge 2 sein.
 diagnostics.types: Jeder Eintrag des Arrays unseal-shares.json muss eine Zeichenkette sein.
 diagnostics.distinct: unseal-shares.json muss ein Array aus zwei verschiedenen Einträgen sein.
 diagnostics.reader: Das Reader-Token muss north-secret aus secret/data/dispatch lesen.
-stages.0.objectives.0.text: Der vorhandene initialisierte Vault ist entsiegelt und behält sein ursprüngliches
-  Wiederherstellungsquorum.
+stages.0.objectives.0.text: Der vorhandene initialisierte Vault ist entsiegelt und behält sein ursprüngliches Wiederherstellungsquorum.
+  Bewahren Sie die aufgezeichnete ursprüngliche Clusteridentität.
 stages.0.objectives.1.text: '`~/quest/unseal-shares.json` auf der Workstation ist ein Array mit der mitgelieferten
   Anzahl unterschiedlicher String-Anteile; nur der Eigentümer darf die Datei lesen und schreiben, sie ist nicht
   ausführbar.'
-stages.0.objectives.2.text: Die mitgelieferte Leseridentität kann die vorhandene Dispatch-Konfiguration aus
-  dem ursprünglichen Vault-Speicher lesen.
+stages.0.objectives.2.text: Die ursprüngliche Anwendung übernimmt und liefert die freigegebene Quellenpublikation
+  mit der privaten Reader-Identität.
+diagnostics.probe_0_0: Die aktive Vault-Clusteridentität muss dem ursprünglichen Eintrag entsprechen; Seal-Status
+  und original-cluster-id vergleichen.
+diagnostics.probe_0_2: Die ursprüngliche Anwendung muss die freigegebene API-Quelle mit privater Reader-Identität
+  übernehmen. Profil, Prozessbeleg und HTTP-Publikation vergleichen.
+guides.reference_1: Relevante Vault-API untersuchen
+guides.reference_2: Referenz zur Publikations- und Verbraucherprüfung

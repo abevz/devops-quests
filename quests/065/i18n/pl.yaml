@@ -1,46 +1,47 @@
 title: Vault w stanie zamkniętym
-brief: 'Dostarczona tożsamość Vault nie może odczytać wymaganej konfiguracji.
+brief: 'Odzyskaj istniejący zainicjalizowany Vault i jego aplikację, zachowując magazyn, kworum, zapisaną tożsamość
+  klastra i różne prywatne udziały klucza.
 
 
-  Pracuj na stacji roboczej w `~/quest` z `platform.env`, `unseal-shares.json`, `reader.hcl`.
+  Pracuj w `~/quest`. Katalog konsumenta zawiera konfigurację, PID i dziennik aplikacji. `consumer/README.md` opisuje
+  interfejs; `consumer-contract.json` zapisuje pierwotne procesy, zatwierdzone źródło, skrót publikacji i wersję.
+  Zachowaj programy, tożsamości i uprawnienia procesów. Każdy konsument ma udostępniać zatwierdzoną publikację przez
+  istniejący HTTP, z pierwotnego źródła i dostarczoną prywatną tożsamością reader. Ręczny odczyt źródła nie wystarcza.
+  Dane uwierzytelniające muszą być zwykłymi plikami użytkownika workstation z trybem `0600`. Nie wypisuj sekretów
+  ani danych uwierzytelniających.
 
 
   **Wymagania:**
 
-  - Istniejący zainicjalizowany Vault jest odpieczętowany i zachowuje pierwotne kworum odzyskiwania.
 
-  - Plik `~/quest/unseal-shares.json` na stacji roboczej jest tablicą z dostarczoną liczbą różnych udziałów
-  tekstowych; tylko właściciel może go czytać i zapisywać, a plik nie jest wykonywalny.
+  - Istniejący zainicjalizowany Vault jest odpieczętowany i zachowuje pierwotne kworum odzyskiwania. Zachowaj zapisaną
+  pierwotną tożsamość klastra.
 
-  - Dostarczona tożsamość czytelnika może odczytać istniejącą konfigurację dyspozytorską z pierwotnego magazynu
-  Vault.
+  - Plik `~/quest/unseal-shares.json` na stacji roboczej jest tablicą z dostarczoną liczbą różnych udziałów tekstowych;
+  tylko właściciel może go czytać i zapisywać, a plik nie jest wykonywalny.
 
-
-  Sprawdzenie obserwuje bieżący stan seal, właściwości pliku i dostęp; nie dowodzi historii magazynu.
-
-  '
-debrief: Stan Vault gry, plik udziałów i dostęp reader odpowiadały kontrolom odzyskiwania.
-stages.0.brief: Istniejąca konfiguracja Vault musi być czytelna przy prywatnych danych odzyskiwania.
-hints.0.text: Zapieczętowany i niezainicjowany to różne stany.
-hints.1.text: 'Sprawdź dostarczone dane wejściowe i obserwowany stan:
+  - Pierwotna aplikacja przyjmuje i udostępnia zatwierdzoną publikację z dostarczoną prywatną tożsamością reader.'
+debrief: Zachowano tożsamości źródła i konsumentów; aplikacje przyjęły zatwierdzoną publikację.
+stages.0.brief: Odzyskaj istniejący zainicjalizowany Vault i jego aplikację, zachowując magazyn, kworum, zapisaną
+  tożsamość klastra i różne prywatne udziały klucza.
+hints.0.text: Dostępność serwera, autoryzacja i publikacja przyjęta przez konsumenta są odrębnymi obserwacjami.
+hints.1.text: 'Porównaj odpowiedź usługi, profile źródeł, dzienniki aplikacji i pierwotny kontrakt. Najpierw prześledź
+  pierwszą uszkodzoną granicę.
 
 
-  ```sh
+  ```bash
 
-  cat initial-seal-status.json reader.hcl
+  cat consumer/source.json consumer/application.log consumer-contract.json
 
-  source platform.env
-
-  curl -fsS "$VAULT_ADDR/v1/sys/seal-status"
+  curl -fsS --max-time 2 http://127.0.0.1:18081/status
 
   ```'
-hints.2.text: 'Postęp unseal wymaga różnych dostarczonych udziałów; ponowne wysłanie tego samego udziału nie
-  dodaje postępu.
+hints.2.text: 'Postęp unseal wymaga różnych dostarczonych udziałów; ponowne wysłanie tego samego udziału nie dodaje
+  postępu.
 
 
-  Wyślij dwa różne dostarczone udziały do /v1/sys/unseal i odczytaj istniejącą wartość KV pierwotnym tokenem
-  dostępu. Nigdy nie wyświetlaj udziałów ani tokenów, nie inicjalizuj ponownie magazynu i nie twórz zastępczego
-  sekretu.
+  Wyślij dwa różne dostarczone udziały do /v1/sys/unseal i odczytaj istniejącą wartość KV pierwotnym tokenem dostępu.
+  Nigdy nie wyświetlaj udziałów ani tokenów, nie inicjalizuj ponownie magazynu i nie twórz zastępczego sekretu.
 
 
   Sprawdź obserwowany wynik:
@@ -53,7 +54,46 @@ hints.2.text: 'Postęp unseal wymaga różnych dostarczonych udziałów; ponowne
   initialized `true`, sealed `false`, `t=2`, `n=3`.
 
   - `source platform.env; curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
-  | jq -e ''.data.data.value=="north-secret"''` — Wypisuje `true`, bez wyświetlania odpowiedzi z sekretem.'
+  | jq -e ''.data.data.value=="north-secret"''` — Wypisuje `true`, bez wyświetlania odpowiedzi z sekretem.
+
+
+  Dopasuj profil do zatwierdzonego API i danych reader. Zachowaj prywatność pliku i wyślij SIGHUP do istniejącego
+  PID; manager to inna tożsamość. Sprawdź publikację HTTP. Oczekiwane: OK.
+
+
+  ```bash
+
+  set -euo pipefail
+
+  cd ~/quest
+
+  curl -fsS --max-time 2 http://127.0.0.1:18081/ > observed-publication.json
+
+  python3 -I - <<''VERIFY_PUBLICATION''
+
+  import json
+
+  from pathlib import Path
+
+  contract=json.loads(Path(''consumer-contract.json'').read_text())
+
+  observed=json.loads(Path(''observed-publication.json'').read_text())
+
+  assert observed[''ready''] is True
+
+  assert observed[''source'']==contract[''vault_url'']
+
+  assert observed[''path'']==contract[''path'']
+
+  assert observed[''value_sha256'']==contract[''value_sha256'']
+
+  assert observed[''version'']==contract[''version'']
+
+  print(''OK'')
+
+  VERIFY_PUBLICATION
+
+  ```'
 phrases.0: Odróżniłem zapieczętowany magazyn od niezainicjowanego serwera.
 phrases.1: Użyłem wymaganej liczby udziałów przeznaczonych wyłącznie do gry.
 phrases.2: Sprawdziłem istniejące dane zamiast tworzyć zamiennik.
@@ -67,9 +107,14 @@ diagnostics.length: unseal-shares.json musi być tablicą o długości 2.
 diagnostics.types: Każdy element tablicy unseal-shares.json musi być ciągiem znaków.
 diagnostics.distinct: unseal-shares.json musi być tablicą dwóch różnych elementów.
 diagnostics.reader: Token czytelnika (reader) musi odczytać north-secret z secret/data/dispatch.
-stages.0.objectives.0.text: Istniejący zainicjalizowany Vault jest odpieczętowany i zachowuje pierwotne kworum
-  odzyskiwania.
-stages.0.objectives.1.text: Plik `~/quest/unseal-shares.json` na stacji roboczej jest tablicą z dostarczoną
-  liczbą różnych udziałów tekstowych; tylko właściciel może go czytać i zapisywać, a plik nie jest wykonywalny.
-stages.0.objectives.2.text: Dostarczona tożsamość czytelnika może odczytać istniejącą konfigurację dyspozytorską
-  z pierwotnego magazynu Vault.
+stages.0.objectives.0.text: Istniejący zainicjalizowany Vault jest odpieczętowany i zachowuje pierwotne kworum odzyskiwania.
+  Zachowaj zapisaną pierwotną tożsamość klastra.
+stages.0.objectives.1.text: Plik `~/quest/unseal-shares.json` na stacji roboczej jest tablicą z dostarczoną liczbą
+  różnych udziałów tekstowych; tylko właściciel może go czytać i zapisywać, a plik nie jest wykonywalny.
+stages.0.objectives.2.text: Pierwotna aplikacja przyjmuje i udostępnia zatwierdzoną publikację z dostarczoną prywatną
+  tożsamością reader.
+diagnostics.probe_0_0: Tożsamość klastra Vault musi odpowiadać pierwotnemu zapisowi; porównaj status seal i original-cluster-id.
+diagnostics.probe_0_2: Pierwotna aplikacja musi przyjąć zatwierdzone API z prywatną tożsamością reader. Porównaj
+  profil, zapis procesu i publikację HTTP.
+guides.reference_1: Sprawdź odpowiednie API Vault
+guides.reference_2: Dokumentacja weryfikacji publikacji i konsumentów

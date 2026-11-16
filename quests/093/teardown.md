@@ -1,1 +1,1 @@
-The runtime removes this installation-owned bay, its namespace, containers, volumes and credentials.
+Идентичность источника и потребителей сохранена; работающие приложения приняли утверждённую публикацию.
