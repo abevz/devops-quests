@@ -50,7 +50,15 @@ def test_renewal_capability_is_scoped_to_the_requested_game(
     monkeypatch.setattr(
         platform, "put", lambda run, name, content: written.update({name: content})
     )
+    # This unit fixture covers token-policy issuance, not actual HTTP processes.
+    # Native consumer tests execute the real provisioner in production bays.
+    provisioned = []
+    monkeypatch.setattr(
+        "devops_quests.vault_applications.provision",
+        lambda platform, run, address, reader, manager: provisioned.append(run["level"]),
+    )
     environment = platform.vault(run)
+    assert provisioned == ([level] if level in {65, 93} else [])
 
     assert environment["VAULT_READER_TOKEN"] == "fixture-token-1"
     assert environment["VAULT_MANAGER_TOKEN"] == "fixture-token-2"

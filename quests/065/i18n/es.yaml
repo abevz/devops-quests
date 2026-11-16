@@ -1,47 +1,48 @@
 title: Vault estado sellado
-brief: 'La identidad Vault suministrada no puede leer la configuración requerida.
+brief: 'Recupera el Vault inicializado existente y su aplicación conservando almacenamiento, cuórum, identidad de
+  clúster registrada y participaciones privadas distintas.
 
 
-  Trabaja en la estación de trabajo en `~/quest` con `platform.env`, `unseal-shares.json`, `reader.hcl`.
+  Trabaja en `~/quest`. El directorio del consumidor contiene configuración, PID y registro. `consumer/README.md`
+  describe la interfaz; `consumer-contract.json` registra los procesos originales, la fuente aprobada, el resumen
+  de publicación y la versión. Conserva programas, identidades y privilegios originales. Cada consumidor debe servir
+  la publicación aprobada desde la fuente original con la identidad privada reader suministrada. Una consulta manual
+  a la fuente no basta. Las credenciales deben ser archivos regulares del usuario workstation con modo `0600`. No
+  imprimas secretos ni credenciales.
 
 
   **Requisitos:**
 
-  - El Vault existente e inicializado está desellado y conserva su cuórum de recuperación original.
+
+  - El Vault existente e inicializado está desellado y conserva su cuórum de recuperación original. Conserva la
+  identidad original registrada del clúster.
 
   - `~/quest/unseal-shares.json` en la estación de trabajo es un array con la cantidad suministrada de participaciones
   distintas de tipo cadena; solo su propietario puede leerlo y escribirlo, y no es ejecutable.
 
-  - La identidad de lectura suministrada puede leer la configuración de despacho existente del almacenamiento
-  original de Vault.
+  - La aplicación original adopta y sirve la publicación aprobada con la identidad privada reader suministrada.'
+debrief: Se conservaron las identidades de fuente y consumidores; las aplicaciones adoptaron la publicación aprobada.
+stages.0.brief: Recupera el Vault inicializado existente y su aplicación conservando almacenamiento, cuórum, identidad
+  de clúster registrada y participaciones privadas distintas.
+hints.0.text: Disponibilidad del servidor, autorización y publicación adoptada por el consumidor son observaciones
+  distintas.
+hints.1.text: 'Compara respuesta real, perfiles de fuente, registros y contrato original. Sigue primero el límite
+  que falla.
 
 
-  La comprobación observa el estado seal actual, propiedades del archivo y acceso; no demuestra el historial
-  de almacenamiento.
+  ```bash
 
-  '
-debrief: El estado del Vault del juego, el archivo de fragmentos y el acceso reader coincidieron con las comprobaciones
-  de recuperación.
-stages.0.brief: La configuración Vault existente debe poder leerse con evidencia de recuperación privada.
-hints.0.text: Sellado y no inicializado son estados diferentes.
-hints.1.text: 'Inspecciona las entradas suministradas y el estado observado:
+  cat consumer/source.json consumer/application.log consumer-contract.json
 
-
-  ```sh
-
-  cat initial-seal-status.json reader.hcl
-
-  source platform.env
-
-  curl -fsS "$VAULT_ADDR/v1/sys/seal-status"
+  curl -fsS --max-time 2 http://127.0.0.1:18081/status
 
   ```'
-hints.2.text: 'El progreso de unseal requiere partes suministradas distintas; enviar dos veces la misma parte
-  no añade progreso.
+hints.2.text: 'El progreso de unseal requiere partes suministradas distintas; enviar dos veces la misma parte no
+  añade progreso.
 
 
-  Envía dos partes suministradas distintas a /v1/sys/unseal y lee el valor KV existente con el token de acceso
-  original. Nunca muestres partes o tokens, reinicialices el almacenamiento ni crees un secreto de reemplazo.
+  Envía dos partes suministradas distintas a /v1/sys/unseal y lee el valor KV existente con el token de acceso original.
+  Nunca muestres partes o tokens, reinicialices el almacenamiento ni crees un secreto de reemplazo.
 
 
   Verifica el resultado observado:
@@ -54,7 +55,46 @@ hints.2.text: 'El progreso de unseal requiere partes suministradas distintas; en
   initialized `true`, sealed `false`, `t=2`, `n=3`.
 
   - `source platform.env; curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
-  | jq -e ''.data.data.value=="north-secret"''` — Imprime `true`, sin mostrar la respuesta secreta.'
+  | jq -e ''.data.data.value=="north-secret"''` — Imprime `true`, sin mostrar la respuesta secreta.
+
+
+  Ajusta el perfil a la fuente API aprobada y credenciales reader. Conserva el archivo privado y envía SIGHUP a
+  la PID existente; manager es otra identidad. Verifica la publicación HTTP. Esperado: OK.
+
+
+  ```bash
+
+  set -euo pipefail
+
+  cd ~/quest
+
+  curl -fsS --max-time 2 http://127.0.0.1:18081/ > observed-publication.json
+
+  python3 -I - <<''VERIFY_PUBLICATION''
+
+  import json
+
+  from pathlib import Path
+
+  contract=json.loads(Path(''consumer-contract.json'').read_text())
+
+  observed=json.loads(Path(''observed-publication.json'').read_text())
+
+  assert observed[''ready''] is True
+
+  assert observed[''source'']==contract[''vault_url'']
+
+  assert observed[''path'']==contract[''path'']
+
+  assert observed[''value_sha256'']==contract[''value_sha256'']
+
+  assert observed[''version'']==contract[''version'']
+
+  print(''OK'')
+
+  VERIFY_PUBLICATION
+
+  ```'
 phrases.0: Distinguí el almacenamiento sellado de un servidor no inicializado.
 phrases.1: Utilicé el número requerido de fragmentos destinados exclusivamente al juego.
 phrases.2: Verifiqué los datos existentes en lugar de crear un reemplazo.
@@ -69,9 +109,15 @@ diagnostics.types: Cada elemento del array unseal-shares.json debe ser una caden
 diagnostics.distinct: unseal-shares.json debe ser un array de dos elementos distintos.
 diagnostics.reader: El token lector (reader) debe leer north-secret de secret/data/dispatch.
 stages.0.objectives.0.text: El Vault existente e inicializado está desellado y conserva su cuórum de recuperación
-  original.
+  original. Conserva la identidad original registrada del clúster.
 stages.0.objectives.1.text: '`~/quest/unseal-shares.json` en la estación de trabajo es un array con la cantidad
-  suministrada de participaciones distintas de tipo cadena; solo su propietario puede leerlo y escribirlo,
-  y no es ejecutable.'
-stages.0.objectives.2.text: La identidad de lectura suministrada puede leer la configuración de despacho existente
-  del almacenamiento original de Vault.
+  suministrada de participaciones distintas de tipo cadena; solo su propietario puede leerlo y escribirlo, y no
+  es ejecutable.'
+stages.0.objectives.2.text: La aplicación original adopta y sirve la publicación aprobada con la identidad privada
+  reader suministrada.
+diagnostics.probe_0_0: La identidad del clúster Vault debe coincidir con el registro original; compara el estado
+  seal y original-cluster-id.
+diagnostics.probe_0_2: La aplicación original debe adoptar la fuente API aprobada con identidad privada reader.
+  Compara perfil, registro de proceso y publicación HTTP.
+guides.reference_1: Consultar la API Vault pertinente
+guides.reference_2: Referencia de publicación y consumidores

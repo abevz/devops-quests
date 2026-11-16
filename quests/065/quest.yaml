@@ -7,79 +7,79 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: |-
-      source platform.env
-      status=$(curl -fsS "$VAULT_ADDR/v1/sys/seal-status" 2>/dev/null || true)
-      failed=0
-      if ! jq -e '.initialized == true' <<<"$status" >/dev/null 2>&1; then
-        printf '%s\n' 'sys/seal-status initialized = true: ✗ [DQ:initialized]'
-        failed=1
-      fi
-
-      if ! jq -e '.sealed == false' <<<"$status" >/dev/null 2>&1; then
-        printf '%s\n' 'sys/seal-status sealed = false: ✗ [DQ:sealed]'
-        failed=1
-      fi
-
-      if ! jq -e '.t == 2' <<<"$status" >/dev/null 2>&1; then
-        printf '%s\n' 'sys/seal-status t = 2: ✗ [DQ:threshold]'
-        failed=1
-      fi
-
-      if ! jq -e '.n == 3' <<<"$status" >/dev/null 2>&1; then
-        printf '%s\n' 'sys/seal-status n = 3: ✗ [DQ:shares]'
-        failed=1
-      fi
-      exit "$failed"
+    check: "dq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\ndq_failed=0\n\
+      set +e\n(\nset -euo pipefail\ntimeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY'\nsource platform.env\n\
+      status=$(curl -fsS \"$VAULT_ADDR/v1/sys/seal-status\" 2>/dev/null || true)\nfailed=0\nif ! jq -e '.initialized\
+      \ == true' <<<\"$status\" >/dev/null 2>&1; then\n  printf '%s\\n' 'sys/seal-status initialized = true: ✗ [DQ:initialized]'\n\
+      \  failed=1\nfi\n\nif ! jq -e '.sealed == false' <<<\"$status\" >/dev/null 2>&1; then\n  printf '%s\\n' 'sys/seal-status\
+      \ sealed = false: ✗ [DQ:sealed]'\n  failed=1\nfi\n\nif ! jq -e '.t == 2' <<<\"$status\" >/dev/null 2>&1; then\n\
+      \  printf '%s\\n' 'sys/seal-status t = 2: ✗ [DQ:threshold]'\n  failed=1\nfi\n\nif ! jq -e '.n == 3' <<<\"\
+      $status\" >/dev/null 2>&1; then\n  printf '%s\\n' 'sys/seal-status n = 3: ✗ [DQ:shares]'\n  failed=1\nfi\n\
+      exit \"$failed\"\nDQ_LEGACY\n)\n[ $? -eq 0 ] || dq_failed=1\n(\nset -euo pipefail\ntimeout --kill-after=1s\
+      \ 14s bash -euo pipefail <<'DQ_CURRENT'\ndq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\n\
+      set +e\n(\nset -euo pipefail\npython3 -I - <<'DQ_VAULT_APPLICATION'\n\nimport json,urllib.request\nfrom pathlib\
+      \ import Path\nfacts=json.loads(Path('/run/dq/facts/0/consumer-contract.json').read_text())\nopener=urllib.request.build_opener(urllib.request.ProxyHandler({}))\n\
+      with opener.open(facts['vault_url']+'/v1/sys/seal-status',timeout=2) as r:\n data=json.load(r)\nassert data['cluster_id']==Path('/run/dq/facts/0/original-cluster-id').read_text().strip()\n\
+      \nDQ_VAULT_APPLICATION\n\n) >\"$dq_probe_output\" 2>/dev/null\ndq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\
+      \nif [ \"$dq_probe_status\" -ne 0 ] && ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\nprintf\
+      \ '%s\\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'\nfi\nrm -f \"$dq_probe_output\"\
+      \ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0\n\nDQ_CURRENT\n)\n[ $? -eq 0 ] || dq_failed=1\nset -e\ntest\
+      \ \"$dq_failed\" -eq 0\n) >\"$dq_probe_output\" 2>/dev/null\ndq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\
+      \nif [ \"$dq_probe_status\" -ne 0 ] && ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\nprintf\
+      \ '%s\\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_0]'\nfi\nrm -f \"$dq_probe_output\"\
+      \ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0\n"
   - text: stages.0.objectives.1.text
     keep: true
-    check: |-
-      failed=0
-      if ! test "$(stat -c %a unseal-shares.json 2>/dev/null)" = 600; then
-        printf '%s\n' 'unseal-shares.json mode = 0600: ✗ [DQ:mode]'
-        failed=1
-      fi
-
-      if ! jq -e 'type == "array"' unseal-shares.json >/dev/null 2>&1; then
-        printf '%s\n' 'unseal-shares.json type = array: ✗ [DQ:array]'
-        failed=1
-      fi
-
-      if ! jq -e 'type == "array" and length == 2' unseal-shares.json >/dev/null 2>&1; then
-        printf '%s\n' 'unseal-shares.json length = 2: ✗ [DQ:length]'
-        failed=1
-      fi
-
-      if ! jq -e 'type == "array" and all(.[];type == "string")' unseal-shares.json >/dev/null 2>&1; then
-        printf '%s\n' 'unseal-shares.json entries type = string: ✗ [DQ:types]'
-        failed=1
-      fi
-
-      if ! jq -e 'type == "array" and length == 2 and .[0] != .[1]' unseal-shares.json >/dev/null 2>&1; then
-        printf '%s\n' 'unseal-shares.json [0] ≠ [1]: ✗ [DQ:distinct]'
-        failed=1
-      fi
-      exit "$failed"
+    check: "failed=0\nif ! test \"$(stat -c %a unseal-shares.json 2>/dev/null)\" = 600; then\n  printf '%s\\n' 'unseal-shares.json\
+      \ mode = 0600: ✗ [DQ:mode]'\n  failed=1\nfi\n\nif ! jq -e 'type == \"array\"' unseal-shares.json >/dev/null\
+      \ 2>&1; then\n  printf '%s\\n' 'unseal-shares.json type = array: ✗ [DQ:array]'\n  failed=1\nfi\n\nif ! jq\
+      \ -e 'type == \"array\" and length == 2' unseal-shares.json >/dev/null 2>&1; then\n  printf '%s\\n' 'unseal-shares.json\
+      \ length = 2: ✗ [DQ:length]'\n  failed=1\nfi\n\nif ! jq -e 'type == \"array\" and all(.[];type == \"string\"\
+      )' unseal-shares.json >/dev/null 2>&1; then\n  printf '%s\\n' 'unseal-shares.json entries type = string: ✗\
+      \ [DQ:types]'\n  failed=1\nfi\n\nif ! jq -e 'type == \"array\" and length == 2 and .[0] != .[1]' unseal-shares.json\
+      \ >/dev/null 2>&1; then\n  printf '%s\\n' 'unseal-shares.json [0] ≠ [1]: ✗ [DQ:distinct]'\n  failed=1\nfi\n\
+      exit \"$failed\""
   - text: stages.0.objectives.2.text
-    check: |-
-      source platform.env
-      umask 077
-      headers=$(mktemp -d)
-      trap 'rm -f "$headers/reader" "$headers/manager"; rmdir "$headers"' EXIT
-      printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN" > "$headers/reader"
-      failed=0
-      if ! test "$(curl -fsS -H @"$headers/reader" "$VAULT_ADDR/v1/secret/data/dispatch" 2>/dev/null | jq -er .data.data.value 2>/dev/null)" = north-secret; then
-        printf '%s\n' 'reader secret/data/dispatch value = north-secret: ✗ [DQ:reader]'
-        failed=1
-      fi
-      exit "$failed"
+    check: "dq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\ndq_failed=0\n\
+      set +e\n(\nset -euo pipefail\ntimeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY'\nsource platform.env\n\
+      umask 077\nheaders=$(mktemp -d)\ntrap 'rm -f \"$headers/reader\" \"$headers/manager\"; rmdir \"$headers\"\
+      ' EXIT\nprintf 'X-Vault-Token: %s\\n' \"$VAULT_READER_TOKEN\" > \"$headers/reader\"\nfailed=0\nif ! test \"\
+      $(curl -fsS -H @\"$headers/reader\" \"$VAULT_ADDR/v1/secret/data/dispatch\" 2>/dev/null | jq -er .data.data.value\
+      \ 2>/dev/null)\" = north-secret; then\n  printf '%s\\n' 'reader secret/data/dispatch value = north-secret:\
+      \ ✗ [DQ:reader]'\n  failed=1\nfi\nexit \"$failed\"\nDQ_LEGACY\n)\n[ $? -eq 0 ] || dq_failed=1\n(\nset -euo\
+      \ pipefail\ntimeout --kill-after=1s 14s bash -euo pipefail <<'DQ_CURRENT'\ndq_probe_output=$(mktemp)\ntrap\
+      \ 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\npython3 -I - <<'DQ_VAULT_APPLICATION'\n\
+      \nimport hashlib,json,stat,urllib.request\nfrom pathlib import Path\nfacts=json.loads(Path('/run/dq/facts/0/consumer-contract.json').read_text())\n\
+      opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))\ndef read(path,limit=8192):\n p=Path(path);\
+      \ s=p.lstat()\n assert stat.S_ISREG(s.st_mode) and s.st_size<=limit\n return p.read_bytes()\ndef process(role):\n\
+      \ old=facts[role]\n assert read(role+'/application.pid').decode().strip()==str(old['pid'])\n proc=Path('/proc')/str(old['pid'])\n\
+      \ fields=(proc/'stat').read_text().rsplit(') ',1)[1].split()\n assert fields[0] not in ('Z','X') and fields[19]==old['start']\n\
+      \ assert (proc/'cmdline').read_bytes().hex()==old['command']\n status=dict(line.split(':',1) for line in (proc/'status').read_text().splitlines()\
+      \ if ':' in line)\n assert all(status[k].strip()==v for k,v in old['status'].items())\n assert hashlib.sha256(read('provided-vault-consumer.py',65536)).hexdigest()==facts['program_sha256']\n\
+      def response(port):\n with opener.open('http://127.0.0.1:'+str(port)+'/',timeout=2) as r:\n  data=json.load(r)\n\
+      \ assert data.get('ready') is True\n assert data.get('value_sha256')==facts['value_sha256']\n assert type(data.get('version'))\
+      \ is int and data['version']==facts['version']\n return data\nprocess('consumer')\nconfig=json.loads(read('consumer/source.json',4096))\n\
+      assert set(config)=={'url','path','token_file'}\nassert config['url']==facts['vault_url'] and config['path']==facts['path']\n\
+      credential=Path(config['token_file'])\nassert stat.S_IMODE(credential.lstat().st_mode)==0o600\nassert credential.lstat().st_uid==1000\n\
+      assert hashlib.sha256(read(credential,4096).strip()).hexdigest()==facts['reader_sha256']\ndata=response(18081)\n\
+      assert data.get('kind')=='vault' and data.get('source')==facts['vault_url'] and data.get('path')==facts['path']\n\
+      \nDQ_VAULT_APPLICATION\n\n) >\"$dq_probe_output\" 2>/dev/null\ndq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\
+      \nif [ \"$dq_probe_status\" -ne 0 ] && ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\nprintf\
+      \ '%s\\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_2]'\nfi\nrm -f \"$dq_probe_output\"\
+      \ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0\n\nDQ_CURRENT\n)\n[ $? -eq 0 ] || dq_failed=1\nset -e\ntest\
+      \ \"$dq_failed\" -eq 0\n) >\"$dq_probe_output\" 2>/dev/null\ndq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\
+      \nif [ \"$dq_probe_status\" -ne 0 ] && ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\nprintf\
+      \ '%s\\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_2]'\nfi\nrm -f \"$dq_probe_output\"\
+      \ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0\n"
 hints:
 - text: hints.0.text
   guide: vault-recovery
 - text: hints.1.text
-  guide: vault-recovery
+  url: https://developer.hashicorp.com/vault/api-docs/system/seal-status
+  label: guides.reference_1
 - text: hints.2.text
-  guide: vault-recovery
+  url: https://developer.hashicorp.com/vault/api-docs/secret/kv/kv-v2#read-secret-version
+  label: guides.reference_2
 debrief: debrief
 phrases:
 - phrases.0
@@ -98,4 +98,15 @@ facts:
   - initial-seal-status.json
   - unseal-status.json
   - reader.hcl
+  - consumer-contract.json
+  - consumer/README.md
+  - consumer/source.json
+  - consumer/source.token
+  - consumer/application.pid
+  - consumer/application.log
+  - provided-vault-consumer.py
   services: []
+immutable:
+  0:
+  - consumer-contract.json
+  - original-cluster-id

@@ -16,7 +16,7 @@ def catalog():
 
 @pytest.mark.parametrize(
     ("number", "stage", "expected"),
-    [(44, 0, 7), (65, 0, 10), (83, 0, 4), (93, 0, 1), (93, 1, 8)],
+    [(44, 0, 7), (65, 0, 12), (83, 0, 6), (93, 0, 1), (93, 1, 9)],
 )
 def test_vault_failure_lines_are_localized(tmp_path, catalog, number, stage, expected):
     home = tmp_path / "home"
@@ -72,8 +72,10 @@ def test_vault_failure_lines_are_localized(tmp_path, catalog, number, stage, exp
             "types",
             "distinct",
             "reader",
+            "probe_0_0",
+            "probe_0_2",
         },
-        (83, 0): {"reader", "secret", "env", "rollout"},
+        (83, 0): {"reader", "secret", "env", "rollout", "probe_0_0", "probe_0_1"},
         (93, 0): {"init"},
         (93, 1): {
             "initialized",
@@ -84,6 +86,7 @@ def test_vault_failure_lines_are_localized(tmp_path, catalog, number, stage, exp
             "reader",
             "manager",
             "mode",
+            "probe_1_1",
         },
     }
     assert set(markers) == expected_markers[(number, stage)]

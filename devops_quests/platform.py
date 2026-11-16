@@ -474,7 +474,7 @@ kubectl create secret generic route-secret --from-literal=value="$value" --dry-r
             )
         self.put(run, "sync-secret.sh", sync)
         if sealed_recovery:
-            if run["level"] == 93:
+            if run["level"] in {65, 93}:
                 status = json.loads(vault("status", "-format=json").stdout)
                 self.put(run, "original-cluster-id", status["cluster_id"])
             self.put(
@@ -516,6 +516,13 @@ kubectl create secret generic route-secret --from-literal=value="$value" --dry-r
                     "Audit fixture did not record exactly one denied read"
                 )
             self.put(run, "audit-events.json", json.dumps(events))
+        if run["level"] in {65, 73, 83, 93}:
+            from .vault_applications import provision
+
+            provision(self, run, address, reader, manager)
+        if run["level"] == 83:
+            # Construction belongs to the learner; this file is only a workspace.
+            self.put(run, "sync-secret.sh", "#!/bin/bash\nset -euo pipefail\n")
         return {
             "VAULT_ADDR": address,
             "VAULT_READER_TOKEN": reader,

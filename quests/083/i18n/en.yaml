@@ -1,46 +1,73 @@
 title: Vault to pod secret
-brief: |-
-  The relay cannot consume its Vault-backed value. Restore the expected value along the delivery chain.
+brief: 'Construct delivery from the existing Vault publication to the original Kubernetes workload and the workstation
+  application. Preserve the Deployment identity, selector, replica count, pod program, image, security settings
+  and secret reference. Every active owned pod must be Ready and use the approved value; preserve the reader’s denial
+  on the other-data and audit paths documented in consumer/README.md. The synchronization workspace contains no
+  completed delivery implementation.
 
-  Work on the workstation in `~/quest` with `platform.env`, `reader.hcl`, `sync-secret.sh`, `deployment.yaml`.
 
-  Unless stated otherwise, Kubernetes resources live in the bay namespace (`DQ_NAMESPACE`); `~/quest` paths are on the workstation.
+  Work in `~/quest`. The supplied consumer directory contains its configuration, process receipt and application
+  log. `consumer/README.md` describes the application interface; `consumer-contract.json` records the original processes,
+  approved source identity, publication digest and version. Preserve the original application programs, process
+  identities and privileges. Each consumer must serve the approved publication through its existing HTTP endpoint
+  using the original source and private supplied reader identity; a successful manual source request is insufficient.
+  Keep credential files regular, owned by the workstation user, with mode `0600`. Do not print credentials or secret
+  values.
+
 
   **Requirements:**
 
-  - The supplied Vault identity, the delivered Kubernetes configuration and the running `relay` process all provide the dispatch value `north-secret`.
-  - Deployment `relay` completes its rollout in the bay namespace.
 
-  The check observes these results; it does not prove which policy edits or synchronization steps produced them.
-stages.0.brief: All delivery observations must agree on the same value.
-hints.0.text: Authorization, delivered configuration and the running process are separate links in a delivery
-  chain.
-hints.1.text: |-
-  Follow the supplied synchronization helper and the workload’s configuration references.
+  - The original application adopts the approved source publication with the private supplied reader identity; Vault
+  access, delivered Kubernetes data and running consumers agree without broadening authorization.
+
+  - The original workload completes rollout with its program and identity preserved, and every active owned pod
+  serves the approved configuration.'
+stages.0.brief: Construct delivery from the existing Vault publication to the original Kubernetes workload and the
+  workstation application. Preserve the Deployment identity, selector, replica count, pod program, image, security
+  settings and secret reference. Every active owned pod must be Ready and use the approved value; preserve the reader’s
+  denial on the other-data and audit paths documented in consumer/README.md. The synchronization workspace contains
+  no completed delivery implementation.
+hints.0.text: Server availability, authorization and a consumer’s adopted publication are different observations.
+hints.1.text: 'Compare the live service response, source profiles, application logs and original contract. Trace
+  the first failing boundary before changing another component.
+
 
   ```bash
-  cat sync-secret.sh
-  kubectl describe deployment relay
-  ```
-hints.2.text: |-
-  Repair rail-reader through the manager token, run sync-secret.sh, then inspect the Secret and pod environment. KV-v2 reads require the secret/data/dispatch policy path.
 
-  Verify from `~/quest` on the workstation:
+  cat consumer/source.json consumer/application.log consumer-contract.json
 
-  - `source platform.env`
-  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+  curl -fsS --max-time 2 http://127.0.0.1:18081/status
 
-  Exit `0`; no credential or secret value is printed.
-
-  - `kubectl get secret route-secret -o json | jq -e '.data.value | @base64d == "north-secret"' >/dev/null`
-
-  Exit `0`; no credential or secret value is printed.
-
-  - `kubectl exec deployment/relay -c worker -- sh -c 'test "$ROUTE_SECRET" = north-secret'`
-  - `kubectl rollout status deployment/relay --timeout=3s`
-
-  Exit `0`; no credential or secret value is printed. The rollout completes.
-debrief: The reader value, Secret key, relay environment and rollout matched the checks.
+  ```'
+hints.2.text: "Construct a private source read and Kubernetes Secret delivery; preserve the Deployment and its Secret\
+  \ reference, refresh all environment consumers and adopt the reader credential in the workstation profile. Use\
+  \ the API path and expected publication in the original contract. The synchronizer workspace must be implemented\
+  \ first.\n\nMatch the profile to the approved API source and supplied reader credential. Keep the credential private\
+  \ and send SIGHUP to the existing application PID; the manager is a different identity. Recheck the HTTP publication,\
+  \ not only the source. Expected: OK.\n\n```bash\nset -euo pipefail\ncd ~/quest\ncurl -fsS --max-time 2 http://127.0.0.1:18081/\
+  \ > observed-publication.json\npython3 -I - <<'VERIFY_PUBLICATION'\nimport json\nfrom pathlib import Path\ncontract=json.loads(Path('consumer-contract.json').read_text())\n\
+  observed=json.loads(Path('observed-publication.json').read_text())\nassert observed['ready'] is True\nassert observed['source']==contract['vault_url']\n\
+  assert observed['path']==contract['path']\nassert observed['value_sha256']==contract['value_sha256']\nassert observed['version']==contract['version']\n\
+  print('OK')\nVERIFY_PUBLICATION\n```\n\n\n```bash\nset -euo pipefail\ncd ~/quest\nkubectl rollout status deployment/relay\
+  \ --timeout=30s\npython3 -I - <<'VERIFY_OWNED_PODS'\nimport hashlib,json,subprocess\nfrom pathlib import Path\n\
+  def k(*args):\n return subprocess.check_output(['kubectl',*args],timeout=3)\nold=json.loads(Path('original-relay.json').read_text())\n\
+  current=json.loads(k('get','deployment','relay','-o','json'))\nassert current['metadata']['uid']==old['metadata']['uid']\n\
+  assert current['spec']['template']['spec']==old['spec']['template']['spec']\nsets=json.loads(k('get','replicasets','-o','json'))['items']\n\
+  owners={x['metadata']['uid'] for x in sets if any(o.get('controller') is True and o['uid']==old['metadata']['uid']\
+  \ for o in x['metadata'].get('ownerReferences',[]))}\npods=json.loads(k('get','pods','-o','json'))['items']\n\
+  active=[p for p in pods if not p['metadata'].get('deletionTimestamp') and p['status'].get('phase') not in ('Succeeded','Failed')\
+  \ and any(o.get('controller') is True and o['uid'] in owners for o in p['metadata'].get('ownerReferences',[]))]\n\
+  assert len(active)==1\ncontract=json.loads(Path('consumer-contract.json').read_text())\nfor p in active:\n assert\
+  \ any(c['type']=='Ready' and c['status']=='True' for c in p['status'].get('conditions',[]))\n assert p['spec']['containers'][0]['image']==old['spec']['template']['spec']['containers'][0]['image']\n\
+  \ value=k('exec',p['metadata']['name'],'-c','worker','--','printenv','ROUTE_SECRET').rstrip(b'\\n')\n assert hashlib.sha256(value).hexdigest()==contract['value_sha256']\n\
+  print('OK')\nVERIFY_OWNED_PODS\n```\n\nExpected: rollout completes and OK.\n\n\n```bash\nset -euo pipefail\nsource\
+  \ platform.env\ncurl -fsS --max-time 3 -H @<(printf 'X-Vault-Token: %s\\n' \"$VAULT_READER_TOKEN\") -H 'Content-Type:\
+  \ application/json' -X POST --data '{\"paths\":[\"secret/data/dispatch\",\"secret/data/other\",\"sys/audit\"]}'\
+  \ \"$VAULT_ADDR/v1/sys/capabilities-self\" | jq -e '.\"secret/data/dispatch\"==[\"read\"] and .\"secret/data/other\"\
+  ==[\"deny\"] and .\"sys/audit\"==[\"deny\"]'\n```\n\nExpected: true; no secret is displayed."
+debrief: The original source and consumer identities were preserved, and the running applications adopted the approved
+  publication.
 phrases.0: I checked the running state before making a change.
 phrases.1: I found the cause and changed one thing at a time.
 phrases.2: I checked both the platform status and the actual consumer.
@@ -50,6 +77,13 @@ diagnostics.reader: The reader token must read north-secret from secret/data/dis
 diagnostics.secret: The decoded route-secret value must equal north-secret.
 diagnostics.env: The relay container ROUTE_SECRET must equal north-secret.
 diagnostics.rollout: The relay Deployment rollout must complete.
-stages.0.objectives.0.text: The supplied Vault identity, the delivered Kubernetes configuration and the
-  running `relay` process all provide the dispatch value `north-secret`.
-stages.0.objectives.1.text: Deployment `relay` completes its rollout in the bay namespace.
+stages.0.objectives.0.text: The original application adopts the approved source publication with the private supplied
+  reader identity; Vault access, delivered Kubernetes data and running consumers agree without broadening authorization.
+stages.0.objectives.1.text: The original workload completes rollout with its program and identity preserved, and
+  every active owned pod serves the approved configuration.
+diagnostics.probe_0_0: The original application must adopt the approved API source with the private reader identity.
+  Compare its profile, process receipt and HTTP publication.
+diagnostics.probe_0_1: Preserve the original Deployment identity and pod program; every active owned pod must be
+  Ready and use the approved source value.
+guides.reference_1: Inspect the relevant Vault API
+guides.reference_2: Publication and consumer verification reference

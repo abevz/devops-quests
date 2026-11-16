@@ -51,3 +51,5 @@ sed -i 's|${DQ_APP_IMAGE}|'"$DQ_APP_IMAGE"'|g' deployment.yaml
 kubectl apply -f deployment.yaml
 
 # sync-secret.sh is an explicit on-demand synchronizer, not an operator.
+
+kubectl get deployment relay -o json > original-relay.json
