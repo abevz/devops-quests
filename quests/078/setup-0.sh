@@ -45,7 +45,7 @@ DQ_CONTROL_MANUAL
 printf '%s\n' 'Station control interface: see ~/quest/control/README.md' > .motd
 printf '%s\n' '{"status":"idle"}' > registry-agent-status.json
 source platform.env
-kubectl create secret docker-registry registry-pull --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" --docker-password="$REGISTRY_PASSWORD" --dry-run=client -o yaml > registry-pull.yaml
+kubectl create secret docker-registry registry-pull --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" --docker-password=retired-game-credential --dry-run=client -o yaml > registry-pull.yaml
 kubectl apply -f registry-pull.yaml >/dev/null
 cat > board.yaml <<'DQ_ASSET'
 apiVersion: apps/v1
@@ -104,3 +104,23 @@ from pathlib import Path
 p=Path('board.yaml');p.write_text(p.read_text().replace('__PRIVATE_IMAGE__',os.environ['PRIVATE_IMAGE']))
 IMAGE
 kubectl apply -f board.yaml
+
+rm registry-pull.yaml
+
+source platform.env
+python3 -I - <<'DQ_REGISTRY_SOURCE'
+import hashlib,json,os
+from pathlib import Path
+contract={'endpoint':os.environ['REGISTRY'],'username':os.environ['REGISTRY_USER'],
+'password_sha256':hashlib.sha256(os.environ['REGISTRY_PASSWORD'].encode()).hexdigest(),
+'ca_sha256':hashlib.sha256(Path('registry-ca.crt').read_bytes()).hexdigest()}
+Path('registry-source.json').write_text(json.dumps(contract))
+DQ_REGISTRY_SOURCE
+
+python3 -I - <<'DQ_PULL_CONTRACT'
+import json,subprocess
+from pathlib import Path
+deployment=json.loads(subprocess.check_output(['kubectl','get','deployment','board','-o','json'],timeout=3))
+credential=json.loads(subprocess.check_output(['kubectl','get','secret','registry-pull','-o','json'],timeout=3))
+Path('registry-consumer.json').write_text(json.dumps({'deployment':deployment,'secret_uid':credential['metadata']['uid'],'secret_name':credential['metadata']['name']}))
+DQ_PULL_CONTRACT

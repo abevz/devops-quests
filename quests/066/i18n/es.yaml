@@ -1,52 +1,70 @@
 title: Retención de registro
-brief: 'El registro tiene una solicitud de retención pendiente; las versiones protegidas deben seguir disponibles.
+brief: 'La solicitud de retención y las etiquetas conservadas no describen un inventario coherente. Recupera una
+  retención segura sin sustituir el registry ni su autoridad.
 
 
-  Trabaja en la estación de trabajo en `~/quest` con `platform.env`, `registry-ca.crt`, `retention.json`, `prune.sh`.
+  Trabaja en `~/quest`. Los registros de fuente identifican la autoridad y publicación originales; las copias congeladas
+  en `/run/dq/facts/0/` siguen siendo autoritativas. Conserva identidades, programas, límites de acceso y confianza
+  TLS. No imprimas credenciales; no sustituyas la fuente protegida.
+
+
+  Entradas: `platform.env`, `registry-ca.crt`, `release-catalog.json`, `registry-source.json`, `retention.json`
+  y el borrador `prune.sh`. Construye las operaciones del registry; el borrador no implementa la eliminación completa.
+  Eliminar manifiestos no demuestra recolección de blobs.
 
 
   **Requisitos:**
 
-  - `~/quest/retention.json` en la estación de trabajo selecciona solo la versión obsoleta identificada en
-  el catálogo autorizado.
 
-  - Mediante TLS verificado, los manifiestos actual y de reversión siguen disponibles con HTTP `200`, y el
-  manifiesto obsoleto devuelve `404`.
+  - `~/quest/retention.json` en la estación de trabajo selecciona solo la versión obsoleta identificada en el catálogo
+  autorizado.
 
-
-  La comprobación observa la eliminación de manifiestos, no garbage collection; los archivos de `~/quest` son
-  copias de trabajo, mientras `/run/dq/facts/0/` en la workstation es autoritativo.
-
-  '
-debrief: Retention eliminó un manifest obsoleto sin romper una referencia de reversión real.
-stages.0.brief: El resultado de retención debe conservar ambas versiones protegidas.
-hints.0.text: Las etiquetas son referencias mutables; La seguridad de retention depende del manifests protegido.
-hints.1.text: 'El retention.json propuesto selecciona rollback. Las identidades de los digest protegidos proceden
-  de /run/dq/facts/0/release-catalog.json de solo lectura, no de la copia de trabajo.
+  - Mediante la autoridad TLS original verificada, los manifiestos actual y de reversión devuelven `200`, el obsoleto
+  `404`, y las etiquetas conservadas resuelven a los digest aprobados.'
+debrief: Se conservaron identidades originales de fuentes y consumidores; la versión aprobada se verificó en cada
+  límite afectado.
+stages.0.brief: La solicitud de retención y las etiquetas conservadas no describen un inventario coherente. Recupera
+  una retención segura sin sustituir el registry ni su autoridad.
+hints.0.text: Una etiqueta mutable, un manifiesto inmutable y los bytes almacenados son objetos distintos.
+hints.1.text: 'Antes de cambiar datos, compara plan de retención, catálogo aprobado y enlaces reales de etiquetas.
 
 
-  Inspecciona las entradas suministradas y el estado observado:
+  ```bash
 
+  cat retention.json release-catalog.json registry-source.json
 
-  ```sh
+  source platform.env
 
-  cat retention.json
-
-  cat /run/dq/facts/0/release-catalog.json
+  curl -fsS --max-time 3 --cacert registry-ca.crt --config <(printf ''user = "%s:%s"\n'' "$REGISTRY_USER" "$REGISTRY_PASSWORD")
+  "https://$REGISTRY/v2/parcel/tags/list" | jq ''{tags}''
 
   ```'
-hints.2.text: |-
-  Selecciona solo obsolete y ejecuta bash prune.sh; el helper rechaza digest protegidos y verifica TLS mediante registry-ca.crt.
-
-  Verifica el resultado observado:
-
-  - `jq -e --slurpfile c /run/dq/facts/0/release-catalog.json '(.delete|type)=="array" and (.delete|unique)==[$c[0].obsolete]' retention.json` — Imprime `true` para la solicitud de eliminación guardada.
-  - `source platform.env; for kind in current rollback obsolete; do digest=$(jq -r --arg kind "$kind" '.[$kind]' /run/dq/facts/0/release-catalog.json); code=$(curl -sS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' -o /dev/null -w '%{http_code}' "https://$REGISTRY/v2/parcel/manifests/$digest"); printf "%s %s\n" "$kind" "$code"; done` — Informa `current 200`, `rollback 200`, `obsolete 404`, con verificación del certificado activada.
-
+hints.2.text: "\n\nSelecciona solo el digest obsoleto aprobado. Construye DELETE validados contra el registry original,\
+  \ conservando identidad privada y CA; restaura la etiqueta actual publicando el manifiesto aprobado. Conserva\
+  \ la etiqueta de reversión. Una etiqueta local no actualiza el registry.\n\n```bash\nset -euo pipefail\ncd ~/quest\n\
+  source platform.env\npython3 -I - <<'VERIFY_RELEASE'\nimport urllib.error\n\nimport base64,hashlib,json,os,ssl,urllib.request\n\
+  from pathlib import Path\nsource=json.loads(Path('/run/dq/facts/0/registry-source.json').read_text())\nassert\
+  \ os.environ['REGISTRY']==source['endpoint']\nassert os.environ['REGISTRY_USER']==source['username']\nassert hashlib.sha256(os.environ['REGISTRY_PASSWORD'].encode()).hexdigest()==source['password_sha256']\n\
+  assert hashlib.sha256(Path('registry-ca.crt').read_bytes()).hexdigest()==source['ca_sha256']\nclass NoRedirect(urllib.request.HTTPRedirectHandler):\n\
+  \ def redirect_request(self,*args,**kwargs):\n  return None\nopener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect(),\n\
+  urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile='registry-ca.crt')))\nheaders={'Authorization':'Basic\
+  \ '+base64.b64encode((source['username']+':'+os.environ['REGISTRY_PASSWORD']).encode()).decode(),\n'Accept':'application/vnd.docker.distribution.manifest.v2+json,\
+  \ application/vnd.oci.image.manifest.v1+json'}\ndef manifest(reference):\n request=urllib.request.Request('https://'+source['endpoint']+'/v2/parcel/manifests/'+reference,headers=headers)\n\
+  \ with opener.open(request,timeout=2) as response:\n  body=response.read(2097153)\n  assert len(body)<=2097152\n\
+  \  digest='sha256:'+hashlib.sha256(body).hexdigest()\n  assert response.headers.get('Docker-Content-Digest')==digest\n\
+  \  return digest\n\ncatalog=json.loads(Path('/run/dq/facts/0/release-catalog.json').read_text())\nassert manifest('current')==catalog['current']\n\
+  assert manifest('1')==catalog['rollback']\n\nfor role in ('current','rollback','obsolete'):\n digest=catalog[role]\n\
+  \ try:\n  observed=manifest(digest)\n  assert role!='obsolete' and observed==digest\n except urllib.error.HTTPError\
+  \ as error:\n  assert role=='obsolete' and error.code==404\n\nprint('OK')\nVERIFY_RELEASE\n```\n\nEsperado: OK.\
+  \ No se muestran credenciales."
 phrases.0: Protegí los resúmenes de reversión antes de eliminar el obsoleto manifests.
 phrases.1: Verifiqué TLS en lugar de omitir las verificaciones de certificados.
 phrases.2: Distinguí la eliminación de manifest del almacenamiento garbage collection.
-stages.0.objectives.0.text: '`~/quest/retention.json` en la estación de trabajo selecciona solo la versión
-  obsoleta identificada en el catálogo autorizado.'
-stages.0.objectives.1.text: Mediante TLS verificado, los manifiestos actual y de reversión siguen disponibles
-  con HTTP `200`, y el manifiesto obsoleto devuelve `404`.
+stages.0.objectives.0.text: '`~/quest/retention.json` en la estación de trabajo selecciona solo la versión obsoleta
+  identificada en el catálogo autorizado.'
+stages.0.objectives.1.text: Mediante la autoridad TLS original verificada, los manifiestos actual y de reversión
+  devuelven `200`, el obsoleto `404`, y las etiquetas conservadas resuelven a los digest aprobados.
+diagnostics.probe_0_1: Conserva la autoridad y CA originales del registry; las etiquetas conservadas deben resolver
+  a los digest aprobados.
+guides.reference_1: Referencia de API y diagnóstico
+guides.reference_2: Referencia de publicación y consumidores

@@ -2,112 +2,113 @@ heading: Recuperación de registro privado y GitOps
 text: '# Recuperación de registro privado y GitOps
 
 
-  Usa solo la bahía desechable de la misión. Un kubelet descarga una imagen privada mediante un Secret del mismo namespace nombrado en `imagePullSecrets`. Un digest identifica el contenido inmutable de la imagen; `imagePullPolicy: Always` hace que se compruebe la descarga al iniciar. Lee `platform.env`, `private-release.json`, `board.yaml` y `registry-pull.yaml` cuando estén disponibles. Protege las credenciales de juego: no las imprimas ni las guardes en el historial del terminal. Inspecciona eventos del Pod y espera `kubectl rollout status deployment/board --timeout=90s`; un rollout correcto actual no demuestra descargas futuras.
+  ## Separar los límites
 
 
-  Una Application de Argo CD selecciona repositorio, ruta, revisión y destino. El controlador reconcilia de forma asíncrona: `Synced` describe la comparación con Git y `Healthy` la salud de recursos. En app-of-apps, un padre reconcilia una Application hija, que reconcilia el workload. Compara ambas con el commit enviado y conserva la identidad del padre. `wait-apps.sh` en la bahía comprueba las Applications esperadas; vuelve a intentar tras la reconciliación en vez de asumir un cambio inmediato.
+  Disponibilidad del registry, confianza de transporte, identidad de fuente y adopción son observaciones distintas.
+  Usa solo la bahía desechable. Compara contratos con la API real; los registros congelados conservan la autoridad
+  original. Un recibo describe una acción del agente, no disponibilidad continua, autorización ni adopción.
 
 
-  Un generador de lista de ApplicationSet proporciona parámetros a una plantilla Go; una ruta como `stations/{{.station}}` produce una ruta por entrada. En la misión ApplicationSet el sondeo del juego envía uno de dos manifiestos limitados de `applicationset.yaml` al controlador privado. Es un adaptador con cambios permitidos limitados, no una API general del controlador. Espera las Applications generadas e inspecciona propietario, revisión, salud y respuestas reales del workload.
+  ## Consumidores de imágenes privadas
 
 
-  Referencias: [descargas de imágenes privadas](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/), [generador de lista Argo CD](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators-List/), [plantillas Go](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/GoTemplate/).
+  Cliente workstation y kubelet custodian credenciales independientemente. Una lectura autenticada no actualiza
+  un Secret de extracción del namespace. El Secret contiene credenciales, pero no instala una CA en el runtime del
+  nodo. Conserva endpoint, confianza del certificado, imagen inmutable, controlador y objeto de credenciales.
 
 
-  En el ejercicio 027, inspecciona los eventos de descarga de imagen de relay y usa las credenciales de juego suministradas para crear un pull Secret en el mismo namespace sin exponer sus valores. Refiérelo en `imagePullSecrets`, conserva la imagen privada y `Always`, y espera el rollout de relay.
+  Los eventos distinguen conexión, certificado, autorización y manifiesto ausente. Always controla resolución y
+  extracción; una caché y un contenedor Ready no prueban credenciales válidas para la siguiente extracción. Compara
+  el Secret privadamente con la autoridad aprobada y verifica digest real y referencias de pods propios.
 
 
-  En el ejercicio 041, compara los historiales de release-candidate y main. Transfiere el aviso deseado a main mediante merge o cherry-pick, publícalo en el remoto privado suministrado y desde `~/quest` ejecuta `git -C repository fetch origin main release-candidate`. Verifica `north-41` en main local y remoto, baseline como ancestro, el worktree limpio y la igualdad de los commits reales HEAD y remoto.
-
-
-  En el ejercicio 042, rota `registry-pull` con las credenciales del juego sin imprimirlas ni guardarlas en el historial del shell. Verifica el tipo del Secret y la auth codificada de forma canónica, conserva `PRIVATE_IMAGE`, `Always`, una réplica y un único pull Secret; comprueba el rollout y `north-42`. Base64 es codificación, no cifrado; el rollout actual no demuestra descargas futuras.
-
-
-  En el ejercicio 043, cambia el source path de Argo Application a `manifests` conservando repository, project, revision y destination suministrados. Sincroniza y compara la revisión del controlador con main remoto; comprueba Synced/Healthy y la respuesta real `north-43`.
-
-
-  En el ejercicio 049, una etiqueta mutable y el digest deseado pueden devolver el mismo texto aunque identifiquen artefactos distintos. Fija `PRIVATE_IMAGE`, conserva `Always` y `registry-pull`, compara el image ID del contenedor listo con el digest deseado y comprueba `north-49`.
-
-
-  Para el ejercicio 027, este ejemplo crea el pull Secret desde el entorno suministrado sin poner credenciales en argumentos de comandos ni imprimir el contenido. Para el ejercicio 042, sustituye `parcel-pull` por `registry-pull`; mantén privado el Secret resultante.
+  El ejemplo genérico actualiza un Secret existente autorizado. Elige primero objeto y autoridad suministrada. No
+  imprime credenciales; base64 es codificación, no cifrado. La carga sigue necesitando referenciar el objeto previsto.
 
 
   ```bash
 
+  set -euo pipefail
+
   set +x
 
-  cd ~/quest
+  : "${DQ_PULL_SECRET:?select the existing authorized Secret}"
 
-  source platform.env
+  : "${REGISTRY:?select the approved registry endpoint}"
 
-  export DQ_PULL_SECRET=parcel-pull
+  : "${REGISTRY_USER:?select the supplied registry identity}"
 
-  python3 - <<''PY'' | kubectl apply -f - >/dev/null
+  : "${REGISTRY_PASSWORD:?load the private supplied credential}"
 
-  import base64
+  export DQ_PULL_SECRET REGISTRY REGISTRY_USER REGISTRY_PASSWORD
 
-  import json
+  before=$(kubectl get secret "$DQ_PULL_SECRET" -o jsonpath=''{.metadata.uid}'')
 
-  import os
+  python3 -I - <<''PRIVATE_AUTH'' | kubectl apply -f - >/dev/null
 
-  import sys
+  import base64,json,os
 
+  auth=base64.b64encode((os.environ[''REGISTRY_USER'']+'':''+os.environ[''REGISTRY_PASSWORD'']).encode()).decode()
 
-  auth = base64.b64encode((os.environ[''REGISTRY_USER''] + '':'' + os.environ[''REGISTRY_PASSWORD'']).encode()).decode()
+  config={''auths'':{os.environ[''REGISTRY'']:{''auth'':auth}}}
 
-  config = json.dumps({''auths'': {os.environ[''REGISTRY'']: {''auth'': auth}}}).encode()
+  secret={''apiVersion'':''v1'',''kind'':''Secret'',''metadata'':{''name'':os.environ[''DQ_PULL_SECRET'']},
 
-  secret = {''apiVersion'': ''v1'', ''kind'': ''Secret'', ''metadata'': {''name'': os.environ[''DQ_PULL_SECRET'']}, ''type'': ''kubernetes.io/dockerconfigjson'', ''data'': {''.dockerconfigjson'': base64.b64encode(config).decode()}}
+  ''type'':''kubernetes.io/dockerconfigjson'',''data'':{''.dockerconfigjson'':base64.b64encode(json.dumps(config).encode()).decode()}}
 
-  json.dump(secret, sys.stdout)
+  print(json.dumps(secret))
 
-  PY
+  PRIVATE_AUTH
 
-  unset DQ_PULL_SECRET
+  test "$(kubectl get secret "$DQ_PULL_SECRET" -o jsonpath=''{.metadata.uid}'')" = "$before"
 
   ```
 
 
-  Un comando Git y un controlador de entrega no comparten automáticamente la configuración de autenticación. Un Secret de repositorio usa `argocd.argoproj.io/secret-type=repository` y `type=git` junto con campos de repositorio, usuario y credencial. Metadatos y alcance de autorización importan por separado del valor de credencial. Inspecciona cada contexto autorizado sin imprimir autenticación y protege la configuración que la almacena.
+  ## Retención y referencias mutables
 
 
-  En el ejercicio 066, distingue los digest rollback, current y obsolete antes de aplicar retención. El helper suministrado solo puede borrar obsolete en este registry desechable; verifica que current y rollback siguen disponibles por digest. Borrar manifiestos no es garbage collection.
+  Una etiqueta resuelve a un manifiesto; su digest identifica bytes exactos. Una etiqueta Docker local no actualiza
+  el registry remoto hasta publicar el manifiesto. Compara inventario de etiquetas, respuestas y catálogo aprobado.
+  Usa los tipos de manifiesto adecuados al interpretar Docker-Content-Digest.
 
 
-  En un servicio basado en archivos, la configuración proyectada y la ubicación de entrada del programa son límites distintos. Una fuente puede estar sincronizada mientras un proceso lee otra entrada o una vista anterior. Compara datos deseados, archivos montados y metadatos HTTP reales. La disponibilidad por sí sola no demuestra adopción, identidad ni concordancia con la fuente.
+  Construye retención sobre identidades protegidas. Comprueba el plan antes de DELETE y disponibilidad de manifiestos
+  protegidos después. Las etiquetas conservadas también deben apuntar al contenido correcto: conservar un digest
+  no conserva automáticamente un alias. Eliminar manifiestos y recolectar blobs son operaciones distintas. No sustituyas
+  recuperación por borrar volúmenes, TLS inseguro u otro registry.
 
 
-  En el ejercicio 075, restaura el push hook firmado original al receptor congelado y entrega un evento main válido mediante el endpoint de prueba suministrado. Con polling desactivado, verifica el evento observado por el servidor, la revisión actual, la salud y `north-75`; un refresh manual no crea ese evento.
+  ## Eventos y reconciliación
 
 
-  En el ejercicio 078, solicita solo el arranque limitado del registry, verifica TLS autenticado en `/v2/` y recupera una réplica board con la imagen fijada y el pull Secret existentes. Compara la identidad de la imagen activa y la respuesta; mantén privadas las credenciales del juego.
+  Un webhook conecta un evento con un receptor privado. Compara receptor, tipo, repositorio, rama y firma sin imprimir
+  el secreto. La aceptación firmada difiere del sondeo periódico y de reconciliar correctamente. Usa el resultado
+  del proveedor junto con la observación autenticada del receptor.
 
 
-  La procedencia de una imagen une la imagen inmutable activa, los bytes reales del manifiesto/config del registro y la ascendencia de fuentes en Git. Un commit de despliegue puede seleccionar un artefacto de fuentes anterior. Descubre esa relación a partir de las tres autoridades, sin copiar una tupla preparada ni tratar una etiqueta como firma. El informe local, el registro GitOps publicado, el ConfigMap activo y el archivo leído por un Pod activo son observaciones distintas: coincidir en un límite no demuestra propagación por los demás. Inspecciona el modo de montaje y la identidad del consumidor si el objeto API y el contenido montado difieren; un montaje subPath conserva su archivo durante la vida de ese Pod. Conserva la identidad original de la imagen y verifica el registro realmente servido por el consumidor. Los metadatos sin firma aportan trazabilidad, no certifican una compilación confiable.
+  Una Application vincula repositorio, ruta, revisión, proyecto y destino. Synced describe comparación con la fuente;
+  Healthy describe salud de recursos. Ninguno demuestra la respuesta servida. Compara revisión, datos deseados,
+  objeto Kubernetes y respuesta real sin cambiar un límite correcto.
 
 
-  Los consumidores gestionados de forma independiente pueden seguir contratos de versión distintos. Un estado histórico sano y las entradas aprobadas actuales no tienen por qué describir la misma versión. Compara identidad, revisión de fuente y salida real en cada límite conservando la historia registrada. La ascendencia Git describe commits guardados, no un comando concreto de recuperación.
+  ## Publicación y adopción
 
 
-  La suma del archivo identifica la entrada de recuperación conservada; el digest del manifiesto de imagen identifica otros bytes. Un proceso de registro disponible y un contenedor exitoso desde caché no demuestran que se pueda recuperar cada blob de config y capa referenciado. Verifica TLS autenticado, bytes y tamaños reales de blobs en el repositorio/tag/digest originales. Conserva por separado los artefactos independientes; recuperar un archivo no demuestra recuperación ante desastre del host o almacenamiento.
+  Una ConfigMap montada puede actualizar archivos proyectados mientras la aplicación sirve una copia del inicio.
+  Puede requerirse actualización compatible o rollout. Conserva controlador y programa; compara cada pod activo
+  propio con fuente y respuesta. Un objeto nuevo sano no conserva la identidad original.
 
 
-  Restaurar el artefacto y activar consumidores independientes son operaciones distintas. Un controlador GitOps reconcilia la definición publicada, mientras la plantilla batch administrada por API tiene su propia autoridad. Compara commit remoto, revisión observada, referencias inmutables e image ID reales. Un patch solo del Deployment activo puede revertirse; un alias mutable puede resolver hoy los bytes correctos sin volver inmutable el release declarado.
+  En app-of-apps el padre reconcilia una Application hija, y esta la carga. Sigue fuente y propietario en cada capa.
+  Un generador ApplicationSet aporta parámetros a una plantilla; inspecciona también objetos generados. El controlador
+  puede sobrescribir cambios directos. Conserva autoridad del repositorio, propietarios, namespace y publicación
+  durante propagación.
 
 
-  Un CronJob suspendido puede suministrar una plantilla para un Job de recuperación deliberado sin reactivar el horario. Compara campos relevantes de la plantilla Job con el CronJob conservado y excluye las ejecuciones anteriores registradas. Una finalización genuina necesita un Pod real cuyo propietario sea el UID del Job nuevo, el image ID esperado y un contenedor terminado con salida cero; el estado del Job no basta. Un Job manual puede tener metadatos distintos del programado: inspecciona propietarios reales sin exigir un comando o nombre generado concreto. Conserva el Pod completado hasta verificar; las comprobaciones de imágenes listas de Deployments activos no describen Pods batch terminados.
-
-
-  En el ejercicio 122, el parent reconcilia una Application child y esta reconcilia board. Corrige la ruta fuente del child en Git y publica un descendiente de baseline. Conserva el UID del parent y la ruta apps; compara las revisiones sincronizadas de ambos, la salud del child, la tracking annotation y la respuesta de board.
-
-
-  En el ejercicio 070, corrige el source path de Application y confirma Synced en la revisión Git registrada antes de recuperar el Secret de ejecución. El workload puede seguir enfermo hasta reparar la política reader de Vault y ejecutar explícitamente el sincronizador; el token Vault no debe entrar al workload.
-
-
-  En el ejercicio 080, recupera primero la reconciliación de la fuente en baseline. Luego publica la imagen inmutable suministrada en un release descendiente y compara Git, revisión de Argo, digest autenticado del registry e ID de imagen activa. Conserva los ajustes pull, verifica salud y `north-80`, y mantén privadas las credenciales; las comprobaciones no demuestran que el pull Secret no cambiara.
-
-
-  En el ejercicio 100, restaura la fuente y automatización de Application y sigue el release por la imagen privada, estado Argo y board. Repara la entrega limitada mediante Vault y verifica el digest activo y la respuesta. Synced solo no establece salud; dos rutas Vault probadas no establecen el alcance completo de la política.
+  Referencias: [API registry](https://distribution.github.io/distribution/spec/api/), [imágenes privadas](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/),
+  [webhooks Argo CD](https://argo-cd.readthedocs.io/en/stable/operator-manual/webhook/), [adopción ConfigMap](https://kubernetes.io/docs/tutorials/configuration/updating-configuration-via-a-configmap/).
 
   '
-source_hash: 151691dd9e2dbe1e6a55e07fab0ce2e080b57291ab53af3f64a82dc374cdba70
+source_hash: 71163a1b9b5c6da4e37f7541b6cdf0720b470e301229fd25f78c9ff9a1c8b7a0

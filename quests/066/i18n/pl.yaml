@@ -1,52 +1,71 @@
 title: Przechowywanie rejestru
-brief: 'W rejestrze oczekuje żądanie retencji; chronione wydania muszą pozostać dostępne.
+brief: 'Żądanie retencji i zachowane tagi nie opisują spójnego zestawu wydań. Przywróć bezpieczną retencję bez zastępowania
+  registry lub jego tożsamości.
 
 
-  Pracuj na stacji roboczej w `~/quest` z `platform.env`, `registry-ca.crt`, `retention.json`, `prune.sh`.
+  Pracuj w `~/quest`. Zapisy źródła określają pierwotną tożsamość i chronioną publikację; zamrożone kopie w `/run/dq/facts/0/`
+  pozostają autorytatywne. Zachowaj tożsamości, programy, granice dostępu i zaufanie TLS. Nie wypisuj danych uwierzytelniających;
+  nie zastępuj chronionego źródła.
+
+
+  Wejścia: `platform.env`, `registry-ca.crt`, `release-catalog.json`, `registry-source.json`, `retention.json` i
+  szkielet `prune.sh`. Zbuduj operacje registry; szkielet nie zawiera gotowego usuwania. Usunięcie manifestu nie
+  dowodzi oczyszczania blobów.
 
 
   **Wymagania:**
 
+
   - Plik `~/quest/retention.json` na stacji roboczej wybiera wyłącznie przestarzałe wydanie wskazane w autorytatywnym
   katalogu.
 
-  - Przez zweryfikowane TLS bieżący manifest i manifest wycofania pozostają dostępne z HTTP `200`, a przestarzały
-  manifest zwraca `404`.
+  - Przez pierwotne sprawdzone TLS manifesty bieżący i wycofania zwracają `200`, przestarzały `404`, a zachowane
+  tagi wskazują zatwierdzone skróty.'
+debrief: Zachowano pierwotne tożsamości źródeł i konsumentów; zatwierdzone wydanie sprawdzono na każdej dotkniętej
+  granicy.
+stages.0.brief: Żądanie retencji i zachowane tagi nie opisują spójnego zestawu wydań. Przywróć bezpieczną retencję
+  bez zastępowania registry lub jego tożsamości.
+hints.0.text: Zmienny tag, niezmienny manifest i przechowywane bajty to różne obiekty.
+hints.1.text: 'Przed zmianą registry porównaj plan retencji, katalog zatwierdzonych skrótów i rzeczywiste powiązania
+  tagów.
 
 
-  Sprawdzenie obserwuje usunięcie manifestu, a nie garbage collection; pliki w `~/quest` są kopiami roboczymi,
-  a `/run/dq/facts/0/` na workstation jest autorytatywne.
+  ```bash
 
-  '
-debrief: Retention usunął przestarzały manifest bez przerywania prawdziwego odniesienia do wycofania.
-stages.0.brief: Wynik retencji musi zachować oba chronione wydania.
-hints.0.text: Tagi to zmienne odniesienia; Bezpieczeństwo retention zależy od chronionego manifests.
-hints.1.text: 'Proponowany retention.json wybiera rollback. Tożsamości chronionych digestów pochodzą z /run/dq/facts/0/release-catalog.json
-  tylko do odczytu, a nie z kopii roboczej.
+  cat retention.json release-catalog.json registry-source.json
 
+  source platform.env
 
-  Sprawdź dostarczone dane wejściowe i obserwowany stan:
-
-
-  ```sh
-
-  cat retention.json
-
-  cat /run/dq/facts/0/release-catalog.json
+  curl -fsS --max-time 3 --cacert registry-ca.crt --config <(printf ''user = "%s:%s"\n'' "$REGISTRY_USER" "$REGISTRY_PASSWORD")
+  "https://$REGISTRY/v2/parcel/tags/list" | jq ''{tags}''
 
   ```'
-hints.2.text: |-
-  Wybierz tylko obsolete i uruchom bash prune.sh; helper odrzuca chronione digesty i weryfikuje TLS przez registry-ca.crt.
-
-  Sprawdź obserwowany wynik:
-
-  - `jq -e --slurpfile c /run/dq/facts/0/release-catalog.json '(.delete|type)=="array" and (.delete|unique)==[$c[0].obsolete]' retention.json` — Wypisuje `true` dla zapisanego żądania usunięcia.
-  - `source platform.env; for kind in current rollback obsolete; do digest=$(jq -r --arg kind "$kind" '.[$kind]' /run/dq/facts/0/release-catalog.json); code=$(curl -sS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' -o /dev/null -w '%{http_code}' "https://$REGISTRY/v2/parcel/manifests/$digest"); printf "%s %s\n" "$kind" "$code"; done` — Podaje `current 200`, `rollback 200`, `obsolete 404`, z włączoną weryfikacją certyfikatu.
-
+hints.2.text: "\n\nWybierz wyłącznie zatwierdzony przestarzały skrót. Zbuduj sprawdzane DELETE do pierwotnego registry,\
+  \ zachowując prywatną tożsamość i CA; odtwórz bieżący tag przez publikację zatwierdzonego manifestu. Zachowaj\
+  \ tag wycofania. Lokalny tag nie aktualizuje registry.\n\n```bash\nset -euo pipefail\ncd ~/quest\nsource platform.env\n\
+  python3 -I - <<'VERIFY_RELEASE'\nimport urllib.error\n\nimport base64,hashlib,json,os,ssl,urllib.request\nfrom\
+  \ pathlib import Path\nsource=json.loads(Path('/run/dq/facts/0/registry-source.json').read_text())\nassert os.environ['REGISTRY']==source['endpoint']\n\
+  assert os.environ['REGISTRY_USER']==source['username']\nassert hashlib.sha256(os.environ['REGISTRY_PASSWORD'].encode()).hexdigest()==source['password_sha256']\n\
+  assert hashlib.sha256(Path('registry-ca.crt').read_bytes()).hexdigest()==source['ca_sha256']\nclass NoRedirect(urllib.request.HTTPRedirectHandler):\n\
+  \ def redirect_request(self,*args,**kwargs):\n  return None\nopener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect(),\n\
+  urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile='registry-ca.crt')))\nheaders={'Authorization':'Basic\
+  \ '+base64.b64encode((source['username']+':'+os.environ['REGISTRY_PASSWORD']).encode()).decode(),\n'Accept':'application/vnd.docker.distribution.manifest.v2+json,\
+  \ application/vnd.oci.image.manifest.v1+json'}\ndef manifest(reference):\n request=urllib.request.Request('https://'+source['endpoint']+'/v2/parcel/manifests/'+reference,headers=headers)\n\
+  \ with opener.open(request,timeout=2) as response:\n  body=response.read(2097153)\n  assert len(body)<=2097152\n\
+  \  digest='sha256:'+hashlib.sha256(body).hexdigest()\n  assert response.headers.get('Docker-Content-Digest')==digest\n\
+  \  return digest\n\ncatalog=json.loads(Path('/run/dq/facts/0/release-catalog.json').read_text())\nassert manifest('current')==catalog['current']\n\
+  assert manifest('1')==catalog['rollback']\n\nfor role in ('current','rollback','obsolete'):\n digest=catalog[role]\n\
+  \ try:\n  observed=manifest(digest)\n  assert role!='obsolete' and observed==digest\n except urllib.error.HTTPError\
+  \ as error:\n  assert role=='obsolete' and error.code==404\n\nprint('OK')\nVERIFY_RELEASE\n```\n\nOczekiwane:\
+  \ OK. Dane uwierzytelniające nie są wypisywane."
 phrases.0: Chroniłem podsumowania wycofania przed usunięciem przestarzałego manifests.
 phrases.1: Zweryfikowałem TLS zamiast ominąć sprawdzanie certyfikatów.
 phrases.2: Wyróżniłem usunięcie manifest z magazynu garbage collection.
-stages.0.objectives.0.text: Plik `~/quest/retention.json` na stacji roboczej wybiera wyłącznie przestarzałe
-  wydanie wskazane w autorytatywnym katalogu.
-stages.0.objectives.1.text: Przez zweryfikowane TLS bieżący manifest i manifest wycofania pozostają dostępne
-  z HTTP `200`, a przestarzały manifest zwraca `404`.
+stages.0.objectives.0.text: Plik `~/quest/retention.json` na stacji roboczej wybiera wyłącznie przestarzałe wydanie
+  wskazane w autorytatywnym katalogu.
+stages.0.objectives.1.text: Przez pierwotne sprawdzone TLS manifesty bieżący i wycofania zwracają `200`, przestarzały
+  `404`, a zachowane tagi wskazują zatwierdzone skróty.
+diagnostics.probe_0_1: Zachowaj pierwotne dane dostępu i CA registry; zachowane tagi wydań muszą wskazywać zatwierdzone
+  skróty manifestów.
+guides.reference_1: Dokumentacja API i diagnostyki
+guides.reference_2: Dokumentacja weryfikacji publikacji i konsumentów

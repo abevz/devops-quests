@@ -19,20 +19,18 @@ assert len(set(catalog.values()))==3
 open('release-catalog.json','w').write(json.dumps(catalog))
 open('retention.json','w').write(json.dumps({'delete':[catalog['rollback']]}))
 CATALOG
-cat > prune.sh <<'DQ_ASSET'
-#!/bin/bash
-set -euo pipefail
-cd ~/quest
+
 source platform.env
-python3 - <<'VALIDATE'
-import json,re
-c=json.load(open('/run/dq/facts/0/release-catalog.json'));p=json.load(open('retention.json'))
-assert len(p['delete'])==1
-for d in p['delete']:
- assert re.fullmatch(r'sha256:[0-9a-f]{64}',d)
- assert d==c['obsolete'], 'Refusing to remove an unapproved release'
-VALIDATE
-while read -r digest; do
- curl -fsS --cacert registry-ca.crt -u "$REGISTRY_USER:$REGISTRY_PASSWORD" --request DELETE "https://$REGISTRY/v2/parcel/manifests/$digest" >/dev/null
-done < <(jq -r '.delete[]' retention.json)
-DQ_ASSET
+python3 -I - <<'DQ_REGISTRY_SOURCE'
+import hashlib,json,os
+from pathlib import Path
+contract={'endpoint':os.environ['REGISTRY'],'username':os.environ['REGISTRY_USER'],
+'password_sha256':hashlib.sha256(os.environ['REGISTRY_PASSWORD'].encode()).hexdigest(),
+'ca_sha256':hashlib.sha256(Path('registry-ca.crt').read_bytes()).hexdigest()}
+Path('registry-source.json').write_text(json.dumps(contract))
+DQ_REGISTRY_SOURCE
+
+# The workspace is intentionally a scaffold, not a complete deletion adapter.
+printf '%s\n' '#!/bin/bash' 'set -euo pipefail' > prune.sh
+docker tag "$PRIVATE_IMAGE" "$REGISTRY/parcel:current"
+docker push "$REGISTRY/parcel:current" >/dev/null

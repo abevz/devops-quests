@@ -31,8 +31,8 @@ spec:
         command:
         - sh
         - -c
-        - mkdir -p /tmp/site; printf "%s\n" "initial-75" > /tmp/site/index.html; exec httpd -f -p 8080
-          -h /tmp/site
+        - mkdir -p /tmp/site; cp /etc/publication/notice /tmp/site/index.html; exec
+          httpd -f -p 8080 -h /tmp/site
         resources:
           requests:
             cpu: 10m
@@ -45,6 +45,14 @@ spec:
           capabilities:
             drop:
             - ALL
+        volumeMounts:
+        - name: publication
+          mountPath: /etc/publication
+          readOnly: true
+      volumes:
+      - name: publication
+        configMap:
+          name: board-publication
 DQ_ASSET
 python3 - repository/manifests/board.yaml <<'DQ_IMAGE'
 import os,sys
@@ -70,6 +78,14 @@ import os,sys
 from pathlib import Path
 p=Path(sys.argv[1]);p.write_text(p.read_text().replace('__DQ_APP_IMAGE__',os.environ['DQ_APP_IMAGE']))
 DQ_IMAGE
+cat > repository/manifests/publication.yaml <<'DQ_PUBLICATION'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: board-publication
+data:
+  notice: initial-75
+DQ_PUBLICATION
 cd repository
 git remote add origin "$GIT_URL"
 git add .
@@ -116,12 +132,25 @@ curl -fsS -u "$GIT_USER:$GIT_PASSWORD" -H 'Content-Type: application/json' --req
 jq -er .id hook-created.json > hook-id
 python3 - <<'RELEASE'
 from pathlib import Path
-p=Path('repository/manifests/board.yaml');p.write_text(p.read_text().replace('initial-75','north-75'))
+p=Path('repository/manifests/publication.yaml');p.write_text(p.read_text().replace('initial-75','north-75'))
 RELEASE
 cd repository
-git add manifests/board.yaml
+git add manifests/publication.yaml
 git commit -m 'Publish webhook-delivered board'
 git push origin main
 git rev-parse HEAD > ../release-commit
 cd ..
 sleep 5
+
+python3 -I - <<'DQ_PUBLICATION_CONTRACT'
+import json,subprocess,yaml
+from pathlib import Path
+def k(*args):
+ return json.loads(subprocess.check_output(['kubectl',*args,'-o','json'],timeout=3))
+revision=Path('release-commit').read_text().strip()
+approved=yaml.safe_load(subprocess.check_output(['git','-C','repository','show',revision+':manifests/publication.yaml'],text=True,timeout=3))
+contract={'deployment':k('get','deployment','board'),'application':k('get','application','board'),
+'publication_uid':k('get','configmap',approved['metadata']['name'])['metadata']['uid'],
+'approved':approved,'release_commit':revision,'source_file':'manifests/publication.yaml'}
+Path('webhook-publication.json').write_text(json.dumps(contract))
+DQ_PUBLICATION_CONTRACT
