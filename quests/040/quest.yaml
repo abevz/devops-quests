@@ -86,6 +86,16 @@ stages:
       if ! ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'set -eu; test "$(cat /srv/site/maintenance.txt)" = north-40'; then printf '%s\n' 'app1 /srv/site/maintenance.txt = north-40: ✗ [DQ:maintenance_1]' >&2; failed=1; fi
       if ! ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'set -eu; test "$(cat /srv/site/maintenance.txt)" = north-40'; then printf '%s\n' 'app2 /srv/site/maintenance.txt = north-40: ✗ [DQ:maintenance_2]' >&2; failed=1; fi
       if ! ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'set -eu; test "$(cat /srv/site/maintenance.txt)" = north-40'; then printf '%s\n' 'app3 /srv/site/maintenance.txt = north-40: ✗ [DQ:maintenance_3]' >&2; failed=1; fi
+      failed_hosts=()
+      for host in app1 app2 app3; do
+        if ! test "$(curl -fsS --max-time 2 "http://$host-${DQ_NAMESPACE#dq-}:8080/" 2>/dev/null)" = north-40; then
+          failed_hosts+=("$host")
+        fi
+      done
+      if (( ${#failed_hosts[@]} )); then
+        printf 'Maintenance HTTP response is stale or unavailable (%s): ✗ [DQ:fleet_http]\n' "${failed_hosts[*]}" >&2
+        failed=1
+      fi
       exit "$failed"
 - brief: stages.1.brief
   objectives:
@@ -209,7 +219,7 @@ stages:
       def require(good, marker):
           if not good:raise AssertionError(marker)
 
-      from dq_check import current_pods
+      from dq_check import current_pods, readiness_probe, workload_worker
 
       try:
           d=get('deployment','board');pods=current_pods(d,get('replicasets'),get('pods'));pods=[p for p in pods if p.get('status',{}).get('phase')=='Running']
@@ -217,6 +227,21 @@ stages:
           for pod in pods:
               value=subprocess.check_output(['kubectl','exec','--pod-running-timeout=2s',pod['metadata']['name'],'-c','worker','--','wget','-qO-','-T','3','http://board:8080'],stderr=subprocess.DEVNULL,timeout=4)
               require(value.rstrip(b'\n')==b'north-40','http')
+          try:
+              probe_matches = readiness_probe(d) and workload_worker(d)['readinessProbe']['httpGet'].get('path') == '/ready'
+          except (ValueError, TypeError, KeyError, AttributeError):
+              probe_matches = False
+          require(probe_matches, 'readiness_probe')
+          for pod in pods:
+              try:
+                  value = subprocess.check_output(
+                      ['kubectl', 'exec', '--pod-running-timeout=2s', pod['metadata']['name'], '-c', 'worker',
+                       '--', 'wget', '-qO-', '-T', '2', 'http://127.0.0.1:8080/ready'],
+                      stderr=subprocess.DEVNULL, timeout=3,
+                  )
+              except (OSError, subprocess.SubprocessError):
+                  value = b''
+              require(value.rstrip(b'\n') == b'ready', 'readiness_endpoint')
 
       except Exception as error:
           marker = str(error) if isinstance(error,AssertionError) and re.fullmatch(r'[a-z0-9_]+',str(error)) else 'http'
@@ -237,7 +262,7 @@ hints:
 - text: hints.0.text
   guide: ansible-11
 - text: hints.1.text
-  guide: ansible-11
+  guide: kubernetes-4
 - text: hints.2.text
   guide: kubernetes-workloads
 debrief: debrief
@@ -266,6 +291,7 @@ facts:
   - inventory.ini
   - ansible.cfg
   - rollout.yml
+  - maintenance-interface.json
   - board.yaml
   - service.yaml
   services: []

@@ -1,75 +1,60 @@
 title: Управляемое обслуживание
-brief: "Передача на обслуживание не завершена на управляемых хостах и в приложении.\n\nРаботайте в `~/quest` на\
-  \ рабочей станции. Входные файлы по этапам:\n- Этап 1: `inventory.ini`, `ansible.cfg`, `rollout.yml`.\n- Этап\
-  \ 2: `board.yaml`, `service.yaml`.\n\n**Требования:**\n\n- Этап 1:\n  - Для обслуживания действует ограничение:\
-  \ не более одного хоста одновременно.\n  - На каждом управляемом хосте (`app1`, `app2`, `app3`) `/srv/site/maintenance.txt`\
-  \ содержит `north-40`.\n- Этап 2:\n  - Deployment `board` завершает развёртывание с `2` доступными репликами.\n\
-  \  - Service `board` предоставляет приложение на порту `8080`.\n  - Каждый работающий Pod приложения получает\
-  \ `north-40` от `http://board:8080`.\n\nПроверка изучает объявленную политику партий, текущие ресурсы и ответы;\
-  \ она не доказывает порядок выполнения, сохранение идентичности Service или настройку readiness-probe. Ограничение\
-  \ одного хоста проверяется по объявлению; порядок выполнения и непрерывная доступность не отслеживаются."
-debrief: Последовательные обновления целей и rolling-замена с readiness обеспечили разные механизмы доступности.
+brief: |-
+  Передача на обслуживание не завершена на управляемых хостах и в приложении.
+
+  Работайте на рабочей станции в `~/quest`. На первом этапе используйте `inventory.ini`, `ansible.cfg`, `rollout.yml` и `maintenance-interface.json`. На втором этапе используйте `board.yaml` и `service.yaml`.
+
+  **Requirements:**
+
+  - Для обслуживания действует ограничение: не более одного хоста одновременно.
+  - На `app1`, `app2` и `app3` файл `/srv/site/maintenance.txt` содержит `north-40`. HTTP-сервис каждого хоста на порту `8080` возвращает `north-40`.
+  - Deployment `board` завершает развёртывание с `2` доступными репликами.
+  - Service `board` предоставляет приложение на порту `8080`.
+  - Каждый работающий Pod приложения получает `north-40` с `http://board:8080`. HTTP-проверка готовности контейнера worker обращается к `/ready` на порту `8080`, и каждый worker возвращает там `ready`.
+debrief: |-
+  Размер партии ограничивает обслуживание хостов. Проверка готовности управляет допуском Pod к трафику при rollout. Файлы, ответы процессов и статус контроллера показывают разные результаты.
 stages.0.brief: Объявленные партии обслуживания должны включать по одному хосту.
 stages.1.brief: Доступность приложения и маршрутизация сервиса должны быть согласованы.
-hints.0.text: Разделите контракт парка и rollout приложения.
-hints.1.text: 'serial и strategy Deployment управляют разными системами. Используйте `serial: 1` для каждого play
-  обслуживания.
-
-
-  Изучите описание обслуживания, события приложения и описание Service.
-
+hints.0.text: |-
+  Проверяйте файл обслуживания и ответ работающего процесса отдельно. Во время rollout проверка готовности определяет, какие Pod принимают трафик.
+hints.1.text: |-
+  На первом этапе сопоставьте playbook, интерфейс сервиса и реальные ответы. На втором сравните проверку готовности в шаблоне Pod с Service board.
 
   ```sh
-
-  cat rollout.yml
-
-  kubectl describe deployment board
-
-  kubectl describe service board
-
+  cat rollout.yml maintenance-interface.json
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/maintenance.txt'
+    curl -fsS --max-time 2 "http://$host:8080/"
+  done
   ```
 
-
-  Этап 2: Изучите определения этих ресурсов для данного этапа.
-
-
   ```sh
-
   kubectl get deployment board -o yaml
-
-  kubectl get service board -o yaml
-
-  ```'
+  kubectl describe service board
+  ```
 hints.2.text: |-
-  Сохраните readiness и selectors при смене ответа.
-
-  Проверьте соответствующий этап после исправления.
-
-  Этап 1: Предварительный прогон обрабатывает по одному хосту в партии, а каждый из `app1`, `app2`, `app3` показывает `north-40`.
+  На первом этапе файл обслуживания и HTTP-ответ показывают `north-40` на всех трёх хостах. На втором проверьте две доступные реплики, ответ через Service и прямой ответ готовности каждого контейнера worker.
 
   ```sh
   ansible-playbook rollout.yml --check
   for n in 1 2 3; do
     host="app${n}-${DQ_NAMESPACE#dq-}"
-    printf "%s: " "$host"
     ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/maintenance.txt'
+    curl -fsS --max-time 2 "http://$host:8080/"
   done
   ```
-
-  Этап 2: Развёртывание завершается с `2` доступными репликами; запросы потребителей выводят `north-40`.
 
   ```sh
   kubectl get deployment board
   kubectl rollout status deployment/board --timeout=3s
-  for pod in $(kubectl get pods -l app=board -o json | jq -r '.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")|.metadata.name'); do
-    kubectl exec "$pod" -c worker -- wget -qO- http://board:8080
-    printf "\n"
+  for pod in $(kubectl get pods -l app=board -o json | jq -r '.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running") | .metadata.name'); do
+    kubectl exec "$pod" -c worker -- wget -qO- -T 3 http://board:8080
+    printf '\n'
+    kubectl exec "$pod" -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/ready
+    printf '\n'
   done
   ```
-
-  Ожидаемые наблюдения для этапа целиком:
-  - Этап 2: Deployment и Service соответствуют требованиям; запросы потребителей выводят `north-40`.
-
 phrases.0: 'Я ограничил пачки обслуживания с помощью serial: 1.'
 phrases.1: Я проверил контракт обслуживания на каждом целевом узле.
 phrases.2: Я проверил готовые реплики и сохранённый Service при выкатке.
@@ -81,25 +66,40 @@ questions.1.points.0: Она ограничивает действия конт�
 questions.1.points.1: Отдельно измеряйте трафик и завершение процессов.
 questions.1.points.2: Укажите окно наблюдения и границы проверок.
 questions.1.prompt: Доказывает ли безопасная политика rollout отсутствие потерянных запросов?
-diagnostics.maintenance_1: На app1 /srv/site/maintenance.txt должен содержать north-40.
-diagnostics.maintenance_2: На app2 /srv/site/maintenance.txt должен содержать north-40.
-diagnostics.maintenance_3: На app3 /srv/site/maintenance.txt должен содержать north-40.
+diagnostics.maintenance_1: |-
+  На app1 /srv/site/maintenance.txt должен содержать north-40. Playbook мог не доставить файл на хост. Сопоставьте содержимое файла с результатом задачи. [Документация](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.maintenance_2: |-
+  На app2 /srv/site/maintenance.txt должен содержать north-40. Playbook мог не доставить файл на хост. Сопоставьте содержимое файла с результатом задачи. [Документация](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.maintenance_3: |-
+  На app3 /srv/site/maintenance.txt должен содержать north-40. Playbook мог не доставить файл на хост. Сопоставьте содержимое файла с результатом задачи. [Документация](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
 stages.0.objectives.0.text: 'Для обслуживания действует ограничение: не более одного хоста одновременно.'
-stages.0.objectives.1.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) `/srv/site/maintenance.txt` содержит
-  `north-40`.
+stages.0.objectives.1.text: |-
+  На `app1`, `app2` и `app3` файл `/srv/site/maintenance.txt` содержит `north-40`. HTTP-сервис каждого хоста на порту `8080` возвращает `north-40`.
 stages.1.objectives.0.text: Deployment `board` завершает развёртывание с `2` доступными репликами.
 stages.1.objectives.1.text: Service `board` предоставляет приложение на порту `8080`.
-stages.1.objectives.2.text: Каждый работающий Pod приложения получает `north-40` от `http://board:8080`.
-diagnostics.serial: Обслуживание должно ограничивать размер пакета одним хостом.
-diagnostics.strategy: Rolling update должен сохранять эффективный surge один и нулевую недоступность.
-diagnostics.available: Deployment board должен иметь две доступные реплики.
-diagnostics.service: Service board должен выбирать приложение и направлять TCP 8080 на его порт.
-diagnostics.http: Каждый работающий Pod приложения должен получать north-40 от board:8080.
-diagnostics.probe_0_0: 'Текущие данные не позволили проверить эту цель: Для обслуживания действует ограничение:
-  не более одного хоста одновременно.'
-diagnostics.probe_1_0: 'Текущие данные не позволили проверить эту цель: Deployment `board` завершает развёртывание
-  с `2` доступными репликами.'
-diagnostics.probe_1_1: 'Текущие данные не позволили проверить эту цель: Service `board` предоставляет приложение
-  на порту `8080`.'
-diagnostics.probe_1_2: 'Текущие данные не позволили проверить эту цель: Каждый работающий Pod приложения получает
-  `north-40` от `http://board:8080`.'
+stages.1.objectives.2.text: |-
+  Каждый работающий Pod приложения получает `north-40` с `http://board:8080`. HTTP-проверка готовности контейнера worker обращается к `/ready` на порту `8080`, и каждый worker возвращает там `ready`.
+diagnostics.serial: |-
+  Обслуживание должно ограничивать размер пакета одним хостом. В партии playbook может оказаться несколько хостов. Сопоставьте шаблон хостов и размер партии. [Документация](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_strategies.html#setting-the-batch-size-with-serial)
+diagnostics.strategy: |-
+  Rolling update должен сохранять эффективный surge один и нулевую недоступность. Стратегия Deployment и состояние rollout проверяются отдельно. Сопоставьте стратегию и доступные реплики. [Документация](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy)
+diagnostics.available: |-
+  Deployment board должен иметь две доступные реплики. Стратегия Deployment и состояние rollout проверяются отдельно. Сопоставьте стратегию и доступные реплики. [Документация](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#complete-deployment)
+diagnostics.service: |-
+  Service board должен выбирать приложение и направлять TCP 8080 на его порт. Selector или порты могут указывать на другой backend. Сопоставьте Service и шаблон Pod. [Документация](https://kubernetes.io/docs/concepts/services-networking/service/#defining-a-service)
+diagnostics.http: |-
+  Каждый работающий Pod приложения должен получать north-40 от board:8080. Pod может ещё отдавать предыдущий релиз. Проверьте прямой ответ и статус rollout. [Документация](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.probe_0_0: |-
+  Проверка не вернула диагностический результат. Проверьте нужный ресурс или файл отдельно. [Документация](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_strategies.html#setting-the-batch-size-with-serial)
+diagnostics.probe_1_0: |-
+  Проверка не вернула диагностический результат. Проверьте нужный ресурс или файл отдельно. [Документация](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#complete-deployment)
+diagnostics.probe_1_1: |-
+  Проверка не вернула диагностический результат. Проверьте нужный ресурс или файл отдельно. [Документация](https://kubernetes.io/docs/concepts/services-networking/service/#port-definitions)
+diagnostics.probe_1_2: |-
+  Проверка не вернула диагностический результат. Проверьте нужный ресурс или файл отдельно. [Документация](https://kubernetes.io/docs/concepts/workloads/pods/probes/#readiness-probe)
+diagnostics.fleet_http: |-
+  Процесс мог остаться на данных, загруженных при старте. Сопоставьте записанное сообщение и HTTP-ответ перед переходом к следующему хосту. [Документация](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.readiness_probe: |-
+  Шаблон Pod может проверять другой путь или порт. Сопоставьте проверку готовности и отдельный endpoint. [Документация](https://kubernetes.io/docs/concepts/workloads/pods/probes/#readiness-probe)
+diagnostics.readiness_endpoint: |-
+  Процесс может ещё не обслуживать endpoint готовности. Запросите его внутри этого Pod. [Документация](https://kubernetes.io/docs/concepts/workloads/pods/probes/#readiness-probe)

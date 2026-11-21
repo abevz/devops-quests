@@ -1,74 +1,60 @@
 title: Controlled maintenance
-brief: "A maintenance handover is incomplete across the managed hosts and the application.\n\nWork in `~/quest`\
-  \ on the workstation. Inputs by stage:\n- Stage 1: `inventory.ini`, `ansible.cfg`, `rollout.yml`.\n- Stage 2:\
-  \ `board.yaml`, `service.yaml`.\n\n**Requirements:**\n\n- Stage 1:\n  - Maintenance has a one-host-at-a-time safety\
-  \ limit.\n  - On every managed host (`app1`, `app2`, `app3`), `/srv/site/maintenance.txt` contains `north-40`.\n\
-  - Stage 2:\n  - Deployment `board` completes its rollout with `2` replicas available.\n  - Service `board` exposes\
-  \ the application on port `8080`.\n  - Every running application Pod receives `north-40` from `http://board:8080`.\n\
-  \nThe check inspects declared batch policy and current resources and responses; it does not prove execution order,\
-  \ Service identity retention or readiness-probe configuration. The one-host safety limit is checked from its declaration;\
-  \ execution order and uninterrupted availability are not traced."
-debrief: Serial target updates and readiness-gated rolling replacement provided distinct availability mechanisms.
+brief: |-
+  A maintenance handover is incomplete across the managed hosts and the application.
+
+  Work on the workstation in `~/quest`. Stage 1 uses `inventory.ini`, `ansible.cfg`, `rollout.yml` and `maintenance-interface.json`. Stage 2 uses `board.yaml` and `service.yaml`.
+
+  **Requirements:**
+
+  - Maintenance has a one-host-at-a-time safety limit.
+  - On `app1`, `app2` and `app3`, `/srv/site/maintenance.txt` contains `north-40` and each host’s HTTP service on port `8080` returns `north-40`.
+  - Deployment `board` completes its rollout with `2` replicas available.
+  - Service `board` exposes the application on port `8080`.
+  - Every running application Pod receives `north-40` from `http://board:8080`. The worker’s HTTP readiness probe checks `/ready` on port `8080`, and each worker returns `ready` there.
+debrief: |-
+  The batch limit constrains maintenance on the fleet. The readiness probe gates Pod traffic during rollout. Files, process responses and controller state provide different observations at completion.
 stages.0.brief: Declared maintenance batches must contain one host.
 stages.1.brief: Application availability and service routing must agree.
-hints.0.text: Separate the fleet contract from the application rollout.
-hints.1.text: 'serial and Deployment strategy control different systems. Use `serial: 1` for every maintenance play.
-
-
-  Inspect the maintenance definition, application events and Service description.
-
+hints.0.text: |-
+  Separate the maintenance file from the response of the running process. A rolling update admits Pods to traffic based on its readiness check.
+hints.1.text: |-
+  Compare the maintenance definition, the service interface and the actual responses in stage 1. In stage 2, compare the Pod template’s probe and the board Service.
 
   ```sh
-
-  cat rollout.yml
-
-  kubectl describe deployment board
-
-  kubectl describe service board
-
+  cat rollout.yml maintenance-interface.json
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/maintenance.txt'
+    curl -fsS --max-time 2 "http://$host:8080/"
+  done
   ```
 
-
-  Stage 2: Inspect these resource definitions for this stage.
-
-
   ```sh
-
   kubectl get deployment board -o yaml
-
-  kubectl get service board -o yaml
-
-  ```'
+  kubectl describe service board
+  ```
 hints.2.text: |-
-  Preserve readiness and selectors while changing the response.
-
-  Verify the relevant stage after repairing it.
-
-  Stage 1: The preview processes one host per batch, and each of `app1`, `app2`, `app3` shows `north-40`.
+  In stage 1, the maintenance file and the HTTP response both show `north-40` on all three hosts. In stage 2, verify two available replicas, the release response through the Service and each worker’s direct readiness response.
 
   ```sh
   ansible-playbook rollout.yml --check
   for n in 1 2 3; do
     host="app${n}-${DQ_NAMESPACE#dq-}"
-    printf "%s: " "$host"
     ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/maintenance.txt'
+    curl -fsS --max-time 2 "http://$host:8080/"
   done
   ```
-
-  Stage 2: The rollout completes with `2` replicas available; consumer requests print `north-40`.
 
   ```sh
   kubectl get deployment board
   kubectl rollout status deployment/board --timeout=3s
-  for pod in $(kubectl get pods -l app=board -o json | jq -r '.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")|.metadata.name'); do
-    kubectl exec "$pod" -c worker -- wget -qO- http://board:8080
-    printf "\n"
+  for pod in $(kubectl get pods -l app=board -o json | jq -r '.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running") | .metadata.name'); do
+    kubectl exec "$pod" -c worker -- wget -qO- -T 3 http://board:8080
+    printf '\n'
+    kubectl exec "$pod" -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/ready
+    printf '\n'
   done
   ```
-
-  Expected observations for the complete stage:
-  - Stage 2: The Deployment and Service match Requirements; consumer requests print `north-40`.
-
 phrases.0: I limited maintenance batches with serial one.
 phrases.1: I verified the maintenance contract on every target.
 phrases.2: I verified ready replicas and the retained Service during the rollout.
@@ -80,25 +66,40 @@ questions.1.points.0: It constrains controller actions, not every network event.
 questions.1.points.1: Measure traffic and termination separately.
 questions.1.points.2: State the actual observation window and probe limits.
 questions.1.prompt: Does a safe rollout policy prove zero lost requests?
-diagnostics.maintenance_1: On app1, /srv/site/maintenance.txt must equal north-40.
-diagnostics.maintenance_2: On app2, /srv/site/maintenance.txt must equal north-40.
-diagnostics.maintenance_3: On app3, /srv/site/maintenance.txt must equal north-40.
+diagnostics.maintenance_1: |-
+  On app1, /srv/site/maintenance.txt must equal north-40. The play may not have delivered the contract to the target. Compare the file and the corresponding task result. [Reference](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.maintenance_2: |-
+  On app2, /srv/site/maintenance.txt must equal north-40. The play may not have delivered the contract to the target. Compare the file and the corresponding task result. [Reference](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.maintenance_3: |-
+  On app3, /srv/site/maintenance.txt must equal north-40. The play may not have delivered the contract to the target. Compare the file and the corresponding task result. [Reference](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
 stages.0.objectives.0.text: Maintenance has a one-host-at-a-time safety limit.
-stages.0.objectives.1.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/maintenance.txt` contains
-  `north-40`.
+stages.0.objectives.1.text: |-
+  On `app1`, `app2` and `app3`, `/srv/site/maintenance.txt` contains `north-40` and each host’s HTTP service on port `8080` returns `north-40`.
 stages.1.objectives.0.text: Deployment `board` completes its rollout with `2` replicas available.
 stages.1.objectives.1.text: Service `board` exposes the application on port `8080`.
-stages.1.objectives.2.text: Every running application Pod receives `north-40` from `http://board:8080`.
-diagnostics.serial: Maintenance must have a one-host-at-a-time batch limit.
-diagnostics.strategy: The rolling update must preserve an effective surge of one and zero unavailability.
-diagnostics.available: Deployment board must have two available replicas.
-diagnostics.service: Service board must select the application and expose TCP 8080 at its application port.
-diagnostics.http: Every running application Pod must receive north-40 from board:8080.
-diagnostics.probe_0_0: 'The current inputs could not verify this objective: Maintenance has a one-host-at-a-time
-  safety limit.'
-diagnostics.probe_1_0: 'The current inputs could not verify this objective: Deployment `board` completes its rollout
-  with `2` replicas available.'
-diagnostics.probe_1_1: 'The current inputs could not verify this objective: Service `board` exposes the application
-  on port `8080`.'
-diagnostics.probe_1_2: 'The current inputs could not verify this objective: Every running application Pod receives
-  `north-40` from `http://board:8080`.'
+stages.1.objectives.2.text: |-
+  Every running application Pod receives `north-40` from `http://board:8080`. The worker’s HTTP readiness probe checks `/ready` on port `8080`, and each worker returns `ready` there.
+diagnostics.serial: |-
+  Maintenance must have a one-host-at-a-time batch limit. The play may cover more than one host per batch. Compare the host pattern and batch limit. [Reference](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_strategies.html#setting-the-batch-size-with-serial)
+diagnostics.strategy: |-
+  The rolling update must preserve an effective surge of one and zero unavailability. Deployment strategy and the current rollout are separate. Compare the strategy and available replicas. [Reference](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy)
+diagnostics.available: |-
+  Deployment board must have two available replicas. Deployment strategy and the current rollout are separate. Compare the strategy and available replicas. [Reference](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#complete-deployment)
+diagnostics.service: |-
+  Service board must select the application and expose TCP 8080 at its application port. The selector or port mapping may point to another backend. Compare the Service and the Pod template. [Reference](https://kubernetes.io/docs/concepts/services-networking/service/#defining-a-service)
+diagnostics.http: |-
+  Every running application Pod must receive north-40 from board:8080. A Pod may still serve the previous release. Check the direct responses and rollout status. [Reference](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.probe_0_0: |-
+  The probe returned no usable diagnostic. Check the referenced resource or file separately. [Reference](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_strategies.html#setting-the-batch-size-with-serial)
+diagnostics.probe_1_0: |-
+  The probe returned no usable diagnostic. Check the referenced resource or file separately. [Reference](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#complete-deployment)
+diagnostics.probe_1_1: |-
+  The probe returned no usable diagnostic. Check the referenced resource or file separately. [Reference](https://kubernetes.io/docs/concepts/services-networking/service/#port-definitions)
+diagnostics.probe_1_2: |-
+  The probe returned no usable diagnostic. Check the referenced resource or file separately. [Reference](https://kubernetes.io/docs/concepts/workloads/pods/probes/#readiness-probe)
+diagnostics.fleet_http: |-
+  The process may still use data loaded at startup. Compare the saved message and the HTTP response before moving to the next host. [Reference](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.readiness_probe: |-
+  The Pod template may check a different path or listener. Compare the readiness probe and the dedicated endpoint. [Reference](https://kubernetes.io/docs/concepts/workloads/pods/probes/#readiness-probe)
+diagnostics.readiness_endpoint: |-
+  The listening process may not serve the readiness endpoint yet. Request it on the affected Pod. [Reference](https://kubernetes.io/docs/concepts/workloads/pods/probes/#readiness-probe)

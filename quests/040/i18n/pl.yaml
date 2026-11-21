@@ -1,74 +1,60 @@
 title: Kontrolowana konserwacja
-brief: "Przekazanie konserwacyjne jest niekompletne na zarządzanych hostach i w aplikacji.\n\nPracuj w `~/quest`\
-  \ na stacji roboczej. Dane wejściowe według etapu:\n- Etap 1: `inventory.ini`, `ansible.cfg`, `rollout.yml`.\n\
-  - Etap 2: `board.yaml`, `service.yaml`.\n\n**Wymagania:**\n\n- Etap 1:\n  - Konserwacja ma limit bezpieczeństwa\
-  \ jednego hosta naraz.\n  - Na każdym zarządzanym hoście (`app1`, `app2`, `app3`) `/srv/site/maintenance.txt`\
-  \ zawiera `north-40`.\n- Etap 2:\n  - Deployment `board` kończy rollout z `2` dostępnymi replikami.\n  - Service\
-  \ `board` udostępnia aplikację na porcie `8080`.\n  - Każdy działający Pod aplikacji otrzymuje `north-40` z `http://board:8080`.\n\
-  \nKontrola sprawdza zadeklarowaną politykę partii, bieżące zasoby i odpowiedzi; nie dowodzi kolejności wykonania,\
-  \ zachowania tożsamości Service ani konfiguracji readiness-probe. Limit jednego hosta jest sprawdzany na podstawie\
-  \ deklaracji; kolejność wykonania i nieprzerwana dostępność nie są śledzone."
-debrief: Szeregowe aktualizacje celów i stopniowa wymiana bramkowana readiness zapewniły odrębne mechanizmy dostępności.
+brief: |-
+  Przekazanie konserwacyjne jest niekompletne na zarządzanych hostach i w aplikacji.
+
+  Pracuj na stacji roboczej w `~/quest`. Na etapie 1 użyj `inventory.ini`, `ansible.cfg`, `rollout.yml` i `maintenance-interface.json`. Na etapie 2 użyj `board.yaml` i `service.yaml`.
+
+  **Requirements:**
+
+  - Konserwacja ma limit bezpieczeństwa jednego hosta naraz.
+  - Na `app1`, `app2` i `app3` plik `/srv/site/maintenance.txt` zawiera `north-40`. Usługa HTTP każdego hosta na porcie `8080` zwraca `north-40`.
+  - Deployment `board` kończy rollout z `2` dostępnymi replikami.
+  - Service `board` udostępnia aplikację na porcie `8080`.
+  - Każdy działający Pod aplikacji otrzymuje `north-40` z `http://board:8080`. Sonda HTTP readiness kontenera worker sprawdza `/ready` na porcie `8080`, a każdy worker zwraca tam `ready`.
+debrief: |-
+  Rozmiar partii ogranicza konserwację floty. Sonda readiness steruje ruchem do Podów podczas rolloutu. Pliki, odpowiedzi i stan kontrolera dają różne obserwacje.
 stages.0.brief: Zadeklarowane partie konserwacyjne muszą zawierać po jednym hoście.
 stages.1.brief: Dostępność aplikacji i routing usługi muszą być zgodne.
-hints.0.text: Oddziel umowę flotową od aplikacji rollout.
-hints.1.text: 'Strategie serial i Deployment kontrolują różne systemy. Użyj `serial: 1` w każdym play konserwacyjnym.
-
-
-  Sprawdź definicję konserwacji, zdarzenia aplikacji i opis Service.
-
+hints.0.text: |-
+  Rozróżnij plik konserwacji i odpowiedź uruchomionego procesu. Podczas rolloutu sonda readiness steruje dopuszczaniem Podów do ruchu.
+hints.1.text: |-
+  Na etapie 1 porównaj konfigurację konserwacji, interfejs usługi i faktyczne odpowiedzi. Na etapie 2 porównaj sondę w szablonie Poda z Service board.
 
   ```sh
-
-  cat rollout.yml
-
-  kubectl describe deployment board
-
-  kubectl describe service board
-
+  cat rollout.yml maintenance-interface.json
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/maintenance.txt'
+    curl -fsS --max-time 2 "http://$host:8080/"
+  done
   ```
 
-
-  Etap 2: Sprawdź te definicje zasobów dla tego etapu.
-
-
   ```sh
-
   kubectl get deployment board -o yaml
-
-  kubectl get service board -o yaml
-
-  ```'
+  kubectl describe service board
+  ```
 hints.2.text: |-
-  Zachowaj readiness i selectors podczas zmiany odpowiedzi.
-
-  Sprawdź odpowiedni etap po naprawie.
-
-  Etap 1: Podgląd przetwarza jeden host na partię, a każdy z `app1`, `app2`, `app3` pokazuje `north-40`.
+  Na etapie 1 plik i odpowiedź HTTP pokazują `north-40` na wszystkich trzech hostach. Na etapie 2 sprawdź dwie dostępne repliki, odpowiedź przez Service i bezpośrednią odpowiedź readiness każdego kontenera worker.
 
   ```sh
   ansible-playbook rollout.yml --check
   for n in 1 2 3; do
     host="app${n}-${DQ_NAMESPACE#dq-}"
-    printf "%s: " "$host"
     ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/maintenance.txt'
+    curl -fsS --max-time 2 "http://$host:8080/"
   done
   ```
-
-  Etap 2: Rollout kończy się z `2` dostępnymi replikami; żądania konsumentów wypisują `north-40`.
 
   ```sh
   kubectl get deployment board
   kubectl rollout status deployment/board --timeout=3s
-  for pod in $(kubectl get pods -l app=board -o json | jq -r '.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")|.metadata.name'); do
-    kubectl exec "$pod" -c worker -- wget -qO- http://board:8080
-    printf "\n"
+  for pod in $(kubectl get pods -l app=board -o json | jq -r '.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running") | .metadata.name'); do
+    kubectl exec "$pod" -c worker -- wget -qO- -T 3 http://board:8080
+    printf '\n'
+    kubectl exec "$pod" -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/ready
+    printf '\n'
   done
   ```
-
-  Oczekiwane obserwacje dla całego etapu:
-  - Etap 2: Deployment i Service spełniają wymagania; żądania konsumentów wypisują `north-40`.
-
 phrases.0: Ograniczyłem partie konserwacyjne do partii seryjnej.
 phrases.1: Sprawdziłem umowę serwisową na każdym celu.
 phrases.2: W trakcie rolloutu zweryfikowałem gotowe repliki oraz zachowany Service.
@@ -80,25 +66,40 @@ questions.1.points.0: Ogranicza działania kontrolera, a nie każde zdarzenie si
 questions.1.points.1: Mierz osobno ruch i zakończenie.
 questions.1.points.2: Podaj rzeczywiste okno obserwacji i granice sondy.
 questions.1.prompt: Czy bezpieczna polisa rollout gwarantuje zero utraconych żądań?
-diagnostics.maintenance_1: Na app1 /srv/site/maintenance.txt musi zawierać north-40.
-diagnostics.maintenance_2: Na app2 /srv/site/maintenance.txt musi zawierać north-40.
-diagnostics.maintenance_3: Na app3 /srv/site/maintenance.txt musi zawierać north-40.
+diagnostics.maintenance_1: |-
+  Na app1 /srv/site/maintenance.txt musi zawierać north-40. Play mógł nie dostarczyć umowy do celu. Porównaj plik i wynik zadania. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.maintenance_2: |-
+  Na app2 /srv/site/maintenance.txt musi zawierać north-40. Play mógł nie dostarczyć umowy do celu. Porównaj plik i wynik zadania. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.maintenance_3: |-
+  Na app3 /srv/site/maintenance.txt musi zawierać north-40. Play mógł nie dostarczyć umowy do celu. Porównaj plik i wynik zadania. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
 stages.0.objectives.0.text: Konserwacja ma limit bezpieczeństwa jednego hosta naraz.
-stages.0.objectives.1.text: Na każdym zarządzanym hoście (`app1`, `app2`, `app3`) `/srv/site/maintenance.txt` zawiera
-  `north-40`.
+stages.0.objectives.1.text: |-
+  Na `app1`, `app2` i `app3` plik `/srv/site/maintenance.txt` zawiera `north-40`. Usługa HTTP każdego hosta na porcie `8080` zwraca `north-40`.
 stages.1.objectives.0.text: Deployment `board` kończy rollout z `2` dostępnymi replikami.
 stages.1.objectives.1.text: Service `board` udostępnia aplikację na porcie `8080`.
-stages.1.objectives.2.text: Każdy działający Pod aplikacji otrzymuje `north-40` z `http://board:8080`.
-diagnostics.serial: Konserwacja musi ograniczać partię do jednego hosta.
-diagnostics.strategy: Rolling update musi zachować efektywny surge jeden i zerową niedostępność.
-diagnostics.available: Deployment board musi mieć dwie dostępne repliki.
-diagnostics.service: Service board musi wybierać aplikację i kierować TCP 8080 na jej port.
-diagnostics.http: Każdy działający Pod aplikacji musi otrzymywać north-40 z board:8080.
-diagnostics.probe_0_0: 'Bieżące dane nie pozwalają potwierdzić tego celu: Konserwacja ma limit bezpieczeństwa jednego
-  hosta naraz.'
-diagnostics.probe_1_0: 'Bieżące dane nie pozwalają potwierdzić tego celu: Deployment `board` kończy rollout z `2`
-  dostępnymi replikami.'
-diagnostics.probe_1_1: 'Bieżące dane nie pozwalają potwierdzić tego celu: Service `board` udostępnia aplikację na
-  porcie `8080`.'
-diagnostics.probe_1_2: 'Bieżące dane nie pozwalają potwierdzić tego celu: Każdy działający Pod aplikacji otrzymuje
-  `north-40` z `http://board:8080`.'
+stages.1.objectives.2.text: |-
+  Każdy działający Pod aplikacji otrzymuje `north-40` z `http://board:8080`. Sonda HTTP readiness kontenera worker sprawdza `/ready` na porcie `8080`, a każdy worker zwraca tam `ready`.
+diagnostics.serial: |-
+  Konserwacja musi ograniczać partię do jednego hosta. Play może obejmować więcej niż jeden host w partii. Porównaj wzorzec hostów i limit partii. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_strategies.html#setting-the-batch-size-with-serial)
+diagnostics.strategy: |-
+  Rolling update musi zachować efektywny surge jeden i zerową niedostępność. Strategia i bieżący rollout opisują różne rzeczy. Porównaj strategię i dostępne repliki. [Dokumentacja](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy)
+diagnostics.available: |-
+  Deployment board musi mieć dwie dostępne repliki. Strategia i bieżący rollout opisują różne rzeczy. Porównaj strategię i dostępne repliki. [Dokumentacja](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#complete-deployment)
+diagnostics.service: |-
+  Service board musi wybierać aplikację i kierować TCP 8080 na jej port. Selektor albo mapowanie portów może wskazywać inny backend. Porównaj Service i szablon Poda. [Dokumentacja](https://kubernetes.io/docs/concepts/services-networking/service/#defining-a-service)
+diagnostics.http: |-
+  Każdy działający Pod aplikacji musi otrzymywać north-40 z board:8080. Pod może nadal udostępniać poprzednie wydanie. Sprawdź bezpośrednie odpowiedzi i stan rolloutu. [Dokumentacja](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.probe_0_0: |-
+  Sprawdzenie nie dało użytecznej diagnozy. Sprawdź zasób lub plik osobno. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_strategies.html#setting-the-batch-size-with-serial)
+diagnostics.probe_1_0: |-
+  Sprawdzenie nie dało użytecznej diagnozy. Sprawdź zasób lub plik osobno. [Dokumentacja](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#complete-deployment)
+diagnostics.probe_1_1: |-
+  Sprawdzenie nie dało użytecznej diagnozy. Sprawdź zasób lub plik osobno. [Dokumentacja](https://kubernetes.io/docs/concepts/services-networking/service/#port-definitions)
+diagnostics.probe_1_2: |-
+  Sprawdzenie nie dało użytecznej diagnozy. Sprawdź zasób lub plik osobno. [Dokumentacja](https://kubernetes.io/docs/concepts/workloads/pods/probes/#readiness-probe)
+diagnostics.fleet_http: |-
+  Proces może nadal używać danych wczytanych przy starcie. Porównaj zapisany komunikat z odpowiedzią HTTP przed następnym hostem. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.readiness_probe: |-
+  Szablon Poda może sprawdzać inną ścieżkę lub listener. Porównaj sondę readiness z dedykowanym endpointem. [Dokumentacja](https://kubernetes.io/docs/concepts/workloads/pods/probes/#readiness-probe)
+diagnostics.readiness_endpoint: |-
+  Proces może jeszcze nie udostępniać endpointu readiness. Wyślij żądanie w danym Podzie. [Dokumentacja](https://kubernetes.io/docs/concepts/workloads/pods/probes/#readiness-probe)

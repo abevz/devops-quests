@@ -42,7 +42,7 @@ def execute(monkeypatch, tmp_path, number, stage, index, documents):
             key = (argv[2], None if argv[3] == '-o' else argv[3])
         elif argv[:2] == ['kubectl', 'exec']:
             assert '-c' in argv and argv[argv.index('-c') + 1] == 'worker'
-            key = ('exec', argv[3])
+            key = ('exec_ready' if argv[-1] == 'http://127.0.0.1:8080/ready' else 'exec', argv[3])
         elif argv[:3] == ['tofu', 'show', '-json']:
             key = ('state', None)
         elif argv[:2] == ['ansible-inventory', '--list']:
@@ -483,9 +483,15 @@ def test_live_private_image_policy(monkeypatch, tmp_path, variant):
     assert (result == 0) is (variant in {'reference', 'observer-first'})
 
 
-@pytest.mark.parametrize('variant', ['reference', 'extra-unrelated-pod', 'wrong-worker-response', 'foreign-only', 'empty'])
+@pytest.mark.parametrize('variant', ['reference', 'extra-unrelated-pod', 'wrong-worker-response', 'foreign-only', 'empty',
+                                     'named-readiness-port', 'wrong-readiness-path', 'wrong-readiness-body'])
 def test_every_running_application_pod_nonvacuous(monkeypatch, tmp_path, variant):
     docs = private_documents()
+    worker = docs[('deployment', 'board')]['spec']['template']['spec']['containers'][0]
+    worker['readinessProbe'] = {'httpGet': {
+        'path': '/' if variant == 'wrong-readiness-path' else '/ready',
+        'port': 'http' if variant == 'named-readiness-port' else 8080,
+    }}
     if variant == 'extra-unrelated-pod':
         other = copy.deepcopy(docs[('pods', None)]['items'][0])
         other['metadata']['ownerReferences'][0]['uid'] = 'other'
@@ -495,8 +501,9 @@ def test_every_running_application_pod_nonvacuous(monkeypatch, tmp_path, variant
     elif variant == 'empty':
         docs[('pods', None)]['items'] = []
     docs[('exec', 'board-pod')] = b'retired\n' if variant == 'wrong-worker-response' else b'north-40\n'
+    docs[('exec_ready', 'board-pod')] = b'stale\n' if variant == 'wrong-readiness-body' else b'ready\n'
     result, _ = execute(monkeypatch, tmp_path, 40, 1, 2, docs)
-    assert (result == 0) is (variant in {'reference', 'extra-unrelated-pod'})
+    assert (result == 0) is (variant in {'reference', 'extra-unrelated-pod', 'named-readiness-port'})
 
 
 def shell_observation(tmp_path, code, app=None, expected='value', variant='reference', relay_response=None):

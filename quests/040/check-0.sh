@@ -83,6 +83,16 @@ failed=0
 if ! ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'set -eu; test "$(cat /srv/site/maintenance.txt)" = north-40'; then printf '%s\n' 'app1 /srv/site/maintenance.txt = north-40: ✗ [DQ:maintenance_1]' >&2; failed=1; fi
 if ! ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'set -eu; test "$(cat /srv/site/maintenance.txt)" = north-40'; then printf '%s\n' 'app2 /srv/site/maintenance.txt = north-40: ✗ [DQ:maintenance_2]' >&2; failed=1; fi
 if ! ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'set -eu; test "$(cat /srv/site/maintenance.txt)" = north-40'; then printf '%s\n' 'app3 /srv/site/maintenance.txt = north-40: ✗ [DQ:maintenance_3]' >&2; failed=1; fi
+failed_hosts=()
+for host in app1 app2 app3; do
+  if ! test "$(curl -fsS --max-time 2 "http://$host-${DQ_NAMESPACE#dq-}:8080/" 2>/dev/null)" = north-40; then
+    failed_hosts+=("$host")
+  fi
+done
+if (( ${#failed_hosts[@]} )); then
+  printf 'Maintenance HTTP response is stale or unavailable (%s): ✗ [DQ:fleet_http]\n' "${failed_hosts[*]}" >&2
+  failed=1
+fi
 exit "$failed"
 )
 [ $? -eq 0 ] || failed=1

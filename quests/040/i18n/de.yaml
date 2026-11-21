@@ -1,77 +1,60 @@
 title: Kontrollierte Wartung
-brief: "Eine Wartungsübergabe ist auf den verwalteten Hosts und in der Anwendung noch unvollständig.\n\nArbeiten\
-  \ Sie in `~/quest` auf der Workstation. Eingaben je Phase:\n- Phase 1: `inventory.ini`, `ansible.cfg`, `rollout.yml`.\n\
-  - Phase 2: `board.yaml`, `service.yaml`.\n\n**Anforderungen:**\n\n- Phase 1:\n  - Für die Wartung gilt eine Sicherheitsgrenze\
-  \ von jeweils einem Host.\n  - Auf jedem verwalteten Host (`app1`, `app2`, `app3`) enthält `/srv/site/maintenance.txt`\
-  \ den Wert `north-40`.\n- Phase 2:\n  - Deployment `board` schließt seinen Rollout mit `2` verfügbaren Replikaten\
-  \ ab.\n  - Service `board` stellt die Anwendung auf Port `8080` bereit.\n  - Jeder laufende Anwendungs-Pod erhält\
-  \ `north-40` von `http://board:8080`.\n\nDie Prüfung untersucht deklarierte Batch-Policy, aktuelle Ressourcen\
-  \ und Antworten; Ausführungsreihenfolge, Beibehaltung der Service-Identität und Readiness-Probe-Konfiguration\
-  \ werden nicht bewiesen. Die Ein-Host-Sicherheitsgrenze wird anhand ihrer Deklaration geprüft; Ausführungsreihenfolge\
-  \ und ununterbrochene Verfügbarkeit werden nicht verfolgt."
-debrief: Serielle Zielaktualisierungen und ein betriebsbereiter rollierender Austausch stellten unterschiedliche
-  Verfügbarkeitsmechanismen bereit.
+brief: |-
+  Eine Wartungsübergabe ist auf den verwalteten Hosts und in der Anwendung noch unvollständig.
+
+  Arbeiten Sie auf der Workstation in `~/quest`. Phase 1 verwendet `inventory.ini`, `ansible.cfg`, `rollout.yml` und `maintenance-interface.json`. Phase 2 verwendet `board.yaml` und `service.yaml`.
+
+  **Requirements:**
+
+  - Für die Wartung gilt eine Sicherheitsgrenze von jeweils einem Host.
+  - Auf `app1`, `app2` und `app3` enthält `/srv/site/maintenance.txt` den Wert `north-40`. Der HTTP-Dienst jedes Hosts liefert auf Port `8080` ebenfalls `north-40`.
+  - Deployment `board` schließt seinen Rollout mit `2` verfügbaren Replikaten ab.
+  - Service `board` stellt die Anwendung auf Port `8080` bereit.
+  - Jeder laufende Anwendungs-Pod erhält `north-40` von `http://board:8080`. Die HTTP-Readiness-Probe des Containers worker prüft `/ready` auf Port `8080`. Dort liefert jeder worker `ready`.
+debrief: |-
+  Die Batchgröße begrenzt die Wartung der Fleet. Die Readiness-Probe steuert den Pod-Verkehr beim Rollout. Dateien, Prozessantworten und Controller-Status liefern unterschiedliche Beobachtungen.
 stages.0.brief: Deklarierte Wartungsbatches müssen jeweils einen Host enthalten.
 stages.1.brief: Anwendungsverfügbarkeit und Service-Routing müssen zusammenpassen.
-hints.0.text: Trennen Sie den Flottenvertrag von der Anwendung rollout.
-hints.1.text: 'serial und Deployment strategy steuern unterschiedliche Systeme. Verwenden Sie `serial: 1` für jeden
-  Wartungs-Play.
-
-
-  Prüfen Sie Wartungsdefinition, Anwendungsereignisse und Service-Beschreibung.
-
+hints.0.text: |-
+  Betrachten Sie Wartungsdatei und Antwort des laufenden Prozesses getrennt. Beim Rollout lässt die Readiness-Prüfung Pods für den Verkehr zu.
+hints.1.text: |-
+  Vergleichen Sie in Phase 1 die Wartungsdefinition, die Dienstschnittstelle und die tatsächlichen Antworten. Vergleichen Sie in Phase 2 die Probe in der Pod-Vorlage mit dem Service board.
 
   ```sh
-
-  cat rollout.yml
-
-  kubectl describe deployment board
-
-  kubectl describe service board
-
+  cat rollout.yml maintenance-interface.json
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/maintenance.txt'
+    curl -fsS --max-time 2 "http://$host:8080/"
+  done
   ```
 
-
-  Phase 2: Prüfen Sie diese Ressourcendefinitionen für diese Phase.
-
-
   ```sh
-
   kubectl get deployment board -o yaml
-
-  kubectl get service board -o yaml
-
-  ```'
+  kubectl describe service board
+  ```
 hints.2.text: |-
-  Behalten Sie readiness und selectors beim Ändern der Reaktion bei.
-
-  Prüfen Sie die jeweilige Phase nach der Reparatur.
-
-  Phase 1: Die Vorschau bearbeitet einen Host je Batch und jeder von `app1`, `app2`, `app3` zeigt `north-40`.
+  In Phase 1 zeigen Wartungsdatei und HTTP-Antwort auf allen drei Hosts `north-40`. Prüfen Sie in Phase 2 zwei verfügbare Repliken, die Release-Antwort durch den Service und die direkte Readiness-Antwort jedes worker.
 
   ```sh
   ansible-playbook rollout.yml --check
   for n in 1 2 3; do
     host="app${n}-${DQ_NAMESPACE#dq-}"
-    printf "%s: " "$host"
     ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/maintenance.txt'
+    curl -fsS --max-time 2 "http://$host:8080/"
   done
   ```
-
-  Phase 2: Der Rollout wird mit `2` verfügbaren Replikaten abgeschlossen; Verbraucherabfragen geben `north-40` aus.
 
   ```sh
   kubectl get deployment board
   kubectl rollout status deployment/board --timeout=3s
-  for pod in $(kubectl get pods -l app=board -o json | jq -r '.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")|.metadata.name'); do
-    kubectl exec "$pod" -c worker -- wget -qO- http://board:8080
-    printf "\n"
+  for pod in $(kubectl get pods -l app=board -o json | jq -r '.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running") | .metadata.name'); do
+    kubectl exec "$pod" -c worker -- wget -qO- -T 3 http://board:8080
+    printf '\n'
+    kubectl exec "$pod" -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/ready
+    printf '\n'
   done
   ```
-
-  Erwartete Beobachtungen für die gesamte Phase:
-  - Phase 2: Deployment und Service erfüllen die Anforderungen; Verbraucherabfragen geben `north-40` aus.
-
 phrases.0: Ich habe die Wartungschargen mit serial eins begrenzt.
 phrases.1: Ich habe den Wartungsvertrag für jedes Ziel überprüft.
 phrases.2: Ich habe während des Rollouts fertige Replikate und das beibehaltene Service überprüft.
@@ -83,25 +66,40 @@ questions.1.points.0: Es schränkt die Aktionen des Controllers ein, nicht jedes
 questions.1.points.1: Messen Sie Verkehr und Terminierung separat.
 questions.1.points.2: Geben Sie das tatsächliche Beobachtungsfenster und die Sondengrenzen an.
 questions.1.prompt: Beweist eine sichere rollout-Richtlinie, dass keine Anfragen verloren gehen?
-diagnostics.maintenance_1: Auf app1 muss /srv/site/maintenance.txt north-40 enthalten.
-diagnostics.maintenance_2: Auf app2 muss /srv/site/maintenance.txt north-40 enthalten.
-diagnostics.maintenance_3: Auf app3 muss /srv/site/maintenance.txt north-40 enthalten.
+diagnostics.maintenance_1: |-
+  Auf app1 muss /srv/site/maintenance.txt north-40 enthalten. Das Play hat den Vertrag möglicherweise nicht ausgeliefert. Vergleichen Sie Datei und Ergebnis der Aufgabe. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.maintenance_2: |-
+  Auf app2 muss /srv/site/maintenance.txt north-40 enthalten. Das Play hat den Vertrag möglicherweise nicht ausgeliefert. Vergleichen Sie Datei und Ergebnis der Aufgabe. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.maintenance_3: |-
+  Auf app3 muss /srv/site/maintenance.txt north-40 enthalten. Das Play hat den Vertrag möglicherweise nicht ausgeliefert. Vergleichen Sie Datei und Ergebnis der Aufgabe. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
 stages.0.objectives.0.text: Für die Wartung gilt eine Sicherheitsgrenze von jeweils einem Host.
-stages.0.objectives.1.text: Auf jedem verwalteten Host (`app1`, `app2`, `app3`) enthält `/srv/site/maintenance.txt`
-  den Wert `north-40`.
+stages.0.objectives.1.text: |-
+  Auf `app1`, `app2` und `app3` enthält `/srv/site/maintenance.txt` den Wert `north-40`. Der HTTP-Dienst jedes Hosts liefert auf Port `8080` ebenfalls `north-40`.
 stages.1.objectives.0.text: Deployment `board` schließt seinen Rollout mit `2` verfügbaren Replikaten ab.
 stages.1.objectives.1.text: Service `board` stellt die Anwendung auf Port `8080` bereit.
-stages.1.objectives.2.text: Jeder laufende Anwendungs-Pod erhält `north-40` von `http://board:8080`.
-diagnostics.serial: Die Wartung muss die Batchgröße auf einen Host begrenzen.
-diagnostics.strategy: Das Rolling Update muss effektiv surge eins und keine Nichtverfügbarkeit beibehalten.
-diagnostics.available: Deployment board muss zwei verfügbare Replikas haben.
-diagnostics.service: Service board muss die Anwendung auswählen und TCP 8080 an ihren Port weiterleiten.
-diagnostics.http: Jeder laufende Anwendungs-Pod muss north-40 von board:8080 erhalten.
-diagnostics.probe_0_0: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: Für die Wartung gilt
-  eine Sicherheitsgrenze von jeweils einem Host.'
-diagnostics.probe_1_0: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: Deployment `board` schließt
-  seinen Rollout mit `2` verfügbaren Replikaten ab.'
-diagnostics.probe_1_1: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: Service `board` stellt
-  die Anwendung auf Port `8080` bereit.'
-diagnostics.probe_1_2: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: Jeder laufende Anwendungs-Pod
-  erhält `north-40` von `http://board:8080`.'
+stages.1.objectives.2.text: |-
+  Jeder laufende Anwendungs-Pod erhält `north-40` von `http://board:8080`. Die HTTP-Readiness-Probe des Containers worker prüft `/ready` auf Port `8080`. Dort liefert jeder worker `ready`.
+diagnostics.serial: |-
+  Die Wartung muss die Batchgröße auf einen Host begrenzen. Das Play kann mehrere Hosts pro Batch umfassen. Vergleichen Sie Hostmuster und Batchgrenze. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_strategies.html#setting-the-batch-size-with-serial)
+diagnostics.strategy: |-
+  Das Rolling Update muss effektiv surge eins und keine Nichtverfügbarkeit beibehalten. Deployment-Strategie und laufender Rollout sind getrennt. Vergleichen Sie Strategie und verfügbare Repliken. [Dokumentation](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy)
+diagnostics.available: |-
+  Deployment board muss zwei verfügbare Replikas haben. Deployment-Strategie und laufender Rollout sind getrennt. Vergleichen Sie Strategie und verfügbare Repliken. [Dokumentation](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#complete-deployment)
+diagnostics.service: |-
+  Service board muss die Anwendung auswählen und TCP 8080 an ihren Port weiterleiten. Selector oder Portzuordnung kann auf ein anderes Backend zeigen. Vergleichen Sie Service und Pod-Vorlage. [Dokumentation](https://kubernetes.io/docs/concepts/services-networking/service/#defining-a-service)
+diagnostics.http: |-
+  Jeder laufende Anwendungs-Pod muss north-40 von board:8080 erhalten. Ein Pod kann noch das vorherige Release ausliefern. Prüfen Sie direkte Antworten und Rollout-Status. [Dokumentation](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.probe_0_0: |-
+  Die Prüfung lieferte keine verwertbare Diagnose. Prüfen Sie Ressource oder Datei separat. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_strategies.html#setting-the-batch-size-with-serial)
+diagnostics.probe_1_0: |-
+  Die Prüfung lieferte keine verwertbare Diagnose. Prüfen Sie Ressource oder Datei separat. [Dokumentation](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#complete-deployment)
+diagnostics.probe_1_1: |-
+  Die Prüfung lieferte keine verwertbare Diagnose. Prüfen Sie Ressource oder Datei separat. [Dokumentation](https://kubernetes.io/docs/concepts/services-networking/service/#port-definitions)
+diagnostics.probe_1_2: |-
+  Die Prüfung lieferte keine verwertbare Diagnose. Prüfen Sie Ressource oder Datei separat. [Dokumentation](https://kubernetes.io/docs/concepts/workloads/pods/probes/#readiness-probe)
+diagnostics.fleet_http: |-
+  Der Prozess kann noch beim Start geladene Daten verwenden. Vergleichen Sie gespeicherte Meldung und HTTP-Antwort vor dem nächsten Host. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.readiness_probe: |-
+  Die Pod-Vorlage kann einen anderen Pfad oder Listener prüfen. Vergleichen Sie Readiness-Probe und eigenen Endpunkt. [Dokumentation](https://kubernetes.io/docs/concepts/workloads/pods/probes/#readiness-probe)
+diagnostics.readiness_endpoint: |-
+  Der Prozess stellt den Readiness-Endpunkt möglicherweise noch nicht bereit. Rufen Sie ihn im betroffenen Pod ab. [Dokumentation](https://kubernetes.io/docs/concepts/workloads/pods/probes/#readiness-probe)
