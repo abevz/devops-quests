@@ -10,6 +10,16 @@ failed=0
 if ! ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = release-60 && test "$(stat -c %a /srv/site/message)" = 644'; then printf '%s\n' 'app1 file release-60: ✗ [DQ:file_1]' >&2; failed=1; fi
 if ! ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = release-60 && test "$(stat -c %a /srv/site/message)" = 644'; then printf '%s\n' 'app2 file release-60: ✗ [DQ:file_2]' >&2; failed=1; fi
 if ! ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = release-60 && test "$(stat -c %a /srv/site/message)" = 644'; then printf '%s\n' 'app3 file release-60: ✗ [DQ:file_3]' >&2; failed=1; fi
+expected_identity=$(cat /run/dq/facts/0/healthy-service 2>/dev/null || true)
+identity=$(timeout 4s ssh -n -o BatchMode=yes -p 2222 "root@app3-${DQ_NAMESPACE#dq-}" 'set -eu
+pid=$(cat /run/quest-service.pid)
+case "$pid" in ""|*[!0-9]*) exit 1 ;; esac
+start=$(cut -d " " -f 22 "/proc/$pid/stat")
+test -n "$start" && printf "%s:%s\n" "$pid" "$start"' 2>/dev/null || true)
+if ! test -n "$expected_identity" || ! test "$identity" = "$expected_identity"; then
+  printf '%s\n' 'The already healthy service lost its process identity: ✗ [DQ:healthy_service]' >&2
+  failed=1
+fi
 exit "$failed"
 )
 [ $? -eq 0 ] || failed=1

@@ -14,6 +14,16 @@ stages:
       if ! ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = release-60 && test "$(stat -c %a /srv/site/message)" = 644'; then printf '%s\n' 'app1 file release-60: ✗ [DQ:file_1]' >&2; failed=1; fi
       if ! ssh -n -o BatchMode=yes -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = release-60 && test "$(stat -c %a /srv/site/message)" = 644'; then printf '%s\n' 'app2 file release-60: ✗ [DQ:file_2]' >&2; failed=1; fi
       if ! ssh -n -o BatchMode=yes -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" 'test "$(cat /srv/site/message)" = release-60 && test "$(stat -c %a /srv/site/message)" = 644'; then printf '%s\n' 'app3 file release-60: ✗ [DQ:file_3]' >&2; failed=1; fi
+      expected_identity=$(cat /run/dq/facts/0/healthy-service 2>/dev/null || true)
+      identity=$(timeout 4s ssh -n -o BatchMode=yes -p 2222 "root@app3-${DQ_NAMESPACE#dq-}" 'set -eu
+      pid=$(cat /run/quest-service.pid)
+      case "$pid" in ""|*[!0-9]*) exit 1 ;; esac
+      start=$(cut -d " " -f 22 "/proc/$pid/stat")
+      test -n "$start" && printf "%s:%s\n" "$pid" "$start"' 2>/dev/null || true)
+      if ! test -n "$expected_identity" || ! test "$identity" = "$expected_identity"; then
+        printf '%s\n' 'The already healthy service lost its process identity: ✗ [DQ:healthy_service]' >&2
+        failed=1
+      fi
       exit "$failed"
   - text: stages.0.objectives.1.text
     check: |-
@@ -28,13 +38,32 @@ stages:
   objectives:
   - text: stages.1.objectives.0.text
     check: |-
+      if ! bash -euo pipefail <<'DQ_LEGACY'
       kubectl rollout status deployment/relay --timeout=3s >/dev/null
       test "$(kubectl exec deployment/relay -c worker -- printenv RELEASE)" = release-60
+      DQ_LEGACY
+      then
+        printf '%s\n' 'The relay rollout or running release is incomplete: ✗ [DQ:relay_release]'
+        exit 1
+      fi
+      expected=$(cat /run/dq/facts/1/fleet-release.txt 2>/dev/null || true)
+      uid=$(cat /run/dq/facts/1/release-config-uid 2>/dev/null || true)
+      publication=$(kubectl --request-timeout=3s get configmap relay-release -o json 2>/dev/null || true)
+      deployment=$(kubectl --request-timeout=3s get deployment relay -o json 2>/dev/null || true)
+      if ! test "$expected" = release-60 || ! test -n "$uid" ||
+         ! jq -e --arg uid "$uid" --arg revision "$expected" '.metadata.uid == $uid and .data.revision == $revision' <<<"$publication" >/dev/null 2>&1 ||
+         ! jq -e '[
+             .spec.template.spec.containers[]? | select(.name=="worker") | .env[]? | select(.name=="RELEASE")
+           ] | length == 1 and .[0].valueFrom.configMapKeyRef.name == "relay-release" and
+             .[0].valueFrom.configMapKeyRef.key == "revision" and (.[0].value // "") == ""' <<<"$deployment" >/dev/null 2>&1; then
+        printf '%s\n' 'The relay release is not bound to the original fleet publication: ✗ [DQ:release_source]'
+        exit 1
+      fi
 hints:
 - text: hints.0.text
   guide: ansible-10
 - text: hints.1.text
-  guide: ansible-10
+  guide: kubernetes-12
 - text: hints.2.text
   guide: kubernetes-12
 debrief: debrief
@@ -53,5 +82,14 @@ facts:
   - inventory.ini
   - ansible.cfg
   - rollout.yml
+  - service-interface.json
   - deployment.yaml
+  - release-config.yaml
+  - fleet-release.txt
   services: []
+immutable:
+  0:
+  - healthy-service
+  1:
+  - fleet-release.txt
+  - release-config-uid

@@ -42,6 +42,28 @@ if test -n "$retiring"; then
 fi
 kubectl wait --for='jsonpath={.status.availableReplicas}=2' deployment/board --timeout=45s
 """,
+    # Copy and reload-on-change from the source at ba6d23b.
+    (60, 0): """cat > rollout.yml <<'DQ_ASSET'
+- name: SignalRail rollout
+  hosts: fleet
+  gather_facts: false
+  handlers:
+  - name: Reload banner
+    ansible.builtin.command: dq-service reload
+  tasks:
+  - name: Deliver the route message
+    ansible.builtin.copy:
+      dest: /srv/site/message
+      content: |
+        release-60
+      mode: '0644'
+    notify: Reload banner
+DQ_ASSET
+ansible-playbook rollout.yml
+""",
+    (60, 1): """kubectl set env deployment/relay RELEASE=release-60
+kubectl rollout status deployment/relay --timeout=90s
+""",
     (85, 0): """kubectl patch pdb relay --type=merge -p '{"spec":{"minAvailable":1}}'
 sleep 3
 """,
@@ -141,6 +163,8 @@ def test_old_minimal_fix_does_not_complete(number, stage):
         log["old_source"] = "b235ecb"
     if number == 40:
         log["old_source"] = "ec6cef5"
+    if number == 60:
+        log["old_source"] = "ba6d23b"
     stop = threading.Event()
     errors = []
     thread = None
@@ -213,6 +237,32 @@ test "$(kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://127.0.0
                     check=False, timeout=10,
                 )
                 assert missing.returncode != 0
+            log["old_repair_converged_with_failure"] = marker
+            log["old_repair_diagnostics"] = failures
+        if number == 60:
+            assert old.returncode == 0, old.stdout + old.stderr
+            marker = "http_2" if stage == 0 else "release_source"
+            detail = after.stdout + after.stderr
+            failures = [line for line in detail.splitlines() if "[DQ:" in line]
+            assert len(failures) == 1 and f"[DQ:{marker}]" in failures[0], detail
+            if stage == 0:
+                runtime.exec(run, "set -euo pipefail\ncd ~/quest\n" + r"""
+for host in app2 app3; do
+    peer="$host-${DQ_NAMESPACE#dq-}"
+    ssh -n -o BatchMode=yes -p 2222 "root@$peer" 'dq-service reload'
+    deadline=$((SECONDS+10))
+    until test "$(curl -fsS --max-time 2 "http://$peer:8080/" 2>/dev/null)" = release-60; do
+        [ "$SECONDS" -lt "$deadline" ] || exit 1
+        sleep 0.2
+    done
+done
+""", timeout=25)
+                restarted = runtime.exec(run, check, check=False, timeout=25)
+                assert restarted.returncode != 0 and "[DQ:healthy_service]" in restarted.stderr
+            else:
+                runtime.exec(run, """kubectl patch configmap relay-release --type=merge -p '{"data":{"revision":"release-60"}}'""")
+                bypass = runtime.exec(run, check, check=False, timeout=25)
+                assert bypass.returncode != 0 and "[DQ:release_source]" in bypass.stdout
             log["old_repair_converged_with_failure"] = marker
             log["old_repair_diagnostics"] = failures
         if number == 77:

@@ -1,64 +1,80 @@
 title: Инцидент fleet
-brief: "Парк хостов и его потребитель Kubernetes ещё не согласованы по требуемому релизу.\n\nРаботайте в `~/quest`\
-  \ на рабочей станции. Входные файлы по этапам:\n- Этап 1: `inventory.ini`, `ansible.cfg`, `rollout.yml`.\n- Этап\
-  \ 2: `deployment.yaml`.\n\n**Требования:**\n\n- Этап 1:\n  - На каждом управляемом хосте (`app1`, `app2`, `app3`)\
-  \ `/srv/site/message` содержит `release-60` и имеет режим `0644`.\n  - С рабочей станции каждый из хостов `app1`,\
-  \ `app2` и `app3` возвращает `release-60` по HTTP на порту `8080`.\n- Этап 2:\n  - Deployment `relay` завершает\
-  \ развёртывание, его работающий процесс настроен на `release-60`.\n\nHTTP проверяется на управляемых хостах; потребитель\
-  \ Kubernetes проверяется по развёртыванию и окружению процесса. Эти наблюдения не доказывают использованные команды."
+brief: |-
+  Парк хостов и его потребитель Kubernetes ещё не согласованы по требуемому релизу.
+
+  Работайте на рабочей станции в `~/quest`. На первом этапе используйте `inventory.ini`, `ansible.cfg`, `rollout.yml` и `service-interface.json`. На втором используйте `deployment.yaml`, `release-config.yaml` и `fleet-release.txt`.
+
+  **Requirements:**
+
+  - На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/message` содержит `release-60` с правами `0644`. Сохраните процесс, который уже обслуживает нужный релиз.
+  - С рабочей станции каждый из хостов `app1`, `app2` и `app3` возвращает `release-60` по HTTP на порту `8080`.
+  - Deployment `relay` завершает rollout. Контейнер worker получает `release-60` в `RELEASE` из выданного ключа существующей ConfigMap. Сохраните идентичность ConfigMap и опубликуйте в ней ревизию, записанную в `fleet-release.txt`.
+
+  Проверка опирается на текущие файлы, HTTP-ответы и зафиксированные идентичности. Команды для достижения результата выберите сами.
 stages.0.brief: Парк хостов должен выдавать один согласованный релиз.
 stages.1.brief: Работающий потребитель должен отражать тот же релиз.
-hints.0.text: Восстановите работающий fleet до изменения reader.
-hints.1.text: 'Файл и cache сервиса должны совпадать с нужным релизом.
-
-
-  Сравните описание доставки с работающим потребителем.
-
+hints.0.text: |-
+  Восстанавливайте файл и процесс по отдельности. Зафиксируйте здоровый процесс перед решением о перезагрузке сервиса.
+hints.1.text: |-
+  На первом этапе сравните файл, права и HTTP-ответы по каждому хосту. На втором сопоставьте записанную ревизию, текущую ConfigMap и источник переменной окружения Deployment.
 
   ```sh
+  cat rollout.yml service-interface.json
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message; cat /run/quest-service.pid'
+    curl -fsS --max-time 3 "http://$host:8080/"
+  done
+  ```
 
-  cat rollout.yml
-
-  kubectl describe deployment relay
-
-  ```'
+  ```sh
+  cat release-config.yaml fleet-release.txt
+  kubectl get deployment relay -o yaml
+  kubectl get configmap -o yaml
+  ```
 hints.2.text: |-
-  Используйте reload handler, затем исправьте RELEASE у Kubernetes reader и проверьте readiness.
-
-  Проверьте соответствующий этап после исправления.
-
-  Этап 1: Каждый управляемый хост показывает `release-60`, режим файла `644` и HTTP `release-60` на порту `8080`.
+  На первом этапе все файлы содержат `release-60` с правами `644`, HTTP-ответы совпадают, а исходно здоровый процесс сохранён. На втором rollout завершён и worker получает `release-60` из исходной ConfigMap.
 
   ```sh
   for n in 1 2 3; do
     host="app${n}-${DQ_NAMESPACE#dq-}"
-    printf "%s: " "$host"
-    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message'
-    curl -fsS --max-time 3 "http://$host:8080"
-    printf "\n"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message; cat /run/quest-service.pid'
+    curl -fsS --max-time 3 "http://$host:8080/"
   done
   ```
 
-  Этап 2: Развёртывание завершено, работающий процесс выводит `release-60`.
-
   ```sh
+  kubectl get configmap relay-release -o yaml
+  kubectl get deployment relay -o yaml
   kubectl rollout status deployment/relay --timeout=3s
   kubectl exec deployment/relay -c worker -- printenv RELEASE
   ```
-
-debrief: Fleet обслуживал старый релиз, reader не проходил readiness. Вы восстановили banner до исправления Kubernetes
-  reader.
+debrief: |-
+  Handler копирования реагирует на изменение файла. При уже правильном файле процесс может остаться на старых данных. Ответы fleet фиксируют ревизию для отдельной публикации и потребителя Kubernetes.
 phrases.0: Я проверил фактическое состояние до изменения.
 phrases.1: Я нашёл причину и менял по одному параметру.
 phrases.2: После изменения я проверил состояние workload и его готовность.
-diagnostics.file_1: На app1 /srv/site/message должен содержать release-60 и иметь режим 0644.
-diagnostics.file_2: На app2 /srv/site/message должен содержать release-60 и иметь режим 0644.
-diagnostics.file_3: На app3 /srv/site/message должен содержать release-60 и иметь режим 0644.
-diagnostics.http_1: HTTP на app1:8080 должен возвращать release-60.
-diagnostics.http_2: HTTP на app2:8080 должен возвращать release-60.
-diagnostics.http_3: HTTP на app3:8080 должен возвращать release-60.
-stages.0.objectives.0.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) `/srv/site/message` содержит `release-60`
-  и имеет режим `0644`.
+diagnostics.file_1: |-
+  На app1 /srv/site/message должен содержать release-60 и иметь режим 0644. Playbook мог не доставить содержимое или режим доступа на этот хост. Сопоставьте результат задачи и файл. [Документация](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.file_2: |-
+  На app2 /srv/site/message должен содержать release-60 и иметь режим 0644. Playbook мог не доставить содержимое или режим доступа на этот хост. Сопоставьте результат задачи и файл. [Документация](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.file_3: |-
+  На app3 /srv/site/message должен содержать release-60 и иметь режим 0644. Playbook мог не доставить содержимое или режим доступа на этот хост. Сопоставьте результат задачи и файл. [Документация](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.http_1: |-
+  HTTP на app1:8080 должен возвращать release-60. Файл может быть правильным, а процесс всё ещё отдавать старые данные. Сопоставьте HTTP-ответ и сообщение на диске. [Документация](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.http_2: |-
+  HTTP на app2:8080 должен возвращать release-60. Файл может быть правильным, а процесс всё ещё отдавать старые данные. Сопоставьте HTTP-ответ и сообщение на диске. [Документация](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.http_3: |-
+  HTTP на app3:8080 должен возвращать release-60. Файл может быть правильным, а процесс всё ещё отдавать старые данные. Сопоставьте HTTP-ответ и сообщение на диске. [Документация](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+stages.0.objectives.0.text: |-
+  На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/message` содержит `release-60` с правами `0644`. Сохраните процесс, который уже обслуживает нужный релиз.
 stages.0.objectives.1.text: С рабочей станции каждый из хостов `app1`, `app2` и `app3` возвращает `release-60` по
   HTTP на порту `8080`.
-stages.1.objectives.0.text: Deployment `relay` завершает развёртывание, его работающий процесс настроен на `release-60`.
+stages.1.objectives.0.text: |-
+  Deployment `relay` завершает rollout. Контейнер worker получает `release-60` в `RELEASE` из выданного ключа существующей ConfigMap. Сохраните идентичность ConfigMap и опубликуйте в ней ревизию, записанную в `fleet-release.txt`.
+diagnostics.healthy_service: |-
+  Не удалось подтвердить идентичность исходно здорового процесса. Массовая перезагрузка может заменить процесс, который уже работал на нужном релизе. [Документация](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.relay_release: |-
+  Rollout не завершён или процесс получил другое значение. Сопоставьте шаблон Pod и работающий контейнер. [Документация](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.release_source: |-
+  Публикация может отсутствовать, устареть, быть заменена или не использоваться. Сопоставьте ConfigMap и источник релиза со снимком fleet. [Документация](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/#define-a-container-environment-variable-with-data-from-a-single-configmap)
