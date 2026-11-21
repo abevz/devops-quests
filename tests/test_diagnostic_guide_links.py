@@ -19,7 +19,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11))
+@pytest.mark.parametrize("quest", range(1, 15))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
