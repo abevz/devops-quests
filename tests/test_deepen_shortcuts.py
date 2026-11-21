@@ -22,6 +22,11 @@ pytestmark = pytest.mark.skipif(
 )
 
 OLD_FIXES = {
+    # Frozen at b235ecb. The reference applied the supplied configuration as-is.
+    (30, 0): 'tofu apply -auto-approve -input=false -no-color\n',
+    (30, 1): '''kubectl set env deployment/relay RELEASE=release-30
+kubectl rollout status deployment/relay --timeout=90s
+''',
     (85, 0): """kubectl patch pdb relay --type=merge -p '{"spec":{"minAvailable":1}}'
 sleep 3
 """,
@@ -117,6 +122,8 @@ def test_old_minimal_fix_does_not_complete(number, stage):
     folder = Path(os.environ.get("DQ_DEEPEN_EVIDENCE", ROOT / "artifacts/deepen-shortcuts"))
     folder.mkdir(parents=True, exist_ok=True)
     log = {"quest": number, "stage": stage, "old_source": "5d34145" if number in {66, 75, 78} else "ae87ab3"}
+    if number == 30:
+        log["old_source"] = "b235ecb"
     stop = threading.Event()
     errors = []
     thread = None
@@ -131,7 +138,11 @@ def test_old_minimal_fix_does_not_complete(number, stage):
     try:
         runtime.create(run)
         for current in range(stage + 1):
-            runtime.exec(run, catalog.script(number, current, "setup"), timeout=240)
+            setup = catalog.script(number, current, "setup")
+            if number == 30:
+                # Engine runs stage setup from the quest directory.
+                setup = "set -euo pipefail\ncd ~/quest\n" + setup
+            runtime.exec(run, setup, timeout=240)
             facts = catalog.quests[number].get("immutable", {}).get(current, [])
             if facts:
                 runtime.capture_facts(dict(run, stage=current), facts)
@@ -164,6 +175,15 @@ def test_old_minimal_fix_does_not_complete(number, stage):
             wait_for_old_gitops_effect(runtime, run, number)
         after = runtime.exec(run, check, check=False, timeout=60)
         assert after.returncode != 0, "Old minimal repair completed the deepened quest"
+        if number == 30:
+            assert old.returncode == 0, old.stdout + old.stderr
+            marker = "release_content" if stage == 0 else "service_http"
+            assert len(after.stdout.splitlines()) == 1 and f"[DQ:{marker}]" in after.stdout
+            if stage == 1:
+                runtime.exec(run, """
+test "$(kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/)" = signalrail
+""", timeout=15)
+            log["old_repair_converged_with_failure"] = marker
         if number == 77:
             healthy = runtime.exec(run, "kubectl get pdb board-budget -o jsonpath='{.status.currentHealthy}'").stdout
             assert healthy == "1", "Readiness fault must still be independently observable"

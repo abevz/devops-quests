@@ -499,7 +499,7 @@ def test_every_running_application_pod_nonvacuous(monkeypatch, tmp_path, variant
     assert (result == 0) is (variant in {'reference', 'extra-unrelated-pod'})
 
 
-def shell_observation(tmp_path, code, app=None, expected='value', variant='reference'):
+def shell_observation(tmp_path, code, app=None, expected='value', variant='reference', relay_response=None):
     home = tmp_path / 'home'
     workspace = home / 'quest'
     binaries = tmp_path / 'bin'
@@ -512,7 +512,7 @@ def shell_observation(tmp_path, code, app=None, expected='value', variant='refer
     (facts / 'gateway-target.json').write_text(json.dumps({'url': 'http://private-gateway:8000'}))
     (workspace / 'release-commit').write_text('abc')
     (workspace / 'platform.env').write_text('export GIT_URL=https://git.invalid/station\n')
-    settings = {'app': app or {}, 'expected': expected, 'variant': variant}
+    settings = {'app': app or {}, 'expected': expected, 'variant': variant, 'relay_response': relay_response}
     config = tmp_path / 'config.json'
     config.write_text(json.dumps(settings))
     kubectl = binaries / 'kubectl'
@@ -529,6 +529,9 @@ if any('wrong.station.internal' in x or 'closed.station.internal' in x or x=='ht
 if 'nslookup' in a:
  if not good:sys.exit(1)
  print('Name: station.internal\\nAddress: 10.0.0.9');sys.exit(0)
+if 'http://relay:8080/' in a:
+ if not good or p['relay_response'] is None:sys.exit(1)
+ print(p['relay_response']);sys.exit(0)
 print(p['expected'] if good else 'retired')
 ''')
     kubectl.chmod(0o755)
@@ -572,8 +575,19 @@ def test_local_destination_identity_shell(tmp_path, destination, good):
 ])
 @pytest.mark.parametrize('variant', ['reference', 'observer-first', 'wrong'])
 def test_consumer_exec_selects_worker(tmp_path, number, stage, index, value, variant):
-    result = shell_observation(tmp_path, goal(number, stage, index), expected=value, variant=variant)
+    result = shell_observation(
+        tmp_path, goal(number, stage, index), expected=value, variant=variant,
+        relay_response='signalrail' if number == 30 else None,
+    )
     assert (result.returncode == 0) is (variant != 'wrong'), result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('response', [None, 'retired', 'signalrail'])
+def test_030_ready_worker_still_requires_the_service_response(tmp_path, response):
+    result = shell_observation(tmp_path, goal(30, 1, 0), expected='release-30', relay_response=response)
+    assert (result.returncode == 0) is (response == 'signalrail')
+    if result.returncode:
+        assert '[DQ:service_http]' in result.stdout
 
 
 @pytest.mark.parametrize('variant', ['reference', 'json', 'runner', 'changed', 'failed', 'missing', 'duplicate', 'duplicate-json', 'unreachable', 'unreachable-json', 'alias-dark', 'alias-failures'])

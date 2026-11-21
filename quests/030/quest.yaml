@@ -51,22 +51,33 @@ stages:
       trap - EXIT
       test "$dq_probe_status" -eq 0
   - text: stages.0.objectives.1.text
-    check: test "$(cat release.txt)" = release-30
+    check: |-
+      if ! test "$(cat release.txt 2>/dev/null)" = release-30; then
+        printf '%s\n' 'The managed release file lacks its approved revision: ✗ [DQ:release_content]'
+        exit 1
+      fi
   - text: stages.0.objectives.2.text
     check: tofu plan -input=false -detailed-exitcode -no-color >/dev/null
 - brief: stages.1.brief
   objectives:
   - text: stages.1.objectives.0.text
     check: |-
-      kubectl rollout status deployment/relay --timeout=3s >/dev/null
-      test "$(kubectl exec deployment/relay -c worker -- printenv RELEASE)" = release-30
+      if ! kubectl rollout status deployment/relay --timeout=3s >/dev/null 2>&1 ||
+         ! test "$(timeout 4s kubectl exec deployment/relay -c worker -- printenv RELEASE 2>/dev/null)" = release-30; then
+        printf '%s\n' 'The relay rollout or running release is incomplete: ✗ [DQ:consumer_release]'
+        exit 1
+      fi
+      if ! test "$(timeout 4s kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://relay:8080/ 2>/dev/null)" = signalrail; then
+        printf '%s\n' 'The relay Service does not return its expected HTTP response: ✗ [DQ:service_http]'
+        exit 1
+      fi
 hints:
 - text: hints.0.text
   guide: terraform-3
 - text: hints.1.text
-  guide: terraform-3
-- text: hints.2.text
   guide: kubernetes-12
+- text: hints.2.text
+  guide: kubernetes-10
 debrief: debrief
 phrases:
 - phrases.0
@@ -84,6 +95,7 @@ facts:
   - DOCKER_CERT_PATH
   files:
   - main.tf
+  - approved-release.txt
   - deployment.yaml
   - release.txt
   services: []

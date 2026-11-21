@@ -1,59 +1,64 @@
 title: Zustand und Verfügbarkeit
-brief: "Das verwaltete Release und sein Kubernetes-Verbraucher sind noch nicht im geforderten Zustand.\n\nArbeiten\
-  \ Sie in `~/quest` auf der Workstation. Eingaben je Phase:\n- Phase 1: `main.tf`.\n- Phase 2: `deployment.yaml`.\n\
-  \n**Anforderungen:**\n\n- Phase 1:\n  - OpenTofu erfasst das verwaltete Release-Artefakt im State.\n  - Auf der\
-  \ Workstation enthält `release.txt` den Wert `release-30`.\n  - Der OpenTofu-Plan endet mit Code `0` ohne Änderungen.\n\
-  - Phase 2:\n  - Deployment `relay` schließt seinen Rollout ab und sein laufender Prozess ist für `release-30`\
-  \ konfiguriert.\n\nHTTP-Antwort des Verbrauchers und Änderungshistorie liegen außerhalb dieser Prüfung; beobachtet\
-  \ werden Rollout und Prozessumgebung."
+brief: |-
+  Die Version von relay ist veraltet. Sobald der laufende Prozess die freigegebene Revision verwendet, soll relay Anfragen bedienen.
+
+  Arbeiten Sie auf der Workstation in `~/quest`. Prüfen Sie in Phase 1 `main.tf` und `approved-release.txt`. Verwenden Sie in Phase 2 die erzeugte `release.txt` und die bereitgestellte `deployment.yaml`.
+
+  **Requirements:**
+
+  - OpenTofu verwaltet das Release-Artefakt im State.
+  - Auf der Workstation enthält `release.txt` die Revision `release-30` aus `approved-release.txt`.
+  - Der OpenTofu-Plan endet mit Code `0` ohne Änderungen.
+  - Deployment `relay` schließt den Rollout ab. Im Worker ist `RELEASE` auf `release-30` gesetzt und der Service unter `http://relay:8080/` liefert `signalrail`.
 stages.0.brief: Das lokale Release muss konsistent verwaltet werden.
 stages.1.brief: Der laufende Verbraucher muss dasselbe Release widerspiegeln.
-hints.0.text: Beginnen Sie mit dem verwalteten Release-Marker, nicht mit dem pod.
-hints.1.text: 'Verwenden Sie den Status und plan, um release.txt vor der zweiten Stufe wiederherzustellen. Prüfen
-  Sie `main.tf` auf den fehlenden Erzeuger von `release.txt`.
-
-
-  Vergleichen Sie die Artefaktdefinition mit der Verbraucherbeschreibung.
-
+hints.0.text: |-
+  Vergleichen Sie zuerst die freigegebene Revision mit dem Wert, den OpenTofu schreiben wird.
+hints.1.text: |-
+  Phase 1: Vergleichen Sie den geplanten Dateiinhalt mit der Freigabe. Phase 2: Prüfen Sie Deployment, Service und berechnete Backends getrennt.
 
   ```sh
-
-  cat main.tf
-
-  kubectl describe deployment relay
-
-  ```'
-hints.2.text: |-
-  Dann inspect die reader RELEASE-Umgebung und ihre exec readiness test.
-
-  Prüfen Sie die jeweilige Phase nach der Reparatur.
-
-  Phase 1: Der State enthält `release.txt`, die Datei zeigt `release-30` und der Plan endet mit Code `0` ohne Änderungen.
-
-  ```sh
-  tofu show -json
-  cat release.txt
-  printf "\n"
-  tofu plan -input=false -detailed-exitcode -no-color
+  cat approved-release.txt
+  tofu plan -input=false -no-color
   ```
 
-  Phase 2: Der Rollout ist abgeschlossen und der laufende Prozess gibt `release-30` aus.
+  ```sh
+  kubectl get deployment relay -o yaml
+  kubectl describe service relay
+  kubectl get endpointslice -l kubernetes.io/service-name=relay -o yaml
+  ```
+hints.2.text: |-
+  Phase 1: Der State führt die verwaltete `release.txt`. Ihr Inhalt entspricht `approved-release.txt` und der Plan endet mit Code `0`. Phase 2: Der Rollout endet, der Worker meldet `release-30` und der Service liefert `signalrail`.
+
+  ```sh
+  tofu show -json | jq -r '.. | objects | select(.type? == "local_file" and .mode? == "managed") | .values.filename'
+  cat release.txt
+  tofu plan -input=false -detailed-exitcode -no-color
+  ```
 
   ```sh
   kubectl rollout status deployment/relay --timeout=3s
   kubectl exec deployment/relay -c worker -- printenv RELEASE
+  kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://relay:8080/
   ```
-
-debrief: Der Release-Marker fehlte und der reader verwendete eine retired-Version. Sie haben zuerst den Zustand
-  wiederhergestellt und dann den Live-reader repariert.
+debrief: |-
+  Plan und State beschreiben den verwalteten Inhalt. Der Rollout beschreibt die Verfügbarkeit des Prozesses. Das Service-Routing bestimmt, ob Clients den Prozess erreichen.
 phrases.0: Ich habe den Betriebsstatus überprüft, bevor ich eine Änderung vorgenommen habe.
 phrases.1: Ich habe die Ursache gefunden und eine Sache nach der anderen geändert.
 phrases.2: Ich habe den workload-Status und seine Bereitschaft nach der Änderung überprüft.
 stages.0.objectives.0.text: OpenTofu erfasst das verwaltete Release-Artefakt im State.
-stages.0.objectives.1.text: Auf der Workstation enthält `release.txt` den Wert `release-30`.
+stages.0.objectives.1.text: |-
+  Auf der Workstation enthält `release.txt` die Revision `release-30` aus `approved-release.txt`.
 stages.0.objectives.2.text: Der OpenTofu-Plan endet mit Code `0` ohne Änderungen.
-stages.1.objectives.0.text: Deployment `relay` schließt seinen Rollout ab und sein laufender Prozess ist für `release-30`
-  konfiguriert.
-diagnostics.state: Der OpenTofu-State muss das verwaltete Artefakt release.txt erfassen.
-diagnostics.probe_0_0: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: OpenTofu erfasst das
-  verwaltete Release-Artefakt im State.'
+stages.1.objectives.0.text: |-
+  Deployment `relay` schließt den Rollout ab. Im Worker ist `RELEASE` auf `release-30` gesetzt und der Service unter `http://relay:8080/` liefert `signalrail`.
+diagnostics.state: |-
+  Der OpenTofu-State muss das verwaltete Artefakt release.txt erfassen. Die Datei kann bereits vorhanden sein, bevor OpenTofu sie als verwaltete Ressource erfasst hat. Vergleichen Sie das Artefakt mit dem aktuellen State. [OpenTofu-State prüfen](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.probe_0_0: |-
+  Die Zustandsprüfung hat keine Diagnose geliefert. Prüfen Sie den State separat aus dem Arbeitsverzeichnis. [OpenTofu-State prüfen](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.release_content: |-
+  Die verwaltete Release-Datei muss die freigegebene Revision enthalten. Auch ein Plan ohne Änderungen kann veraltete Inhalte beschreiben. Vergleichen Sie die verwaltete Datei mit der freigegebenen Revision. [OpenTofu-Plan](https://opentofu.org/docs/cli/commands/plan/)
+diagnostics.consumer_release: |-
+  Der Rollout muss abgeschlossen sein und der Worker muss die freigegebene Revision verwenden. Die Pod-Vorlage kann noch einen veralteten Wert liefern oder die neuen Pods starten noch. Vergleichen Sie Vorlage und laufenden Worker. [Deployment aktualisieren](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.service_http: |-
+  Die Anfrage über den Relay-Service muss den erwarteten Inhalt liefern. Ein bereiter Pod kann direkt auf HTTP antworten, während dem Service ein nutzbares Backend fehlt. Vergleichen Sie die Portzuordnung mit Pod und EndpointSlice. [Portdefinitionen für Services](https://kubernetes.io/docs/concepts/services-networking/service/#port-definitions)
