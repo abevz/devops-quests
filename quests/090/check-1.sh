@@ -17,6 +17,15 @@ for n in 1 2 3; do
     printf '%s\n' "$host /srv/site/message mode = 644: ✗ [DQ:mode_$n]"; failed=1
   fi
 done
+expected=$(jq -er .recovery_id /run/dq/facts/1/recovered-release.json 2>/dev/null || true)
+for n in 1 2 3; do
+  host="app${n}-${DQ_NAMESPACE#dq-}"
+  identity=$(timeout 3s ssh -n -o BatchMode=yes -o ConnectTimeout=2 -p 2222 "root@$host" 'cat /srv/site/recovery-id' 2>/dev/null || true)
+  if ! test -n "$expected" || ! test "$identity" = "$expected"; then
+    printf '%s\n' "$host recovery identity differs from the recovered release: ✗ [DQ:fleet_identity_$n]"
+    failed=1
+  fi
+done
 exit "$failed"
 )
 [ $? -eq 0 ] || failed=1

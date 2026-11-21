@@ -50,6 +50,34 @@ stages:
       rm -f "$dq_probe_output"
       trap - EXIT
       test "$dq_probe_status" -eq 0
+      facts=/run/dq/facts/0/recovery-contract.json
+      archive_hash=$(sha256sum recovery/checkpoint.tfstate 2>/dev/null | cut -d ' ' -f 1 || true)
+      if ! test -n "$archive_hash" || ! test "$archive_hash" = "$(jq -er .sha256 "$facts" 2>/dev/null || true)"; then
+        printf '%s\n' 'Trusted checkpoint contents changed: ✗ [DQ:checkpoint_digest]'
+        exit 1
+      fi
+      state=$(timeout 5s tofu state pull 2>/dev/null || true)
+      release_id=$(jq -er .release_id "$facts" 2>/dev/null || true)
+      handover_id=$(jq -er .handover_id "$facts" 2>/dev/null || true)
+      lineage=$(jq -er .lineage "$facts" 2>/dev/null || true)
+      record_matches() {
+        jq -e --arg name "$1" --arg id "$2" '
+          any(.resources[]?; .mode=="managed" and .type=="terraform_data" and
+              (.module // "")=="" and .name==$name and
+              (.instances | length)==1 and .instances[0].attributes.id==$id)
+        ' <<<"$state" >/dev/null 2>&1
+      }
+      failed=0
+      if ! test -n "$lineage" || ! jq -e --arg lineage "$lineage" '.lineage==$lineage' <<<"$state" >/dev/null 2>&1 ||
+         ! test -n "$handover_id" || ! record_matches handover "$handover_id"; then
+        printf '%s\n' 'The newer handover binding or active lineage was lost: ✗ [DQ:handover_state]'
+        failed=1
+      fi
+      if ! test -n "$release_id" || ! record_matches release_record "$release_id"; then
+        printf '%s\n' 'Release binding differs from the trusted checkpoint: ✗ [DQ:checkpoint_binding]'
+        failed=1
+      fi
+      exit "$failed"
   - text: stages.0.objectives.1.text
     check: |-
       set -euo pipefail
@@ -87,6 +115,15 @@ stages:
           printf '%s\n' "$host /srv/site/message mode = 644: ✗ [DQ:mode_$n]"; failed=1
         fi
       done
+      expected=$(jq -er .recovery_id /run/dq/facts/1/recovered-release.json 2>/dev/null || true)
+      for n in 1 2 3; do
+        host="app${n}-${DQ_NAMESPACE#dq-}"
+        identity=$(timeout 3s ssh -n -o BatchMode=yes -o ConnectTimeout=2 -p 2222 "root@$host" 'cat /srv/site/recovery-id' 2>/dev/null || true)
+        if ! test -n "$expected" || ! test "$identity" = "$expected"; then
+          printf '%s\n' "$host recovery identity differs from the recovered release: ✗ [DQ:fleet_identity_$n]"
+          failed=1
+        fi
+      done
       exit "$failed"
   - text: stages.1.objectives.1.text
     check: |-
@@ -107,6 +144,10 @@ stages:
       set -euo pipefail
       cd ~/quest
       failed=0
+      if ! bash -euo pipefail <<'DQ_LEGACY'
+      set -euo pipefail
+      cd ~/quest
+      failed=0
       if ! kubectl rollout status deployment/relay --timeout=3s >/dev/null 2>&1; then
         printf '%s\n' 'deployment/relay rollout complete: ✗ [DQ:rollout]'; failed=1
       fi
@@ -114,13 +155,42 @@ stages:
         printf '%s\n' 'deployment/relay RELEASE = release-90: ✗ [DQ:relay]'; failed=1
       fi
       exit "$failed"
+      DQ_LEGACY
+      then failed=1; fi
+      expected=$(cat /run/dq/facts/2/relay-handover-id 2>/dev/null || true)
+      uid=$(cat /run/dq/facts/2/relay-publication-uid 2>/dev/null || true)
+      publication=$(kubectl --request-timeout=3s get configmap relay-recovery -o json 2>/dev/null || true)
+      deployment=$(kubectl --request-timeout=3s get deployment relay -o json 2>/dev/null || true)
+      if ! test -n "$expected" || ! test -n "$uid" ||
+         ! jq -e --arg id "$expected" --arg uid "$uid" '.metadata.uid==$uid and .data["recovery-id"]==$id' <<<"$publication" >/dev/null 2>&1 ||
+         ! jq -e '.spec.template.spec as $pod |
+            any($pod.volumes[]?; .configMap.name=="relay-recovery" and
+              (.name as $volume | any($pod.containers[]?; .name=="worker" and
+                any(.volumeMounts[]?; .name==$volume and .mountPath=="/run/recovery" and .readOnly==true))))' <<<"$deployment" >/dev/null 2>&1; then
+        printf '%s\n' 'Relay publication must project the recovered identity from its original ConfigMap: ✗ [DQ:relay_publication]'
+        failed=1
+      else
+        observed=$(timeout 5s kubectl exec --pod-running-timeout=2s deployment/relay -c worker -- sh -ec '
+          test "$(cat /proc/1/comm)" = httpd
+          test "$(readlink /proc/1/cwd)" = /tmp/www
+          test /tmp/www/recovery-id -ef /run/recovery/recovery-id
+          projected=$(cat /run/recovery/recovery-id)
+          response=$(wget -qO- -T 2 http://127.0.0.1:8080/recovery-id)
+          printf "%s\n%s\n" "$projected" "$response"
+        ' 2>/dev/null || true)
+        if ! test "$observed" = "$(printf '%s\n%s' "$expected" "$expected")"; then
+          printf '%s\n' 'Relay worker does not serve its projected recovery identity: ✗ [DQ:relay_identity]'
+          failed=1
+        fi
+      fi
+      exit "$failed"
 hints:
 - text: hints.0.text
   guide: terraform-3
 - text: hints.1.text
-  guide: terraform-3
+  guide: ansible-10
 - text: hints.2.text
-  guide: terraform-3
+  guide: kubernetes-12
 debrief: debrief
 phrases:
 - phrases.0
@@ -140,6 +210,20 @@ facts:
   - inventory.ini
   - ansible.cfg
   - main.tf
+  - recovery/checkpoint.tfstate
+  - recovery/checkpoint.sha256
+  - incident.auto.tfvars.json
   - rollout.yml
+  - recovered-release.json
   - deployment.yaml
+  - relay-handover-id
+  - relay-publication.yaml
   services: []
+immutable:
+  0:
+  - recovery-contract.json
+  1:
+  - recovered-release.json
+  2:
+  - relay-handover-id
+  - relay-publication-uid

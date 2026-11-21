@@ -1,91 +1,131 @@
 title: Disaster recovery
-brief: "The managed marker, fleet banners and service do not yet present a consistent release.\n\nWork in `~/quest`\
-  \ on the workstation. Inputs by stage:\n- Stage 1: `main.tf`.\n- Stage 2: `inventory.ini`, `ansible.cfg`, `rollout.yml`.\n\
-  - Stage 3: `deployment.yaml`.\n\n**Requirements:**\n\n- Stage 1:\n  - OpenTofu records the managed release artifact\
-  \ in state.\n  - On the workstation, `~/quest/release.txt` contains `release-90`.\n  - OpenTofu plans no changes\
-  \ and exits `0`.\n- Stage 2:\n  - On every managed host (`app1`, `app2`, `app3`), `/srv/site/message` contains\
-  \ `release-90` with mode `0644`.\n  - HTTP on port `8080` returns `release-90` from every managed host (`app1`,\
-  \ `app2`, `app3`).\n- Stage 3:\n  - Deployment `relay` completes its rollout and its running process is configured\
-  \ for `release-90`.\n\nThe check observes the marker, fleet file and HTTP results, and running consumer state;\
-  \ it does not prove the recovery commands used."
+brief: |-
+  The release record was lost from the active state. Recover the verified release while preserving newer handover data, then restore the fleet and the relay.
+
+  Work on the workstation in `~/quest`. Stage 1 uses `main.tf`, `incident.auto.tfvars.json` and `recovery/`. Stage 2 uses `rollout.yml`, `inventory.ini`, `ansible.cfg` and `recovered-release.json`. Stage 3 uses `deployment.yaml`, `relay-publication.yaml` and `relay-handover-id`.
+
+  **Requirements:**
+
+  - OpenTofu tracks the managed release artifact and restores the release record with the identity from the verified checkpoint. Preserve the checkpoint bytes, current state lineage and newer handover record.
+  - On the workstation, `~/quest/release.txt` contains `release-90`.
+  - OpenTofu plans no changes and exits `0`.
+  - On `app1`, `app2` and `app3`, `/srv/site/message` contains `release-90` with mode `0644`, and `/srv/site/recovery-id` matches the recovery ID from `recovered-release.json`.
+  - HTTP on port `8080` returns `release-90` from every managed host (`app1`, `app2`, `app3`).
+  - Deployment `relay` completes its rollout and worker uses `release-90` in `RELEASE`. Preserve the supplied ConfigMap and the read-only publication under `/run/recovery`. Keep the supplied HTTP worker and document root. Serve the projected file itself, with the ID from `relay-handover-id`, at `http://127.0.0.1:8080/recovery-id`.
+
+  The check establishes only the resulting state and live observations against the recorded identities. The choice of recovery commands is yours.
 stages.0.brief: The managed marker must be stable.
 stages.1.brief: The fleet must serve the recovered release consistently.
 stages.2.brief: The running consumer must agree with the recovered release.
-hints.0.text: Recover one layer at a time and verify each live result.
-hints.1.text: 'The marker, fleet banners and reader environment must name the same release.
-
-
-  Inspect the supplied definitions, resource descriptions and events for the relevant stage.
-
+hints.0.text: |-
+  Compare the checkpoint with the active state before restoring missing bindings. The recovered identity must reach each downstream layer.
+hints.1.text: |-
+  Inspect lineage and resource identities in both state files. Follow the recorded identity through the fleet artifact and the Kubernetes publication.
 
   ```sh
-
-  cat main.tf
-
-  cat rollout.yml
-
-  kubectl describe deployment relay
-
-  ```'
-hints.2.text: |-
-  Apply the marker, reload the correctly configured fleet, then repair the Kubernetes reader and wait for readiness.
-
-  Verify the repaired stage and compare the observed result.
-
-  Stage 1: State includes `release.txt`, the workstation file shows `release-90`, and the plan exits `0` without changes.
-
-  ```sh
-  tofu show -json
-  cat release.txt
-  printf "\n"
-  tofu plan -input=false -detailed-exitcode -no-color
+  (cd recovery && sha256sum -c checkpoint.sha256)
+  jq '{lineage,serial,resources:[.resources[] | {type,name,ids:[.instances[].attributes.id]}]}' terraform.tfstate recovery/checkpoint.tfstate
   ```
 
-  Stage 2: Each managed host shows `release-90`, file mode `644`, and HTTP `release-90` on port `8080`.
-
   ```sh
+  cat recovered-release.json rollout.yml
   for n in 1 2 3; do
     host="app${n}-${DQ_NAMESPACE#dq-}"
-    printf "%s: " "$host"
-    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message'
-    curl -fsS --max-time 3 "http://$host:8080"
-    printf "\n"
+    curl -fsS --max-time 3 "http://$host:8080/"
   done
   ```
 
-  Stage 3: The rollout is complete and the running process prints `release-90`.
+  ```sh
+  cat relay-publication.yaml relay-handover-id
+  kubectl get deployment relay -o yaml
+  kubectl get configmap -o yaml
+  ```
+hints.2.text: |-
+  Work from a copy of the verified checkpoint. Restore the missing bindings while retaining the newer handover record. Verify the files, HTTP responses, and the original ConfigMap’s projection through the running worker.
 
   ```sh
-  kubectl rollout status deployment/relay --timeout=3s
-  kubectl exec deployment/relay -c worker -- printenv RELEASE
+  (cd recovery && sha256sum -c checkpoint.sha256)
+  tofu state list
+  tofu output -raw recovery_id
+  printf '\n'
+  cat release.txt
+  tofu plan -input=false -detailed-exitcode -no-color
   ```
 
-debrief: The checks verified the managed marker, the fleet files and responses, and the relay rollout and environment.
+  ```sh
+  jq -r .recovery_id recovered-release.json
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message; cat /srv/site/recovery-id'
+    curl -fsS --max-time 3 "http://$host:8080/"
+    printf '\n'
+  done
+  ```
+
+  ```sh
+  kubectl get configmap relay-recovery -o yaml
+  kubectl rollout status deployment/relay --timeout=3s
+  kubectl exec deployment/relay -c worker -- printenv RELEASE
+  kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/recovery-id
+  cat relay-handover-id
+  ```
+debrief: |-
+  Selective restoration keeps the newer binding and recovers the release identity from the checkpoint. Host files and live HTTP prove different parts of distribution. The relay projection carries the recovered identity to the final consumer.
 phrases.0: I checked the running state before making a change.
 phrases.1: I found the cause and changed one thing at a time.
 phrases.2: I checked the workload state and its readiness after the change.
 diagnostics.state: |-
-  OpenTofu state must track the managed release.txt artifact.
-
-diagnostics.file: release.txt must equal release-90.
-diagnostics.plan: The OpenTofu plan must exit with code 0.
-diagnostics.rollout: The relay Deployment rollout must complete.
-diagnostics.relay: Deployment relay RELEASE must equal release-90.
-diagnostics.content_1: app1 /srv/site/message must contain exactly release-90, optionally followed by one newline.
-diagnostics.mode_1: app1 /srv/site/message mode must be 644.
-diagnostics.http_1: app1 on port 8080 must return release-90.
-diagnostics.content_2: app2 /srv/site/message must contain exactly release-90, optionally followed by one newline.
-diagnostics.mode_2: app2 /srv/site/message mode must be 644.
-diagnostics.http_2: app2 on port 8080 must return release-90.
-diagnostics.content_3: app3 /srv/site/message must contain exactly release-90, optionally followed by one newline.
-diagnostics.mode_3: app3 /srv/site/message mode must be 644.
-diagnostics.http_3: app3 on port 8080 must return release-90.
-stages.0.objectives.0.text: OpenTofu records the managed release artifact in state.
+  OpenTofu state must track the managed release.txt artifact. Compare the current binding with the verified checkpoint. A recreated record can have a new identity. [Reference](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.file: |-
+  release.txt must equal release-90. The active state or artifact may differ from the intended input. Compare the managed file and current plan. [Reference](https://opentofu.org/docs/cli/commands/plan/)
+diagnostics.plan: |-
+  The OpenTofu plan must exit with code 0. The active state or artifact may differ from the intended input. Compare the managed file and current plan. [Reference](https://opentofu.org/docs/cli/commands/plan/)
+diagnostics.rollout: |-
+  The relay Deployment rollout must complete. Compare the Pod template and running relay worker. The updated value takes effect with the new Pods. [Reference](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.relay: |-
+  Deployment relay RELEASE must equal release-90. Compare the Pod template and running relay worker. The updated value takes effect with the new Pods. [Reference](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.content_1: |-
+  app1 /srv/site/message must contain exactly release-90, optionally followed by one newline. A copy may have omitted the recovered record or its mode. Compare the stored result on each host with the handover artifact. [Reference](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.mode_1: |-
+  app1 /srv/site/message mode must be 644. A copy may have omitted the recovered record or its mode. Compare the stored result on each host with the handover artifact. [Reference](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.http_1: |-
+  app1 on port 8080 must return release-90. The process can still use its previous contents. Compare each host’s stored message with its HTTP response. [Reference](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.content_2: |-
+  app2 /srv/site/message must contain exactly release-90, optionally followed by one newline. A copy may have omitted the recovered record or its mode. Compare the stored result on each host with the handover artifact. [Reference](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.mode_2: |-
+  app2 /srv/site/message mode must be 644. A copy may have omitted the recovered record or its mode. Compare the stored result on each host with the handover artifact. [Reference](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.http_2: |-
+  app2 on port 8080 must return release-90. The process can still use its previous contents. Compare each host’s stored message with its HTTP response. [Reference](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.content_3: |-
+  app3 /srv/site/message must contain exactly release-90, optionally followed by one newline. A copy may have omitted the recovered record or its mode. Compare the stored result on each host with the handover artifact. [Reference](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.mode_3: |-
+  app3 /srv/site/message mode must be 644. A copy may have omitted the recovered record or its mode. Compare the stored result on each host with the handover artifact. [Reference](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.http_3: |-
+  app3 on port 8080 must return release-90. The process can still use its previous contents. Compare each host’s stored message with its HTTP response. [Reference](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+stages.0.objectives.0.text: |-
+  OpenTofu tracks the managed release artifact and restores the release record with the identity from the verified checkpoint. Preserve the checkpoint bytes, current state lineage and newer handover record.
 stages.0.objectives.1.text: On the workstation, `~/quest/release.txt` contains `release-90`.
 stages.0.objectives.2.text: OpenTofu plans no changes and exits `0`.
-stages.1.objectives.0.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/message` contains `release-90`
-  with mode `0644`.
+stages.1.objectives.0.text: |-
+  On `app1`, `app2` and `app3`, `/srv/site/message` contains `release-90` with mode `0644`, and `/srv/site/recovery-id` matches the recovery ID from `recovered-release.json`.
 stages.1.objectives.1.text: HTTP on port `8080` returns `release-90` from every managed host (`app1`, `app2`, `app3`).
-stages.2.objectives.0.text: Deployment `relay` completes its rollout and its running process is configured for `release-90`.
-diagnostics.probe_0_0: 'The current inputs could not verify this objective: OpenTofu records the managed release
-  artifact in state.'
+stages.2.objectives.0.text: |-
+  Deployment `relay` completes its rollout and worker uses `release-90` in `RELEASE`. Preserve the supplied ConfigMap and the read-only publication under `/run/recovery`. Keep the supplied HTTP worker and document root. Serve the projected file itself, with the ID from `relay-handover-id`, at `http://127.0.0.1:8080/recovery-id`.
+diagnostics.probe_0_0: |-
+  The state probe produced no diagnostic result. Inspect the state separately in the working directory. [Reference](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.checkpoint_binding: |-
+  Compare the current binding with the verified checkpoint. A recreated record can have a new identity. [Reference](https://opentofu.org/docs/cli/commands/state/mv/#usage)
+diagnostics.handover_state: |-
+  Replacing active state with an old checkpoint can lose newer bindings. Compare the two states and their lineage. [Reference](https://opentofu.org/docs/cli/commands/state/mv/#usage)
+diagnostics.checkpoint_digest: |-
+  The checkpoint may have been edited or replaced. Verify the original saved copy against its checksum. [Reference](https://opentofu.org/docs/cli/commands/state/mv/#usage)
+diagnostics.fleet_identity_1: |-
+  A copy may have omitted the recovered record or its mode. Compare the stored result on each host with the handover artifact. [Reference](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.fleet_identity_2: |-
+  A copy may have omitted the recovered record or its mode. Compare the stored result on each host with the handover artifact. [Reference](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.fleet_identity_3: |-
+  A copy may have omitted the recovered record or its mode. Compare the stored result on each host with the handover artifact. [Reference](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.relay_publication: |-
+  The relay publication may still use an old record or an incorrect source. Compare the original ConfigMap, its projection and HTTP returned by worker. [Reference](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/#add-configmap-data-to-a-volume)
+diagnostics.relay_identity: |-
+  Check that the supplied HTTP worker serves the projected file directly from its original document root. [Reference](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/#add-configmap-data-to-a-volume)

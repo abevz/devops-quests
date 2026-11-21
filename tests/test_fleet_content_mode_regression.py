@@ -59,7 +59,7 @@ def test_fleet_checks_separate_actual_content_and_mode(
     binaries.mkdir()
     ssh = binaries / "ssh"
     ssh.write_text(
-        "#!/usr/bin/python3\nimport os,subprocess,sys\ncommand=sys.argv[-1].replace('/srv/site/message',os.environ['TEST_MESSAGE'])\nif 'TEST_RECEIPTS' in os.environ:\n target=sys.argv[-2].split('@')[-1].split('-')[0]\n command=command.replace('/srv/site/delivery.json',os.path.join(os.environ['TEST_RECEIPTS'],target+'.json'))\nsys.exit(subprocess.run(command,shell=True).returncode)\n"
+        "#!/usr/bin/python3\nimport os,subprocess,sys\ncommand=sys.argv[-1].replace('/srv/site/message',os.environ['TEST_MESSAGE'])\nif 'TEST_RECOVERY_ID' in os.environ:\n command=command.replace('/srv/site/recovery-id',os.environ['TEST_RECOVERY_ID'])\nif 'TEST_RECEIPTS' in os.environ:\n target=sys.argv[-2].split('@')[-1].split('-')[0]\n command=command.replace('/srv/site/delivery.json',os.path.join(os.environ['TEST_RECEIPTS'],target+'.json'))\nsys.exit(subprocess.run(command,shell=True).returncode)\n"
     )
     ssh.chmod(0o755)
     curl = binaries / "curl"
@@ -110,6 +110,15 @@ def test_fleet_checks_separate_actual_content_and_mode(
             '#!/usr/bin/python3\nimport os,sys\nfrom pathlib import Path\n'
             'print(Path(os.environ["TEST_CONTRACT" if sys.argv[1]=="output" else "TEST_STATE"]).read_text())\n'
         )
+    if number == 90:
+        # Supply the identity captured at stage handover without changing
+        # the cases that exercise the original file and mode predicates.
+        receipt = tmp_path / "recovery-id"
+        receipt.write_text("recovered-original\n")
+        contract = tmp_path / "recovered-release.json"
+        contract.write_text(json.dumps({"release": expected, "recovery_id": "recovered-original"}))
+        environment["TEST_RECOVERY_ID"] = str(receipt)
+        source = source.replace("/run/dq/facts/1/recovered-release.json", str(contract))
     result = subprocess.run(
         ["bash", "-c", source],
         text=True,
@@ -131,7 +140,7 @@ def test_fleet_checks_separate_actual_content_and_mode(
 
 @pytest.mark.parametrize(
     ("number", "stage", "expected_count"),
-    [(81, 0, 3), (81, 2, 2), (90, 0, 3), (90, 2, 2), (98, 0, 19)],
+    [(81, 0, 3), (81, 2, 2), (90, 0, 3), (90, 2, 3), (98, 0, 19)],
 )
 def test_failed_conditions_have_translations(
     tmp_path, catalog, number, stage, expected_count

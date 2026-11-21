@@ -1,96 +1,132 @@
 title: Odzyskiwanie po awarii
-brief: "Zarządzany znacznik, banery floty i usługa nie pokazują jeszcze spójnego wydania.\n\nPracuj w `~/quest`\
-  \ na stacji roboczej. Dane wejściowe według etapu:\n- Etap 1: `main.tf`.\n- Etap 2: `inventory.ini`, `ansible.cfg`,\
-  \ `rollout.yml`.\n- Etap 3: `deployment.yaml`.\n\n**Wymagania:**\n\n- Etap 1:\n  - OpenTofu rejestruje zarządzany\
-  \ artefakt wydania w state.\n  - Na workstation plik `~/quest/release.txt` zawiera `release-90`.\n  - OpenTofu\
-  \ nie planuje zmian i kończy się kodem `0`.\n- Etap 2:\n  - Na każdym zarządzanym hoście (`app1`, `app2`, `app3`)\
-  \ plik `/srv/site/message` zawiera `release-90` i ma tryb `0644`.\n  - HTTP na porcie `8080` zwraca `release-90`\
-  \ z każdego zarządzanego hosta (`app1`, `app2`, `app3`).\n- Etap 3:\n  - Deployment `relay` kończy rollout, a\
-  \ jego działający proces jest skonfigurowany dla `release-90`.\n\nSprawdzenie obserwuje znacznik, pliki i wyniki\
-  \ HTTP floty oraz stan działającego odbiorcy; nie dowodzi użytych poleceń odzyskiwania."
+brief: |-
+  Rekord wydania zniknął z aktywnego stanu. Odzyskaj zweryfikowane wydanie, zachowaj nowsze dane przekazania, a następnie odtwórz flotę i relay.
+
+  Pracuj na stacji roboczej w `~/quest`. Etap 1 używa `main.tf`, `incident.auto.tfvars.json` i `recovery/`. Etap 2 używa `rollout.yml`, `inventory.ini`, `ansible.cfg` i `recovered-release.json`. Etap 3 używa `deployment.yaml`, `relay-publication.yaml` i `relay-handover-id`.
+
+  **Requirements:**
+
+  - OpenTofu zarządza artefaktem wydania w stanie i przywraca rekord z tożsamością ze zweryfikowanej kopii. Zachowaj bajty kopii, pochodzenie aktywnego stanu i nowszy rekord przekazania.
+  - Na workstation plik `~/quest/release.txt` zawiera `release-90`.
+  - OpenTofu nie planuje zmian i kończy się kodem `0`.
+  - Na `app1`, `app2` i `app3` plik `/srv/site/message` zawiera `release-90` w trybie `0644`. `/srv/site/recovery-id` odpowiada identyfikatorowi z `recovered-release.json`.
+  - HTTP na porcie `8080` zwraca `release-90` z każdego zarządzanego hosta (`app1`, `app2`, `app3`).
+  - Deployment `relay` kończy rollout, a worker używa `release-90` w `RELEASE`. Zachowaj dostarczoną ConfigMap i projekcję tylko do odczytu pod `/run/recovery`. Zachowaj dostarczony proces HTTP w kontenerze worker i jego katalog główny. Udostępnij bezpośrednio plik z projekcji, zawierający ID z `relay-handover-id`, pod adresem `http://127.0.0.1:8080/recovery-id`.
+
+  Sprawdzenie potwierdza tylko stan końcowy i rzeczywiste działanie na podstawie zapisanych identyfikatorów. Samodzielnie wybierz polecenia odzyskiwania.
 stages.0.brief: Zarządzany znacznik musi być stabilny.
 stages.1.brief: Flota musi spójnie udostępniać odzyskane wydanie.
 stages.2.brief: Działający odbiorca musi być zgodny z odzyskanym wydaniem.
-hints.0.text: Odzyskuj jedną warstwę na raz i sprawdzaj każdy wynik na żywo.
-hints.1.text: 'Znacznik, banery floty i środowisko reader muszą mieć tę samą nazwę wersji.
-
-
-  Sprawdź dostarczone definicje, opisy zasobów i zdarzenia odpowiedniego etapu.
-
+hints.0.text: |-
+  Porównaj kopię z aktywnym stanem przed przywróceniem brakujących powiązań. Odzyskana tożsamość musi dotrzeć do każdej kolejnej warstwy.
+hints.1.text: |-
+  Sprawdź pochodzenie i tożsamości zasobów w obu plikach stanu. Śledź zapisaną tożsamość w artefakcie floty i publikacji Kubernetes.
 
   ```sh
-
-  cat main.tf
-
-  cat rollout.yml
-
-  kubectl describe deployment relay
-
-  ```'
-hints.2.text: |-
-  Zastosuj znacznik, załaduj ponownie poprawnie skonfigurowany fleet, następnie napraw Kubernetes reader i poczekaj na readiness.
-
-  Sprawdź naprawiony etap i porównaj obserwowany wynik.
-
-  Etap 1: State zawiera `release.txt`, plik workstation pokazuje `release-90`, a plan kończy się kodem `0` bez zmian.
-
-  ```sh
-  tofu show -json
-  cat release.txt
-  printf "\n"
-  tofu plan -input=false -detailed-exitcode -no-color
+  (cd recovery && sha256sum -c checkpoint.sha256)
+  jq '{lineage,serial,resources:[.resources[] | {type,name,ids:[.instances[].attributes.id]}]}' terraform.tfstate recovery/checkpoint.tfstate
   ```
 
-  Etap 2: Każdy zarządzany host pokazuje `release-90`, tryb pliku `644` oraz HTTP `release-90` na porcie `8080`.
-
   ```sh
+  cat recovered-release.json rollout.yml
   for n in 1 2 3; do
     host="app${n}-${DQ_NAMESPACE#dq-}"
-    printf "%s: " "$host"
-    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message'
-    curl -fsS --max-time 3 "http://$host:8080"
-    printf "\n"
+    curl -fsS --max-time 3 "http://$host:8080/"
   done
   ```
 
-  Etap 3: Rollout jest zakończony, a działający proces wypisuje `release-90`.
+  ```sh
+  cat relay-publication.yaml relay-handover-id
+  kubectl get deployment relay -o yaml
+  kubectl get configmap -o yaml
+  ```
+hints.2.text: |-
+  Pracuj na kopii zweryfikowanego punktu. Przywróć brakujące powiązania i zachowaj nowszy rekord przekazania. Sprawdź pliki, odpowiedzi HTTP oraz projekcję pierwotnej ConfigMap w działającym worker.
 
   ```sh
-  kubectl rollout status deployment/relay --timeout=3s
-  kubectl exec deployment/relay -c worker -- printenv RELEASE
+  (cd recovery && sha256sum -c checkpoint.sha256)
+  tofu state list
+  tofu output -raw recovery_id
+  printf '\n'
+  cat release.txt
+  tofu plan -input=false -detailed-exitcode -no-color
   ```
 
-debrief: Kontrole sprawdziły zarządzany znacznik, pliki i odpowiedzi floty oraz rollout i środowisko relay.
+  ```sh
+  jq -r .recovery_id recovered-release.json
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message; cat /srv/site/recovery-id'
+    curl -fsS --max-time 3 "http://$host:8080/"
+    printf '\n'
+  done
+  ```
+
+  ```sh
+  kubectl get configmap relay-recovery -o yaml
+  kubectl rollout status deployment/relay --timeout=3s
+  kubectl exec deployment/relay -c worker -- printenv RELEASE
+  kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/recovery-id
+  cat relay-handover-id
+  ```
+debrief: |-
+  Selektywne przywracanie zachowuje nowsze powiązanie i odzyskuje tożsamość wydania z kopii. Pliki hostów i HTTP potwierdzają różne części dystrybucji. Projekcja przekazuje tożsamość do relay.
 phrases.0: Przed dokonaniem zmiany sprawdziłem stan działania.
 phrases.1: Znalazłem przyczynę i zmieniałem jedną rzecz na raz.
 phrases.2: Sprawdziłem stan workload i jego gotowość po zmianie.
 diagnostics.state: |-
-  Stan OpenTofu musi śledzić zarządzany artefakt release.txt.
-
-diagnostics.file: release.txt musi być równy release-90.
-diagnostics.plan: Plan OpenTofu musi zakończyć się kodem 0.
-diagnostics.rollout: Wdrożenie Deployment relay musi się zakończyć.
-diagnostics.relay: RELEASE Deployment relay musi wynosić release-90.
-diagnostics.content_1: Na hoście app1 /srv/site/message musi zawierać dokładnie release-90, opcjonalnie z jednym
-  znakiem nowej linii.
-diagnostics.mode_1: Na hoście app1 uprawnienia /srv/site/message muszą wynosić 644.
-diagnostics.http_1: Host app1 na porcie 8080 musi zwrócić release-90.
-diagnostics.content_2: Na hoście app2 /srv/site/message musi zawierać dokładnie release-90, opcjonalnie z jednym
-  znakiem nowej linii.
-diagnostics.mode_2: Na hoście app2 uprawnienia /srv/site/message muszą wynosić 644.
-diagnostics.http_2: Host app2 na porcie 8080 musi zwrócić release-90.
-diagnostics.content_3: Na hoście app3 /srv/site/message musi zawierać dokładnie release-90, opcjonalnie z jednym
-  znakiem nowej linii.
-diagnostics.mode_3: Na hoście app3 uprawnienia /srv/site/message muszą wynosić 644.
-diagnostics.http_3: Host app3 na porcie 8080 musi zwrócić release-90.
-stages.0.objectives.0.text: OpenTofu rejestruje zarządzany artefakt wydania w state.
+  Stan OpenTofu musi śledzić zarządzany artefakt release.txt. Porównaj aktywne powiązanie ze zweryfikowaną kopią. Nowo utworzony rekord może mieć inną tożsamość. [Dokumentacja](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.file: |-
+  release.txt musi być równy release-90. Aktywny stan lub artefakt mogą różnić się od oczekiwanego wejścia. Porównaj plik i aktualny plan. [Dokumentacja](https://opentofu.org/docs/cli/commands/plan/)
+diagnostics.plan: |-
+  Plan OpenTofu musi zakończyć się kodem 0. Aktywny stan lub artefakt mogą różnić się od oczekiwanego wejścia. Porównaj plik i aktualny plan. [Dokumentacja](https://opentofu.org/docs/cli/commands/plan/)
+diagnostics.rollout: |-
+  Wdrożenie Deployment relay musi się zakończyć. Porównaj szablon Poda i działający kontener worker w relay. Nowa wartość pojawia się w nowych Podach. [Dokumentacja](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.relay: |-
+  RELEASE Deployment relay musi wynosić release-90. Porównaj szablon Poda i działający kontener worker w relay. Nowa wartość pojawia się w nowych Podach. [Dokumentacja](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.content_1: |-
+  Na hoście app1 /srv/site/message musi zawierać dokładnie release-90, opcjonalnie z jednym znakiem nowej linii. Kopiowanie mogło pominąć odzyskany rekord lub jego tryb. Porównaj wynik każdego hosta z artefaktem przekazania. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.mode_1: |-
+  Na hoście app1 uprawnienia /srv/site/message muszą wynosić 644. Kopiowanie mogło pominąć odzyskany rekord lub jego tryb. Porównaj wynik każdego hosta z artefaktem przekazania. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.http_1: |-
+  Host app1 na porcie 8080 musi zwrócić release-90. Proces może nadal używać starszej treści. Porównaj zapisany komunikat z odpowiedzią HTTP. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.content_2: |-
+  Na hoście app2 /srv/site/message musi zawierać dokładnie release-90, opcjonalnie z jednym znakiem nowej linii. Kopiowanie mogło pominąć odzyskany rekord lub jego tryb. Porównaj wynik każdego hosta z artefaktem przekazania. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.mode_2: |-
+  Na hoście app2 uprawnienia /srv/site/message muszą wynosić 644. Kopiowanie mogło pominąć odzyskany rekord lub jego tryb. Porównaj wynik każdego hosta z artefaktem przekazania. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.http_2: |-
+  Host app2 na porcie 8080 musi zwrócić release-90. Proces może nadal używać starszej treści. Porównaj zapisany komunikat z odpowiedzią HTTP. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.content_3: |-
+  Na hoście app3 /srv/site/message musi zawierać dokładnie release-90, opcjonalnie z jednym znakiem nowej linii. Kopiowanie mogło pominąć odzyskany rekord lub jego tryb. Porównaj wynik każdego hosta z artefaktem przekazania. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.mode_3: |-
+  Na hoście app3 uprawnienia /srv/site/message muszą wynosić 644. Kopiowanie mogło pominąć odzyskany rekord lub jego tryb. Porównaj wynik każdego hosta z artefaktem przekazania. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.http_3: |-
+  Host app3 na porcie 8080 musi zwrócić release-90. Proces może nadal używać starszej treści. Porównaj zapisany komunikat z odpowiedzią HTTP. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+stages.0.objectives.0.text: |-
+  OpenTofu zarządza artefaktem wydania w stanie i przywraca rekord z tożsamością ze zweryfikowanej kopii. Zachowaj bajty kopii, pochodzenie aktywnego stanu i nowszy rekord przekazania.
 stages.0.objectives.1.text: Na workstation plik `~/quest/release.txt` zawiera `release-90`.
 stages.0.objectives.2.text: OpenTofu nie planuje zmian i kończy się kodem `0`.
-stages.1.objectives.0.text: Na każdym zarządzanym hoście (`app1`, `app2`, `app3`) plik `/srv/site/message` zawiera
-  `release-90` i ma tryb `0644`.
+stages.1.objectives.0.text: |-
+  Na `app1`, `app2` i `app3` plik `/srv/site/message` zawiera `release-90` w trybie `0644`. `/srv/site/recovery-id` odpowiada identyfikatorowi z `recovered-release.json`.
 stages.1.objectives.1.text: HTTP na porcie `8080` zwraca `release-90` z każdego zarządzanego hosta (`app1`, `app2`,
   `app3`).
-stages.2.objectives.0.text: Deployment `relay` kończy rollout, a jego działający proces jest skonfigurowany dla
-  `release-90`.
-diagnostics.probe_0_0: 'Bieżące dane nie pozwalają potwierdzić tego celu: OpenTofu rejestruje zarządzany artefakt
-  wydania w state.'
+stages.2.objectives.0.text: |-
+  Deployment `relay` kończy rollout, a worker używa `release-90` w `RELEASE`. Zachowaj dostarczoną ConfigMap i projekcję tylko do odczytu pod `/run/recovery`. Zachowaj dostarczony proces HTTP w kontenerze worker i jego katalog główny. Udostępnij bezpośrednio plik z projekcji, zawierający ID z `relay-handover-id`, pod adresem `http://127.0.0.1:8080/recovery-id`.
+diagnostics.probe_0_0: |-
+  Sprawdzenie stanu nie dało diagnozy. Sprawdź stan osobno z katalogu roboczego. [Dokumentacja](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.checkpoint_binding: |-
+  Porównaj aktywne powiązanie ze zweryfikowaną kopią. Nowo utworzony rekord może mieć inną tożsamość. [Dokumentacja](https://opentofu.org/docs/cli/commands/state/mv/#usage)
+diagnostics.handover_state: |-
+  Zastąpienie aktywnego stanu starszą kopią może utracić nowsze powiązania. Porównaj oba stany i ich pochodzenie. [Dokumentacja](https://opentofu.org/docs/cli/commands/state/mv/#usage)
+diagnostics.checkpoint_digest: |-
+  Kopia mogła zostać zmieniona lub zastąpiona. Sprawdź oryginalną kopię względem sumy kontrolnej. [Dokumentacja](https://opentofu.org/docs/cli/commands/state/mv/#usage)
+diagnostics.fleet_identity_1: |-
+  Kopiowanie mogło pominąć odzyskany rekord lub jego tryb. Porównaj wynik każdego hosta z artefaktem przekazania. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.fleet_identity_2: |-
+  Kopiowanie mogło pominąć odzyskany rekord lub jego tryb. Porównaj wynik każdego hosta z artefaktem przekazania. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.fleet_identity_3: |-
+  Kopiowanie mogło pominąć odzyskany rekord lub jego tryb. Porównaj wynik każdego hosta z artefaktem przekazania. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.relay_publication: |-
+  Publikacja relay może używać starego rekordu lub innego źródła. Porównaj pierwotną ConfigMap, projekcję i odpowiedź HTTP kontenera worker. [Dokumentacja](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/#add-configmap-data-to-a-volume)
+diagnostics.relay_identity: |-
+  Sprawdź, czy dostarczony proces HTTP w kontenerze worker serwuje plik z projekcji bezpośrednio ze swojego pierwotnego katalogu głównego. [Dokumentacja](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/#add-configmap-data-to-a-volume)
