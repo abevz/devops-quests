@@ -4,8 +4,17 @@ failed=0
 set +e
 (
 set -e
+if bash -euo pipefail <<'DQ_PREDICATE'
 tofu state list | grep -Fx terraform_data.directory
 tofu state list | grep -Fx terraform_data.marker
+DQ_PREDICATE
+then
+  :
+else
+  code=$?
+  printf '%s\n' 'Both dependency resources are tracked: ✗ [DQ:condition_0]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -102,17 +111,29 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
-test -f work/.prepared
+test -f work/.prepared || {
+  code=$?
+  printf '%s\n' 'work/.prepared exists: ✗ [DQ:condition_2]' >&2
+  exit "$code"
+}
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
-test "$(cat work/route.txt)" = north
+test "$(cat work/route.txt)" = north || {
+  code=$?
+  printf '%s\n' 'work/route.txt contains north: ✗ [DQ:condition_3]' >&2
+  exit "$code"
+}
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
-tofu plan -input=false -detailed-exitcode -no-color >/dev/null
+tofu plan -input=false -detailed-exitcode -no-color >/dev/null || {
+  code=$?
+  printf '%s\n' 'OpenTofu detailed plan exits with 0: ✗ [DQ:condition_4]' >&2
+  exit "$code"
+}
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
