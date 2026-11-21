@@ -11,6 +11,7 @@ GUIDE_LINK = re.compile(
 )
 SECTION = re.compile(r"^#{2,6}[ \t]+.+[ \t]+\{#([a-z][a-z0-9-]*)\}[ \t]*$", re.M)
 MARKER = re.compile(r"\[DQ:([a-z0-9_]+)\]")
+FLEET_MARKER = re.compile(r"\[DQ:([a-z0-9_]+)\$(?:n|host)\]")
 
 
 @pytest.fixture(scope="module")
@@ -18,22 +19,20 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", (1, 2, 3, 4, 5, 7, 8, 9))
+@pytest.mark.parametrize("quest", (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
-    markers = {
-        marker
-        for stage in catalog.quests[quest]["stages"]
-        for goal in stage["objectives"]
-        for marker in MARKER.findall(goal["check"])
-    }
-    # The fleet checks interpolate host numbers into these diagnostic IDs.
-    host_markers = {2: ("content", "mode"), 5: ("copy",)}
-    markers.update(
-        f"{condition}_{host}"
-        for condition in host_markers.get(quest, ())
-        for host in (1, 2, 3)
-    )
-    assert markers
+    markers = set()
+    for stage in catalog.quests[quest]["stages"]:
+        for goal in stage["objectives"]:
+            check = goal["check"]
+            emitted = set(MARKER.findall(check))
+            emitted.update(
+                f"{prefix}{host}"
+                for prefix in FLEET_MARKER.findall(check)
+                for host in (1, 2, 3)
+            )
+            assert emitted, (quest, goal["text"])
+            markers.update(emitted)
     explanations = catalog.public(quest)["diagnostics"]
     assert set(explanations) == markers
     for values in explanations.values():
