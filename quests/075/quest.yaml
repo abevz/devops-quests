@@ -7,47 +7,89 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: |-
-      source platform.env
+    check: 'source platform.env
+
       source webhook.env
+
       GITEA_API="${GIT_URL%/rail/station.git}/api/v1/repos/rail/station"
+
       hook=$(cat /run/dq/facts/0/hook-id)
-      curl -fsS -u "$GIT_USER:$GIT_PASSWORD" "$GITEA_API/hooks/$hook" | jq -e --arg url "$(jq -er .url /run/dq/facts/0/webhook-target.json)" '.active==true and .type=="gogs" and (.config.url | sub("\\?$";""))==$url and .config.content_type=="json" and .events==["push"] and .branch_filter=="main"' >/dev/null
+
+      curl -fsS -u "$GIT_USER:$GIT_PASSWORD" "$GITEA_API/hooks/$hook" | jq -e --arg url "$(jq -er .url /run/dq/facts/0/webhook-target.json)"
+      ''.active==true and .type=="gogs" and (.config.url | sub("\\?$";""))==$url and .config.content_type=="json"
+      and .events==["push"] and .branch_filter=="main"'' >/dev/null'
   - text: stages.0.objectives.1.text
     keep: true
-    check: |-
-      source platform.env
+    check: 'source platform.env
+
       git -C repository fetch origin main >/dev/null 2>&1
+
       test "$(git -C repository rev-parse origin/main)" = "$(cat release-commit)"
+
       test "$(cat release-commit)" != "$(cat /run/dq/facts/0/initial-commit)"
-      git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/initial-commit)" origin/main
+
+      git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/initial-commit)" origin/main'
   - text: stages.0.objectives.2.text
     keep: true
-    check: |-
-      source platform.env
-      kubectl get application board -o json | jq -e --arg url "$GIT_URL" 'def same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url and (.spec.source.path | same_dir("manifests")) and .spec.source.targetRevision=="main"' >/dev/null
+    check: 'source platform.env
+
+      kubectl get application board -o json | jq -e --arg url "$GIT_URL" ''def same_dir($want): if type!="string"
+      then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts
+      | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url and (.spec.source.path | same_dir("manifests"))
+      and .spec.source.targetRevision=="main"'' >/dev/null'
   - text: stages.0.objectives.3.text
-    check: |-
-      source platform.env
-      kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" '.status.sync.status=="Synced" and .status.health.status=="Healthy" and .status.sync.revision==$rev' >/dev/null
+    check: 'source platform.env
+
+      kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" ''.status.sync.status=="Synced"
+      and .status.health.status=="Healthy" and .status.sync.revision==$rev'' >/dev/null'
   - text: stages.0.objectives.4.text
     keep: true
     check: kubectl rollout status deployment/board --timeout=3s >/dev/null
   - text: stages.0.objectives.5.text
-    check: |-
-      test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-75
-
+    check: "dq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\ndq_failed=0\n\
+      set +e\n(\nset -euo pipefail\ntimeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY'\ntest \"$(timeout\
+      \ 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080)\"\
+      \ = north-75\nDQ_LEGACY\n)\n[ $? -eq 0 ] || dq_failed=1\n(\nset -euo pipefail\ntimeout --kill-after=1s 14s\
+      \ bash -euo pipefail <<'DQ_CURRENT'\ndq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset\
+      \ +e\n(\nset -euo pipefail\npython3 -I - <<'DQ_WEBHOOK_PUBLICATION'\n\nimport json,subprocess,yaml\nfrom pathlib\
+      \ import Path\nfrom dq_check import current_pods,pod_worker,ready_image,workload_worker\ndef k(*args):\n return\
+      \ json.loads(subprocess.check_output(['kubectl',*args,'-o','json'],timeout=2))\ncontract=json.loads(Path('/run/dq/facts/0/webhook-publication.json').read_text())\n\
+      old=contract['deployment']\ndeployment=k('get','deployment','board')\nassert deployment['metadata']['uid']==old['metadata']['uid']\n\
+      assert deployment['spec']['selector']==old['spec']['selector']\nassert deployment['spec']['replicas']==old['spec']['replicas']==1\n\
+      assert deployment['spec']['template']['spec']==old['spec']['template']['spec']\napp=k('get','application','board')\n\
+      assert app['metadata']['uid']==contract['application']['metadata']['uid']\nassert app['spec']==contract['application']['spec']\n\
+      revision=app['status']['sync']['revision']\nsubprocess.run(['git','-C','repository','merge-base','--is-ancestor',contract['release_commit'],revision],check=True,timeout=2)\n\
+      desired=yaml.safe_load(subprocess.check_output(['git','-C','repository','show',revision+':'+contract['source_file']],text=True,timeout=2))\n\
+      assert desired['kind']=='ConfigMap' and desired['metadata']['name']==contract['approved']['metadata']['name']\n\
+      assert desired['data']==contract['approved']['data']\nconfig=k('get','configmap',desired['metadata']['name'])\n\
+      assert config['metadata']['uid']==contract['publication_uid']\nassert config['data']==desired['data']\nworker=workload_worker(deployment)\n\
+      pods=current_pods(deployment,k('get','replicasets'),k('get','pods'))\nassert len(pods)==1\nfor pod in pods:\n\
+      \ assert ready_image(pod,worker['image'])\n current=pod_worker(pod)\n for key in ('command','args'):\n  assert\
+      \ current.get(key)==worker.get(key)\n for mount in worker.get('volumeMounts',[]):\n  assert mount.get('readOnly')\
+      \ is True and mount in current.get('volumeMounts',[])\n value=subprocess.check_output(['kubectl','exec',pod['metadata']['name'],'-c','worker','--','wget','-qO-','-T','2','http://127.0.0.1:8080'],timeout=3)\n\
+      \ assert value.decode().rstrip('\\n')==desired['data']['notice'].rstrip('\\n')\n\nDQ_WEBHOOK_PUBLICATION\n\
+      \n) >\"$dq_probe_output\" 2>/dev/null\ndq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\nif [ \"$dq_probe_status\"\
+      \ -ne 0 ] && ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\nprintf '%s\\n' 'Current inputs could\
+      \ not verify this objective: ✗ [DQ:probe_0_5]'\nfi\nrm -f \"$dq_probe_output\"\ntrap - EXIT\ntest \"$dq_probe_status\"\
+      \ -eq 0\n\nDQ_CURRENT\n)\n[ $? -eq 0 ] || dq_failed=1\nset -e\ntest \"$dq_failed\" -eq 0\n) >\"$dq_probe_output\"\
+      \ 2>/dev/null\ndq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\nif [ \"$dq_probe_status\" -ne 0 ] &&\
+      \ ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\nprintf '%s\\n' 'Current inputs could not verify\
+      \ this objective: ✗ [DQ:probe_0_5]'\nfi\nrm -f \"$dq_probe_output\"\ntrap - EXIT\ntest \"$dq_probe_status\"\
+      \ -eq 0\n"
   - text: stages.0.objectives.6.text
-    check: |-
-      source platform.env
-      jq -e --arg repo "${GIT_URL%.git}" '.repo==$repo and .branch=="main" and .authenticated==true' /run/dq/observations/webhook.json >/dev/null
+    check: 'source platform.env
+
+      jq -e --arg repo "${GIT_URL%.git}" ''.repo==$repo and .branch=="main" and .authenticated==true'' /run/dq/observations/webhook.json
+      >/dev/null'
 hints:
 - text: hints.0.text
   guide: gitops-delivery
 - text: hints.1.text
-  guide: gitops-delivery
+  url: https://argo-cd.readthedocs.io/en/stable/operator-manual/webhook/
+  label: guides.reference_1
 - text: hints.2.text
-  guide: gitops-delivery
+  url: https://kubernetes.io/docs/tutorials/configuration/updating-configuration-via-a-configmap/
+  label: guides.reference_2
 debrief: debrief
 phrases:
 - phrases.0
@@ -81,6 +123,8 @@ facts:
   - application.yaml
   - repository/manifests/board.yaml
   - repository/manifests/service.yaml
+  - repository/manifests/publication.yaml
+  - webhook-publication.json
   services: []
 book:
   chapter: 11
@@ -94,3 +138,4 @@ immutable:
   - webhook-target.json
   - hook-id
   - initial-commit
+  - webhook-publication.json

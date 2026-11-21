@@ -2,112 +2,119 @@ heading: Private Registry und GitOps wiederherstellen
 text: '# Private Registry und GitOps wiederherstellen
 
 
-  Nutze nur die vergängliche Quest-Umgebung. Ein Kubelet zieht ein privates Image mit einem Secret im selben Namespace, das in `imagePullSecrets` benannt ist. Ein Digest identifiziert unveränderlichen Image-Inhalt; `imagePullPolicy: Always` bewirkt beim Start eine Pull-Prüfung. Lies `platform.env`, `private-release.json`, `board.yaml` und `registry-pull.yaml`, sofern bereitgestellt. Schütze die Spiel-Zugangsdaten: Gib sie nicht aus und speichere sie nicht in der Terminal-Historie. Prüfe Pod-Ereignisse und warte auf `kubectl rollout status deployment/board --timeout=90s`; ein aktuell erfolgreicher Rollout beweist keine künftigen Pulls.
+  ## Grenzen getrennt betrachten
 
 
-  Eine Argo-CD-Application wählt Repository, Pfad, Revision und Ziel. Der Controller gleicht asynchron ab: `Synced` beschreibt den Vergleich mit Git, `Healthy` die Gesundheit der Ressourcen. Bei app-of-apps gleicht ein Parent eine Child-Application ab, die den Workload abgleicht. Vergleiche beide mit dem gepushten Commit und bewahre die Parent-Identität. `wait-apps.sh` in der Umgebung prüft die erwarteten Applications; versuche es nach dem Abgleich erneut, statt eine sofortige Änderung anzunehmen.
+  Registry-Verfügbarkeit, Transportvertrauen, Quellenidentität und Verbraucherübernahme sind getrennte Beobachtungen.
+  Nur die kurzlebige Spielumgebung verwenden. Quellenverträge mit der aktiven API vergleichen; eingefrorene Einträge
+  bewahren die ursprüngliche Autorität. Eine Steuerquittung beschreibt eine Agentenaktion, keine dauerhafte Verfügbarkeit,
+  Berechtigung oder Datenübernahme.
 
 
-  Ein ApplicationSet-Listengenerator liefert Parameter für eine Go-Vorlage; ein Pfad wie `stations/{{.station}}` erzeugt einen Pfad pro Eintrag. In der ApplicationSet-Quest sendet die Spielabfrage eines von zwei begrenzten Manifesten aus `applicationset.yaml` an den privaten Controller. Dies ist ein Adapter mit begrenzten erlaubten Änderungen, keine allgemeine Controller-API. Warte auf erzeugte Applications und prüfe Eigentümer, Revision, Zustand und tatsächliche Workload-Antworten.
+  ## Private Image-Verbraucher
 
 
-  Quellen: [private Image-Pulls](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/), [Argo-CD-Listengenerator](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators-List/), [Go-Vorlagen](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/GoTemplate/).
+  Workstation-Client und Kubelet verwahren Zugangsdaten unabhängig. Ein erfolgreicher authentifizierter Abruf aktualisiert
+  keinen Kubernetes-Pull-Secret im Namespace. Der Secret enthält Registry-Zugangsdaten, installiert aber keine CA
+  in die Node-Laufzeit. Vorgesehenen Endpunkt, Zertifikatsvertrauen, unveränderliches Image, Controller-Identität
+  und Zugangsdatenobjekt bewahren.
 
 
-  Prüfe in Aufgabe 027 die Image-Pull-Ereignisse von relay und erstelle mit den bereitgestellten Spielzugangsdaten ein Pull-Secret im selben Namespace, ohne Werte offenzulegen. Referenziere es in `imagePullSecrets`, behalte das private Image und `Always` und warte auf den Relay-Rollout.
+  Pod-Ereignisse unterscheiden Verbindungs-, Zertifikats-, Berechtigungs- und fehlende Manifestfehler. Always steuert
+  Auflösung und Abruf; Image-Cache und Ready-Container belegen keine Gültigkeit gespeicherter Zugangsdaten für einen
+  späteren Abruf. Secret privat mit freigegebener Autorität vergleichen; tatsächlichen Image-Digest und zugehörige
+  Pod-Referenzen prüfen.
 
 
-  Vergleiche in Aufgabe 041 die Historien von release-candidate und main. Übernimm die gewünschte Nachricht per Merge oder Cherry-Pick nach main, pushe zum bereitgestellten privaten Remote und führe aus `~/quest` den Befehl `git -C repository fetch origin main release-candidate` aus. Prüfe `north-41` auf lokalem und entferntem main, baseline als Vorfahren, einen sauberen Worktree und die Gleichheit der tatsächlichen HEAD- und Remote-Commits.
-
-
-  Rotiere in Aufgabe 042 `registry-pull` mit den Spielzugangsdaten, ohne sie auszugeben oder in der Shell-Historie zu speichern. Prüfe den Secret-Typ und kanonisch kodierte Authentisierung, behalte `PRIVATE_IMAGE`, `Always`, eine Replik und genau ein Pull-Secret und prüfe Rollout und `north-42`. Base64 ist Kodierung, keine Verschlüsselung; der aktuelle Rollout beweist keine künftigen Pulls.
-
-
-  Ändere in Aufgabe 043 den Source-Pfad der Argo Application auf `manifests` und behalte Repository, Projekt, Revision und Ziel. Synchronisiere und vergleiche die Controller-Revision mit dem entfernten main; prüfe Synced/Healthy und die tatsächliche Antwort `north-43`.
-
-
-  In Aufgabe 049 können ein veränderlicher Tag und der gewünschte Digest denselben Text liefern, obwohl sie verschiedene Artefakte bezeichnen. Pinne `PRIVATE_IMAGE`, behalte `Always` und `registry-pull`, vergleiche die Image-ID des bereiten Containers mit dem gewünschten Digest und prüfe `north-49`.
-
-
-  Für Aufgabe 027 erstellt dieses Beispiel das Pull-Secret aus der bereitgestellten Umgebung, ohne Zugangsdaten in Befehlsargumente zu setzen oder den Inhalt auszugeben. Ersetze für Aufgabe 042 `parcel-pull` durch `registry-pull`; halte das resultierende Secret privat.
+  Das allgemeine Beispiel aktualisiert einen bestehenden erlaubten Secret. Zuerst Objekt und bereitgestellte Autorität
+  auswählen. Es gibt keine Zugangsdaten aus; Base64 ist Kodierung, keine Verschlüsselung. Der Workload muss weiterhin
+  das vorgesehene Objekt referenzieren.
 
 
   ```bash
 
+  set -euo pipefail
+
   set +x
 
-  cd ~/quest
+  : "${DQ_PULL_SECRET:?select the existing authorized Secret}"
 
-  source platform.env
+  : "${REGISTRY:?select the approved registry endpoint}"
 
-  export DQ_PULL_SECRET=parcel-pull
+  : "${REGISTRY_USER:?select the supplied registry identity}"
 
-  python3 - <<''PY'' | kubectl apply -f - >/dev/null
+  : "${REGISTRY_PASSWORD:?load the private supplied credential}"
 
-  import base64
+  export DQ_PULL_SECRET REGISTRY REGISTRY_USER REGISTRY_PASSWORD
 
-  import json
+  before=$(kubectl get secret "$DQ_PULL_SECRET" -o jsonpath=''{.metadata.uid}'')
 
-  import os
+  python3 -I - <<''PRIVATE_AUTH'' | kubectl apply -f - >/dev/null
 
-  import sys
+  import base64,json,os
 
+  auth=base64.b64encode((os.environ[''REGISTRY_USER'']+'':''+os.environ[''REGISTRY_PASSWORD'']).encode()).decode()
 
-  auth = base64.b64encode((os.environ[''REGISTRY_USER''] + '':'' + os.environ[''REGISTRY_PASSWORD'']).encode()).decode()
+  config={''auths'':{os.environ[''REGISTRY'']:{''auth'':auth}}}
 
-  config = json.dumps({''auths'': {os.environ[''REGISTRY'']: {''auth'': auth}}}).encode()
+  secret={''apiVersion'':''v1'',''kind'':''Secret'',''metadata'':{''name'':os.environ[''DQ_PULL_SECRET'']},
 
-  secret = {''apiVersion'': ''v1'', ''kind'': ''Secret'', ''metadata'': {''name'': os.environ[''DQ_PULL_SECRET'']}, ''type'': ''kubernetes.io/dockerconfigjson'', ''data'': {''.dockerconfigjson'': base64.b64encode(config).decode()}}
+  ''type'':''kubernetes.io/dockerconfigjson'',''data'':{''.dockerconfigjson'':base64.b64encode(json.dumps(config).encode()).decode()}}
 
-  json.dump(secret, sys.stdout)
+  print(json.dumps(secret))
 
-  PY
+  PRIVATE_AUTH
 
-  unset DQ_PULL_SECRET
+  test "$(kubectl get secret "$DQ_PULL_SECRET" -o jsonpath=''{.metadata.uid}'')" = "$before"
 
   ```
 
 
-  Ein Git-Befehl und ein Delivery-Controller teilen ihre Authentifizierungskonfiguration nicht automatisch. Ein Repository-Secret verwendet `argocd.argoproj.io/secret-type=repository` und `type=git` mit Repository-, Benutzer- und Zugangsdatenfeldern. Metadaten und Berechtigungsumfang sind getrennt vom Zugangsdatenwert wichtig. Prüfe jeden berechtigten Zugriffskontext ohne Authentifizierungswerte auszugeben und schütze die speichernde Konfiguration.
+  ## Aufbewahrung und veränderliche Referenzen
 
 
-  Unterscheide in Aufgabe 066 vor der Retention die Digests rollback, current und obsolete. Der bereitgestellte Helper darf in dieser einmaligen Registry nur obsolete löschen; prüfe, dass current und rollback per Digest abrufbar bleiben. Manifestlöschung ist keine Garbage Collection.
+  Ein Tag verweist auf ein Manifest, dessen Digest genaue Bytes bezeichnet. Ein lokaler Docker-Tag aktualisiert
+  eine entfernte Registry erst nach Push des Manifests. Tag-Bestand, Manifestantworten und freigegebenen Digest-Katalog
+  vergleichen. Manifest-Medientypen beim Abruf und bei Docker-Content-Digest berücksichtigen.
 
 
-  Bei einem dateibasierten Dienst sind projizierte Konfiguration und Eingabeort des Programms unterschiedliche Grenzen. Eine Quelle kann synchronisiert sein, während ein Prozess andere Eingaben oder einen älteren Stand liest. Vergleiche Soll-Daten, eingebundene Dateien und tatsächliche HTTP-Metadaten. Bereitschaft allein belegt weder Übernahme noch Identität oder Quellenübereinstimmung.
+  Aufbewahrung auf geschützte Manifestidentitäten stützen. Plan vor DELETE und Lesbarkeit geschützter Manifeste
+  danach prüfen. Verbleibende Release-Tags müssen ebenfalls auf den vorgesehenen Inhalt zeigen: ein bewahrter Digest
+  bewahrt nicht automatisch einen veränderlichen Alias. Manifest-Löschung und Einsammeln unreferenzierter Blobs
+  sind getrennte Vorgänge. Keine Volume-Löschung, unsicheres TLS oder fremde Registry als Ersatz verwenden.
 
 
-  Stelle in Aufgabe 075 den ursprünglichen signierten Push-Hook auf den eingefrorenen Empfänger wieder her und liefere über den bereitgestellten Test-Endpunkt ein gültiges Main-Ereignis. Prüfe bei abgeschaltetem Polling das serverseitig beobachtete Ereignis, aktuelle Revision, Gesundheit und `north-75`; ein manueller Refresh erzeugt dieses Ereignis nicht.
+  ## Ereignisse und Abgleich
 
 
-  Fordere in Aufgabe 078 nur den begrenzten Registry-Start an, prüfe authentifiziertes TLS `/v2/` und stelle dann eine Board-Replik mit vorhandenem gepinntem Image und Pull-Secret wieder her. Vergleiche laufende Image-Identität und Antwort; halte die Spielzugangsdaten geheim.
+  Ein Repository-Webhook verbindet ein Quellenereignis mit einem privaten Empfänger. Empfänger, Ereignistyp, Repository,
+  Branch und Signaturkonfiguration ohne Geheimnisausgabe vergleichen. Annahme eines signierten Ereignisses unterscheidet
+  sich von periodischem Polling und erfolgreichem Quellenabgleich. Zustellergebnis und authentifizierte Empfängerbeobachtung
+  zusammen verwenden.
 
 
-  Image-Provenienz verbindet das laufende unveränderliche Image, die tatsächlichen Manifest-/Config-Bytes der Registry und die Quellabstammung in Git. Ein Deployment-Commit kann ein älteres Quellartefakt auswählen. Ermittle diese Beziehung aus den drei zuständigen Quellen, statt ein vorbereitetes Tupel zu kopieren oder ein Label als Signatur zu behandeln. Lokaler Bericht, veröffentlichter GitOps-Nachweis, laufende ConfigMap und die vom laufenden Pod gelesene Datei sind getrennte Beobachtungen: Übereinstimmung an einer Grenze beweist keine Übertragung über die übrigen. Untersuche Mount-Modus und Verbraucheridentität, wenn API-Objekt und eingebundener Inhalt abweichen; ein subPath-Mount behält seine Datei für die Lebensdauer dieses Pods. Erhalte die ursprüngliche Image-Identität und prüfe den tatsächlich ausgelieferten Quellnachweis. Unsignierte Metadaten bieten Rückverfolgbarkeit, keinen vertrauenswürdigen Build-Nachweis.
+  Eine Application bindet Repository, Pfad, Revision, Projekt und Ziel. Synced beschreibt Quellenvergleich, Healthy
+  Ressourcengesundheit. Beide belegen keine Anwendungsantwort. Abgeglichene Revision, Soll-Daten, Kubernetes-Objekt
+  und tatsächliche Antwort vergleichen, ohne eine korrekte Zugriffsgrenze zu ändern.
 
 
-  Unabhängig verwaltete Verbraucher können unterschiedlichen Versionsverträgen folgen. Ein gesunder historischer Zustand und aktuelle freigegebene Eingaben müssen nicht denselben Stand beschreiben. Vergleiche Identität, Quellrevision und Laufzeitausgabe an jeder Grenze und bewahre die aufgezeichnete Historie. Git-Abstammung beschreibt gespeicherte Commits, keinen bestimmten Wiederherstellungsbefehl.
+  ## Veröffentlichung und Übernahme
 
 
-  Die Archiv-Prüfsumme identifiziert die erhaltene Wiederherstellungseingabe; der Image-Manifest-Digest identifiziert andere Bytes. Ein erreichbarer Registry-Prozess und ein erfolgreicher gecachter Container beweisen nicht, dass jeder referenzierte Config- und Layer-Blob abrufbar ist. Prüfe authentifiziertes TLS sowie echte Blob-Bytes und Größen unter ursprünglichem Repository/Tag/Digest. Erhalte unabhängige Registry-Artefakte separat; Archivwiederherstellung belegt keine Host- oder Speicher-Notfallwiederherstellung.
+  Eine gemountete ConfigMap kann projizierte Dateien aktualisieren, während die Anwendung eine beim Start kopierte
+  Fassung ausliefert. Unterstützte Aktualisierung oder Rollout kann zur Übernahme nötig sein. Ursprünglichen Controller
+  und Pod-Programm bewahren; jeden aktiven zugehörigen Pod mit Quelle und Antwort vergleichen. Ein gesundes Ersatzobjekt
+  bewahrt keine ursprüngliche Identität.
 
 
-  Artefaktwiederherstellung und Aktivierung unabhängiger Verbraucher sind getrennte Operationen. Ein GitOps-Controller gleicht die veröffentlichte Definition ab; eine API-verwaltete Batch-Vorlage hat eine eigene Zuständigkeit. Vergleiche Remote-Commit, beobachtete Revision, unveränderliche Image-Referenzen und echte Container-Image-IDs. Ein reiner Live-Patch kann zurückgesetzt werden; ein veränderlicher Alias kann heute passende Bytes liefern, ohne das deklarierte Release unveränderlich zu machen.
+  Bei App-of-Apps gleicht ein Elternobjekt eine untergeordnete Application ab, diese den Workload. Quelle und Eigentümer
+  je Ebene verfolgen. ApplicationSet-Generatoren übergeben Parameter an Vorlagen; erzeugte Objekte ebenso prüfen.
+  Direkte Änderungen können vom Controller überschrieben werden. Repository-Autorität, Eigentümeridentitäten, Namespace
+  und Publikation bei der Weitergabe bewahren.
 
 
-  Ein ausgesetzter CronJob kann weiterhin die Vorlage für einen bewussten Wiederherstellungs-Job liefern, ohne seinen Zeitplan fortzusetzen. Vergleiche relevante Job-Vorlagenfelder mit dem erhaltenen CronJob und schließe aufgezeichnete frühere Ausführungen aus. Ein wirklich abgeschlossenes Ergebnis braucht einen echten Pod mit der neuen Job-UID als Besitzer, erwarteter Image-ID und beendetem Container mit Exit-Code null; Job-Status allein reicht nicht. Manuelle Jobs können andere Metadaten als geplante Jobs haben; prüfe daher echte Besitzer statt einen bestimmten Befehl oder generierten Namen vorauszusetzen. Erhalte den abgeschlossenen Pod bis zur Prüfung; Ready-Image-Prüfungen für laufende Deployments beschreiben keine beendeten Batch-Pods.
-
-
-  In Aufgabe 122 gleicht der Parent eine Child-Application ab, die wiederum das Board abgleicht. Korrigiere den Child-Source-Pfad in Git und pushe einen Nachfahren von baseline. Erhalte Parent-UID und Apps-Pfad und vergleiche beide Sync-Revisionen, Child-Gesundheit, Tracking-Annotation und Board-Antwort.
-
-
-  Korrigiere in Aufgabe 070 den Source-Pfad der Application und bestätige Synced für die aufgezeichnete Git-Revision vor der Wiederherstellung des Runtime-Secrets. Der Workload kann bis zur Reparatur der Vault-Reader-Policy und dem ausdrücklichen Start des Synchronisierers ungesund bleiben; ein Vault-Token gehört nicht in den Workload.
-
-
-  Stelle in Aufgabe 080 zuerst die Quell-Reconciliation auf baseline wieder her. Pushe dann das bereitgestellte unveränderliche Image in einem nachfolgenden Release und vergleiche Git, Argo-Revision, authentifizierten Registry-Digest und laufende Image-ID. Erhalte Pull-Einstellungen, prüfe Gesundheit und `north-80` und halte Zugangsdaten privat; die Prüfungen belegen nicht, dass das Pull-Secret unverändert war.
-
-
-  Stelle in Aufgabe 100 Quelle und Automatisierung der Application wieder her und verfolge das Release über privates Image, Argo-Status und Board. Repariere die begrenzte Vault-gestützte Auslieferung und prüfe laufenden Digest und Antwort. Synced allein belegt keine Gesundheit; zwei geprüfte Vault-Pfade belegen nicht den vollständigen Policy-Umfang.
+  Referenzen: [Registry-API](https://distribution.github.io/distribution/spec/api/), [private Images](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/),
+  [Argo-CD-Webhooks](https://argo-cd.readthedocs.io/en/stable/operator-manual/webhook/), [ConfigMap-Übernahme](https://kubernetes.io/docs/tutorials/configuration/updating-configuration-via-a-configmap/).
 
   '
-source_hash: 151691dd9e2dbe1e6a55e07fab0ce2e080b57291ab53af3f64a82dc374cdba70
+source_hash: 71163a1b9b5c6da4e37f7541b6cdf0720b470e301229fd25f78c9ff9a1c8b7a0

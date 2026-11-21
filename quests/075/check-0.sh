@@ -39,7 +39,95 @@ kubectl rollout status deployment/board --timeout=3s >/dev/null
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+dq_failed=0
+set +e
+(
+set -euo pipefail
+timeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY'
 test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-75
+DQ_LEGACY
+)
+[ $? -eq 0 ] || dq_failed=1
+(
+set -euo pipefail
+timeout --kill-after=1s 14s bash -euo pipefail <<'DQ_CURRENT'
+dq_probe_output=$(mktemp)
+trap 'rm -f "$dq_probe_output"' EXIT
+set +e
+(
+set -euo pipefail
+python3 -I - <<'DQ_WEBHOOK_PUBLICATION'
+
+import json,subprocess,yaml
+from pathlib import Path
+from dq_check import current_pods,pod_worker,ready_image,workload_worker
+def k(*args):
+ return json.loads(subprocess.check_output(['kubectl',*args,'-o','json'],timeout=2))
+contract=json.loads(Path('/run/dq/facts/0/webhook-publication.json').read_text())
+old=contract['deployment']
+deployment=k('get','deployment','board')
+assert deployment['metadata']['uid']==old['metadata']['uid']
+assert deployment['spec']['selector']==old['spec']['selector']
+assert deployment['spec']['replicas']==old['spec']['replicas']==1
+assert deployment['spec']['template']['spec']==old['spec']['template']['spec']
+app=k('get','application','board')
+assert app['metadata']['uid']==contract['application']['metadata']['uid']
+assert app['spec']==contract['application']['spec']
+revision=app['status']['sync']['revision']
+subprocess.run(['git','-C','repository','merge-base','--is-ancestor',contract['release_commit'],revision],check=True,timeout=2)
+desired=yaml.safe_load(subprocess.check_output(['git','-C','repository','show',revision+':'+contract['source_file']],text=True,timeout=2))
+assert desired['kind']=='ConfigMap' and desired['metadata']['name']==contract['approved']['metadata']['name']
+assert desired['data']==contract['approved']['data']
+config=k('get','configmap',desired['metadata']['name'])
+assert config['metadata']['uid']==contract['publication_uid']
+assert config['data']==desired['data']
+worker=workload_worker(deployment)
+pods=current_pods(deployment,k('get','replicasets'),k('get','pods'))
+assert len(pods)==1
+for pod in pods:
+ assert ready_image(pod,worker['image'])
+ current=pod_worker(pod)
+ for key in ('command','args'):
+  assert current.get(key)==worker.get(key)
+ for mount in worker.get('volumeMounts',[]):
+  assert mount.get('readOnly') is True and mount in current.get('volumeMounts',[])
+ value=subprocess.check_output(['kubectl','exec',pod['metadata']['name'],'-c','worker','--','wget','-qO-','-T','2','http://127.0.0.1:8080'],timeout=3)
+ assert value.decode().rstrip('\n')==desired['data']['notice'].rstrip('\n')
+
+DQ_WEBHOOK_PUBLICATION
+
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_5]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
+
+DQ_CURRENT
+)
+[ $? -eq 0 ] || dq_failed=1
+set -e
+test "$dq_failed" -eq 0
+) >"$dq_probe_output" 2>/dev/null
+dq_probe_status=$?
+set -e
+cat "$dq_probe_output"
+if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_5]'
+fi
+rm -f "$dq_probe_output"
+trap - EXIT
+test "$dq_probe_status" -eq 0
+
 )
 [ $? -eq 0 ] || failed=1
 (

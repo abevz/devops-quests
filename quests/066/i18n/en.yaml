@@ -1,52 +1,71 @@
 title: Registry retention
-brief: 'The registry has a pending retention request; protected releases must remain available.
+brief: 'The retention request and surviving release aliases do not describe a consistent release inventory. Recover
+  safe retention without replacing the registry or its authority.
 
 
-  Work on the workstation in `~/quest` with `platform.env`, `registry-ca.crt`, `retention.json`, `prune.sh`.
+  Work in `~/quest`. Supplied source records identify the original authority and protected publication; backend-frozen
+  copies under `/run/dq/facts/0/` remain authoritative. Preserve the original identities, programs, access boundaries
+  and TLS trust. Keep credentials private; do not print them or replace the protected source.
+
+
+  Inputs: `platform.env`, `registry-ca.crt`, `release-catalog.json`, `registry-source.json`, `retention.json` and
+  the `prune.sh` workspace. Construct the required registry operations; the workspace contains no complete deletion
+  implementation. Manifest removal does not prove blob garbage collection.
 
 
   **Requirements:**
 
-  - Workstation `~/quest/retention.json` selects only the obsolete release identified by the authoritative
-  catalog.
 
-  - Over verified TLS, the current and rollback manifests remain available with HTTP `200`, and the obsolete
-  manifest returns `404`.
+  - Workstation `~/quest/retention.json` selects only the obsolete release identified by the authoritative catalog.
 
-
-  The check observes manifest deletion, not garbage collection; files in `~/quest` are working copies, while
-  `/run/dq/facts/0/` on the workstation is authoritative.
-
-  '
-debrief: Retention removed an obsolete manifest without breaking a real rollback reference.
-stages.0.brief: The retention result must preserve both protected releases.
-hints.0.text: Tags are mutable references; retention safety depends on protected manifests.
-hints.1.text: 'The proposed retention.json selects rollback. Protected digest identities come from the read-only
-  /run/dq/facts/0/release-catalog.json, not the working copy.
+  - Over the original verified TLS authority, current and rollback manifests return `200`, the obsolete manifest
+  returns `404`, and the surviving release aliases resolve to the approved digests.'
+debrief: The original source and consumer identities were preserved, and the approved release was verified at each
+  affected boundary.
+stages.0.brief: The retention request and surviving release aliases do not describe a consistent release inventory.
+  Recover safe retention without replacing the registry or its authority.
+hints.0.text: A mutable tag, an immutable manifest and the bytes retained by storage are different objects.
+hints.1.text: 'Compare the proposed retention plan, approved digest catalog and live tag bindings before changing
+  registry data.
 
 
-  Inspect the supplied inputs and observed state:
+  ```bash
 
+  cat retention.json release-catalog.json registry-source.json
 
-  ```sh
+  source platform.env
 
-  cat retention.json
-
-  cat /run/dq/facts/0/release-catalog.json
+  curl -fsS --max-time 3 --cacert registry-ca.crt --config <(printf ''user = "%s:%s"\n'' "$REGISTRY_USER" "$REGISTRY_PASSWORD")
+  "https://$REGISTRY/v2/parcel/tags/list" | jq ''{tags}''
 
   ```'
-hints.2.text: |-
-  Select obsolete only and run bash prune.sh; the helper refuses protected digests and verifies TLS using registry-ca.crt.
-
-  Verify the observed result:
-
-  - `jq -e --slurpfile c /run/dq/facts/0/release-catalog.json '(.delete|type)=="array" and (.delete|unique)==[$c[0].obsolete]' retention.json` — Prints `true` for the retained deletion request.
-  - `source platform.env; for kind in current rollback obsolete; do digest=$(jq -r --arg kind "$kind" '.[$kind]' /run/dq/facts/0/release-catalog.json); code=$(curl -sS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' -o /dev/null -w '%{http_code}' "https://$REGISTRY/v2/parcel/manifests/$digest"); printf "%s %s\n" "$kind" "$code"; done` — Reports `current 200`, `rollback 200`, `obsolete 404`, with certificate verification enabled.
-
+hints.2.text: "\n\nSelect only the approved obsolete digest. Construct validated DELETE requests against the original\
+  \ registry, retaining its private identity and CA; restore the current release alias by publishing the approved\
+  \ current manifest. Preserve the existing rollback alias. A local image tag is not a registry update.\n\n```bash\n\
+  set -euo pipefail\ncd ~/quest\nsource platform.env\npython3 -I - <<'VERIFY_RELEASE'\nimport urllib.error\n\nimport\
+  \ base64,hashlib,json,os,ssl,urllib.request\nfrom pathlib import Path\nsource=json.loads(Path('/run/dq/facts/0/registry-source.json').read_text())\n\
+  assert os.environ['REGISTRY']==source['endpoint']\nassert os.environ['REGISTRY_USER']==source['username']\nassert\
+  \ hashlib.sha256(os.environ['REGISTRY_PASSWORD'].encode()).hexdigest()==source['password_sha256']\nassert hashlib.sha256(Path('registry-ca.crt').read_bytes()).hexdigest()==source['ca_sha256']\n\
+  class NoRedirect(urllib.request.HTTPRedirectHandler):\n def redirect_request(self,*args,**kwargs):\n  return None\n\
+  opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect(),\nurllib.request.HTTPSHandler(context=ssl.create_default_context(cafile='registry-ca.crt')))\n\
+  headers={'Authorization':'Basic '+base64.b64encode((source['username']+':'+os.environ['REGISTRY_PASSWORD']).encode()).decode(),\n\
+  'Accept':'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json'}\n\
+  def manifest(reference):\n request=urllib.request.Request('https://'+source['endpoint']+'/v2/parcel/manifests/'+reference,headers=headers)\n\
+  \ with opener.open(request,timeout=2) as response:\n  body=response.read(2097153)\n  assert len(body)<=2097152\n\
+  \  digest='sha256:'+hashlib.sha256(body).hexdigest()\n  assert response.headers.get('Docker-Content-Digest')==digest\n\
+  \  return digest\n\ncatalog=json.loads(Path('/run/dq/facts/0/release-catalog.json').read_text())\nassert manifest('current')==catalog['current']\n\
+  assert manifest('1')==catalog['rollback']\n\nfor role in ('current','rollback','obsolete'):\n digest=catalog[role]\n\
+  \ try:\n  observed=manifest(digest)\n  assert role!='obsolete' and observed==digest\n except urllib.error.HTTPError\
+  \ as error:\n  assert role=='obsolete' and error.code==404\n\nprint('OK')\nVERIFY_RELEASE\n```\n\nExpected: OK.\
+  \ Credentials are not displayed."
 phrases.0: I protected rollback digests before deleting obsolete manifests.
 phrases.1: I verified TLS instead of bypassing certificate checks.
 phrases.2: I distinguished manifest removal from storage garbage collection.
-stages.0.objectives.0.text: Workstation `~/quest/retention.json` selects only the obsolete release identified
-  by the authoritative catalog.
-stages.0.objectives.1.text: Over verified TLS, the current and rollback manifests remain available with HTTP
-  `200`, and the obsolete manifest returns `404`.
+stages.0.objectives.0.text: Workstation `~/quest/retention.json` selects only the obsolete release identified by
+  the authoritative catalog.
+stages.0.objectives.1.text: Over the original verified TLS authority, current and rollback manifests return `200`,
+  the obsolete manifest returns `404`, and the surviving release aliases resolve to the approved digests.
+diagnostics.probe_0_1: The original registry authority and CA must be retained; surviving release tags must resolve
+  to their approved manifest digests.
+guides.reference_1: Relevant API and diagnostic reference
+guides.reference_2: Publication and consumer verification reference

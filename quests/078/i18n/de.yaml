@@ -1,64 +1,107 @@
 title: Verfügbarkeit der Registrierung
-brief: |-
-  Die private Registry ist nicht erreichbar und board bedient keine Anfragen. Stellen Sie zuerst den Registry-Zugriff und dann den Board-Dienst wieder her.
+brief: 'Privater Image-Dienst und Workload sind nicht verfügbar. Stellen Sie die ursprüngliche Registry und danach
+  den privaten Image-Abruf wieder her; bewahren Sie Artefakt, Controller, Programm und Zugangsdatenobjekt.
 
-  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `registry-ca.crt`, `registry-repair.json`, `registry-pull.yaml`, `board.yaml`.
 
-  Sofern nicht anders angegeben, liegen Kubernetes-Ressourcen im Bay-Namespace (`DQ_NAMESPACE`); Pfade unter `~/quest` liegen auf der Workstation.
+  Arbeiten Sie in `~/quest`. Quellenaufzeichnungen beschreiben ursprüngliche Autorität und geschützte Publikation;
+  eingefrorene Kopien unter `/run/dq/facts/0/` bleiben maßgeblich. Identitäten, Programme, Zugriffsgrenzen und TLS-Vertrauen
+  bewahren. Zugangsdaten nicht ausgeben; die geschützte Quelle nicht ersetzen.
 
-  Die Steuerschnittstelle der Station ist in `~/quest/control/README.md` dokumentiert.
 
-  **Requirements:**
+  Eingaben: `platform.env`, `registry-ca.crt`, `board.yaml`, `registry-target.json`, `registry-source.json` und
+  `registry-consumer.json`. Die begrenzte Dienststeuerung beschreibt `control/README.md`. Identität des bestehenden
+  Zugangsdatenobjekts bewahren. Verfügbarkeit belegt keine Wiederherstellung nach Speicherverlust.
 
-  - Stufe 1:
-    - Der bereitgestellte Registry-Endpunkt akzeptiert einen authentifizierten `/v2/`-Lesezugriff über geprüftes TLS.
 
-  - Stufe 2:
-    - Der bereitgestellte Registry-Endpunkt akzeptiert einen authentifizierten `/v2/`-Lesezugriff über geprüftes TLS.
-    - Deployment `board` und ein bereiter Container in einem aktiven Pod verwenden das vorhandene unveränderliche private Release-Image mit Pull-Policy `Always`.
-    - Deployment `board` hat Replikazahl `1` und schließt seinen Rollout ab.
-    - In einem Pod von Deployment `board` liefert `http://127.0.0.1:8080` den Wert `north-78`.
+  **Anforderungen:**
 
-  Die aktuelle Dienstverfügbarkeit beweist keine Wiederherstellung nach Verlust des Registry-Speichers.
-debrief: Das echte registry wurde wiederhergestellt, bevor das private Image consumer zurückgebracht wurde.
+
+  - Phase 1: Der bereitgestellte Registry-Endpunkt akzeptiert einen authentifizierten `/v2/`-Lesezugriff über geprüftes
+  TLS.
+
+  - Phase 2: Ursprüngliche Registry-Identität und CA bleiben gültig; der ursprüngliche Pull-Secret enthält die bereitgestellten
+  privaten Zugangsdaten.
+
+  - Phase 2: Deployment `board` und ein bereiter Container in einem aktiven Pod verwenden das vorhandene unveränderliche
+  private Release-Image mit Pull-Policy `Always`.
+
+  - Phase 2: Das ursprüngliche Deployment bewahrt die Pod-Spezifikation, hat `1` Replikat und schließt den Rollout
+  mit einem aktiven zugehörigen Pod, freigegebenem Digest, `Always` und ursprünglichem Pull-Secret ab.
+
+  - Phase 2: In einem Pod von Deployment `board` liefert `http://127.0.0.1:8080` den Wert `north-78`.'
+debrief: Ursprüngliche Quellen- und Verbraucheridentitäten blieben erhalten; das freigegebene Release wurde an jeder
+  betroffenen Grenze geprüft.
 stages.0.brief: Stellen Sie den authentifizierten Zugriff auf die vorhandene private Registry wieder her.
-stages.1.brief: Stellen Sie den Board-Dienst mit seinem vorgesehenen privaten Release wieder her.
-hints.0.text: Stellen Sie den registry endpoint wieder her, bevor Sie consumers starten, der pull benötigt.
-hints.1.text: |-
-  Prüfen Sie die anfangs bereitgestellte Agentenquittung und den aktuellen Dienst- oder Workload-Zustand. Die Quittung beschreibt Agentenaktivität, keine laufende Gesundheitsüberwachung.
+stages.1.brief: Privater Image-Dienst und Workload sind nicht verfügbar. Stellen Sie die ursprüngliche Registry
+  und danach den privaten Image-Abruf wieder her; bewahren Sie Artefakt, Controller, Programm und Zugangsdatenobjekt.
+hints.0.text: Dienstverfügbarkeit, TLS-Vertrauen und Kubelet-Authentifizierung sind getrennte Grenzen.
+hints.1.text: 'Steuerquittung, Quellenvertrag, Deployment und Pull-Secret-Metadaten prüfen. Nach einem Abrufversuch
+  unterscheiden Pod-Ereignisse Transport- und Berechtigungsfehler.
+
 
   ```bash
-  cat registry-agent-status.json
+
+  cat registry-agent-status.json registry-source.json
+
   kubectl describe deployment board
-  ```
-hints.2.text: |-
-  Überprüfen Sie zuerst TLS und die Authentifizierung, stellen Sie dann ein board-Replikat wieder her und überprüfen Sie dessen digest und HTTP. Schreiben Sie genau `{"action":"start"}` in `registry-repair.json`. Die nächste Zielabfrage startet nur die unveränderte Registry dieser Installation; andere Aktionen und zusätzliche Felder werden abgelehnt. Das bereitgestellte Pull-Secret heißt `registry-pull`. Schreiben Sie nur die dokumentierte Startaktion; Der Agent zielt auf einen festen Spielcontainer.
 
-  Prüfen Sie in `~/quest` auf der Workstation:
+  kubectl get secret -o custom-columns=NAME:.metadata.name,TYPE:.type
 
-  - `source platform.env`
-  - `curl -fsS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") "https://$(jq -r .endpoint /run/dq/facts/0/registry-target.json)/v2/"`
+  kubectl get events --sort-by=.lastTimestamp
 
-  Stufe 1: Authentifizierte TLS-Antwort: `{}`.
-
-  - `kubectl get deployment board -o json | jq '{replicas:.spec.replicas, ready:.status.readyReplicas,worker:(.spec.template.spec.containers[]|select(.name=="worker")|{image,imagePullPolicy})}'`
-
-  Stufe 2: `replicas: 1`, `ready: 1`. Das Image entspricht dem eingefrorenen Release und die Pull-Policy ist `Always`.
-
-  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080`
-
-  Stufe 2: `north-78`.
+  ```'
+hints.2.text: "Überprüfen Sie zuerst TLS und die Authentifizierung, stellen Sie dann ein board-Replikat wieder her\
+  \ und überprüfen Sie dessen digest und HTTP. Schreiben Sie genau `{\"action\":\"start\"}` in `registry-repair.json`.\
+  \ Die nächste Zielabfrage startet nur die unveränderte Registry dieser Installation; andere Aktionen und zusätzliche\
+  \ Felder werden abgelehnt. Das bereitgestellte Pull-Secret heißt `registry-pull`. Schreiben Sie nur die dokumentierte\
+  \ Startaktion; Der Agent zielt auf einen festen Spielcontainer.\n\nPrüfen Sie in `~/quest` auf der Workstation:\n\
+  \n- `source platform.env`\n- `curl -fsS --cacert registry-ca.crt --config <(printf 'user = \"%s:%s\"\\n' \"$REGISTRY_USER\"\
+  \ \"$REGISTRY_PASSWORD\") \"https://$(jq -r .endpoint /run/dq/facts/0/registry-target.json)/v2/\"`\n\nStufe 1:\
+  \ Authentifizierte TLS-Antwort: `{}`.\n\n- `kubectl get deployment board -o json | jq '{replicas:.spec.replicas,\
+  \ ready:.status.readyReplicas,worker:(.spec.template.spec.containers[]|select(.name==\"worker\")|{image,imagePullPolicy})}'`\n\
+  \nStufe 2: `replicas: 1`, `ready: 1`. Das Image entspricht dem eingefrorenen Release und die Pull-Policy ist `Always`.\n\
+  \n- `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080`\n\nStufe 2: `north-78`.\n\
+  \nEin authentifizierter Workstation-Abruf aktualisiert keinen Kubelet-Secret. Bestehenden Pull-Secret mit ursprünglichen\
+  \ privaten Zugangsdaten aktualisieren, UID bewahren und den einzelnen freigegebenen Worker starten. Digest und\
+  \ Always bewahren; Authentifizierung nicht umgehen, Controller nicht ersetzen.\n\n```bash\nset -euo pipefail\n\
+  cd ~/quest\nsource platform.env\npython3 -I - <<'VERIFY_RELEASE'\n\nimport base64,hashlib,json,os,ssl,urllib.request\n\
+  from pathlib import Path\nsource=json.loads(Path('/run/dq/facts/0/registry-source.json').read_text())\nassert\
+  \ os.environ['REGISTRY']==source['endpoint']\nassert os.environ['REGISTRY_USER']==source['username']\nassert hashlib.sha256(os.environ['REGISTRY_PASSWORD'].encode()).hexdigest()==source['password_sha256']\n\
+  assert hashlib.sha256(Path('registry-ca.crt').read_bytes()).hexdigest()==source['ca_sha256']\nclass NoRedirect(urllib.request.HTTPRedirectHandler):\n\
+  \ def redirect_request(self,*args,**kwargs):\n  return None\nopener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect(),\n\
+  urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile='registry-ca.crt')))\nheaders={'Authorization':'Basic\
+  \ '+base64.b64encode((source['username']+':'+os.environ['REGISTRY_PASSWORD']).encode()).decode(),\n'Accept':'application/vnd.docker.distribution.manifest.v2+json,\
+  \ application/vnd.oci.image.manifest.v1+json'}\ndef manifest(reference):\n request=urllib.request.Request('https://'+source['endpoint']+'/v2/parcel/manifests/'+reference,headers=headers)\n\
+  \ with opener.open(request,timeout=2) as response:\n  body=response.read(2097153)\n  assert len(body)<=2097152\n\
+  \  digest='sha256:'+hashlib.sha256(body).hexdigest()\n  assert response.headers.get('Docker-Content-Digest')==digest\n\
+  \  return digest\n\nfrom dq_check import registry_credentials\nimport subprocess\ncontract=json.loads(Path('/run/dq/facts/0/registry-consumer.json').read_text())\n\
+  target=json.loads(Path('/run/dq/facts/0/registry-target.json').read_text())\nassert manifest(target['image'].split('@',1)[1])==target['image'].split('@',1)[1]\n\
+  secret=json.loads(subprocess.check_output(['kubectl','get','secret',contract['secret_name'],'-o','json'],timeout=2))\n\
+  assert secret['metadata']['uid']==contract['secret_uid']\nassert registry_credentials(secret,source['endpoint'],source['username'],os.environ['REGISTRY_PASSWORD'])\n\
+  \n\nimport json,subprocess\nfrom pathlib import Path\nfrom dq_check import current_pods,pod_worker,ready_image,workload_worker,pull_secret_names\n\
+  def k(*args):\n return json.loads(subprocess.check_output(['kubectl',*args,'-o','json'],timeout=2))\ncontract=json.loads(Path('/run/dq/facts/0/registry-consumer.json').read_text())\n\
+  old=contract['deployment']\ndeployment=k('get','deployment','board')\nassert deployment['metadata']['uid']==old['metadata']['uid']\n\
+  assert deployment['spec']['selector']==old['spec']['selector']\nassert deployment['spec']['template']['spec']==old['spec']['template']['spec']\n\
+  worker=workload_worker(deployment)\nactive=current_pods(deployment,k('get','replicasets'),k('get','pods'))\nassert\
+  \ len(active)==1\nfor pod in active:\n assert ready_image(pod,worker['image'])\n assert pod_worker(pod).get('imagePullPolicy')=='Always'\n\
+  \ assert pull_secret_names(pod)=={contract['secret_name']}\n assert pod_worker(pod).get('command')==worker.get('command')\n\
+  \ assert pod_worker(pod).get('args')==worker.get('args')\n\nprint('OK')\nVERIFY_RELEASE\n```\n\nErwartet: OK.\
+  \ Keine Zugangsdaten werden ausgegeben."
 phrases.0: Ich habe den Image-Dienst wiederhergestellt, bevor ich seinen consumers neu gestartet habe.
 phrases.1: Ich habe eine Wiederherstellung mit engem Umfang control ohne Hostzugriff verwendet.
 phrases.2: Ich habe registry TLS, Bild identity und Anwendung HTTP separat überprüft.
 stages.0.objectives.0.text: Der bereitgestellte Registry-Endpunkt akzeptiert einen authentifizierten `/v2/`-Lesezugriff
   über geprüftes TLS.
-stages.1.objectives.0.text: Der bereitgestellte Registry-Endpunkt akzeptiert einen authentifizierten `/v2/`-Lesezugriff
-  über geprüftes TLS.
-stages.1.objectives.1.text: Deployment `board` und ein bereiter Container in einem aktiven Pod verwenden
-  das vorhandene unveränderliche private Release-Image mit Pull-Policy `Always`.
-stages.1.objectives.2.text: Deployment `board` hat Replikazahl `1` und schließt seinen Rollout ab.
-stages.1.objectives.3.text: In einem Pod von Deployment `board` liefert `http://127.0.0.1:8080` den Wert
-  `north-78`.
-diagnostics.probe_1_0: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: Der bereitgestellte
-  Registry-Endpunkt akzeptiert einen authentifizierten `/v2/`-Lesezugriff über geprüftes TLS.'
+stages.1.objectives.0.text: Ursprüngliche Registry-Identität und CA bleiben gültig; der ursprüngliche Pull-Secret
+  enthält die bereitgestellten privaten Zugangsdaten.
+stages.1.objectives.1.text: Deployment `board` und ein bereiter Container in einem aktiven Pod verwenden das vorhandene
+  unveränderliche private Release-Image mit Pull-Policy `Always`.
+stages.1.objectives.2.text: Das ursprüngliche Deployment bewahrt die Pod-Spezifikation, hat `1` Replikat und schließt
+  den Rollout mit einem aktiven zugehörigen Pod, freigegebenem Digest, `Always` und ursprünglichem Pull-Secret ab.
+stages.1.objectives.3.text: In einem Pod von Deployment `board` liefert `http://127.0.0.1:8080` den Wert `north-78`.
+diagnostics.probe_1_0: Ursprüngliche Registry-Zugangsdaten und CA müssen dem Quellenvertrag entsprechen; bestehenden
+  Pull-Secret mit ursprünglichen Zugangsdaten aktualisieren.
+diagnostics.probe_1_2: Ursprüngliches Deployment und Pod-Programm bewahren; der einzige aktive zugehörige Pod muss
+  den freigegebenen privaten Digest mit Always und ursprünglichem Pull-Secret verwenden.
+guides.reference_1: API- und Diagnosereferenz
+guides.reference_2: Referenz zur Publikations- und Verbraucherprüfung

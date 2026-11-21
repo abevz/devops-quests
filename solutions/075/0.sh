@@ -11,3 +11,6 @@ for i in $(seq 1 90); do
  if kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" '.status.sync.revision==$rev and .status.sync.status=="Synced" and .status.health.status=="Healthy"' >/dev/null; then break; fi
  sleep 1
 done
+
+kubectl rollout restart deployment/board
+kubectl rollout status deployment/board --timeout=90s

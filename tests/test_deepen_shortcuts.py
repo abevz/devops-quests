@@ -1,6 +1,7 @@
 """Old minimal repairs must fail against fresh production bays (dq-82).
 
-The frozen repairs below come from ae87ab3 audit evidence, not current solutions.
+Initial repairs were frozen at ae87ab3; additions identify their pre-deepening revision.
+Repair bodies stay frozen while earlier-stage preparation follows the production lifecycle.
 Only their convergence waits are bounded by the harness. Native opt-in required.
 """
 
@@ -48,6 +49,12 @@ STATIC_FIX
 }
 
 
+# Re-verified against main5d34145 before this batch; only convergence waits are bounded.
+OLD_FIXES.update({(66, 0): 'cat > prune.sh <<\'DQ_FROZEN_PRUNE\'\n#!/bin/bash\nset -euo pipefail\ncd ~/quest\nsource platform.env\npython3 - <<\'VALIDATE\'\nimport json,re\nc=json.load(open(\'/run/dq/facts/0/release-catalog.json\'));p=json.load(open(\'retention.json\'))\nassert len(p[\'delete\'])==1\nfor d in p[\'delete\']:\n assert re.fullmatch(r\'sha256:[0-9a-f]{64}\',d)\n assert d==c[\'obsolete\'], \'Refusing to remove an unapproved release\'\nVALIDATE\nwhile read -r digest; do\n curl -fsS --cacert registry-ca.crt -u "$REGISTRY_USER:$REGISTRY_PASSWORD" --request DELETE "https://$REGISTRY/v2/parcel/manifests/$digest" >/dev/null\ndone < <(jq -r \'.delete[]\' retention.json)\nDQ_FROZEN_PRUNE\nset -euo pipefail\ncd ~/quest\njq --slurpfile c /run/dq/facts/0/release-catalog.json \'{delete:[$c[0].obsolete]}\' retention.json > corrected-retention.json\nmv corrected-retention.json retention.json\nbash prune.sh\n', (75, 0): 'set -euo pipefail\ncd ~/quest\nsource platform.env\nsource webhook.env\nGITEA_API="${GIT_URL%/rail/station.git}/api/v1/repos/rail/station"\nhook=$(cat /run/dq/facts/0/hook-id)\njq -n --arg url "$(jq -er .url /run/dq/facts/0/webhook-target.json)" --arg secret "$WEBHOOK_SECRET" \'{config:{url:$url,content_type:"json",secret:$secret},events:["push"],branch_filter:"main",active:true}\' > hook-repair.json\ncurl -fsS -u "$GIT_USER:$GIT_PASSWORD" -H \'Content-Type: application/json\' --request PATCH --data-binary @hook-repair.json "$GITEA_API/hooks/$hook" >/dev/null\ncurl -fsS -u "$GIT_USER:$GIT_PASSWORD" --request POST "$GITEA_API/hooks/$hook/tests?ref=refs/heads/main" >/dev/null\nfor i in $(seq 1 90); do\n if kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" \'.status.sync.revision==$rev and .status.sync.status=="Synced" and .status.health.status=="Healthy"\' >/dev/null; then break; fi\n sleep 1\ndone\n', (78, 1): 'set -euo pipefail\ncd ~/quest\nkubectl scale deployment board --replicas=1\nkubectl rollout status deployment/board --timeout=8s\n'})
+
+OLD_REGISTRY_RETENTION_CHECK = 'set -euo pipefail\ncd ~/quest\nfailed=0\nset +e\n(\nset -e\njq -e --slurpfile c /run/dq/facts/0/release-catalog.json \'(.delete|type)=="array" and (.delete|unique)==[$c[0].obsolete]\' retention.json >/dev/null\n)\n[ $? -eq 0 ] || failed=1\n(\nset -e\nsource platform.env\nfor kind in rollback current obsolete; do\n digest=$(jq -er --arg kind "$kind" \'.[$kind]\' /run/dq/facts/0/release-catalog.json)\n code=$(curl -sS --cacert registry-ca.crt -u "$REGISTRY_USER:$REGISTRY_PASSWORD" -H \'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json\' -o /dev/null -w \'%{http_code}\' "https://$REGISTRY/v2/parcel/manifests/$digest")\n if test "$kind" = obsolete; then test "$code" = 404; else test "$code" = 200; fi\ndone\n)\n[ $? -eq 0 ] || failed=1\nexit "$failed"\n'
+
+
 @pytest.mark.parametrize("number,stage", OLD_FIXES)
 def test_old_minimal_fix_does_not_complete(number, stage):
     catalog = Catalog()
@@ -55,7 +62,7 @@ def test_old_minimal_fix_does_not_complete(number, stage):
     run = {"id": secrets.token_hex(12), "level": number}
     folder = Path(os.environ.get("DQ_DEEPEN_EVIDENCE", ROOT / "artifacts/deepen-shortcuts"))
     folder.mkdir(parents=True, exist_ok=True)
-    log = {"quest": number, "stage": stage, "old_source": "ae87ab3"}
+    log = {"quest": number, "stage": stage, "old_source": "5d34145" if number in {66, 75, 78} else "ae87ab3"}
     stop = threading.Event()
     errors = []
     thread = None
@@ -76,6 +83,9 @@ def test_old_minimal_fix_does_not_complete(number, stage):
                 runtime.capture_facts(dict(run, stage=current), facts)
             if current < stage:
                 runtime.exec(run, (ROOT / f"solutions/{number:03}/{current}.sh").read_text(), timeout=240)
+                if number == 78:
+                    # Match production polling before advancing the original control stage.
+                    runtime.game_controls(run)
                 assert runtime.exec(run, catalog.script(number, current, "check"), check=False, timeout=60).returncode == 0
         check = catalog.script(number, stage, "check")
         initial = runtime.exec(run, check, check=False, timeout=60)
@@ -89,6 +99,8 @@ def test_old_minimal_fix_does_not_complete(number, stage):
             # Its API name is still occupied, so only readiness of a real mirror
             # would change this result; a missing timer tick is not the fault.
             time.sleep(25)
+        if number == 75:
+            runtime.observe(run)
         after = runtime.exec(run, check, check=False, timeout=60)
         assert after.returncode != 0, "Old minimal repair completed the deepened quest"
         if number == 77:
@@ -97,6 +109,32 @@ def test_old_minimal_fix_does_not_complete(number, stage):
             assert old.returncode != 0, "The old helper must refuse eviction without two healthy replicas"
         if number == 115 and stage == 1:
             assert "[DQ:selector_canary]" in after.stdout
+        if number == 66:
+            assert old.returncode == 0
+            runtime.exec(run, OLD_REGISTRY_RETENTION_CHECK, timeout=60)
+            assert "[DQ:probe_0_1]" in after.stdout
+            log["old_whole_predicates"] = "PASS while surviving alias is wrong"
+        if number == 75:
+            assert old.returncode == 0
+            for index in (0, 3, 6):
+                goal = catalog.quests[75]["stages"][0]["objectives"][index]["check"]
+                runtime.exec(run, "set -euo pipefail\ncd ~/quest\n" + goal, timeout=25)
+            # Real reconciliation completed; the startup cache is independently stale.
+            runtime.exec(run, "set -euo pipefail\ncd ~/quest\n" + r"""
+approved=$(jq -er .approved.data.notice /run/dq/facts/0/webhook-publication.json)
+actual=$(kubectl get configmap board-publication -o jsonpath='{.data.notice}')
+test "$actual" = "$approved"
+test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" != "$approved"
+""", timeout=25)
+            log["source_reconciled_consumer_stale"] = True
+        if number == 78:
+            assert old.returncode != 0
+            runtime.exec(run, r"""
+kubectl get events -o json | jq -e 'any(.items[];(.message // "" | test("unauthorized|authentication required|failed to authorize";"i")))' >/dev/null
+""", timeout=25)
+            log["actual_pull_authorization_denial"] = True
+
+
         log.update(initial="FAIL as expected", old_fix_exit=old.returncode,
                    after="FAIL as expected", diagnostics=after.stdout)
     except Exception as error:

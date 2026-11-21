@@ -7,103 +7,113 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: |-
-      source platform.env
-      jq -e '.=={action:"start"}' registry-repair.json >/dev/null
+    check: 'source platform.env
+
+      jq -e ''.=={action:"start"}'' registry-repair.json >/dev/null
+
       endpoint=$(jq -er .endpoint /run/dq/facts/0/registry-target.json)
-      curl -fsS --max-time 3 --cacert registry-ca.crt -u "$REGISTRY_USER:$REGISTRY_PASSWORD" "https://$endpoint/v2/" >/dev/null
+
+      curl -fsS --max-time 3 --cacert registry-ca.crt -u "$REGISTRY_USER:$REGISTRY_PASSWORD" "https://$endpoint/v2/"
+      >/dev/null'
 - brief: stages.1.brief
   objectives:
   - text: stages.1.objectives.0.text
-    check: |-
-      dq_probe_output=$(mktemp)
-      trap 'rm -f "$dq_probe_output"' EXIT
-      set +e
-      (
-      set -euo pipefail
-      source platform.env
-      image=$(jq -er .image /run/dq/facts/0/registry-target.json)
-      source platform.env
-      document=$(kubectl get deployment board -o json 2>/dev/null || true)
-      replicasets=$(kubectl get replicasets -o json 2>/dev/null || true)
-      pods=$(kubectl get pods -o json 2>/dev/null || true)
-      python3 -I - /dev/fd/3 /dev/fd/4 /dev/fd/5 "$image" "$REGISTRY" "$REGISTRY_USER" "$REGISTRY_PASSWORD" 3<<<"$document" 4<<<"$replicasets" 5<<<"$pods" <<'DQ_PRIVATE_IMAGE_POLICY'
-      import base64,json,os,re,subprocess,sys
-
-      from dq_check import read_argument as argument
-      sys.argv=[sys.argv[0]]+[argument(value) for value in sys.argv[1:]]
-
-      from dq_check import named
-
-      from dq_check import workload_worker as _dq_worker
-
-      def template_worker(document):
-          return _dq_worker(document, error="application container identity", ignore_non_mappings=True)
-
-      from dq_check import current_pods
-
-      from dq_check import pod_worker
-      from dq_check import pull_secret_names as pull_names
-
-
-
-      from dq_check import ready_image
-
-
-      from dq_check import registry_credentials as credentials
-
-      def valid_secret(name,registry,user,password):
-          try:return credentials(secret(name),registry,user,password)
-          except Exception:return False
-
-      def secret(name):
-          if not re.fullmatch(r'[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?',name):raise ValueError('credential name')
-          return json.loads(subprocess.check_output(['kubectl','get','secret',name,'-o','json'],stderr=subprocess.DEVNULL,timeout=2))
-
-      try:
-          deployment,replicasets,pods=[json.loads(value) for value in sys.argv[1:4]]
-          image,registry,user,password=sys.argv[4:8]
-          worker=template_worker(deployment)
-          active=current_pods(deployment,replicasets,pods)
-          assert worker.get('image')==image and worker.get('imagePullPolicy')=='Always'
-          assert any(ready_image(pod,image) and pod_worker(pod).get('imagePullPolicy')=='Always' and bool(pull_names(pod)) for pod in active)
-      except Exception:
-          sys.exit(1)
-      DQ_PRIVATE_IMAGE_POLICY
-      ) >"$dq_probe_output" 2>/dev/null
-      dq_probe_status=$?
-      set -e
-      cat "$dq_probe_output"
-      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
-      printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_1_0]'
-      fi
-      rm -f "$dq_probe_output"
-      trap - EXIT
-      test "$dq_probe_status" -eq 0
+    check: "dq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\ndq_failed=0\n\
+      set +e\n(\nset -euo pipefail\ntimeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY'\ndq_probe_output=$(mktemp)\n\
+      trap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\nsource platform.env\nimage=$(jq -er\
+      \ .image /run/dq/facts/0/registry-target.json)\nsource platform.env\ndocument=$(kubectl get deployment board\
+      \ -o json 2>/dev/null || true)\nreplicasets=$(kubectl get replicasets -o json 2>/dev/null || true)\npods=$(kubectl\
+      \ get pods -o json 2>/dev/null || true)\npython3 -I - /dev/fd/3 /dev/fd/4 /dev/fd/5 \"$image\" \"$REGISTRY\"\
+      \ \"$REGISTRY_USER\" \"$REGISTRY_PASSWORD\" 3<<<\"$document\" 4<<<\"$replicasets\" 5<<<\"$pods\" <<'DQ_PRIVATE_IMAGE_POLICY'\n\
+      import base64,json,os,re,subprocess,sys\n\nfrom dq_check import read_argument as argument\nsys.argv=[sys.argv[0]]+[argument(value)\
+      \ for value in sys.argv[1:]]\n\nfrom dq_check import named\n\nfrom dq_check import workload_worker as _dq_worker\n\
+      \ndef template_worker(document):\n    return _dq_worker(document, error=\"application container identity\"\
+      , ignore_non_mappings=True)\n\nfrom dq_check import current_pods\n\nfrom dq_check import pod_worker\nfrom\
+      \ dq_check import pull_secret_names as pull_names\n\n\n\nfrom dq_check import ready_image\n\n\nfrom dq_check\
+      \ import registry_credentials as credentials\n\ndef valid_secret(name,registry,user,password):\n    try:return\
+      \ credentials(secret(name),registry,user,password)\n    except Exception:return False\n\ndef secret(name):\n\
+      \    if not re.fullmatch(r'[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?',name):raise ValueError('credential name')\n \
+      \   return json.loads(subprocess.check_output(['kubectl','get','secret',name,'-o','json'],stderr=subprocess.DEVNULL,timeout=2))\n\
+      \ntry:\n    deployment,replicasets,pods=[json.loads(value) for value in sys.argv[1:4]]\n    image,registry,user,password=sys.argv[4:8]\n\
+      \    worker=template_worker(deployment)\n    active=current_pods(deployment,replicasets,pods)\n    assert\
+      \ worker.get('image')==image and worker.get('imagePullPolicy')=='Always'\n    assert any(ready_image(pod,image)\
+      \ and pod_worker(pod).get('imagePullPolicy')=='Always' and bool(pull_names(pod)) for pod in active)\nexcept\
+      \ Exception:\n    sys.exit(1)\nDQ_PRIVATE_IMAGE_POLICY\n) >\"$dq_probe_output\" 2>/dev/null\ndq_probe_status=$?\n\
+      set -e\ncat \"$dq_probe_output\"\nif [ \"$dq_probe_status\" -ne 0 ] && ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"\
+      $dq_probe_output\"; then\nprintf '%s\\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_1_0]'\n\
+      fi\nrm -f \"$dq_probe_output\"\ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0\nDQ_LEGACY\n)\n[ $? -eq 0 ] ||\
+      \ dq_failed=1\n(\nset -euo pipefail\ntimeout --kill-after=1s 14s bash -euo pipefail <<'DQ_CURRENT'\ndq_probe_output=$(mktemp)\n\
+      trap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\nsource platform.env\npython3 -I - <<'DQ_REGISTRY_CREDENTIAL'\n\
+      \nimport base64,hashlib,json,os,ssl,urllib.request\nfrom pathlib import Path\nsource=json.loads(Path('/run/dq/facts/0/registry-source.json').read_text())\n\
+      assert os.environ['REGISTRY']==source['endpoint']\nassert os.environ['REGISTRY_USER']==source['username']\n\
+      assert hashlib.sha256(os.environ['REGISTRY_PASSWORD'].encode()).hexdigest()==source['password_sha256']\nassert\
+      \ hashlib.sha256(Path('registry-ca.crt').read_bytes()).hexdigest()==source['ca_sha256']\nclass NoRedirect(urllib.request.HTTPRedirectHandler):\n\
+      \ def redirect_request(self,*args,**kwargs):\n  return None\nopener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect(),\n\
+      urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile='registry-ca.crt')))\nheaders={'Authorization':'Basic\
+      \ '+base64.b64encode((source['username']+':'+os.environ['REGISTRY_PASSWORD']).encode()).decode(),\n'Accept':'application/vnd.docker.distribution.manifest.v2+json,\
+      \ application/vnd.oci.image.manifest.v1+json'}\ndef manifest(reference):\n request=urllib.request.Request('https://'+source['endpoint']+'/v2/parcel/manifests/'+reference,headers=headers)\n\
+      \ with opener.open(request,timeout=2) as response:\n  body=response.read(2097153)\n  assert len(body)<=2097152\n\
+      \  digest='sha256:'+hashlib.sha256(body).hexdigest()\n  assert response.headers.get('Docker-Content-Digest')==digest\n\
+      \  return digest\n\nfrom dq_check import registry_credentials\nimport subprocess\ncontract=json.loads(Path('/run/dq/facts/0/registry-consumer.json').read_text())\n\
+      target=json.loads(Path('/run/dq/facts/0/registry-target.json').read_text())\nassert manifest(target['image'].split('@',1)[1])==target['image'].split('@',1)[1]\n\
+      secret=json.loads(subprocess.check_output(['kubectl','get','secret',contract['secret_name'],'-o','json'],timeout=2))\n\
+      assert secret['metadata']['uid']==contract['secret_uid']\nassert registry_credentials(secret,source['endpoint'],source['username'],os.environ['REGISTRY_PASSWORD'])\n\
+      \nDQ_REGISTRY_CREDENTIAL\n\n) >\"$dq_probe_output\" 2>/dev/null\ndq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\
+      \nif [ \"$dq_probe_status\" -ne 0 ] && ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\nprintf\
+      \ '%s\\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_1_0]'\nfi\nrm -f \"$dq_probe_output\"\
+      \ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0\n\nDQ_CURRENT\n)\n[ $? -eq 0 ] || dq_failed=1\nset -e\ntest\
+      \ \"$dq_failed\" -eq 0\n) >\"$dq_probe_output\" 2>/dev/null\ndq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\
+      \nif [ \"$dq_probe_status\" -ne 0 ] && ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\nprintf\
+      \ '%s\\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_1_0]'\nfi\nrm -f \"$dq_probe_output\"\
+      \ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0\n"
   - text: stages.1.objectives.1.text
-    check: |-
-      source platform.env
-      image=$(jq -er .image /run/dq/facts/0/registry-target.json)
-      kubectl get deployment board -o json | jq -e --arg image "$image" '.spec.template.spec.containers[0].image==$image and .spec.template.spec.containers[0].imagePullPolicy=="Always" and .spec.template.spec.imagePullSecrets==[{name:"registry-pull"}]' >/dev/null
-      digest=$(printf %s "$image" | cut -d@ -f2)
-      kubectl get pods -l app=board -o json | jq -e --arg digest "$digest" 'any(.items[];.metadata.deletionTimestamp==null and any(.status.containerStatuses[]?;.ready==true and (.imageID|contains($digest))))' >/dev/null
-  - text: stages.1.objectives.2.text
-    check: |-
-      source platform.env
-      image=$(jq -er .image /run/dq/facts/0/registry-target.json)
-      kubectl get deployment board -o json | jq -e --arg image "$image" '.spec.replicas==1' >/dev/null
-      kubectl rollout status deployment/board --timeout=3s >/dev/null
-  - text: stages.1.objectives.3.text
-    check: |-
-      test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080)" = north-78
+    check: 'source platform.env
 
+      image=$(jq -er .image /run/dq/facts/0/registry-target.json)
+
+      kubectl get deployment board -o json | jq -e --arg image "$image" ''.spec.template.spec.containers[0].image==$image
+      and .spec.template.spec.containers[0].imagePullPolicy=="Always" and .spec.template.spec.imagePullSecrets==[{name:"registry-pull"}]''
+      >/dev/null
+
+      digest=$(printf %s "$image" | cut -d@ -f2)
+
+      kubectl get pods -l app=board -o json | jq -e --arg digest "$digest" ''any(.items[];.metadata.deletionTimestamp==null
+      and any(.status.containerStatuses[]?;.ready==true and (.imageID|contains($digest))))'' >/dev/null'
+  - text: stages.1.objectives.2.text
+    check: "dq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\ndq_failed=0\n\
+      set +e\n(\nset -euo pipefail\ntimeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY'\nsource platform.env\n\
+      image=$(jq -er .image /run/dq/facts/0/registry-target.json)\nkubectl get deployment board -o json | jq -e\
+      \ --arg image \"$image\" '.spec.replicas==1' >/dev/null\nkubectl rollout status deployment/board --timeout=3s\
+      \ >/dev/null\nDQ_LEGACY\n)\n[ $? -eq 0 ] || dq_failed=1\n(\nset -euo pipefail\ntimeout --kill-after=1s 14s\
+      \ bash -euo pipefail <<'DQ_CURRENT'\ndq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset\
+      \ +e\n(\nset -euo pipefail\nsource platform.env\npython3 -I - <<'DQ_REGISTRY_PODS'\n\nimport json,subprocess\n\
+      from pathlib import Path\nfrom dq_check import current_pods,pod_worker,ready_image,workload_worker,pull_secret_names\n\
+      def k(*args):\n return json.loads(subprocess.check_output(['kubectl',*args,'-o','json'],timeout=2))\ncontract=json.loads(Path('/run/dq/facts/0/registry-consumer.json').read_text())\n\
+      old=contract['deployment']\ndeployment=k('get','deployment','board')\nassert deployment['metadata']['uid']==old['metadata']['uid']\n\
+      assert deployment['spec']['selector']==old['spec']['selector']\nassert deployment['spec']['template']['spec']==old['spec']['template']['spec']\n\
+      worker=workload_worker(deployment)\nactive=current_pods(deployment,k('get','replicasets'),k('get','pods'))\n\
+      assert len(active)==1\nfor pod in active:\n assert ready_image(pod,worker['image'])\n assert pod_worker(pod).get('imagePullPolicy')=='Always'\n\
+      \ assert pull_secret_names(pod)=={contract['secret_name']}\n assert pod_worker(pod).get('command')==worker.get('command')\n\
+      \ assert pod_worker(pod).get('args')==worker.get('args')\n\nDQ_REGISTRY_PODS\n\n) >\"$dq_probe_output\" 2>/dev/null\n\
+      dq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\nif [ \"$dq_probe_status\" -ne 0 ] && ! grep -Eq '\\\
+      [DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\nprintf '%s\\n' 'Current inputs could not verify this objective:\
+      \ ✗ [DQ:probe_1_2]'\nfi\nrm -f \"$dq_probe_output\"\ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0\n\nDQ_CURRENT\n\
+      )\n[ $? -eq 0 ] || dq_failed=1\nset -e\ntest \"$dq_failed\" -eq 0\n) >\"$dq_probe_output\" 2>/dev/null\ndq_probe_status=$?\n\
+      set -e\ncat \"$dq_probe_output\"\nif [ \"$dq_probe_status\" -ne 0 ] && ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"\
+      $dq_probe_output\"; then\nprintf '%s\\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_1_2]'\n\
+      fi\nrm -f \"$dq_probe_output\"\ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0\n"
+  - text: stages.1.objectives.3.text
+    check: test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3
+      http://127.0.0.1:8080)" = north-78
 hints:
 - text: hints.0.text
   guide: gitops-delivery
 - text: hints.1.text
-  guide: gitops-delivery
+  url: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+  label: guides.reference_1
 - text: hints.2.text
-  guide: gitops-delivery
+  url: https://kubernetes.io/docs/concepts/containers/images/#imagepullbackoff
+  label: guides.reference_2
 debrief: debrief
 phrases:
 - phrases.0
@@ -126,10 +136,13 @@ facts:
   - registry-target.json
   - registry-repair.json
   - registry-agent-status.json
-  - registry-pull.yaml
   - board.yaml
+  - registry-source.json
+  - registry-consumer.json
   services: []
 immutable:
   0:
   - registry-target.json
   - registry-ca.crt
+  - registry-source.json
+  - registry-consumer.json

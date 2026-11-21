@@ -1,71 +1,112 @@
 title: Repository-Webhook
-brief: |-
-  Ein veröffentlichtes Board-Release erreicht seine Verbraucher nicht. Stellen Sie die Zustellung über den vorhandenen Ereignisempfänger des Repositorys wieder her.
+brief: 'Das veröffentlichte Release hat die laufende Anwendung über den bestehenden Ereignisempfänger nicht erreicht.
+  Stellen Sie die Übertragung unter Erhalt von Anwendung, Workload, Publikationsidentität und Programm wieder her.
 
-  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `webhook.env`, `hook-id`, `hook-repair.json`, `release-commit`, `application.yaml`, `repository/`.
 
-  Sofern nicht anders angegeben, liegen Kubernetes-Ressourcen im Bay-Namespace (`DQ_NAMESPACE`); Pfade unter `~/quest` liegen auf der Workstation.
+  Arbeiten Sie in `~/quest`. Quellenaufzeichnungen beschreiben ursprüngliche Autorität und geschützte Publikation;
+  eingefrorene Kopien unter `/run/dq/facts/0/` bleiben maßgeblich. Identitäten, Programme, Zugriffsgrenzen und TLS-Vertrauen
+  bewahren. Zugangsdaten nicht ausgeben; die geschützte Quelle nicht ersetzen.
 
-  **Requirements:**
+
+  Eingaben: `platform.env`, `webhook.env`, `hook-id`, `release-commit`, `repository/`, `application.yaml` und `webhook-publication.json`.
+  Alle aktiven zugehörigen Pods müssen die freigegebene Git-Publikation übernehmen; ursprüngliche ConfigMap, Controller,
+  schreibgeschützte Quelle und Pod-Spezifikation bewahren. Heutige Annahme garantiert keine künftige Zustellung.
+
+
+  **Anforderungen:**
+
 
   - Der vorhandene Push-Hook des Repositorys ist für `main` aktiv und erreicht den vorgesehenen privaten Ereignisempfänger.
-  - Veröffentlichtes `origin/main` entspricht der Workstation-Datei `~/quest/release-commit` und ist ein neuer Nachfolger der vorhandenen Repository-Historie.
-  - Application `board` behält die bereitgestellte private Git-Quelle, den Release-Branch und das vorhandene Workload-Verzeichnis bei.
-  - Application `board` meldet `Synced` und `Healthy` für den Commit in der Workstation-Datei `~/quest/release-commit`.
-  - Deployment `board` schließt seinen Rollout im Bay-Namespace ab.
-  - In einem Pod von Deployment `board` liefert `http://board:8080` den Wert `north-75`.
-  - Der private Empfänger hat ein authentifiziertes `main`-Ereignis aus dem bereitgestellten Repository angenommen.
 
-  Das angenommene Ereignis und das aktuelle Release beweisen nicht, dass jede künftige Webhook-Zustellung erfolgreich sein wird.
-debrief: Der konfigurierte hook und ein akzeptierter signierter main event wurden überprüft, während die
-  periodische Git-Abfrage deaktiviert war.
-stages.0.brief: Erhalten Sie den ursprünglichen Repository-Hook und die vorhandene Git-Historie.
-hints.0.text: Ein durch den Webhook ausgelöster refresh und eine automatische regelmäßige Abfrage sind
-  unterschiedliche Mechanismen.
-hints.1.text: |-
-  Prüfen Sie die vorhandene Hook-Konfiguration und die Empfängerreferenz; geben Sie das gemeinsame Secret nicht aus.
+  - Veröffentlichtes `origin/main` entspricht der Workstation-Datei `~/quest/release-commit` und ist ein neuer Nachfolger
+  der vorhandenen Repository-Historie.
+
+  - Application `board` behält die bereitgestellte private Git-Quelle, den Release-Branch und das vorhandene Workload-Verzeichnis
+  bei.
+
+  - Application `board` meldet `Synced` und `Healthy` für den Commit in der Workstation-Datei `~/quest/release-commit`.
+
+  - Deployment `board` schließt seinen Rollout im Bay-Namespace ab.
+
+  - Ursprünglicher Workload und aktiver zugehöriger Pod bewahren Identität, Programm und schreibgeschützte Quelle;
+  abgeglichene ConfigMap und HTTP-Antwort entsprechen der freigegebenen Git-Publikation.
+
+  - Der private Empfänger hat ein authentifiziertes `main`-Ereignis aus dem bereitgestellten Repository angenommen.'
+debrief: Ursprüngliche Quellen- und Verbraucheridentitäten blieben erhalten; das freigegebene Release wurde an jeder
+  betroffenen Grenze geprüft.
+stages.0.brief: Das veröffentlichte Release hat die laufende Anwendung über den bestehenden Ereignisempfänger nicht
+  erreicht. Stellen Sie die Übertragung unter Erhalt von Anwendung, Workload, Publikationsidentität und Programm
+  wieder her.
+hints.0.text: Angenommenes Ereignis, abgeglichene Ressourcen und übernommene Anwendungsdaten sind getrennte Grenzen.
+hints.1.text: 'Bestehenden Hook, Empfängerreferenz, Git-Publikation, Controller-Status und Startprogramm vergleichen.
+  Metadaten ohne gemeinsame Geheimnisse untersuchen.
+
 
   ```bash
+
   source platform.env
-  source webhook.env
+
   api="${GIT_URL%/rail/station.git}/api/v1/repos/rail/station"
-  curl -fsS --config <(printf 'user = "%s:%s"\n' "$GIT_USER" "$GIT_PASSWORD") "$api/hooks/$(cat hook-id)" | jq '{active,branch_filter,url:.config.url}'
-  ```
-hints.2.text: |-
-  PATCH das eingefrorene hook ID zum bereitgestellten receiver, dann POST seinen /tests-Endpunkt und beobachten Sie den neuen revision. Verwenden Sie den vorhandenen Inhaltstyp Gogs hook, JSON und das freigegebene Spiel secret. inspect ist URL, ohne den secret zu drucken.
 
-  Prüfen Sie in `~/quest` auf der Workstation:
+  curl -fsS --max-time 3 --config <(printf ''user = "%s:%s"\n'' "$GIT_USER" "$GIT_PASSWORD") "$api/hooks/$(cat hook-id)"
+  | jq ''{active,branch_filter,url:.config.url}''
 
-  - `source platform.env`
-  - `git -C repository ls-remote origin refs/heads/main`
-  - `cat release-commit`
+  cat webhook-target.json
 
-  Der Hash von Remote-`main` entspricht `release-commit`.
+  kubectl get application board -o json | jq ''{sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision}''
 
-  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
-  - `jq '{repo,branch,authenticated}' /run/dq/observations/webhook.json`
+  cat repository/manifests/publication.yaml repository/manifests/board.yaml
 
-  `Synced`, `Healthy` und die Revision aus `release-commit`. Die Beobachtung nennt das bereitgestellte Repository, `branch: "main"` und `authenticated: true`. Die Quelle ist das bereitgestellte private Repository, `manifests`, `main`.
+  name=$(jq -er ''.approved.metadata.name'' webhook-publication.json)
 
-  - `kubectl rollout status deployment/board --timeout=3s`
-  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`
+  kubectl get configmap "$name" -o yaml
 
-  Der Rollout ist abgeschlossen; `north-75`.
+  ```'
+hints.2.text: "PATCH das eingefrorene hook ID zum bereitgestellten receiver, dann POST seinen /tests-Endpunkt und\
+  \ beobachten Sie den neuen revision. Verwenden Sie den vorhandenen Inhaltstyp Gogs hook, JSON und das freigegebene\
+  \ Spiel secret. inspect ist URL, ohne den secret zu drucken.\n\nPrüfen Sie in `~/quest` auf der Workstation:\n\
+  \n- `source platform.env`\n- `git -C repository ls-remote origin refs/heads/main`\n- `cat release-commit`\n\n\
+  Der Hash von Remote-`main` entspricht `release-commit`.\n\n- `kubectl get application board -o json | jq '{sync:.status.sync.status,\
+  \ health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`\n\
+  - `jq '{repo,branch,authenticated}' /run/dq/observations/webhook.json`\n\n`Synced`, `Healthy` und die Revision\
+  \ aus `release-commit`. Die Beobachtung nennt das bereitgestellte Repository, `branch: \"main\"` und `authenticated:\
+  \ true`. Die Quelle ist das bereitgestellte private Repository, `manifests`, `main`.\n\n- `kubectl rollout status\
+  \ deployment/board --timeout=3s`\n- `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`\n\
+  \nDer Rollout ist abgeschlossen; `north-75`.\n\nNach Hook-Reparatur und bestätigter authentifizierter Zustellung\
+  \ die Publikation übernehmen lassen. Das Startprogramm kopiert die projizierte Quelle in sein Ausgabeverzeichnis;\
+  \ ConfigMap-Änderungen überschreiben diesen Cache nicht. Ein Rolling Restart des ursprünglichen Deployments ist\
+  \ ein möglicher Weg; Controller, Programm und schreibgeschützte Quelle bewahren.\n\n```bash\nset -euo pipefail\n\
+  cd ~/quest\nsource platform.env\npython3 -I - <<'VERIFY_RELEASE'\n\nimport json,subprocess,yaml\nfrom pathlib\
+  \ import Path\nfrom dq_check import current_pods,pod_worker,ready_image,workload_worker\ndef k(*args):\n return\
+  \ json.loads(subprocess.check_output(['kubectl',*args,'-o','json'],timeout=2))\ncontract=json.loads(Path('/run/dq/facts/0/webhook-publication.json').read_text())\n\
+  old=contract['deployment']\ndeployment=k('get','deployment','board')\nassert deployment['metadata']['uid']==old['metadata']['uid']\n\
+  assert deployment['spec']['selector']==old['spec']['selector']\nassert deployment['spec']['replicas']==old['spec']['replicas']==1\n\
+  assert deployment['spec']['template']['spec']==old['spec']['template']['spec']\napp=k('get','application','board')\n\
+  assert app['metadata']['uid']==contract['application']['metadata']['uid']\nassert app['spec']==contract['application']['spec']\n\
+  revision=app['status']['sync']['revision']\nsubprocess.run(['git','-C','repository','merge-base','--is-ancestor',contract['release_commit'],revision],check=True,timeout=2)\n\
+  desired=yaml.safe_load(subprocess.check_output(['git','-C','repository','show',revision+':'+contract['source_file']],text=True,timeout=2))\n\
+  assert desired['kind']=='ConfigMap' and desired['metadata']['name']==contract['approved']['metadata']['name']\n\
+  assert desired['data']==contract['approved']['data']\nconfig=k('get','configmap',desired['metadata']['name'])\n\
+  assert config['metadata']['uid']==contract['publication_uid']\nassert config['data']==desired['data']\nworker=workload_worker(deployment)\n\
+  pods=current_pods(deployment,k('get','replicasets'),k('get','pods'))\nassert len(pods)==1\nfor pod in pods:\n\
+  \ assert ready_image(pod,worker['image'])\n current=pod_worker(pod)\n for key in ('command','args'):\n  assert\
+  \ current.get(key)==worker.get(key)\n for mount in worker.get('volumeMounts',[]):\n  assert mount.get('readOnly')\
+  \ is True and mount in current.get('volumeMounts',[])\n value=subprocess.check_output(['kubectl','exec',pod['metadata']['name'],'-c','worker','--','wget','-qO-','-T','2','http://127.0.0.1:8080'],timeout=3)\n\
+  \ assert value.decode().rstrip('\\n')==desired['data']['notice'].rstrip('\\n')\n\nprint('OK')\nVERIFY_RELEASE\n\
+  ```\n\nErwartet: OK. Keine Zugangsdaten werden ausgegeben."
 phrases.0: Ich habe die webhook-Lieferung vom periodischen Abgleich getrennt.
 phrases.1: Ich habe die Kompatibilität des receiver URL und des Shared-Secret-Protokolls überprüft.
 phrases.2: Ich habe das neue Commit und das echte HTTP-Verhalten nach der erneuten Lieferung beobachtet.
 questions.0.points.0: Für einen Quellenwechsel ist noch ein refresh trigger erforderlich.
 questions.0.points.1: Überprüfen Sie die Ereigniszustellung, den receiver-Pfad und die Signaturkompatibilität.
 questions.0.points.2: Beobachten Sie den tatsächlich abgeglichenen Commit und nicht nur die sender-Anfrage.
-questions.0.prompt: Warum kann ein korrektes Git-Commit nicht angewendet werden, wenn die Abfrage deaktiviert
-  ist?
-questions.1.points.0: Es beweist den Besitz des gemeinsamen Geheimnisses und erkennt die Modifikation
-  payload.
+questions.0.prompt: Warum kann ein korrektes Git-Commit nicht angewendet werden, wenn die Abfrage deaktiviert ist?
+questions.1.points.0: Es beweist den Besitz des gemeinsamen Geheimnisses und erkennt die Modifikation payload.
 questions.1.points.1: Beide Seiten benötigen den gleichen secret und das gleiche unterstützte Format.
 questions.1.points.2: Der Anwendung wird dadurch keine umfassendere Clusterberechtigung gewährt.
 questions.1.prompt: Was schützt die Unterzeichnung eines webhook?
-stages.0.objectives.0.text: Der vorhandene Push-Hook des Repositorys ist für `main` aktiv und erreicht
-  den vorgesehenen privaten Ereignisempfänger.
+stages.0.objectives.0.text: Der vorhandene Push-Hook des Repositorys ist für `main` aktiv und erreicht den vorgesehenen
+  privaten Ereignisempfänger.
 stages.0.objectives.1.text: Veröffentlichtes `origin/main` entspricht der Workstation-Datei `~/quest/release-commit`
   und ist ein neuer Nachfolger der vorhandenen Repository-Historie.
 stages.0.objectives.2.text: Application `board` behält die bereitgestellte private Git-Quelle, den Release-Branch
@@ -73,6 +114,11 @@ stages.0.objectives.2.text: Application `board` behält die bereitgestellte priv
 stages.0.objectives.3.text: Application `board` meldet `Synced` und `Healthy` für den Commit in der Workstation-Datei
   `~/quest/release-commit`.
 stages.0.objectives.4.text: Deployment `board` schließt seinen Rollout im Bay-Namespace ab.
-stages.0.objectives.5.text: In einem Pod von Deployment `board` liefert `http://board:8080` den Wert `north-75`.
+stages.0.objectives.5.text: Ursprünglicher Workload und aktiver zugehöriger Pod bewahren Identität, Programm und
+  schreibgeschützte Quelle; abgeglichene ConfigMap und HTTP-Antwort entsprechen der freigegebenen Git-Publikation.
 stages.0.objectives.6.text: Der private Empfänger hat ein authentifiziertes `main`-Ereignis aus dem bereitgestellten
   Repository angenommen.
+diagnostics.probe_0_5: Ursprüngliche Anwendung und Workload müssen Quelle, Identität und Programm bewahren; der
+  aktive zugehörige Pod muss die freigegebene Git-Publikation übernehmen.
+guides.reference_1: API- und Diagnosereferenz
+guides.reference_2: Referenz zur Publikations- und Verbraucherprüfung

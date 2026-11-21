@@ -7,24 +7,45 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: |-
-      jq -e --slurpfile c /run/dq/facts/0/release-catalog.json '(.delete|type)=="array" and (.delete|unique)==[$c[0].obsolete]' retention.json >/dev/null
-
+    check: jq -e --slurpfile c /run/dq/facts/0/release-catalog.json '(.delete|type)=="array" and (.delete|unique)==[$c[0].obsolete]'
+      retention.json >/dev/null
   - text: stages.0.objectives.1.text
-    check: |-
-      source platform.env
-      for kind in rollback current obsolete; do
-       digest=$(jq -er --arg kind "$kind" '.[$kind]' /run/dq/facts/0/release-catalog.json)
-       code=$(curl -sS --cacert registry-ca.crt -u "$REGISTRY_USER:$REGISTRY_PASSWORD" -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' -o /dev/null -w '%{http_code}' "https://$REGISTRY/v2/parcel/manifests/$digest")
-       if test "$kind" = obsolete; then test "$code" = 404; else test "$code" = 200; fi
-      done
+    check: "dq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\ndq_failed=0\n\
+      set +e\n(\nset -euo pipefail\ntimeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY'\nsource platform.env\n\
+      for kind in rollback current obsolete; do\n digest=$(jq -er --arg kind \"$kind\" '.[$kind]' /run/dq/facts/0/release-catalog.json)\n\
+      \ code=$(curl -sS --cacert registry-ca.crt -u \"$REGISTRY_USER:$REGISTRY_PASSWORD\" -H 'Accept: application/vnd.docker.distribution.manifest.v2+json,\
+      \ application/vnd.oci.image.manifest.v1+json' -o /dev/null -w '%{http_code}' \"https://$REGISTRY/v2/parcel/manifests/$digest\"\
+      )\n if test \"$kind\" = obsolete; then test \"$code\" = 404; else test \"$code\" = 200; fi\ndone\nDQ_LEGACY\n\
+      )\n[ $? -eq 0 ] || dq_failed=1\n(\nset -euo pipefail\ntimeout --kill-after=1s 14s bash -euo pipefail <<'DQ_CURRENT'\n\
+      dq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\nsource platform.env\n\
+      python3 -I - <<'DQ_REGISTRY_BINDINGS'\n\nimport base64,hashlib,json,os,ssl,urllib.request\nfrom pathlib import\
+      \ Path\nsource=json.loads(Path('/run/dq/facts/0/registry-source.json').read_text())\nassert os.environ['REGISTRY']==source['endpoint']\n\
+      assert os.environ['REGISTRY_USER']==source['username']\nassert hashlib.sha256(os.environ['REGISTRY_PASSWORD'].encode()).hexdigest()==source['password_sha256']\n\
+      assert hashlib.sha256(Path('registry-ca.crt').read_bytes()).hexdigest()==source['ca_sha256']\nclass NoRedirect(urllib.request.HTTPRedirectHandler):\n\
+      \ def redirect_request(self,*args,**kwargs):\n  return None\nopener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect(),\n\
+      urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile='registry-ca.crt')))\nheaders={'Authorization':'Basic\
+      \ '+base64.b64encode((source['username']+':'+os.environ['REGISTRY_PASSWORD']).encode()).decode(),\n'Accept':'application/vnd.docker.distribution.manifest.v2+json,\
+      \ application/vnd.oci.image.manifest.v1+json'}\ndef manifest(reference):\n request=urllib.request.Request('https://'+source['endpoint']+'/v2/parcel/manifests/'+reference,headers=headers)\n\
+      \ with opener.open(request,timeout=2) as response:\n  body=response.read(2097153)\n  assert len(body)<=2097152\n\
+      \  digest='sha256:'+hashlib.sha256(body).hexdigest()\n  assert response.headers.get('Docker-Content-Digest')==digest\n\
+      \  return digest\n\ncatalog=json.loads(Path('/run/dq/facts/0/release-catalog.json').read_text())\nassert manifest('current')==catalog['current']\n\
+      assert manifest('1')==catalog['rollback']\n\nDQ_REGISTRY_BINDINGS\n\n) >\"$dq_probe_output\" 2>/dev/null\n\
+      dq_probe_status=$?\nset -e\ncat \"$dq_probe_output\"\nif [ \"$dq_probe_status\" -ne 0 ] && ! grep -Eq '\\\
+      [DQ:[a-z0-9_]+\\]' \"$dq_probe_output\"; then\nprintf '%s\\n' 'Current inputs could not verify this objective:\
+      \ ✗ [DQ:probe_0_1]'\nfi\nrm -f \"$dq_probe_output\"\ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0\n\nDQ_CURRENT\n\
+      )\n[ $? -eq 0 ] || dq_failed=1\nset -e\ntest \"$dq_failed\" -eq 0\n) >\"$dq_probe_output\" 2>/dev/null\ndq_probe_status=$?\n\
+      set -e\ncat \"$dq_probe_output\"\nif [ \"$dq_probe_status\" -ne 0 ] && ! grep -Eq '\\[DQ:[a-z0-9_]+\\]' \"\
+      $dq_probe_output\"; then\nprintf '%s\\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_1]'\n\
+      fi\nrm -f \"$dq_probe_output\"\ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0\n"
 hints:
 - text: hints.0.text
   guide: gitops-delivery
 - text: hints.1.text
-  guide: gitops-delivery
+  url: https://distribution.github.io/distribution/spec/api/#deleting-an-image
+  label: guides.reference_1
 - text: hints.2.text
-  guide: gitops-delivery
+  url: https://docs.docker.com/reference/api/registry/latest/operations/HeadImageManifest/
+  label: guides.reference_2
 debrief: debrief
 phrases:
 - phrases.0
@@ -47,7 +68,9 @@ facts:
   - release-catalog.json
   - retention.json
   - prune.sh
+  - registry-source.json
   services: []
 immutable:
   0:
   - release-catalog.json
+  - registry-source.json
