@@ -103,6 +103,21 @@ async def test_initial_objectives(number, initial_catalog, tmp_path):
     }
     try:
         run = await engine.start(user, number, 'free', minutes=120)
+        if number == 17:
+            # Sample the bad readiness policy after startup. Running can precede
+            # the first successful probe and EndpointSlice reconciliation.
+            await asyncio.to_thread(runtime.exec, run, r"""
+set -euo pipefail
+kubectl rollout status deployment/stable --timeout=30s
+kubectl rollout status deployment/quarantine --timeout=30s
+pod=$(kubectl get pods -l app=quarantine -o jsonpath='{.items[0].metadata.name}')
+deadline=$((SECONDS+15))
+until kubectl get endpointslices -l kubernetes.io/service-name=departures -o json |
+    jq -e --arg pod "$pod" 'any(.items[]?.endpoints[]?; .targetRef.name == $pod and .conditions.ready == true)' >/dev/null; do
+    test "$SECONDS" -lt "$deadline"
+    sleep .2
+done
+""", timeout=80)
         for stage_index, stage in enumerate(catalog.quests[number]['stages']):
             initial = await engine.poll(run)
             assert initial['status'] == 'active' and initial['stage'] == stage_index, 'Setup already satisfied every condition'

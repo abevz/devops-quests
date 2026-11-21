@@ -19,7 +19,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 15))
+@pytest.mark.parametrize("quest", range(1, 18))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -31,6 +31,14 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                 for prefix in FLEET_MARKER.findall(check)
                 for host in (1, 2, 3)
             )
+            if "routes_{host}" in check:
+                emitted.update(f"routes_{host}" for host in (1, 2, 3))
+            if "directory_{route}_{host}" in check:
+                emitted.update(
+                    f"directory_{route}_{host}"
+                    for route in ("north", "south", "east")
+                    for host in (1, 2, 3)
+                )
             assert emitted, (quest, goal["text"])
             markers.update(emitted)
     explanations = catalog.public(quest)["diagnostics"]
