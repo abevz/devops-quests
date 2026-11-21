@@ -18,7 +18,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", (3, 9))
+@pytest.mark.parametrize("quest", (1, 3, 4, 7, 9))
 def test_each_pilot_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = {
         marker
