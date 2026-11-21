@@ -1,95 +1,132 @@
 title: Восстановление после аварии
-brief: "Управляемый маркер, баннеры парка хостов и сервис ещё не показывают согласованный релиз.\n\nРаботайте в\
-  \ `~/quest` на рабочей станции. Входные файлы по этапам:\n- Этап 1: `main.tf`.\n- Этап 2: `inventory.ini`, `ansible.cfg`,\
-  \ `rollout.yml`.\n- Этап 3: `deployment.yaml`.\n\n**Требования:**\n\n- Этап 1:\n  - OpenTofu учитывает управляемый\
-  \ артефакт релиза в state.\n  - На workstation файл `~/quest/release.txt` содержит `release-90`.\n  - План OpenTofu\
-  \ не содержит изменений и завершается с кодом `0`.\n- Этап 2:\n  - На каждом управляемом хосте (`app1`, `app2`,\
-  \ `app3`) файл `/srv/site/message` содержит `release-90` и имеет режим `0644`.\n  - HTTP на порту `8080` возвращает\
-  \ `release-90` с каждого управляемого хоста (`app1`, `app2`, `app3`).\n- Этап 3:\n  - Deployment `relay` завершает\
-  \ развёртывание, его работающий процесс настроен на `release-90`.\n\nПроверка наблюдает маркер, файлы и HTTP-результаты\
-  \ парка хостов и состояние работающего потребителя; она не доказывает использованные команды восстановления."
+brief: |-
+  Запись релиза потеряна из активного состояния. Восстановите проверенный релиз, сохраните более свежую запись передачи и поднимите fleet и relay.
+
+  Работайте на рабочей станции в `~/quest`. На первом этапе используйте `main.tf`, `incident.auto.tfvars.json` и `recovery/`. На втором используйте `rollout.yml`, `inventory.ini`, `ansible.cfg` и `recovered-release.json`. На третьем используйте `deployment.yaml`, `relay-publication.yaml` и `relay-handover-id`.
+
+  **Requirements:**
+
+  - OpenTofu учитывает управляемый артефакт и восстанавливает запись релиза с идентичностью из проверенной копии. Сохраните содержимое копии, lineage активного состояния и более свежую запись передачи.
+  - На workstation файл `~/quest/release.txt` содержит `release-90`.
+  - План OpenTofu не содержит изменений и завершается с кодом `0`.
+  - На `app1`, `app2` и `app3` файл `/srv/site/message` содержит `release-90` с правами `0644`. Файл `/srv/site/recovery-id` совпадает с идентификатором из `recovered-release.json`.
+  - HTTP на порту `8080` возвращает `release-90` с каждого управляемого хоста (`app1`, `app2`, `app3`).
+  - Deployment `relay` завершает rollout, а worker получает `release-90` в `RELEASE`. Сохраните выданную ConfigMap и проекцию только для чтения в `/run/recovery`. Сохраните выданный HTTP-воркер и его корневой каталог. По адресу `http://127.0.0.1:8080/recovery-id` отдайте сам файл из проекции с идентификатором из `relay-handover-id`.
+
+  Проверка подтверждает только итоговое состояние и фактическое поведение по зафиксированным идентификаторам. Команды восстановления выберите сами.
 stages.0.brief: Управляемый маркер должен быть стабилен.
 stages.1.brief: Парк хостов должен согласованно обслуживать восстановленный релиз.
 stages.2.brief: Работающий потребитель должен соответствовать восстановленному релизу.
-hints.0.text: Восстанавливайте по одному слою и проверяйте фактический результат.
-hints.1.text: 'Маркер, banner fleet и окружение reader должны указывать один релиз.
-
-
-  Изучите поставленные определения, описания ресурсов и события соответствующего этапа.
-
+hints.0.text: |-
+  Перед восстановлением пропавших привязок сравните копию с активным состоянием. Восстановленный идентификатор должен дойти до каждого следующего слоя.
+hints.1.text: |-
+  Проверьте lineage и идентичности ресурсов в обоих файлах состояния. Проследите записанный идентификатор через артефакт fleet и публикацию Kubernetes.
 
   ```sh
-
-  cat main.tf
-
-  cat rollout.yml
-
-  kubectl describe deployment relay
-
-  ```'
-hints.2.text: |-
-  Примените маркер, обновите корректно настроенный fleet, затем исправьте Kubernetes reader и дождитесь readiness.
-
-  Проверьте исправленный этап и сравните наблюдаемый результат.
-
-  Этап 1: State включает `release.txt`, файл workstation показывает `release-90`, план завершается с кодом `0` без изменений.
-
-  ```sh
-  tofu show -json
-  cat release.txt
-  printf "\n"
-  tofu plan -input=false -detailed-exitcode -no-color
+  (cd recovery && sha256sum -c checkpoint.sha256)
+  jq '{lineage,serial,resources:[.resources[] | {type,name,ids:[.instances[].attributes.id]}]}' terraform.tfstate recovery/checkpoint.tfstate
   ```
 
-  Этап 2: Каждый управляемый хост показывает `release-90`, режим файла `644` и HTTP `release-90` на порту `8080`.
-
   ```sh
+  cat recovered-release.json rollout.yml
   for n in 1 2 3; do
     host="app${n}-${DQ_NAMESPACE#dq-}"
-    printf "%s: " "$host"
-    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message'
-    curl -fsS --max-time 3 "http://$host:8080"
-    printf "\n"
+    curl -fsS --max-time 3 "http://$host:8080/"
   done
   ```
 
-  Этап 3: Развёртывание завершено, работающий процесс выводит `release-90`.
+  ```sh
+  cat relay-publication.yaml relay-handover-id
+  kubectl get deployment relay -o yaml
+  kubectl get configmap -o yaml
+  ```
+hints.2.text: |-
+  Работайте с копией проверенного состояния. Восстановите пропавшие привязки, сохранив более свежую запись передачи. Проверьте файлы, HTTP-ответы и проекцию исходной ConfigMap из работающего контейнера worker.
 
   ```sh
-  kubectl rollout status deployment/relay --timeout=3s
-  kubectl exec deployment/relay -c worker -- printenv RELEASE
+  (cd recovery && sha256sum -c checkpoint.sha256)
+  tofu state list
+  tofu output -raw recovery_id
+  printf '\n'
+  cat release.txt
+  tofu plan -input=false -detailed-exitcode -no-color
   ```
 
-debrief: Проверки подтвердили управляемый маркер, файлы и ответы парка, а также rollout и окружение relay.
+  ```sh
+  jq -r .recovery_id recovered-release.json
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message; cat /srv/site/recovery-id'
+    curl -fsS --max-time 3 "http://$host:8080/"
+    printf '\n'
+  done
+  ```
+
+  ```sh
+  kubectl get configmap relay-recovery -o yaml
+  kubectl rollout status deployment/relay --timeout=3s
+  kubectl exec deployment/relay -c worker -- printenv RELEASE
+  kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/recovery-id
+  cat relay-handover-id
+  ```
+debrief: |-
+  Выборочное восстановление сохраняет более свежую привязку и возвращает идентичность релиза из копии. Файлы на хостах и HTTP подтверждают разные части доставки. Проекция передаёт восстановленный идентификатор в relay.
 phrases.0: Я проверил фактическое состояние до изменения.
 phrases.1: Я нашёл причину и менял по одному параметру.
 phrases.2: После изменения я проверил состояние workload и его готовность.
 diagnostics.state: |-
-  OpenTofu state должен учитывать управляемый артефакт release.txt.
-
-diagnostics.file: release.txt должен совпадать с release-90.
-diagnostics.plan: План OpenTofu должен завершиться с кодом 0.
-diagnostics.rollout: Выкатка Deployment relay должна завершиться.
-diagnostics.relay: RELEASE Deployment relay должен быть release-90.
-diagnostics.content_1: На app1 /srv/site/message должен содержать точно release-90, допускается один символ новой
-  строки.
-diagnostics.mode_1: На app1 права /srv/site/message должны быть 644.
-diagnostics.http_1: app1 на порту 8080 должен вернуть release-90.
-diagnostics.content_2: На app2 /srv/site/message должен содержать точно release-90, допускается один символ новой
-  строки.
-diagnostics.mode_2: На app2 права /srv/site/message должны быть 644.
-diagnostics.http_2: app2 на порту 8080 должен вернуть release-90.
-diagnostics.content_3: На app3 /srv/site/message должен содержать точно release-90, допускается один символ новой
-  строки.
-diagnostics.mode_3: На app3 права /srv/site/message должны быть 644.
-diagnostics.http_3: app3 на порту 8080 должен вернуть release-90.
-stages.0.objectives.0.text: OpenTofu учитывает управляемый артефакт релиза в state.
+  OpenTofu state должен учитывать управляемый артефакт release.txt. Сопоставьте активную привязку с проверенной копией. После пересоздания у записи может оказаться другой идентификатор. [Документация](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.file: |-
+  release.txt должен совпадать с release-90. Активное состояние или артефакт могут расходиться с требуемым входом. Сопоставьте файл и текущий план. [Документация](https://opentofu.org/docs/cli/commands/plan/)
+diagnostics.plan: |-
+  План OpenTofu должен завершиться с кодом 0. Активное состояние или артефакт могут расходиться с требуемым входом. Сопоставьте файл и текущий план. [Документация](https://opentofu.org/docs/cli/commands/plan/)
+diagnostics.rollout: |-
+  Выкатка Deployment relay должна завершиться. Сопоставьте шаблон Pod и работающий контейнер worker в relay. Новое значение появляется в новых Pod. [Документация](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.relay: |-
+  RELEASE Deployment relay должен быть release-90. Сопоставьте шаблон Pod и работающий контейнер worker в relay. Новое значение появляется в новых Pod. [Документация](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.content_1: |-
+  На app1 /srv/site/message должен содержать точно release-90, допускается один символ новой строки. Копирование могло пропустить восстановленную запись или её режим. Сопоставьте результат каждого хоста с артефактом передачи. [Документация](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.mode_1: |-
+  На app1 права /srv/site/message должны быть 644. Копирование могло пропустить восстановленную запись или её режим. Сопоставьте результат каждого хоста с артефактом передачи. [Документация](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.http_1: |-
+  app1 на порту 8080 должен вернуть release-90. Процесс может по-прежнему использовать старое содержимое. Сравните записанное сообщение и ответ HTTP. [Документация](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.content_2: |-
+  На app2 /srv/site/message должен содержать точно release-90, допускается один символ новой строки. Копирование могло пропустить восстановленную запись или её режим. Сопоставьте результат каждого хоста с артефактом передачи. [Документация](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.mode_2: |-
+  На app2 права /srv/site/message должны быть 644. Копирование могло пропустить восстановленную запись или её режим. Сопоставьте результат каждого хоста с артефактом передачи. [Документация](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.http_2: |-
+  app2 на порту 8080 должен вернуть release-90. Процесс может по-прежнему использовать старое содержимое. Сравните записанное сообщение и ответ HTTP. [Документация](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.content_3: |-
+  На app3 /srv/site/message должен содержать точно release-90, допускается один символ новой строки. Копирование могло пропустить восстановленную запись или её режим. Сопоставьте результат каждого хоста с артефактом передачи. [Документация](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.mode_3: |-
+  На app3 права /srv/site/message должны быть 644. Копирование могло пропустить восстановленную запись или её режим. Сопоставьте результат каждого хоста с артефактом передачи. [Документация](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.http_3: |-
+  app3 на порту 8080 должен вернуть release-90. Процесс может по-прежнему использовать старое содержимое. Сравните записанное сообщение и ответ HTTP. [Документация](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+stages.0.objectives.0.text: |-
+  OpenTofu учитывает управляемый артефакт и восстанавливает запись релиза с идентичностью из проверенной копии. Сохраните содержимое копии, lineage активного состояния и более свежую запись передачи.
 stages.0.objectives.1.text: На workstation файл `~/quest/release.txt` содержит `release-90`.
 stages.0.objectives.2.text: План OpenTofu не содержит изменений и завершается с кодом `0`.
-stages.1.objectives.0.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/message` содержит
-  `release-90` и имеет режим `0644`.
+stages.1.objectives.0.text: |-
+  На `app1`, `app2` и `app3` файл `/srv/site/message` содержит `release-90` с правами `0644`. Файл `/srv/site/recovery-id` совпадает с идентификатором из `recovered-release.json`.
 stages.1.objectives.1.text: HTTP на порту `8080` возвращает `release-90` с каждого управляемого хоста (`app1`, `app2`,
   `app3`).
-stages.2.objectives.0.text: Deployment `relay` завершает развёртывание, его работающий процесс настроен на `release-90`.
-diagnostics.probe_0_0: 'Текущие данные не позволили проверить эту цель: OpenTofu учитывает управляемый артефакт
-  релиза в state.'
+stages.2.objectives.0.text: |-
+  Deployment `relay` завершает rollout, а worker получает `release-90` в `RELEASE`. Сохраните выданную ConfigMap и проекцию только для чтения в `/run/recovery`. Сохраните выданный HTTP-воркер и его корневой каталог. По адресу `http://127.0.0.1:8080/recovery-id` отдайте сам файл из проекции с идентификатором из `relay-handover-id`.
+diagnostics.probe_0_0: |-
+  Проверка состояния не вернула диагностический результат. Просмотрите состояние отдельно из рабочего каталога. [Документация](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.checkpoint_binding: |-
+  Сопоставьте активную привязку с проверенной копией. После пересоздания у записи может оказаться другой идентификатор. [Документация](https://opentofu.org/docs/cli/commands/state/mv/#usage)
+diagnostics.handover_state: |-
+  Замена активного состояния старой копией может затереть новые привязки. Сопоставьте оба состояния и их lineage. [Документация](https://opentofu.org/docs/cli/commands/state/mv/#usage)
+diagnostics.checkpoint_digest: |-
+  Копию могли отредактировать или заменить. Сверьте исходную копию с её контрольной суммой. [Документация](https://opentofu.org/docs/cli/commands/state/mv/#usage)
+diagnostics.fleet_identity_1: |-
+  Копирование могло пропустить восстановленную запись или её режим. Сопоставьте результат каждого хоста с артефактом передачи. [Документация](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.fleet_identity_2: |-
+  Копирование могло пропустить восстановленную запись или её режим. Сопоставьте результат каждого хоста с артефактом передачи. [Документация](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.fleet_identity_3: |-
+  Копирование могло пропустить восстановленную запись или её режим. Сопоставьте результат каждого хоста с артефактом передачи. [Документация](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.relay_publication: |-
+  Публикация relay может ссылаться на прежнюю запись или другой источник. Сравните исходную ConfigMap, проекцию и HTTP-ответ контейнера worker. [Документация](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/#add-configmap-data-to-a-volume)
+diagnostics.relay_identity: |-
+  Проверьте, что HTTP-воркер отдаёт файл из проекции через исходный корневой каталог. [Документация](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/#add-configmap-data-to-a-volume)

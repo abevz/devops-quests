@@ -1,95 +1,132 @@
 title: Notfallwiederherstellung
-brief: "Verwalteter Marker, Host-Gruppen-Banner und Dienst zeigen noch kein einheitliches Release.\n\nArbeiten Sie\
-  \ in `~/quest` auf der Workstation. Eingaben je Phase:\n- Phase 1: `main.tf`.\n- Phase 2: `inventory.ini`, `ansible.cfg`,\
-  \ `rollout.yml`.\n- Phase 3: `deployment.yaml`.\n\n**Anforderungen:**\n\n- Phase 1:\n  - OpenTofu erfasst das\
-  \ verwaltete Release-Artefakt im State.\n  - Auf der Workstation enthält `~/quest/release.txt` den Wert `release-90`.\n\
-  \  - OpenTofu plant keine Änderungen und endet mit Code `0`.\n- Phase 2:\n  - Auf jedem verwalteten Host (`app1`,\
-  \ `app2`, `app3`) enthält `/srv/site/message` den Wert `release-90` mit Modus `0644`.\n  - HTTP auf Port `8080`\
-  \ liefert `release-90` von jedem verwalteten Host (`app1`, `app2`, `app3`).\n- Phase 3:\n  - Deployment `relay`\
-  \ schließt seinen Rollout ab und sein laufender Prozess ist für `release-90` konfiguriert.\n\nDie Prüfung beobachtet\
-  \ Marker, Dateien und HTTP-Ergebnisse der Host-Gruppe sowie den laufenden Verbraucherzustand; sie belegt die verwendeten\
-  \ Wiederherstellungsbefehle nicht."
+brief: |-
+  Der Release-Datensatz fehlt im aktiven State. Stellen Sie das geprüfte Release wieder her, erhalten Sie die neueren Übergabedaten und stellen Sie dann Fleet und relay wieder her.
+
+  Arbeiten Sie auf der Workstation in `~/quest`. Phase 1 verwendet `main.tf`, `incident.auto.tfvars.json` und `recovery/`. Phase 2 verwendet `rollout.yml`, `inventory.ini`, `ansible.cfg` und `recovered-release.json`. Phase 3 verwendet `deployment.yaml`, `relay-publication.yaml` und `relay-handover-id`.
+
+  **Requirements:**
+
+  - OpenTofu verwaltet das Release-Artefakt im State und stellt den Release-Datensatz mit seiner Identität aus dem geprüften Checkpoint wieder her. Erhalten Sie Inhalt des Checkpoints, die aktive State-Lineage und den neueren Übergabedatensatz.
+  - Auf der Workstation enthält `~/quest/release.txt` den Wert `release-90`.
+  - OpenTofu plant keine Änderungen und endet mit Code `0`.
+  - Auf `app1`, `app2` und `app3` enthält `/srv/site/message` den Wert `release-90` mit Modus `0644`. `/srv/site/recovery-id` entspricht der Wiederherstellungs-ID aus `recovered-release.json`.
+  - HTTP auf Port `8080` liefert `release-90` von jedem verwalteten Host (`app1`, `app2`, `app3`).
+  - Deployment `relay` schließt den Rollout ab und worker verwendet `release-90` in `RELEASE`. Erhalten Sie die bereitgestellte ConfigMap und die schreibgeschützte Projektion unter `/run/recovery`. Behalten Sie den bereitgestellten HTTP-Worker und sein Dokumentenverzeichnis bei. Liefern Sie die projizierte Datei mit der ID aus `relay-handover-id` unter `http://127.0.0.1:8080/recovery-id`.
+
+  Die Prüfung belegt anhand der erfassten IDs lediglich den erreichten Zustand und das beobachtete Verhalten. Sie wählen die Befehle für die Wiederherstellung.
 stages.0.brief: Der verwaltete Marker muss stabil sein.
 stages.1.brief: Die Host-Gruppe muss das wiederhergestellte Release einheitlich ausliefern.
 stages.2.brief: Der laufende Verbraucher muss dem wiederhergestellten Release entsprechen.
-hints.0.text: Stellen Sie jeweils eine Ebene wieder her und überprüfen Sie jedes Live-Ergebnis.
-hints.1.text: 'Der Marker, die fleet-Banner und die reader-Umgebung müssen dieselbe Version heißen.
-
-
-  Prüfen Sie mitgelieferte Definitionen, Ressourcenbeschreibungen und Ereignisse der jeweiligen Phase.
-
+hints.0.text: |-
+  Vergleichen Sie den Checkpoint mit dem aktiven State. Die wiederhergestellte Identität muss alle nachgelagerten Schichten erreichen.
+hints.1.text: |-
+  Prüfen Sie Lineage und Ressourcenidentitäten in beiden State-Dateien. Verfolgen Sie die aufgezeichnete Identität durch das Fleet-Artefakt und die Kubernetes-Veröffentlichung.
 
   ```sh
-
-  cat main.tf
-
-  cat rollout.yml
-
-  kubectl describe deployment relay
-
-  ```'
-hints.2.text: |-
-  Tragen Sie den Marker auf, laden Sie das korrekt konfigurierte fleet neu, reparieren Sie dann das Kubernetes reader und warten Sie auf readiness.
-
-  Prüfen Sie die reparierte Phase und vergleichen Sie das beobachtete Ergebnis.
-
-  Phase 1: Der State enthält `release.txt`, die Workstation-Datei zeigt `release-90` und der Plan endet mit Code `0` ohne Änderungen.
-
-  ```sh
-  tofu show -json
-  cat release.txt
-  printf "\n"
-  tofu plan -input=false -detailed-exitcode -no-color
+  (cd recovery && sha256sum -c checkpoint.sha256)
+  jq '{lineage,serial,resources:[.resources[] | {type,name,ids:[.instances[].attributes.id]}]}' terraform.tfstate recovery/checkpoint.tfstate
   ```
 
-  Phase 2: Jeder verwaltete Host zeigt `release-90`, Dateimodus `644` und HTTP `release-90` auf Port `8080`.
-
   ```sh
+  cat recovered-release.json rollout.yml
   for n in 1 2 3; do
     host="app${n}-${DQ_NAMESPACE#dq-}"
-    printf "%s: " "$host"
-    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message'
-    curl -fsS --max-time 3 "http://$host:8080"
-    printf "\n"
+    curl -fsS --max-time 3 "http://$host:8080/"
   done
   ```
 
-  Phase 3: Der Rollout ist abgeschlossen und der laufende Prozess gibt `release-90` aus.
+  ```sh
+  cat relay-publication.yaml relay-handover-id
+  kubectl get deployment relay -o yaml
+  kubectl get configmap -o yaml
+  ```
+hints.2.text: |-
+  Verwenden Sie eine Kopie des geprüften Checkpoints. Stellen Sie fehlende Bindungen wieder her und erhalten Sie den neueren Übergabedatensatz. Prüfen Sie Dateien, HTTP-Antworten und die Projektion der ursprünglichen ConfigMap am laufenden worker.
 
   ```sh
-  kubectl rollout status deployment/relay --timeout=3s
-  kubectl exec deployment/relay -c worker -- printenv RELEASE
+  (cd recovery && sha256sum -c checkpoint.sha256)
+  tofu state list
+  tofu output -raw recovery_id
+  printf '\n'
+  cat release.txt
+  tofu plan -input=false -detailed-exitcode -no-color
   ```
 
-debrief: Die Prüfungen bestätigten den verwalteten Marker, Flottendateien und Antworten sowie Relay-Rollout und
-  Umgebung.
+  ```sh
+  jq -r .recovery_id recovered-release.json
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message; cat /srv/site/recovery-id'
+    curl -fsS --max-time 3 "http://$host:8080/"
+    printf '\n'
+  done
+  ```
+
+  ```sh
+  kubectl get configmap relay-recovery -o yaml
+  kubectl rollout status deployment/relay --timeout=3s
+  kubectl exec deployment/relay -c worker -- printenv RELEASE
+  kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/recovery-id
+  cat relay-handover-id
+  ```
+debrief: |-
+  Gezielte Wiederherstellung erhält die neuere Bindung und gewinnt die Release-Identität aus dem Checkpoint zurück. Hostdateien und Live-HTTP zeigen verschiedene Teile der Verteilung. Die Projektion überträgt die Identität an relay.
 phrases.0: Ich habe den Betriebsstatus überprüft, bevor ich eine Änderung vorgenommen habe.
 phrases.1: Ich habe die Ursache gefunden und eine Sache nach der anderen geändert.
 phrases.2: Ich habe den workload-Status und seine Bereitschaft nach der Änderung überprüft.
 diagnostics.state: |-
-  Der OpenTofu-State muss das verwaltete Artefakt release.txt erfassen.
-
-diagnostics.file: release.txt muss release-90 entsprechen.
-diagnostics.plan: Der OpenTofu-Plan muss mit Code 0 enden.
-diagnostics.rollout: Der Rollout des Deployment relay muss abgeschlossen sein.
-diagnostics.relay: RELEASE des Deployment relay muss release-90 sein.
-diagnostics.content_1: Auf app1 muss /srv/site/message genau release-90 enthalten, optional mit einem Zeilenumbruch.
-diagnostics.mode_1: Auf app1 muss der Modus von /srv/site/message 644 sein.
-diagnostics.http_1: app1 muss auf Port 8080 release-90 liefern.
-diagnostics.content_2: Auf app2 muss /srv/site/message genau release-90 enthalten, optional mit einem Zeilenumbruch.
-diagnostics.mode_2: Auf app2 muss der Modus von /srv/site/message 644 sein.
-diagnostics.http_2: app2 muss auf Port 8080 release-90 liefern.
-diagnostics.content_3: Auf app3 muss /srv/site/message genau release-90 enthalten, optional mit einem Zeilenumbruch.
-diagnostics.mode_3: Auf app3 muss der Modus von /srv/site/message 644 sein.
-diagnostics.http_3: app3 muss auf Port 8080 release-90 liefern.
-stages.0.objectives.0.text: OpenTofu erfasst das verwaltete Release-Artefakt im State.
+  Der OpenTofu-State muss das verwaltete Artefakt release.txt erfassen. Vergleichen Sie die aktive Bindung mit dem geprüften Checkpoint. Ein neu erzeugter Datensatz kann eine neue Identität haben. [Dokumentation](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.file: |-
+  release.txt muss release-90 entsprechen. Der aktive State oder das Artefakt kann vom vorgesehenen Eingang abweichen. Vergleichen Sie Datei und aktuellen Plan. [Dokumentation](https://opentofu.org/docs/cli/commands/plan/)
+diagnostics.plan: |-
+  Der OpenTofu-Plan muss mit Code 0 enden. Der aktive State oder das Artefakt kann vom vorgesehenen Eingang abweichen. Vergleichen Sie Datei und aktuellen Plan. [Dokumentation](https://opentofu.org/docs/cli/commands/plan/)
+diagnostics.rollout: |-
+  Der Rollout des Deployment relay muss abgeschlossen sein. Vergleichen Sie Pod-Vorlage und laufenden relay worker. Der aktualisierte Wert wird mit den neuen Pods wirksam. [Dokumentation](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.relay: |-
+  RELEASE des Deployment relay muss release-90 sein. Vergleichen Sie Pod-Vorlage und laufenden relay worker. Der aktualisierte Wert wird mit den neuen Pods wirksam. [Dokumentation](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.content_1: |-
+  Auf app1 muss /srv/site/message genau release-90 enthalten, optional mit einem Zeilenumbruch. Die Kopie kann den wiederhergestellten Inhalt oder Modus ausgelassen haben. Vergleichen Sie das Ergebnis auf jedem Host mit dem Übergabeartefakt. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.mode_1: |-
+  Auf app1 muss der Modus von /srv/site/message 644 sein. Die Kopie kann den wiederhergestellten Inhalt oder Modus ausgelassen haben. Vergleichen Sie das Ergebnis auf jedem Host mit dem Übergabeartefakt. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.http_1: |-
+  app1 muss auf Port 8080 release-90 liefern. Der Prozess kann den vorherigen Inhalt weiterverwenden. Vergleichen Sie gespeicherte Meldung und HTTP-Antwort. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.content_2: |-
+  Auf app2 muss /srv/site/message genau release-90 enthalten, optional mit einem Zeilenumbruch. Die Kopie kann den wiederhergestellten Inhalt oder Modus ausgelassen haben. Vergleichen Sie das Ergebnis auf jedem Host mit dem Übergabeartefakt. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.mode_2: |-
+  Auf app2 muss der Modus von /srv/site/message 644 sein. Die Kopie kann den wiederhergestellten Inhalt oder Modus ausgelassen haben. Vergleichen Sie das Ergebnis auf jedem Host mit dem Übergabeartefakt. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.http_2: |-
+  app2 muss auf Port 8080 release-90 liefern. Der Prozess kann den vorherigen Inhalt weiterverwenden. Vergleichen Sie gespeicherte Meldung und HTTP-Antwort. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.content_3: |-
+  Auf app3 muss /srv/site/message genau release-90 enthalten, optional mit einem Zeilenumbruch. Die Kopie kann den wiederhergestellten Inhalt oder Modus ausgelassen haben. Vergleichen Sie das Ergebnis auf jedem Host mit dem Übergabeartefakt. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.mode_3: |-
+  Auf app3 muss der Modus von /srv/site/message 644 sein. Die Kopie kann den wiederhergestellten Inhalt oder Modus ausgelassen haben. Vergleichen Sie das Ergebnis auf jedem Host mit dem Übergabeartefakt. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.http_3: |-
+  app3 muss auf Port 8080 release-90 liefern. Der Prozess kann den vorherigen Inhalt weiterverwenden. Vergleichen Sie gespeicherte Meldung und HTTP-Antwort. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+stages.0.objectives.0.text: |-
+  OpenTofu verwaltet das Release-Artefakt im State und stellt den Release-Datensatz mit seiner Identität aus dem geprüften Checkpoint wieder her. Erhalten Sie Inhalt des Checkpoints, die aktive State-Lineage und den neueren Übergabedatensatz.
 stages.0.objectives.1.text: Auf der Workstation enthält `~/quest/release.txt` den Wert `release-90`.
 stages.0.objectives.2.text: OpenTofu plant keine Änderungen und endet mit Code `0`.
-stages.1.objectives.0.text: Auf jedem verwalteten Host (`app1`, `app2`, `app3`) enthält `/srv/site/message` den
-  Wert `release-90` mit Modus `0644`.
+stages.1.objectives.0.text: |-
+  Auf `app1`, `app2` und `app3` enthält `/srv/site/message` den Wert `release-90` mit Modus `0644`. `/srv/site/recovery-id` entspricht der Wiederherstellungs-ID aus `recovered-release.json`.
 stages.1.objectives.1.text: HTTP auf Port `8080` liefert `release-90` von jedem verwalteten Host (`app1`, `app2`,
   `app3`).
-stages.2.objectives.0.text: Deployment `relay` schließt seinen Rollout ab und sein laufender Prozess ist für `release-90`
-  konfiguriert.
-diagnostics.probe_0_0: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: OpenTofu erfasst das
-  verwaltete Release-Artefakt im State.'
+stages.2.objectives.0.text: |-
+  Deployment `relay` schließt den Rollout ab und worker verwendet `release-90` in `RELEASE`. Erhalten Sie die bereitgestellte ConfigMap und die schreibgeschützte Projektion unter `/run/recovery`. Behalten Sie den bereitgestellten HTTP-Worker und sein Dokumentenverzeichnis bei. Liefern Sie die projizierte Datei mit der ID aus `relay-handover-id` unter `http://127.0.0.1:8080/recovery-id`.
+diagnostics.probe_0_0: |-
+  Die State-Prüfung lieferte keine Diagnose. Prüfen Sie den State separat aus dem Arbeitsverzeichnis. [Dokumentation](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.checkpoint_binding: |-
+  Vergleichen Sie die aktive Bindung mit dem geprüften Checkpoint. Ein neu erzeugter Datensatz kann eine neue Identität haben. [Dokumentation](https://opentofu.org/docs/cli/commands/state/mv/#usage)
+diagnostics.handover_state: |-
+  Das Ersetzen des aktiven State durch einen alten Checkpoint kann neuere Bindungen verlieren. Vergleichen Sie beide States und ihre Lineage. [Dokumentation](https://opentofu.org/docs/cli/commands/state/mv/#usage)
+diagnostics.checkpoint_digest: |-
+  Der Checkpoint wurde möglicherweise geändert oder ersetzt. Prüfen Sie die Originalkopie anhand ihrer Prüfsumme. [Dokumentation](https://opentofu.org/docs/cli/commands/state/mv/#usage)
+diagnostics.fleet_identity_1: |-
+  Die Kopie kann den wiederhergestellten Inhalt oder Modus ausgelassen haben. Vergleichen Sie das Ergebnis auf jedem Host mit dem Übergabeartefakt. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.fleet_identity_2: |-
+  Die Kopie kann den wiederhergestellten Inhalt oder Modus ausgelassen haben. Vergleichen Sie das Ergebnis auf jedem Host mit dem Übergabeartefakt. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.fleet_identity_3: |-
+  Die Kopie kann den wiederhergestellten Inhalt oder Modus ausgelassen haben. Vergleichen Sie das Ergebnis auf jedem Host mit dem Übergabeartefakt. [Dokumentation](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.relay_publication: |-
+  Die Veröffentlichung für relay kann einen alten Datensatz oder eine andere Quelle verwenden. Vergleichen Sie ursprüngliche ConfigMap, Projektion und HTTP-Antwort des worker. [Dokumentation](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/#add-configmap-data-to-a-volume)
+diagnostics.relay_identity: |-
+  Prüfen Sie, ob der bereitgestellte HTTP-Worker die projizierte Datei direkt aus seinem ursprünglichen Dokumentenverzeichnis ausliefert. [Dokumentation](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/#add-configmap-data-to-a-volume)

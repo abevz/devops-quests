@@ -64,6 +64,29 @@ ansible-playbook rollout.yml
     (60, 1): """kubectl set env deployment/relay RELEASE=release-60
 kubectl rollout status deployment/relay --timeout=90s
 """,
+    # Frozen behavior from 5bdcc1f: rebuild, publish the literal, set the literal.
+    (90, 0): 'tofu apply -auto-approve -input=false -no-color\n',
+    (90, 1): """cat > rollout.yml <<'DQ_ASSET'
+- name: SignalRail rollout
+  hosts: fleet
+  gather_facts: false
+  handlers:
+  - name: Reload banner
+    ansible.builtin.command: dq-service reload
+  tasks:
+  - name: Deliver the route message
+    ansible.builtin.copy:
+      dest: /srv/site/message
+      content: |
+        release-90
+      mode: '0644'
+    notify: Reload banner
+DQ_ASSET
+ansible-playbook rollout.yml
+""",
+    (90, 2): """kubectl set env deployment/relay RELEASE=release-90
+kubectl rollout status deployment/relay --timeout=90s
+""",
     (85, 0): """kubectl patch pdb relay --type=merge -p '{"spec":{"minAvailable":1}}'
 sleep 3
 """,
@@ -165,6 +188,8 @@ def test_old_minimal_fix_does_not_complete(number, stage):
         log["old_source"] = "ec6cef5"
     if number == 60:
         log["old_source"] = "ba6d23b"
+    if number == 90:
+        log["old_source"] = "5bdcc1f"
     stop = threading.Event()
     errors = []
     thread = None
@@ -265,6 +290,41 @@ done
                 assert bypass.returncode != 0 and "[DQ:release_source]" in bypass.stdout
             log["old_repair_converged_with_failure"] = marker
             log["old_repair_diagnostics"] = failures
+        if number == 90:
+            assert old.returncode == 0, old.stdout + old.stderr
+            expected = {
+                0: {"[DQ:checkpoint_binding]"},
+                1: {f"[DQ:fleet_identity_{host}]" for host in (1, 2, 3)},
+                2: {"[DQ:relay_publication]"},
+            }[stage]
+            detail = after.stdout + after.stderr
+            failures = {line[line.index("[DQ:"):] for line in detail.splitlines() if "[DQ:" in line}
+            assert failures == expected, detail
+            if stage == 0:
+                # A wholesale replacement restores the old release binding
+                # but erases the newer handover binding in this disposable bay.
+                runtime.exec(run, "cd ~/quest\ncp recovery/checkpoint.tfstate terraform.tfstate")
+                goal = catalog.quests[90]["stages"][0]["objectives"][0]["check"]
+                wholesale = runtime.exec(run, "set -euo pipefail\ncd ~/quest\n" + goal, check=False, timeout=25)
+                assert wholesale.returncode != 0 and "[DQ:handover_state]" in wholesale.stdout
+                assert "[DQ:checkpoint_binding]" not in wholesale.stdout
+            if stage == 2:
+                stale = runtime.exec(run, 'kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/recovery-id', timeout=12)
+                assert stale.stdout.strip() == "retired"
+                runtime.exec(run, (ROOT / "solutions/090/2.sh").read_text(), timeout=150)
+                runtime.exec(run, check, timeout=25)
+                runtime.exec(run, """kubectl exec deployment/relay -c worker -- sh -ec '
+cp /run/recovery/recovery-id /tmp/www/static-recovery-id
+ln -sfn /tmp/www/static-recovery-id /tmp/www/recovery-id
+test "$(wget -qO- -T 3 http://127.0.0.1:8080/recovery-id)" = "$(cat /run/recovery/recovery-id)"
+'""", timeout=12)
+                detached = runtime.exec(run, check, check=False, timeout=25)
+                assert detached.returncode != 0
+                detail = detached.stdout + detached.stderr
+                diagnostics = [line for line in detail.splitlines() if "[DQ:" in line]
+                assert len(diagnostics) == 1 and "[DQ:relay_identity]" in diagnostics[0], detail
+                log["matching_static_http_copy_rejected"] = True
+            log["old_repair_diagnostics"] = sorted(failures)
         if number == 77:
             healthy = runtime.exec(run, "kubectl get pdb board-budget -o jsonpath='{.status.currentHealthy}'").stdout
             assert healthy == "1", "Readiness fault must still be independently observable"
