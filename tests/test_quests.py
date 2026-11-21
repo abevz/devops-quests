@@ -215,8 +215,9 @@ def test_quest(number, tmp_path):
             )
             if number == 5:
                 runtime.exec(run, "cd ~/quest\ntest ! -e prepare.yml && test -s rollout.yml")
-                brief = catalog.text(5, "brief")["en"]
-                consumer_commands = re.findall(r"^- `(.*)` —", brief, re.MULTILINE)
+                last_hint = catalog.quests[5]["hints"][-1]["text"]
+                verification = catalog.text(5, last_hint)["en"]
+                consumer_commands = re.findall(r"^- `([^`]+)`\s+—", verification, re.MULTILINE)
                 assert len(consumer_commands) == 2
                 denied = runtime.exec(
                     run, "cd ~/quest\n" + consumer_commands[0], check=False, timeout=60

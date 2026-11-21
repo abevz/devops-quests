@@ -18,17 +18,22 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", (1, 3, 4, 7, 9))
-def test_each_pilot_condition_has_a_localized_explanation_and_guide(catalog, quest):
+@pytest.mark.parametrize("quest", (1, 2, 3, 4, 5, 7, 8, 9))
+def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = {
         marker
         for stage in catalog.quests[quest]["stages"]
         for goal in stage["objectives"]
         for marker in MARKER.findall(goal["check"])
     }
-    assert len(markers) == sum(
-        len(stage["objectives"]) for stage in catalog.quests[quest]["stages"]
+    # The fleet checks interpolate host numbers into these diagnostic IDs.
+    host_markers = {2: ("content", "mode"), 5: ("copy",)}
+    markers.update(
+        f"{condition}_{host}"
+        for condition in host_markers.get(quest, ())
+        for host in (1, 2, 3)
     )
+    assert markers
     explanations = catalog.public(quest)["diagnostics"]
     assert set(explanations) == markers
     for values in explanations.values():

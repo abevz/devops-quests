@@ -30,6 +30,19 @@ def test_every_failure_has_a_translated_marker(tmp_path, number, stage, expected
     for marker in markers:
         assert set(diagnostics[marker]) >= {"en", "pl", "es", "de", "ru"}
 
+def test_copy_probe_reports_each_host_and_preserves_first_failure(tmp_path):
+    home = tmp_path / "home"
+    (home / "quest").mkdir(parents=True)
+    ssh = tmp_path / "ssh"
+    ssh.write_text("#!/bin/bash\ncase \"$*\" in *app1-test*) exit 7;; *) exit 2;; esac\n")
+    ssh.chmod(0o755)
+    source = (ROOT / "quests/005/check-0.sh").read_text()
+    environment = {**os.environ, "HOME": str(home), "PATH": f'{tmp_path}:{os.environ["PATH"]}', "DQ_NAMESPACE": "dq-test"}
+    result = subprocess.run(["bash", "-c", source], text=True, capture_output=True, env=environment, timeout=15)
+    assert result.returncode == 7
+    assert re.findall(r"\[DQ:([a-z0-9_]+)\]", result.stderr) == ["copy_1", "copy_2", "copy_3"]
+
+
 def test_host_diagnostics_name_the_specific_machine():
     for quest in (2, 10, 20, 63):
         diagnostics = Catalog().public(quest)['diagnostics']
