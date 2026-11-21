@@ -72,6 +72,10 @@ For each failed condition, show one diagnostic, one line explaining why it commo
 happens, and a link to the exact guide paragraph for that cause. Keep the explanation
 specific and actionable; it is a likely cause, not a claim to know the learner's state.
 
+For a named destination, end a lesson heading in every language with the same
+`{#section-id}` and link to `guides#guide=lesson-id&section=section-id`.
+Use the same link destination in every translation of the diagnostic.
+
 - **Good:** For 003, “The state address is missing. This can happen when the root has
   not called or applied the child module.” Link to the matching module-call paragraph.
 - **Bad:** “Check failed; try again,” or one generic cause and unrelated guide link

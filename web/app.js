@@ -42,7 +42,7 @@ let updateInfo = null, updateRequest = false, buildSignature, layoutUser, toolti
 let themeMode = storageGet("dq-theme") ?? "system";
 installNavigationIcons();
 let routing = true;
-let guidesData, guideData, labData, selectedLab, selectedProfile;
+let guidesData, guideData, guideSection, labData, selectedLab, selectedProfile;
 let terminalKind = "quest",
   terminalEndpoint = "terminal";
 let interviewData, interviewSignature;
@@ -80,6 +80,20 @@ function block(value, parent, language = contentLanguage()) {
   p.innerHTML = window.DQMarkdown.renderMarkdown(content.text);
   if (content.language !== language) p.append(el("small", t("language.fallback"), "muted"));
   parent.append(p);
+  return p;
+}
+function renderDiagnosticMessages(failure, messages, parent, reasonLanguage = contentLanguage()) {
+  const reason = failure.reason ?? "checks.cause.unsatisfied";
+  const summary = el("p", i18n.t(reason, undefined, reasonLanguage));
+  parent.append(summary);
+  for (const explanation of diagnosticMessages(failure.detail ?? "", messages)) {
+    const content = block(explanation, parent);
+    for (const link of content.querySelectorAll('a[href^="guides#guide="]')) {
+      link.target = "_blank";
+      link.rel = "noopener";
+      if (reason === "checks.cause.unsatisfied") summary.remove();
+    }
+  }
 }
 // Polling refreshes the bay every few seconds; see renderWhenChanged in play.mjs.
 const renderIfChanged = (node, inputs, render) =>
@@ -241,8 +255,11 @@ function screen(id) {
   if (!routing && id !== "login") {
     const path = { guides: "guides", labs: "labs", interview: "interview", profile: "profile" }[id] ?? "";
     const url = new URL(path, base);
-    if (id === "guides" && !$("guide-reader").hidden && guideData)
-      url.hash = "guide=" + encodeURIComponent(guideData.id);
+    if (id === "guides" && !$("guide-reader").hidden && guideData) {
+      const fragment = new URLSearchParams({ guide: guideData.id });
+      if (guideSection) fragment.set("section", guideSection);
+      url.hash = fragment.toString();
+    }
     if (id === "labs" && selectedLab) url.hash = "lab=" + selectedLab;
     if (id === "bay") url.hash = "quest";
     if (id === "preview") url.hash = "briefing=" + preview.quest.id;
@@ -368,7 +385,7 @@ async function route() {
   try {
     const fragment = new URLSearchParams(location.hash.slice(1));
     const path = location.pathname.slice(base.pathname.length);
-    if (fragment.has("guide")) await openGuide(fragment.get("guide"));
+    if (fragment.has("guide")) await openGuide(fragment.get("guide"), fragment.get("section"));
     else if (fragment.has("briefing")) await openBriefing(Number(fragment.get("briefing")));
     else if (location.hash === "#quest") screen("bay");
     else if (path === "labs" || fragment.has("lab")) {
@@ -904,10 +921,7 @@ function renderObjectiveList(items, node) {
     if (status === "violated") {
       const diagnostic = el("div", undefined, "keep-diagnostic");
       diagnostic.append(el("p", tc("quest.keep_violated")));
-      if (failure) {
-        diagnostic.append(el("p", tc(failure.reason ?? "checks.cause.unsatisfied")));
-        for (const message of diagnosticMessages(failure.detail ?? "", state.quest?.diagnostics)) block(message, diagnostic);
-      }
+      if (failure) renderDiagnosticMessages(failure, state.quest?.diagnostics, diagnostic);
       wrap.append(diagnostic);
     }
     item.append(wrap);
@@ -1019,9 +1033,8 @@ function renderCheckFeedback(run, quest) {
     const wrap = el("div", undefined, "check-failure");
     block(quest.stages[result.stage].objectives[item.objective], wrap);
     wrap.append(el("p", t("checks.reason", { code: item.code })));
-    wrap.append(el("p", t(item.reason ?? "checks.cause.unsatisfied")));
+    renderDiagnosticMessages(item, quest.diagnostics, wrap, i18n.language);
     if (item.detail) {
-      for (const message of diagnosticMessages(item.detail, quest.diagnostics)) block(message, wrap);
       const diagnostic = el("details");
       diagnostic.append(el("summary", t("checks.diagnostic")), el("pre", item.detail));
       wrap.append(diagnostic);
@@ -1570,11 +1583,14 @@ async function labOperation(callback) {
     notify(error.message);
   }
 }
-async function openGuide(name) {
+async function openGuide(name, section = null) {
   guideData = await api("guide/" + encodeURIComponent(name));
+  guideSection = typeof section === "string" && /^[a-z][a-z0-9-]*$/.test(section) ? section : null;
   notify("");
   renderGuide();
   screen("guides");
+  if (guideSection)
+    $("guide-lesson").querySelector("#guide-section-" + guideSection)?.scrollIntoView();
 }
 function updateGuideExpansion() {
   const disclosures = [...$("guide-reader").querySelectorAll("details")];
@@ -1592,8 +1608,17 @@ function renderGuide() {
   $("guide-heading").textContent = heading.text;
   $("guide-heading").lang = heading.language;
   const content = i18n.content(guideData.content, language);
-  $("guide-lesson").innerHTML = window.DQMarkdown.renderMarkdown(content.text, { wiki: guideData.wiki });
-  $("guide-lesson").lang = content.language;
+  const lesson = $("guide-lesson");
+  lesson.innerHTML = window.DQMarkdown.renderMarkdown(content.text, { wiki: guideData.wiki });
+  lesson.lang = content.language;
+  for (const heading of lesson.querySelectorAll("h2, h3, h4, h5, h6")) {
+    const suffix = heading.lastChild;
+    if (suffix?.nodeType !== Node.TEXT_NODE) continue;
+    const match = /\s+\{#([a-z][a-z0-9-]*)\}$/.exec(suffix.textContent);
+    if (!match) continue;
+    heading.id = "guide-section-" + match[1];
+    suffix.textContent = suffix.textContent.slice(0, match.index);
+  }
   void renderDiagrams($("guide-lesson"));
   $("guide-warning").textContent = guideData.lesson_stale ? t("language.stale") : "";
   $("guide-lab").hidden = !guideData.profile;
