@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from devops_quests.application_sets import ApplicationSets
+from devops_quests.application_sets import RELEASE_REF, ApplicationSets
 from devops_quests.sandbox_evidence import bounded_yaml_reader
 
 RUN = {"id": "a" * 24, "level": 123}
@@ -60,9 +60,10 @@ def submission(tmp_path):
 
 
 @pytest.mark.parametrize("repaired", [False, True])
-def test_123_accepts_both_allowed_yaml_manifests_and_keeps_json_transport(submission, repaired):
+@pytest.mark.parametrize("revision", ["main", RELEASE_REF])
+def test_123_accepts_allowed_yaml_and_keeps_json_transport(submission, repaired, revision):
     target, runtime, adapter = submission
-    expected = adapter.manifest(RUN, repaired)
+    expected = adapter.manifest(RUN, repaired, revision=revision)
     target.write_text(yaml.safe_dump(expected, sort_keys=False))
     adapter.control(RUN)
     wanted = copy.deepcopy(expected)
@@ -123,6 +124,15 @@ def test_123_yaml_does_not_expand_the_allowed_application_scope(submission):
     target, runtime, adapter = submission
     value = adapter.manifest(RUN, True)
     value["spec"]["template"]["spec"]["destination"]["namespace"] = "foreign"
+    target.write_text(yaml.safe_dump(value))
+    adapter.control(RUN)
+    assert runtime.calls == []
+
+
+@pytest.mark.parametrize("revision", ["other-branch", "HEAD", "a" * 40])
+def test_123_refuses_revisions_outside_the_two_existing_refs(submission, revision):
+    target, runtime, adapter = submission
+    value = adapter.manifest(RUN, True, revision=revision)
     target.write_text(yaml.safe_dump(value))
     adapter.control(RUN)
     assert runtime.calls == []

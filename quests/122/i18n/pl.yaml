@@ -4,6 +4,8 @@ brief: |-
 
   Pracuj na workstation w `~/quest` z plikami `platform.env`, `repository/apps/child.yaml`, `repository/`, `parent.yaml`, `wait-apps.sh`.
 
+  Zatwierdzoną rewizję zapisano w `approved-publication`.
+
   O ile nie wskazano inaczej, zasoby Kubernetes znajdują się w przestrzeni nazw zatoki (`DQ_NAMESPACE`); ścieżki w `~/quest` są na workstation.
 
   **Requirements:**
@@ -13,40 +15,36 @@ brief: |-
   - Applications `parent` i `board` mają stan `Synced` dla `HEAD` repozytorium na workstation, a `board` ma stan `Healthy`.
   - Istniejąca nadrzędna Application zachowuje tożsamość i pierwotny katalog źródłowy.
   - Deployment `board` ma dokładnie `1` gotową replikę.
-  - Wewnątrz Poda Deployment `board` adres `http://board:8080` zwraca `north-122`.
+  - Z Poda Deploymentu `board` usługa ma zwracać `north-122` pod `http://board:8080` i zatwierdzoną rewizję z `approved-publication` pod `http://board:8080/publication/revision`. Użyj dostarczonej ConfigMap, która już zawiera zatwierdzoną rewizję. Zachowaj jej nazwę i zamontuj ją tylko do odczytu w obciążeniu zapisanym w Git i w działającym Deployment.
 
   Bieżące śledzenie i stan nie dowodzą, że obiekty nigdy nie były stosowane bezpośrednio.
-debrief: App-of-Apps uzgadnia zasoby Application jako obiekty zarządzane przez Git. Synchronizacja nadrzędna
-  nie zastępuje kontroli synchronizacji podrzędnej, stanu i zachowania obciążenia.
+debrief: |-
+  Git, śledzenie zasobów i stan obciążenia pokazują wykonane etapy uzgadniania. Porównanie projekcji z odpowiedzią HTTP wskazuje publikację faktycznie udostępnianą przez usługę.
 stages.0.brief: Zachowaj tożsamość i źródło istniejącego rodzica.
-hints.0.text: Podążaj za rodzicem source → dzieckiem source → obciążeniem; zdrowy rodzic sam nie udowodni,
-  że jego dziecko jest gotowe.
+hints.0.text: |-
+  Śledź osobno aplikację nadrzędną, podrzędną, obciążenie i udostępniane dane. Stan Healthy aplikacji podrzędnej nie wyklucza starszej publikacji.
 hints.1.text: |-
-  Sprawdź dokument dziecka w Git i działającą relację rodzica z dzieckiem.
+  Porównaj zapisane w Git źródło aplikacji podrzędnej z działającymi Application i manifestami publikacji. Gdy usługa odpowie, sprawdź jej rewizję względem dostarczonego zapisu.
 
   ```bash
-  cat repository/apps/child.yaml
+  git -C repository show HEAD:apps/child.yaml
   kubectl get applications parent board -o yaml
+  git -C repository ls-tree -r --name-only HEAD
+  cat approved-publication
   ```
 hints.2.text: |-
-  Zmień dziecko source path na manifests/, commit i push; odśwież element nadrzędny i sprawdź obie wersje. Sprawdź manifest dziecka Application w repository/apps/, a nie tylko żywe dziecko.
+  Opublikuj obie poprawki przez Git. Porównaj ConfigMap śledzoną przez aplikację podrzędną, źródło woluminu Deployment i rewizję w odpowiedzi HTTP. Pierwotna odpowiedź usługi powinna pozostać bez zmian.
 
-  Sprawdź z `~/quest` na workstation:
-
-  - `git -C repository ls-remote origin refs/heads/main`
-  - `git -C repository rev-parse HEAD`
-
-  Oba hashe są identyczne.
-
-  - `kubectl get applications parent board -o json | jq '.items[] | {name:.metadata.name,sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision,uid:.metadata.uid,path:.spec.source.path,project:.spec.project,destination:.spec.destination.namespace,tracking:.metadata.annotations["argocd.argoproj.io/tracking-id"]}'`
-
-  Obie mają stan `Synced` dla lokalnego HEAD; `board` ma stan `Healthy`. UID/ścieżka rodzica oraz projekt/ścieżka/cel/tracking dziecka odpowiadają Requirements.
-
-  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`
-
-  `north-122`.
-
-  - `bash wait-apps.sh` — kod `0`; sprawdzenia dostarczonego wydania przechodzą.
+  ```bash
+  git -C repository ls-remote origin refs/heads/main
+  git -C repository rev-parse HEAD
+  bash wait-apps.sh
+  kubectl get deployment board -o json | jq '.spec.template.spec | {volumes, mounts: [.containers[].volumeMounts[]?]}'
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/publication/revision
+  kubectl get configmaps -o json | jq '.items[] | select(.metadata.annotations["argocd.argoproj.io/tracking-id"] != null) | {name:.metadata.name,revision:.data.revision}'
+  cat approved-publication
+  ```
 phrases.0: Postępowałem zgodnie z łańcuchem pojednania rodzic-dziecko.
 phrases.1: Naprawiłem żądany stan w Git, a nie w wygenerowanym dziecku.
 phrases.2: Sprawdziłem obie wersje i rzeczywistą reakcję na obciążenie.
@@ -84,7 +82,12 @@ stages.0.objectives.2.text: Applications `parent` i `board` mają stan `Synced` 
   na workstation, a `board` ma stan `Healthy`.
 stages.0.objectives.3.text: Istniejąca nadrzędna Application zachowuje tożsamość i pierwotny katalog źródłowy.
 stages.0.objectives.4.text: Deployment `board` ma dokładnie `1` gotową replikę.
-stages.0.objectives.5.text: Wewnątrz Poda Deployment `board` adres `http://board:8080` zwraca `north-122`.
+stages.0.objectives.5.text: |-
+  Z Poda Deploymentu `board` usługa ma zwracać `north-122` pod `http://board:8080` i zatwierdzoną rewizję z `approved-publication` pod `http://board:8080/publication/revision`. Użyj dostarczonej ConfigMap, która już zawiera zatwierdzoną rewizję. Zachowaj jej nazwę i zamontuj ją tylko do odczytu w obciążeniu zapisanym w Git i w działającym Deployment.
 diagnostics.probe_0_1: 'Bieżące dane nie pozwalają potwierdzić tego celu: Zapisana w Git i działająca potomna Application
   `board` używają istniejącej zawartości obciążenia z repozytorium, zachowują właściwy projekt i cel w zatoce oraz
   pozostają zarządzane przez istniejącego rodzica.'
+diagnostics.publication: |-
+  Zatwierdzona ConfigMap aplikacji podrzędnej musi być zamontowana do odczytu i udostępniana pod ścieżką publikacji.
+diagnostics.probe_0_5: |-
+  Na podstawie aktualnych danych nie można sprawdzić projekcji ConfigMap lub jej odpowiedzi HTTP.

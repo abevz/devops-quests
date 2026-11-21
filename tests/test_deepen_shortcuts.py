@@ -55,6 +55,60 @@ OLD_FIXES.update({(66, 0): 'cat > prune.sh <<\'DQ_FROZEN_PRUNE\'\n#!/bin/bash\ns
 OLD_REGISTRY_RETENTION_CHECK = 'set -euo pipefail\ncd ~/quest\nfailed=0\nset +e\n(\nset -e\njq -e --slurpfile c /run/dq/facts/0/release-catalog.json \'(.delete|type)=="array" and (.delete|unique)==[$c[0].obsolete]\' retention.json >/dev/null\n)\n[ $? -eq 0 ] || failed=1\n(\nset -e\nsource platform.env\nfor kind in rollback current obsolete; do\n digest=$(jq -er --arg kind "$kind" \'.[$kind]\' /run/dq/facts/0/release-catalog.json)\n code=$(curl -sS --cacert registry-ca.crt -u "$REGISTRY_USER:$REGISTRY_PASSWORD" -H \'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json\' -o /dev/null -w \'%{http_code}\' "https://$REGISTRY/v2/parcel/manifests/$digest")\n if test "$kind" = obsolete; then test "$code" = 404; else test "$code" = 200; fi\ndone\n)\n[ $? -eq 0 ] || failed=1\nexit "$failed"\n'
 
 
+# Frozen at 7f37b34. The harness separately waits for the effect of the old edit.
+OLD_FIXES.update({
+    (122, 0): """python3 - <<'REPAIR_YAML'
+from pathlib import Path
+import yaml
+p=Path('repository/apps/child.yaml'); d=yaml.safe_load(p.read_text()); d['spec']['source']['path']='manifests'; p.write_text(yaml.safe_dump(d,sort_keys=False))
+REPAIR_YAML
+git -C repository add apps/child.yaml
+git -C repository commit -m 'Restore child source path'
+git -C repository push origin main
+kubectl annotate application parent argocd.argoproj.io/refresh=hard --overwrite
+""",
+    (123, 0): """python3 - <<'REPAIR_YAML'
+from pathlib import Path
+import yaml
+p=Path('applicationset.yaml'); d=yaml.safe_load(p.read_text()); d['spec']['template']['spec']['source']['path']='stations/{{.station}}'; p.write_text(yaml.safe_dump(d,sort_keys=False))
+REPAIR_YAML
+""",
+})
+
+
+LEGACY_GITOPS_EFFECT = {
+    122: r"""
+bash wait-apps.sh
+test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-122
+actual=$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/publication/revision)
+test -n "$actual"
+test "$actual" != "$(cat /run/dq/facts/0/approved-publication)"
+""",
+    123: r"""
+ns=$(jq -er .namespace /run/dq/facts/0/appset-target.json)
+maintenance=$(cat /run/dq/facts/0/maintenance-commit)
+kubectl -n "$ns" get applications north south -o json |
+  jq -e --arg rev "$maintenance" '(.items|length)==2 and all(.items[];
+     .status.sync.status=="Synced" and .status.health.status=="Healthy"
+     and .status.sync.revision==$rev and .spec.source.targetRevision=="main")' >/dev/null
+for station in north south; do
+  test "$(kubectl exec "deployment/$station" -c worker -- wget -qO- -T 3 "http://$station:8080")" = "$station-123"
+done
+""",
+}
+
+
+def wait_for_old_gitops_effect(runtime, run, number):
+    deadline = time.monotonic() + 100
+    script = "set -euo pipefail\ncd ~/quest\n" + LEGACY_GITOPS_EFFECT[number]
+    while time.monotonic() < deadline:
+        result = runtime.exec(run, script, check=False, timeout=20)
+        if result.returncode == 0:
+            return
+        time.sleep(2)
+    pytest.fail(f"Old GitOps repair did not converge: {result.stdout}{result.stderr}")
+
+
 @pytest.mark.parametrize("number,stage", OLD_FIXES)
 def test_old_minimal_fix_does_not_complete(number, stage):
     catalog = Catalog()
@@ -88,6 +142,8 @@ def test_old_minimal_fix_does_not_complete(number, stage):
                     runtime.game_controls(run)
                 assert runtime.exec(run, catalog.script(number, current, "check"), check=False, timeout=60).returncode == 0
         check = catalog.script(number, stage, "check")
+        if number == 123:
+            runtime.game_controls(run)
         initial = runtime.exec(run, check, check=False, timeout=60)
         assert initial.returncode != 0, "Fresh production bay unexpectedly solved"
         if number == 117:
@@ -101,6 +157,11 @@ def test_old_minimal_fix_does_not_complete(number, stage):
             time.sleep(25)
         if number == 75:
             runtime.observe(run)
+        if number in LEGACY_GITOPS_EFFECT:
+            assert old.returncode == 0, old.stdout + old.stderr
+            if number == 123:
+                runtime.game_controls(run)
+            wait_for_old_gitops_effect(runtime, run, number)
         after = runtime.exec(run, check, check=False, timeout=60)
         assert after.returncode != 0, "Old minimal repair completed the deepened quest"
         if number == 77:
@@ -133,6 +194,14 @@ test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8
 kubectl get events -o json | jq -e 'any(.items[];(.message // "" | test("unauthorized|authentication required|failed to authorize";"i")))' >/dev/null
 """, timeout=25)
             log["actual_pull_authorization_denial"] = True
+        if number == 122:
+            assert len(after.stdout.splitlines()) == 1 and "[DQ:publication]" in after.stdout
+            log["old_whole_predicates"] = "PASS while the HTTP publication is stale"
+        if number == 123:
+            assert len(after.stdout.splitlines()) == 3
+            for diagnostic in ("revision_north", "revision_south", "release_source"):
+                assert f"[DQ:{diagnostic}]" in after.stdout
+            log["maintenance_revision_healthy"] = True
 
 
         log.update(initial="FAIL as expected", old_fix_exit=old.returncode,

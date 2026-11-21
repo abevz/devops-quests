@@ -63,6 +63,17 @@ for station in north south; do
   if ! test -n "$revision" || ! jq -e --arg rev "$revision" '.status.sync.revision==$rev' <<<"$app" >/dev/null 2>&1; then printf '%s\n' "application/$station revision = release-commit: ✗ [DQ:revision_${station}]"; failed=1; fi
   check "application/$station health = Healthy [DQ:health_${station}]" '.status.health.status=="Healthy"' "$app"
 done
+release_ref=$(cat /run/dq/facts/0/release-ref 2>/dev/null || true)
+maintenance=$(cat /run/dq/facts/0/maintenance-commit 2>/dev/null || true)
+refs=$(timeout 5s git -C repository ls-remote "$repo" refs/heads/main "refs/heads/$release_ref" 2>/dev/null || true)
+if ! test -n "$release_ref" || ! test -n "$maintenance" ||
+   ! grep -Fqx "$(printf '%s\trefs/heads/main' "$maintenance")" <<<"$refs" ||
+   ! grep -Fqx "$(printf '%s\trefs/heads/%s' "$revision" "$release_ref")" <<<"$refs" ||
+   ! jq -e --arg ref "$release_ref" '.spec.template.spec.source.targetRevision==$ref' <<<"$appset" >/dev/null 2>&1 ||
+   ! jq -e --arg ref "$release_ref" '(.items|length)==2 and all(.items[]; .spec.source.targetRevision==$ref)' <<<"$apps" >/dev/null 2>&1; then
+  printf '%s\n' 'Both generated Applications follow the approved release ref while main stays unchanged: ✗ [DQ:release_source]'
+  failed=1
+fi
 exit "$failed"
 )
 [ $? -eq 0 ] || failed=1

@@ -4,6 +4,8 @@ brief: |-
 
   Work on the workstation in `~/quest` with `platform.env`, `repository/apps/child.yaml`, `repository/`, `parent.yaml`, `wait-apps.sh`.
 
+  The approved revision is recorded in `approved-publication`.
+
   Unless stated otherwise, Kubernetes resources live in the bay namespace (`DQ_NAMESPACE`); `~/quest` paths are on the workstation.
 
   **Requirements:**
@@ -13,40 +15,36 @@ brief: |-
   - Applications `parent` and `board` are `Synced` at workstation repository `HEAD`, and `board` is `Healthy`.
   - The existing parent Application keeps its identity and its original source directory.
   - Deployment `board` has exactly `1` ready replica.
-  - Inside a Pod of Deployment `board`, `http://board:8080` returns `north-122`.
+  - Inside a Pod of Deployment `board`, the Service must serve `north-122` at `http://board:8080` and the approved revision from `approved-publication` at `http://board:8080/publication/revision`. Use the supplied ConfigMap that already contains the approved revision. Keep its name and use it as a read-only projection in the committed workload and the live Deployment.
 
   Current tracking and status do not prove that objects were never applied directly.
-debrief: App-of-Apps reconciles Application resources as Git-managed objects. A parent sync does not replace
-  inspection of child sync, health and workload behavior.
+debrief: |-
+  Git, tracking and workload health establish where reconciliation succeeded. Comparing the projection with the actual HTTP response establishes which publication the Service delivers.
 stages.0.brief: Keep the existing parent identity and source.
-hints.0.text: Follow parent source → child source → workload; a healthy parent alone does not prove its
-  child is ready.
+hints.0.text: |-
+  Follow parent, child, workload and served data separately. A Healthy child can still deliver an old publication.
 hints.1.text: |-
-  Inspect the committed child document and the live parent/child relationship.
+  Compare the committed child source, the live Applications and the publication manifests. Once the Service responds, compare its revision with the supplied publication record.
 
   ```bash
-  cat repository/apps/child.yaml
+  git -C repository show HEAD:apps/child.yaml
   kubectl get applications parent board -o yaml
+  git -C repository ls-tree -r --name-only HEAD
+  cat approved-publication
   ```
 hints.2.text: |-
-  Change the child source path to manifests/, commit and push; refresh the parent and inspect both revisions. Inspect the child Application manifest in repository/apps/, not only the live child.
+  Publish both corrections through Git. Compare the child’s tracked ConfigMap, the Deployment’s volume source and the live HTTP revision. The Service should still return its original main response.
 
-  Verify from `~/quest` on the workstation:
-
-  - `git -C repository ls-remote origin refs/heads/main`
-  - `git -C repository rev-parse HEAD`
-
-  Both hashes are identical.
-
-  - `kubectl get applications parent board -o json | jq '.items[] | {name:.metadata.name,sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision,uid:.metadata.uid,path:.spec.source.path,project:.spec.project,destination:.spec.destination.namespace,tracking:.metadata.annotations["argocd.argoproj.io/tracking-id"]}'`
-
-  Both are `Synced` at local HEAD; `board` is `Healthy`. Parent UID/path and child project/path/destination/tracking match Requirements.
-
-  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`
-
-  `north-122`.
-
-  - `bash wait-apps.sh` — exit `0`; the supplied release checks pass.
+  ```bash
+  git -C repository ls-remote origin refs/heads/main
+  git -C repository rev-parse HEAD
+  bash wait-apps.sh
+  kubectl get deployment board -o json | jq '.spec.template.spec | {volumes, mounts: [.containers[].volumeMounts[]?]}'
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/publication/revision
+  kubectl get configmaps -o json | jq '.items[] | select(.metadata.annotations["argocd.argoproj.io/tracking-id"] != null) | {name:.metadata.name,revision:.data.revision}'
+  cat approved-publication
+  ```
 phrases.0: I followed the parent-to-child reconciliation chain.
 phrases.1: I repaired desired state in Git rather than the generated child.
 phrases.2: I verified both revisions and the actual workload response.
@@ -85,7 +83,12 @@ stages.0.objectives.2.text: Applications `parent` and `board` are `Synced` at wo
 stages.0.objectives.3.text: The existing parent Application keeps its identity and its original source
   directory.
 stages.0.objectives.4.text: Deployment `board` has exactly `1` ready replica.
-stages.0.objectives.5.text: Inside a Pod of Deployment `board`, `http://board:8080` returns `north-122`.
+stages.0.objectives.5.text: |-
+  Inside a Pod of Deployment `board`, the Service must serve `north-122` at `http://board:8080` and the approved revision from `approved-publication` at `http://board:8080/publication/revision`. Use the supplied ConfigMap that already contains the approved revision. Keep its name and use it as a read-only projection in the committed workload and the live Deployment.
 diagnostics.probe_0_1: 'The current inputs could not verify this objective: The committed and live child Application
   `board` use the repository’s existing workload content, retain their intended project and bay destination, and
   remain managed by the existing parent.'
+diagnostics.publication: |-
+  The approved child-managed ConfigMap must be mounted read-only and served at the release endpoint.
+diagnostics.probe_0_5: |-
+  The current inputs could not verify the ConfigMap projection or its HTTP response.

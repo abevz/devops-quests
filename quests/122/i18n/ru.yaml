@@ -4,6 +4,8 @@ brief: |-
 
   Работайте на workstation в `~/quest` с файлами `platform.env`, `repository/apps/child.yaml`, `repository/`, `parent.yaml`, `wait-apps.sh`.
 
+  Согласованная ревизия записана в `approved-publication`.
+
   Если не указано иное, ресурсы Kubernetes находятся в namespace песочницы (`DQ_NAMESPACE`); пути в `~/quest` — на workstation.
 
   **Requirements:**
@@ -13,40 +15,36 @@ brief: |-
   - Applications `parent` и `board` имеют статус `Synced` для `HEAD` репозитория на workstation, а `board` — `Healthy`.
   - Существующий родительский Application сохраняет идентичность и исходный каталог источника.
   - Deployment `board` имеет ровно `1` готовую реплику.
-  - Внутри Pod Deployment `board` адрес `http://board:8080` возвращает `north-122`.
+  - Из Pod Deployment `board` сервис должен возвращать `north-122` на `http://board:8080`, а согласованную ревизию из `approved-publication` — на `http://board:8080/publication/revision`. Используйте выданную ConfigMap, в которой уже записана согласованная ревизия. Сохраните её имя и монтируйте её только для чтения в нагрузке из Git и в живом Deployment.
 
   Текущие привязки и статусы не доказывают, что объекты никогда не применялись напрямую.
-debrief: App-of-Apps согласует ресурсы Application как объекты под управлением Git. Синхронизация родителя
-  не заменяет проверку синхронизации и здоровья дочернего приложения и поведения нагрузки.
+debrief: |-
+  Git, отслеживание ресурсов и состояние нагрузки показывают, где прошло согласование. Сравнение проекции с HTTP-ответом показывает, какую публикацию отдаёт сервис.
 stages.0.brief: Сохраните идентичность и источник существующего родителя.
-hints.0.text: Проследите source родителя → source дочернего приложения → нагрузка; здоровый родитель сам
-  по себе не доказывает готовность дочернего.
+hints.0.text: |-
+  Проследите по отдельности родителя, дочерний Application, нагрузку и отдаваемые данные. Даже при статусе Healthy сервис может отдавать старую публикацию.
 hints.1.text: |-
-  Изучите документ потомка в Git и живую связь родителя с потомком.
+  Сопоставьте источник дочернего Application в Git, живые Application и манифесты публикации. Когда сервис ответит, сравните отдаваемую ревизию с выданной записью.
 
   ```bash
-  cat repository/apps/child.yaml
+  git -C repository show HEAD:apps/child.yaml
   kubectl get applications parent board -o yaml
+  git -C repository ls-tree -r --name-only HEAD
+  cat approved-publication
   ```
 hints.2.text: |-
-  Исправьте source path дочернего приложения на manifests/, сделайте commit и push; обновите родителя и проверьте обе ревизии. Изучите манифест дочернего Application в repository/apps/, а не только живой объект.
+  Опубликуйте оба исправления через Git. Сопоставьте отслеживаемую дочерним Application ConfigMap, источник тома Deployment и ревизию в HTTP-ответе. Исходный ответ сервиса на корневом URL должен сохраниться.
 
-  Проверьте из `~/quest` на workstation:
-
-  - `git -C repository ls-remote origin refs/heads/main`
-  - `git -C repository rev-parse HEAD`
-
-  Оба хеша совпадают.
-
-  - `kubectl get applications parent board -o json | jq '.items[] | {name:.metadata.name,sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision,uid:.metadata.uid,path:.spec.source.path,project:.spec.project,destination:.spec.destination.namespace,tracking:.metadata.annotations["argocd.argoproj.io/tracking-id"]}'`
-
-  Оба имеют статус `Synced` для локального HEAD; `board` имеет статус `Healthy`. UID/путь родителя и проект/путь/назначение/tracking потомка соответствуют Requirements.
-
-  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`
-
-  `north-122`.
-
-  - `bash wait-apps.sh` — код `0`; проверки предоставленного релиза проходят.
+  ```bash
+  git -C repository ls-remote origin refs/heads/main
+  git -C repository rev-parse HEAD
+  bash wait-apps.sh
+  kubectl get deployment board -o json | jq '.spec.template.spec | {volumes, mounts: [.containers[].volumeMounts[]?]}'
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/publication/revision
+  kubectl get configmaps -o json | jq '.items[] | select(.metadata.annotations["argocd.argoproj.io/tracking-id"] != null) | {name:.metadata.name,revision:.data.revision}'
+  cat approved-publication
+  ```
 phrases.0: Я проследил цепочку согласования от родителя к дочернему приложению.
 phrases.1: Я исправил требуемое состояние в Git, а не созданное дочернее приложение.
 phrases.2: Я проверил обе ревизии и фактический ответ нагрузки.
@@ -85,7 +83,12 @@ stages.0.objectives.2.text: Applications `parent` и `board` имеют стат
 stages.0.objectives.3.text: Существующий родительский Application сохраняет идентичность и исходный каталог
   источника.
 stages.0.objectives.4.text: Deployment `board` имеет ровно `1` готовую реплику.
-stages.0.objectives.5.text: Внутри Pod Deployment `board` адрес `http://board:8080` возвращает `north-122`.
+stages.0.objectives.5.text: |-
+  Из Pod Deployment `board` сервис должен возвращать `north-122` на `http://board:8080`, а согласованную ревизию из `approved-publication` — на `http://board:8080/publication/revision`. Используйте выданную ConfigMap, в которой уже записана согласованная ревизия. Сохраните её имя и монтируйте её только для чтения в нагрузке из Git и в живом Deployment.
 diagnostics.probe_0_1: 'Текущие данные не позволили проверить эту цель: Закоммиченный и живой дочерний Application
   `board` используют существующее содержимое нагрузки из репозитория, сохраняют предназначенные проект и назначение
   в песочнице и остаются под управлением существующего родителя.'
+diagnostics.publication: |-
+  Сервис должен отдавать согласованную ConfigMap дочернего Application через проекцию только для чтения.
+diagnostics.probe_0_5: |-
+  По текущим данным не удалось проверить проекцию ConfigMap или её HTTP-ответ.

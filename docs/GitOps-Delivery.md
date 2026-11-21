@@ -50,4 +50,6 @@ Application связывает репозиторий, путь, ревизию,
 
 В app-of-apps родитель согласует дочерний Application, а тот — нагрузку. Прослеживайте источник и владельца на каждом слое. Генератор ApplicationSet передаёт параметры шаблону; проверяйте сгенерированные объекты вместе с ним. Прямое изменение дочернего объекта контроллер может перезаписать. Сохраните доверие репозитория, владельцев, namespace и публикацию при распространении.
 
+Дочерний Application может применить корректные манифесты и при этом выбрать устаревшую публикацию. Сопоставьте смонтированный источник с ответом HTTP. Для флота сравните путь и целевую ссылку каждого сгенерированного Application с разрешённым коммитом. Разные ветки могут временно указывать на один коммит, поэтому совпадение ревизии само по себе не подтверждает источник.
+
 Справочники: [API registry](https://distribution.github.io/distribution/spec/api/), [приватные образы](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/), [webhook Argo CD](https://argo-cd.readthedocs.io/en/stable/operator-manual/webhook/), [принятие ConfigMap](https://kubernetes.io/docs/tutorials/configuration/updating-configuration-via-a-configmap/).

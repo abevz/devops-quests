@@ -2,7 +2,9 @@ title: Argo CD ApplicationSet
 brief: |-
   Флот station не предоставляет оба ожидаемых сервиса. Восстановите создаваемые приложения и наблюдаемые результаты релиза.
 
-  Работайте на workstation в `~/quest` с файлами `platform.env`, `appset-target.json`, `applicationset.yaml`, `repository/`, `release-commit`, `wait-apps.sh`.
+  Работайте на workstation в `~/quest` с файлами `platform.env`, `appset-target.json`, `applicationset.yaml`, `repository/`, `release-ref`, `release-commit`, `maintenance-commit`, `wait-apps.sh`.
+
+  При проверке целей адаптер отправляет файл `applicationset.yaml` с рабочей станции. Он принимает исходный или рабочий путь флота и исходную или выданную ссылку релиза. Генератор, проект, репозиторий, область и владение сохраняются.
 
   Если не указано иное, ресурсы Kubernetes находятся в namespace песочницы (`DQ_NAMESPACE`); пути в `~/quest` — на workstation.
 
@@ -10,49 +12,37 @@ brief: |-
 
   - Существующий ApplicationSet создаёт ровно Applications `north` и `south`, каждый использует содержимое соответствующей станции из предоставленного репозитория, сохраняя предназначенные проект и назначение в песочнице.
   - Оба созданных Application остаются во владении существующего ApplicationSet.
-  - Оба созданных Application имеют статусы `Synced` и `Healthy` для предоставленной ревизии релиза.
+  - Оба сгенерированных Application используют согласованный релиз из `release-ref` и `release-commit` и имеют статусы `Synced` и `Healthy`. Опубликованная ветка обслуживания `main` сохраняет ревизию из `maintenance-commit`.
   - Deployments `north` и `south` имеют ровно по `1` готовой реплике.
   - Внутри их Pod адреса `http://north:8080` и `http://south:8080` возвращают соответственно `north-123` и `south-123`.
 
-    - Созданные Applications и их ApplicationSet остаются в предоставленном namespace контроллера; Deployments и Services — в namespace песочницы.
-
-  Текущее созданное состояние не доказывает, что менялся только путь шаблона.
-debrief: ApplicationSet генерирует спецификации Application; каждое Application по-прежнему согласует
-  свою нагрузку. Ограниченная передача манифеста сохраняет приватные project, repository и destination,
-  а генерацию выполняет настоящий контроллер с областью одного namespace.
+  - Созданные Applications и их ApplicationSet остаются в предоставленном namespace контроллера; Deployments и Services — в namespace песочницы.
+debrief: |-
+  ApplicationSet разворачивает шаблон в спецификации Application. Каждый Application разрешает ревизию своего источника. Сопоставляйте состояние со ссылкой и согласованным коммитом.
 stages.0.brief: Сохраните предоставленную область контроллера и владение созданными объектами.
-hints.0.text: List-генератор задаёт station; шаблон подставляет его в source path каждого Application.
+hints.0.text: |-
+  Проверяйте путь и ссылку на ревизию сгенерированного источника отдельно. Рабочие манифесты в одной ветке ещё не говорят, что контроллер использует согласованный коммит.
 hints.1.text: |-
-  Изучите предоставленный ApplicationSet и созданные Applications в их namespace контроллера.
+  Сопоставьте шаблон, сгенерированные Application и ссылки на сервере Git. Файлы релиза содержат обе ожидаемые ревизии.
 
   ```bash
-  cat applicationset.yaml
   ns=$(jq -r .namespace appset-target.json)
+  cat applicationset.yaml release-ref release-commit maintenance-commit
+  git -C repository ls-remote origin 'refs/heads/*'
   kubectl -n "$ns" get applications north south -o yaml
   ```
 hints.2.text: |-
-  Укажите stations/{{.station}}, сохраните все поля области доступа, затем сравните UID владельца, ревизии и оба HTTP-ответа. Обычный опрос целей отправляет `applicationset.yaml` через ограниченный адаптер. Сохраните `goTemplate: true` и порядок станций `[north, south]`; принимается только исходный манифест или исправление пути его шаблона. Изучите applicationset.yaml и созданные Application только для чтения в namespace из appset-target.json.
-
-  Проверьте из `~/quest` на workstation:
-
-  - `ns=$(jq -r .namespace appset-target.json)`
-  - `kubectl -n "$ns" get applications north south -o json | jq '.items[] | {name:.metadata.name,sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision,project:.spec.project,repo:.spec.source.repoURL,path:.spec.source.path,destination:.spec.destination.namespace,owners:.metadata.ownerReferences}'`
-
-  Оба имеют статусы `Synced` и `Healthy` для `release-commit`. Оба используют проект `station`, записанный репозиторий, соответствующие пути `stations/north` / `stations/south`, назначение `DQ_NAMESPACE` и владельца `ApplicationSet`.
-
-  - `kubectl get deployments north south -o json | jq '.items[] | {name:.metadata.name,ready:.status.readyReplicas}'`
-
-  Каждый сообщает `ready: 1`.
+  Используйте `stations/{{.station}}` в шаблоне пути и выберите выданную ссылку релиза. Сопоставьте живой источник каждого Application со ссылками Git и проверьте ответы обоих сервисов.
 
   ```bash
+  ns=$(jq -r .namespace appset-target.json)
+  git -C repository ls-remote origin refs/heads/main "refs/heads/$(cat release-ref)"
+  kubectl -n "$ns" get applications north south -o json | jq '.items[] | {name:.metadata.name,source:.spec.source,sync:.status.sync,health:.status.health.status,owners:.metadata.ownerReferences}'
+  bash wait-apps.sh
   for station in north south; do
     kubectl exec deployment/"$station" -- wget -qO- -T 3 "http://$station:8080"
   done
   ```
-
-  `north-123`, `south-123`.
-
-  - `bash wait-apps.sh` — код `0`; проверки предоставленного релиза проходят.
 phrases.0: Я разделил генерацию Application и согласование нагрузки.
 phrases.1: Я проверил значения генератора и развёртывание шаблона.
 phrases.2: Я сохранил ограниченную область прав контроллера и назначений.
@@ -96,8 +86,10 @@ stages.0.objectives.0.text: Существующий ApplicationSet создаё
   каждый использует содержимое соответствующей станции из предоставленного репозитория, сохраняя предназначенные
   проект и назначение в песочнице.
 stages.0.objectives.1.text: Оба созданных Application остаются во владении существующего ApplicationSet.
-stages.0.objectives.2.text: Оба созданных Application имеют статусы `Synced` и `Healthy` для предоставленной
-  ревизии релиза.
+stages.0.objectives.2.text: |-
+  Оба сгенерированных Application используют согласованный релиз из `release-ref` и `release-commit` и имеют статусы `Synced` и `Healthy`. Опубликованная ветка обслуживания `main` сохраняет ревизию из `maintenance-commit`.
 stages.0.objectives.3.text: Deployments `north` и `south` имеют ровно по `1` готовой реплике.
 stages.0.objectives.4.text: Внутри их Pod адреса `http://north:8080` и `http://south:8080` возвращают
   соответственно `north-123` и `south-123`.
+diagnostics.release_source: |-
+  Оба Application должны получать ссылку на ревизию из шаблона ApplicationSet. Опубликованные ссылки релиза и обслуживания должны сохранять заданные коммиты.

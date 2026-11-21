@@ -2,7 +2,9 @@ title: Argo CD ApplicationSet
 brief: |-
   Die Station-Flotte liefert nicht beide erwarteten Dienste aus. Stellen Sie die generierten Anwendungen und ihre beobachtbaren Release-Ergebnisse wieder her.
 
-  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `appset-target.json`, `applicationset.yaml`, `repository/`, `release-commit`, `wait-apps.sh`.
+  Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `appset-target.json`, `applicationset.yaml`, `repository/`, `release-ref`, `release-commit`, `maintenance-commit`, `wait-apps.sh`.
+
+  Beim Prüfen übermittelt der begrenzte Adapter die lokale Datei `applicationset.yaml`. Er akzeptiert den ursprünglichen oder vorgesehenen Flottenpfad und die ursprüngliche oder bereitgestellte Release-Referenz. Generator, Projekt, Repository, Geltungsbereich und Eigentümer bleiben fest.
 
   Sofern nicht anders angegeben, liegen Kubernetes-Ressourcen im Bay-Namespace (`DQ_NAMESPACE`); Pfade unter `~/quest` liegen auf der Workstation.
 
@@ -10,49 +12,37 @@ brief: |-
 
   - Das vorhandene ApplicationSet generiert genau die Applications `north` und `south`, jeweils mit dem zugehörigen Stationsinhalt aus dem bereitgestellten Repository und unverändertem vorgesehenem Projekt und Bay-Ziel.
   - Beide generierten Applications gehören weiterhin zum vorhandenen ApplicationSet.
-  - Beide generierten Applications sind für die bereitgestellte Release-Revision `Synced` und `Healthy`.
+  - Beide erzeugten Applications verwenden die Freigabe aus `release-ref` und `release-commit` und sind `Synced` und `Healthy`. Der veröffentlichte Wartungszweig `main` behält die Revision aus `maintenance-commit`.
   - Deployments `north` und `south` haben jeweils genau `1` bereite Replik.
   - In ihren Pods liefern `http://north:8080` und `http://south:8080` jeweils `north-123` und `south-123`.
 
-    - Die generierten Applications und ihr ApplicationSet bleiben im bereitgestellten Controller-Namespace; Deployments und Services bleiben im Bay-Namespace.
-
-  Der aktuelle generierte Zustand beweist nicht, dass nur der Vorlagenpfad geändert wurde.
-debrief: ApplicationSet generiert Application-Spezifikationen; Jeder Application gleicht weiterhin seine
-  Arbeitslast ab. Der begrenzte Übermittlungsadapter behält die privaten Werte project, repository und
-  destination bei, während ein echter Namespace-Controller die Generierung durchführt.
+  - Die generierten Applications und ihr ApplicationSet bleiben im bereitgestellten Controller-Namespace; Deployments und Services bleiben im Bay-Namespace.
+debrief: |-
+  Ein ApplicationSet erzeugt aus der Vorlage Application-Spezifikationen. Jede Application löst ihre Quellrevision auf. Vergleiche ihren Status mit Referenz und freigegebenem Commit.
 stages.0.brief: Erhalten Sie den bereitgestellten Controller-Geltungsbereich und die generierte Eigentümerschaft.
-hints.0.text: Der Listengenerator liefert station; Die Vorlage erweitert es in jeden Application-Quellpfad.
+hints.0.text: |-
+  Prüfen Sie Quellpfad und Zielreferenz getrennt. Funktionierende Manifeste in einem Zweig zeigen noch nicht, dass der Controller den freigegebenen Commit verwendet.
 hints.1.text: |-
-  Prüfen Sie das bereitgestellte ApplicationSet und die generierten Applications in ihrem Controller-Namespace.
+  Vergleichen Sie Vorlage, erzeugte Applications und Referenzen des Git-Servers. Die Release-Dateien halten beide erwarteten Revisionen fest.
 
   ```bash
-  cat applicationset.yaml
   ns=$(jq -r .namespace appset-target.json)
+  cat applicationset.yaml release-ref release-commit maintenance-commit
+  git -C repository ls-remote origin 'refs/heads/*'
   kubectl -n "$ns" get applications north south -o yaml
   ```
 hints.2.text: |-
-  Verwenden Sie stations/{{.station}}, lassen Sie alle Bereichsfelder unverändert und vergleichen Sie dann Besitzer UID, Revisionen und beide HTTP-Antworten. Die normale Zielabfrage übermittelt `applicationset.yaml` durch den begrenzten Adapter. Behalten Sie `goTemplate: true` und die geordneten Stationen `[north, south]` bei; akzeptiert werden nur das ursprüngliche Manifest oder seine Vorlagenpfadkorrektur. Überprüfen Sie applicationset.yaml und die schreibgeschützten generierten Anwendungen im namespace von appset-target.json.
-
-  Prüfen Sie in `~/quest` auf der Workstation:
-
-  - `ns=$(jq -r .namespace appset-target.json)`
-  - `kubectl -n "$ns" get applications north south -o json | jq '.items[] | {name:.metadata.name,sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision,project:.spec.project,repo:.spec.source.repoURL,path:.spec.source.path,destination:.spec.destination.namespace,owners:.metadata.ownerReferences}'`
-
-  Beide sind am Commit aus `release-commit` `Synced` und `Healthy`. Beide nutzen Projekt `station`, das aufgezeichnete Repository, ihre jeweiligen Pfade `stations/north` / `stations/south`, Ziel `DQ_NAMESPACE` und einen `ApplicationSet`-Eigentümer.
-
-  - `kubectl get deployments north south -o json | jq '.items[] | {name:.metadata.name,ready:.status.readyReplicas}'`
-
-  Jedes meldet `ready: 1`.
+  Nutzen Sie `stations/{{.station}}` als Pfadvorlage und wählen Sie die bereitgestellte Release-Referenz. Vergleiche die laufenden Quellen mit den Git-Referenzen und prüfen Sie beide Dienstantworten.
 
   ```bash
+  ns=$(jq -r .namespace appset-target.json)
+  git -C repository ls-remote origin refs/heads/main "refs/heads/$(cat release-ref)"
+  kubectl -n "$ns" get applications north south -o json | jq '.items[] | {name:.metadata.name,source:.spec.source,sync:.status.sync,health:.status.health.status,owners:.metadata.ownerReferences}'
+  bash wait-apps.sh
   for station in north south; do
     kubectl exec deployment/"$station" -- wget -qO- -T 3 "http://$station:8080"
   done
   ```
-
-  `north-123`, `south-123`.
-
-  - `bash wait-apps.sh` — Exit `0`; die Prüfungen des bereitgestellten Releases bestehen.
 phrases.0: Ich habe die Application-Generierung von der Workload-Abstimmung getrennt.
 phrases.1: Ich habe die Generatorwerte und die Vorlagenerweiterung überprüft.
 phrases.2: Ich habe die Controller-Berechtigungen und Ziele begrenzt gehalten.
@@ -96,8 +86,10 @@ stages.0.objectives.0.text: Das vorhandene ApplicationSet generiert genau die Ap
   `south`, jeweils mit dem zugehörigen Stationsinhalt aus dem bereitgestellten Repository und unverändertem
   vorgesehenem Projekt und Bay-Ziel.
 stages.0.objectives.1.text: Beide generierten Applications gehören weiterhin zum vorhandenen ApplicationSet.
-stages.0.objectives.2.text: Beide generierten Applications sind für die bereitgestellte Release-Revision
-  `Synced` und `Healthy`.
+stages.0.objectives.2.text: |-
+  Beide erzeugten Applications verwenden die Freigabe aus `release-ref` und `release-commit` und sind `Synced` und `Healthy`. Der veröffentlichte Wartungszweig `main` behält die Revision aus `maintenance-commit`.
 stages.0.objectives.3.text: Deployments `north` und `south` haben jeweils genau `1` bereite Replik.
 stages.0.objectives.4.text: In ihren Pods liefern `http://north:8080` und `http://south:8080` jeweils
   `north-123` und `south-123`.
+diagnostics.release_source: |-
+  Beide Applications müssen die Zielreferenz aus der ApplicationSet-Vorlage beziehen. Die veröffentlichten Release- und Wartungsreferenzen behalten die festgelegten Commits.

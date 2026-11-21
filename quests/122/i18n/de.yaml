@@ -4,6 +4,8 @@ brief: |-
 
   Arbeiten Sie auf der Workstation in `~/quest` mit `platform.env`, `repository/apps/child.yaml`, `repository/`, `parent.yaml`, `wait-apps.sh`.
 
+  Die freigegebene Revision steht in `approved-publication`.
+
   Sofern nicht anders angegeben, liegen Kubernetes-Ressourcen im Bay-Namespace (`DQ_NAMESPACE`); Pfade unter `~/quest` liegen auf der Workstation.
 
   **Requirements:**
@@ -13,41 +15,36 @@ brief: |-
   - Applications `parent` und `board` sind für `HEAD` des Workstation-Repositorys `Synced`, und `board` ist `Healthy`.
   - Die vorhandene Parent-Application behält ihre Identität und ihr ursprüngliches Quellverzeichnis.
   - Deployment `board` hat genau `1` bereite Replik.
-  - In einem Pod von Deployment `board` liefert `http://board:8080` den Wert `north-122`.
+  - Aus einem Pod des Deployments `board` liefert der Dienst `north-122` unter `http://board:8080` und die freigegebene Revision aus `approved-publication` unter `http://board:8080/publication/revision`. Verwenden Sie die bereitgestellte ConfigMap, die bereits die freigegebene Revision enthält. Behalten Sie ihren Namen bei und binden Sie sie in der eingecheckten Workload und im laufenden Deployment schreibgeschützt ein.
 
   Aktuelles Tracking und aktueller Status beweisen nicht, dass Objekte nie direkt angewendet wurden.
-debrief: App-of-Apps gleicht Application-Ressourcen als von Git verwaltete Objekte ab. Eine übergeordnete
-  Synchronisierung ersetzt nicht die Überprüfung der untergeordneten Synchronisierung, des Zustands und
-  des Arbeitslastverhaltens.
+debrief: |-
+  Git, Ressourcenverfolgung und Workload-Status zeigen, wo der Abgleich erfolgreich war. Der Vergleich der Projektion mit der HTTP-Antwort zeigt die tatsächlich ausgelieferte Veröffentlichung.
 stages.0.brief: Erhalten Sie Identität und Quelle des vorhandenen Parents.
-hints.0.text: Folgen Sie der übergeordneten Quelle → untergeordneten Quelle → Arbeitslast; Ein gesunder
-  Elternteil allein beweist nicht, dass sein Kind bereit ist.
+hints.0.text: |-
+  Verfolgen Sie Eltern- und Kindanwendung, Workload und ausgelieferte Daten getrennt. Ein Kind mit Status Healthy kann eine alte Veröffentlichung ausliefern.
 hints.1.text: |-
-  Prüfen Sie das Child-Dokument in Git und die laufende Parent-Child-Beziehung.
+  Vergleichen Sie die eingecheckte Quelle des Kinds mit den laufenden Applications und den Publikationsmanifesten. Sobald der Dienst antwortet, vergleichen Sie seine Revision mit der bereitgestellten Vorgabe.
 
   ```bash
-  cat repository/apps/child.yaml
+  git -C repository show HEAD:apps/child.yaml
   kubectl get applications parent board -o yaml
+  git -C repository ls-tree -r --name-only HEAD
+  cat approved-publication
   ```
 hints.2.text: |-
-  Ändern Sie den untergeordneten Quellpfad in manifests/, Commit und push; Aktualisieren Sie die übergeordneten und inspect beiden Revisionen. Untersuchen Sie das untergeordnete Application-Manifest in repository/apps/, nicht nur das lebende untergeordnete Element.
+  Veröffentlichen Sie beide Korrekturen über Git. Vergleiche die vom Kind verfolgte ConfigMap, die Volume-Quelle des Deployments und die per HTTP ausgelieferte Revision. Die ursprüngliche Antwort des Dienstes bleibt erhalten.
 
-  Prüfen Sie in `~/quest` auf der Workstation:
-
-  - `git -C repository ls-remote origin refs/heads/main`
-  - `git -C repository rev-parse HEAD`
-
-  Beide Hashes sind identisch.
-
-  - `kubectl get applications parent board -o json | jq '.items[] | {name:.metadata.name,sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision,uid:.metadata.uid,path:.spec.source.path,project:.spec.project,destination:.spec.destination.namespace,tracking:.metadata.annotations["argocd.argoproj.io/tracking-id"]}'`
-
-  Beide sind am lokalen HEAD `Synced`; `board` ist `Healthy`. Parent-UID/Pfad und Child-Projekt/Pfad/Ziel/Tracking entsprechen Requirements.
-
-  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`
-
-  `north-122`.
-
-  - `bash wait-apps.sh` — Exit `0`; die Prüfungen des bereitgestellten Releases bestehen.
+  ```bash
+  git -C repository ls-remote origin refs/heads/main
+  git -C repository rev-parse HEAD
+  bash wait-apps.sh
+  kubectl get deployment board -o json | jq '.spec.template.spec | {volumes, mounts: [.containers[].volumeMounts[]?]}'
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/publication/revision
+  kubectl get configmaps -o json | jq '.items[] | select(.metadata.annotations["argocd.argoproj.io/tracking-id"] != null) | {name:.metadata.name,revision:.data.revision}'
+  cat approved-publication
+  ```
 phrases.0: Ich folgte der Versöhnungskette zwischen Eltern und Kind.
 phrases.1: Ich habe den gewünschten Zustand in Git und nicht im generierten untergeordneten Element repariert.
 phrases.2: Ich habe beide Revisionen und die tatsächliche Workload-Reaktion überprüft.
@@ -88,7 +85,12 @@ stages.0.objectives.2.text: Applications `parent` und `board` sind für `HEAD` d
 stages.0.objectives.3.text: Die vorhandene Parent-Application behält ihre Identität und ihr ursprüngliches
   Quellverzeichnis.
 stages.0.objectives.4.text: Deployment `board` hat genau `1` bereite Replik.
-stages.0.objectives.5.text: In einem Pod von Deployment `board` liefert `http://board:8080` den Wert `north-122`.
+stages.0.objectives.5.text: |-
+  Aus einem Pod des Deployments `board` liefert der Dienst `north-122` unter `http://board:8080` und die freigegebene Revision aus `approved-publication` unter `http://board:8080/publication/revision`. Verwenden Sie die bereitgestellte ConfigMap, die bereits die freigegebene Revision enthält. Behalten Sie ihren Namen bei und binden Sie sie in der eingecheckten Workload und im laufenden Deployment schreibgeschützt ein.
 diagnostics.probe_0_1: 'Mit den aktuellen Eingaben konnte dieses Ziel nicht geprüft werden: Die committete und laufende
   Child-Application `board` nutzen den vorhandenen Workload-Inhalt des Repositorys, behalten das vorgesehene Projekt
   und Bay-Ziel und bleiben vom vorhandenen Parent verwaltet.'
+diagnostics.publication: |-
+  Die freigegebene ConfigMap des Kinds muss schreibgeschützt eingebunden und am Veröffentlichungspfad ausgeliefert werden.
+diagnostics.probe_0_5: |-
+  Mit den aktuellen Eingaben ließ sich die ConfigMap-Projektion oder ihre HTTP-Antwort nicht prüfen.
