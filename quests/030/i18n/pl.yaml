@@ -1,58 +1,64 @@
 title: State i dostępność
-brief: "Zarządzane wydanie i jego konsument Kubernetes nie są jeszcze w wymaganym stanie.\n\nPracuj w `~/quest`\
-  \ na stacji roboczej. Dane wejściowe według etapu:\n- Etap 1: `main.tf`.\n- Etap 2: `deployment.yaml`.\n\n**Wymagania:**\n\
-  \n- Etap 1:\n  - OpenTofu rejestruje zarządzany artefakt wydania w state.\n  - Na stacji roboczej `release.txt`\
-  \ zawiera `release-30`.\n  - Plan OpenTofu kończy się kodem `0` bez zmian.\n- Etap 2:\n  - Deployment `relay`\
-  \ kończy rollout, a jego działający proces jest skonfigurowany dla `release-30`.\n\nOdpowiedź HTTP konsumenta\
-  \ i historia zmian są poza tą kontrolą; obserwowane są rollout i środowisko procesu."
+brief: |-
+  Relay działa na nieaktualnym wydaniu. Po uruchomieniu procesu z zatwierdzoną rewizją relay ma obsługiwać ruch.
+
+  Pracuj na stacji roboczej w `~/quest`. Na etapie 1 sprawdź `main.tf` oraz `approved-release.txt`. Na etapie 2 użyj wygenerowanego `release.txt` i dostarczonego `deployment.yaml`.
+
+  **Requirements:**
+
+  - OpenTofu zapisuje zarządzany artefakt wydania w stanie.
+  - Na stacji roboczej `release.txt` zawiera `release-30`, rewizję z `approved-release.txt`.
+  - Plan OpenTofu kończy się z kodem `0` i bez zmian.
+  - Deployment `relay` kończy rollout. W kontenerze worker `RELEASE` ma wartość `release-30`, a Service pod `http://relay:8080/` zwraca `signalrail`.
 stages.0.brief: Lokalne wydanie musi być zarządzane w sposób spójny.
 stages.1.brief: Działający konsument musi odzwierciedlać to samo wydanie.
-hints.0.text: Zacznij od znacznika zarządzanego wydania, a nie od pod.
-hints.1.text: 'Użyj state i plan, aby przywrócić release.txt przed drugim etapem. Sprawdź `main.tf` pod kątem brakującego
-  producenta `release.txt`.
-
-
-  Porównaj definicję artefaktu z opisem odbiorcy.
-
+hints.0.text: |-
+  Zanim przejdziesz do konsumenta, porównaj zatwierdzone wydanie z wartością, którą zapisze OpenTofu.
+hints.1.text: |-
+  Etap 1: porównaj planowaną zawartość pliku z zatwierdzoną rewizją. Etap 2: sprawdź osobno Deployment, Service i wyznaczone backendy.
 
   ```sh
-
-  cat main.tf
-
-  kubectl describe deployment relay
-
-  ```'
-hints.2.text: |-
-  Następnie sprawdź środowisko reader RELEASE i jego exec readiness test.
-
-  Sprawdź odpowiedni etap po naprawie.
-
-  Etap 1: State zawiera `release.txt`, plik pokazuje `release-30`, a plan kończy się kodem `0` bez zmian.
-
-  ```sh
-  tofu show -json
-  cat release.txt
-  printf "\n"
-  tofu plan -input=false -detailed-exitcode -no-color
+  cat approved-release.txt
+  tofu plan -input=false -no-color
   ```
 
-  Etap 2: Rollout jest zakończony, a działający proces wypisuje `release-30`.
+  ```sh
+  kubectl get deployment relay -o yaml
+  kubectl describe service relay
+  kubectl get endpointslice -l kubernetes.io/service-name=relay -o yaml
+  ```
+hints.2.text: |-
+  Etap 1: stan obejmuje zarządzany plik `release.txt`. Jego zawartość odpowiada `approved-release.txt`, a plan zwraca kod `0`. Etap 2: rollout dobiega końca, worker wypisuje `release-30`, a Service zwraca `signalrail`.
+
+  ```sh
+  tofu show -json | jq -r '.. | objects | select(.type? == "local_file" and .mode? == "managed") | .values.filename'
+  cat release.txt
+  tofu plan -input=false -detailed-exitcode -no-color
+  ```
 
   ```sh
   kubectl rollout status deployment/relay --timeout=3s
   kubectl exec deployment/relay -c worker -- printenv RELEASE
+  kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://relay:8080/
   ```
-
-debrief: Nie było znacznika wydania, a reader korzystał z wycofanej wersji. Najpierw przywróciłeś state, a następnie
-  naprawiłeś działający reader.
+debrief: |-
+  Plan i stan opisują zarządzaną zawartość. Rollout pokazuje dostępność procesu. Routing Service decyduje, czy klienci mogą dotrzeć do procesu.
 phrases.0: Przed dokonaniem zmiany sprawdziłem stan działania.
 phrases.1: Znalazłem przyczynę i zmieniałem jedną rzecz na raz.
 phrases.2: Sprawdziłem stan workload i jego gotowość po zmianie.
 stages.0.objectives.0.text: OpenTofu rejestruje zarządzany artefakt wydania w state.
-stages.0.objectives.1.text: Na stacji roboczej `release.txt` zawiera `release-30`.
+stages.0.objectives.1.text: |-
+  Na stacji roboczej `release.txt` zawiera `release-30`, rewizję z `approved-release.txt`.
 stages.0.objectives.2.text: Plan OpenTofu kończy się kodem `0` bez zmian.
-stages.1.objectives.0.text: Deployment `relay` kończy rollout, a jego działający proces jest skonfigurowany dla
-  `release-30`.
-diagnostics.state: Stan OpenTofu musi śledzić zarządzany artefakt release.txt.
-diagnostics.probe_0_0: 'Bieżące dane nie pozwalają potwierdzić tego celu: OpenTofu rejestruje zarządzany artefakt
-  wydania w state.'
+stages.1.objectives.0.text: |-
+  Deployment `relay` kończy rollout. W kontenerze worker `RELEASE` ma wartość `release-30`, a Service pod `http://relay:8080/` zwraca `signalrail`.
+diagnostics.state: |-
+  Stan OpenTofu musi śledzić zarządzany artefakt release.txt. Plik może istnieć, zanim OpenTofu zapisze go w stanie jako zarządzany zasób. Porównaj artefakt z bieżącym stanem. [Sprawdzanie stanu w OpenTofu](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.probe_0_0: |-
+  Sprawdzenie stanu nie zwróciło wyniku diagnostycznego. Sprawdź stan osobno z katalogu roboczego. [Sprawdzanie stanu w OpenTofu](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.release_content: |-
+  Zarządzany plik wydania musi zawierać zatwierdzoną rewizję. Plan bez zmian może nadal opisywać starszą zawartość. Porównaj zarządzany plik z zatwierdzonym wydaniem. [Plan OpenTofu](https://opentofu.org/docs/cli/commands/plan/)
+diagnostics.consumer_release: |-
+  Rollout musi się zakończyć, a worker musi używać zatwierdzonej rewizji. Szablon Poda może nadal przekazywać starszą wartość albo nowe Pody mogą jeszcze startować. Porównaj szablon z działającym kontenerem worker. [Aktualizacja Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.service_http: |-
+  Żądanie przez Service relay musi zwracać oczekiwaną treść. Gotowy Pod może odpowiadać bezpośrednio przez HTTP, mimo że Service nie ma dostępnego backendu. Porównaj mapowanie portów z Podem i jego EndpointSlice. [Porty Service](https://kubernetes.io/docs/concepts/services-networking/service/#port-definitions)

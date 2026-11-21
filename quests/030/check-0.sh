@@ -50,7 +50,10 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
-test "$(cat release.txt)" = release-30
+if ! test "$(cat release.txt 2>/dev/null)" = release-30; then
+  printf '%s\n' 'The managed release file lacks its approved revision: ✗ [DQ:release_content]'
+  exit 1
+fi
 )
 [ $? -eq 0 ] || failed=1
 (

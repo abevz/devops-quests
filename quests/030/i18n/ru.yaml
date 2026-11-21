@@ -1,57 +1,64 @@
 title: State и доступность
-brief: "Управляемый релиз и его потребитель Kubernetes ещё не находятся в требуемом состоянии.\n\nРаботайте в `~/quest`\
-  \ на рабочей станции. Входные файлы по этапам:\n- Этап 1: `main.tf`.\n- Этап 2: `deployment.yaml`.\n\n**Требования:**\n\
-  \n- Этап 1:\n  - OpenTofu учитывает управляемый артефакт релиза в state.\n  - На рабочей станции `release.txt`\
-  \ содержит `release-30`.\n  - План OpenTofu завершается с кодом `0` без изменений.\n- Этап 2:\n  - Deployment\
-  \ `relay` завершает развёртывание, его работающий процесс настроен на `release-30`.\n\nHTTP-ответ потребителя\
-  \ и история правок находятся вне проверки; наблюдаемый результат потребителя — развёртывание и окружение процесса."
+brief: |-
+  Relay работает с устаревшей версией. После перехода на согласованную ревизию relay должен принимать запросы через Service.
+
+  Работайте на рабочей станции в `~/quest`. На первом этапе понадобятся `main.tf` и `approved-release.txt`. На втором используйте полученный `release.txt` и выданный `deployment.yaml`.
+
+  **Requirements:**
+
+  - OpenTofu ведёт управляемый артефакт релиза в состоянии.
+  - На рабочей станции `release.txt` содержит `release-30`, ревизию из `approved-release.txt`.
+  - План OpenTofu завершается с кодом `0`, изменений нет.
+  - Deployment `relay` завершает rollout. В контейнере worker переменная `RELEASE` равна `release-30`, а Service по адресу `http://relay:8080/` возвращает `signalrail`.
 stages.0.brief: Локальный релиз должен находиться под согласованным управлением.
 stages.1.brief: Работающий потребитель должен отражать тот же релиз.
-hints.0.text: Начните с управляемого маркера релиза, а не с pod.
-hints.1.text: 'Восстановите release.txt через state и plan до второго этапа. Найдите в `main.tf` отсутствующий источник
-  создания `release.txt`.
-
-
-  Сравните описание управляемого артефакта с описанием потребителя.
-
+hints.0.text: |-
+  Сначала сравните согласованный релиз с тем, что собирается записать OpenTofu. Затем переходите к потребителю.
+hints.1.text: |-
+  На первом этапе сравните содержимое файла в плане с согласованной ревизией. На втором проверьте Deployment, Service и рассчитанные для него адреса отдельно.
 
   ```sh
-
-  cat main.tf
-
-  kubectl describe deployment relay
-
-  ```'
-hints.2.text: |-
-  Затем проверьте RELEASE у reader и exec readiness test.
-
-  Проверьте соответствующий этап после исправления.
-
-  Этап 1: State включает `release.txt`, файл показывает `release-30`, план завершается с кодом `0` без изменений.
-
-  ```sh
-  tofu show -json
-  cat release.txt
-  printf "\n"
-  tofu plan -input=false -detailed-exitcode -no-color
+  cat approved-release.txt
+  tofu plan -input=false -no-color
   ```
 
-  Этап 2: Развёртывание завершено, работающий процесс выводит `release-30`.
+  ```sh
+  kubectl get deployment relay -o yaml
+  kubectl describe service relay
+  kubectl get endpointslice -l kubernetes.io/service-name=relay -o yaml
+  ```
+hints.2.text: |-
+  На первом этапе в состоянии есть управляемый файл `release.txt`. Его содержимое совпадает с `approved-release.txt`, план завершается с кодом `0`. На втором rollout завершён, worker выводит `release-30`, а Service возвращает `signalrail`.
+
+  ```sh
+  tofu show -json | jq -r '.. | objects | select(.type? == "local_file" and .mode? == "managed") | .values.filename'
+  cat release.txt
+  tofu plan -input=false -detailed-exitcode -no-color
+  ```
 
   ```sh
   kubectl rollout status deployment/relay --timeout=3s
   kubectl exec deployment/relay -c worker -- printenv RELEASE
+  kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://relay:8080/
   ```
-
-debrief: Маркер отсутствовал, reader использовал старую версию. Вы восстановили state, затем исправили работающий
-  reader.
+debrief: |-
+  План и состояние описывают управляемые данные. Rollout показывает готовность процесса. Маршрутизация Service определяет, дойдут ли до него запросы.
 phrases.0: Я проверил фактическое состояние до изменения.
 phrases.1: Я нашёл причину и менял по одному параметру.
 phrases.2: После изменения я проверил состояние workload и его готовность.
 stages.0.objectives.0.text: OpenTofu учитывает управляемый артефакт релиза в state.
-stages.0.objectives.1.text: На рабочей станции `release.txt` содержит `release-30`.
+stages.0.objectives.1.text: |-
+  На рабочей станции `release.txt` содержит `release-30`, ревизию из `approved-release.txt`.
 stages.0.objectives.2.text: План OpenTofu завершается с кодом `0` без изменений.
-stages.1.objectives.0.text: Deployment `relay` завершает развёртывание, его работающий процесс настроен на `release-30`.
-diagnostics.state: OpenTofu state должен учитывать управляемый артефакт release.txt.
-diagnostics.probe_0_0: 'Текущие данные не позволили проверить эту цель: OpenTofu учитывает управляемый артефакт
-  релиза в state.'
+stages.1.objectives.0.text: |-
+  Deployment `relay` завершает rollout. В контейнере worker переменная `RELEASE` равна `release-30`, а Service по адресу `http://relay:8080/` возвращает `signalrail`.
+diagnostics.state: |-
+  OpenTofu state должен учитывать управляемый артефакт release.txt. Файл может уже существовать, хотя OpenTofu ещё не записал его в состояние как управляемый ресурс. Сопоставьте артефакт с текущим состоянием. [Просмотр состояния OpenTofu](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.probe_0_0: |-
+  Проверка состояния не вернула диагностический результат. Просмотрите состояние отдельно из рабочего каталога. [Просмотр состояния OpenTofu](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.release_content: |-
+  Управляемый файл релиза должен содержать согласованную ревизию. План без изменений может описывать устаревшее содержимое. Сравните управляемый файл с записью о согласованной ревизии. [План OpenTofu](https://opentofu.org/docs/cli/commands/plan/)
+diagnostics.consumer_release: |-
+  Rollout должен завершиться, а worker должен получить согласованную ревизию. В шаблоне Pod может остаться устаревшее значение, либо новые Pod ещё запускаются. Сравните шаблон и работающий контейнер worker. [Обновление Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.service_http: |-
+  Запрос через Service relay должен вернуть ожидаемые данные. Готовый Pod может отвечать по HTTP напрямую, даже если у Service нет доступного backend. Сопоставьте порты Service, Pod и его EndpointSlice. [Порты Service](https://kubernetes.io/docs/concepts/services-networking/service/#port-definitions)

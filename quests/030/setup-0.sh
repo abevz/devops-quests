@@ -7,8 +7,9 @@ terraform {
 }
 resource "local_file" "release" {
  filename = "${path.root}/release.txt"
- content = "release-30\n"
+ content = "retired\n"
 }
 output "release" { value = local_file.release.content }
 DQ_ASSET
+printf '%s\n' release-30 > approved-release.txt
 tofu init -input=false -no-color

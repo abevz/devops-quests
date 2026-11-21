@@ -1,57 +1,64 @@
 title: State and availability
-brief: "The managed release and its Kubernetes consumer are not in the required state.\n\nWork in `~/quest` on the\
-  \ workstation. Inputs by stage:\n- Stage 1: `main.tf`.\n- Stage 2: `deployment.yaml`.\n\n**Requirements:**\n\n\
-  - Stage 1:\n  - OpenTofu records the managed release artifact in state.\n  - On the workstation, `release.txt`\
-  \ contains `release-30`.\n  - The OpenTofu plan exits `0` with no changes.\n- Stage 2:\n  - Deployment `relay`\
-  \ completes its rollout and its running process is configured for `release-30`.\n\nThe consumer HTTP response\
-  \ and edit history are outside this check; the observed consumer result is its rollout and process environment."
+brief: |-
+  The relay release is out of date. The relay must serve traffic once its running process receives the approved revision.
+
+  Work on the workstation in `~/quest`. In stage 1 inspect `main.tf` and `approved-release.txt`. In stage 2 use the generated `release.txt` and the supplied `deployment.yaml`.
+
+  **Requirements:**
+
+  - OpenTofu records the managed release artifact in state.
+  - On the workstation `release.txt` contains `release-30`, the revision in `approved-release.txt`.
+  - The OpenTofu plan exits `0` with no changes.
+  - Deployment `relay` completes its rollout. Inside its worker, `RELEASE` is `release-30` and the Service at `http://relay:8080/` returns `signalrail`.
 stages.0.brief: The local release must be under consistent management.
 stages.1.brief: The running consumer must reflect the same release.
-hints.0.text: Start with the managed release marker, not the pod.
-hints.1.text: 'Use state and plan to restore release.txt before the second stage. Inspect `main.tf` for the missing
-  producer of `release.txt`.
-
-
-  Compare the managed artifact definition with the consumer description.
-
+hints.0.text: |-
+  Compare the approved release with what OpenTofu will write before looking at the consumer.
+hints.1.text: |-
+  Stage 1: compare the proposed file content with the approved record. Stage 2: inspect the Deployment, the Service and its computed backends separately.
 
   ```sh
-
-  cat main.tf
-
-  kubectl describe deployment relay
-
-  ```'
-hints.2.text: |-
-  Then inspect the reader RELEASE environment and its exec readiness test.
-
-  Verify the relevant stage after repairing it.
-
-  Stage 1: The state includes `release.txt`, the file shows `release-30`, and the plan exits `0` without changes.
-
-  ```sh
-  tofu show -json
-  cat release.txt
-  printf "\n"
-  tofu plan -input=false -detailed-exitcode -no-color
+  cat approved-release.txt
+  tofu plan -input=false -no-color
   ```
 
-  Stage 2: The rollout is complete and the running process prints `release-30`.
+  ```sh
+  kubectl get deployment relay -o yaml
+  kubectl describe service relay
+  kubectl get endpointslice -l kubernetes.io/service-name=relay -o yaml
+  ```
+hints.2.text: |-
+  Stage 1: the state includes the managed `release.txt`; its content matches `approved-release.txt`, and the plan exits `0`. Stage 2: the rollout completes, the worker prints `release-30`, and the Service returns `signalrail`.
+
+  ```sh
+  tofu show -json | jq -r '.. | objects | select(.type? == "local_file" and .mode? == "managed") | .values.filename'
+  cat release.txt
+  tofu plan -input=false -detailed-exitcode -no-color
+  ```
 
   ```sh
   kubectl rollout status deployment/relay --timeout=3s
   kubectl exec deployment/relay -c worker -- printenv RELEASE
+  kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://relay:8080/
   ```
-
-debrief: The release marker was absent and the reader used a retired version. You restored state first, then repaired
-  the live reader.
+debrief: |-
+  Your plan and state describe managed content. The rollout describes process availability. Service routing determines whether clients can reach that process.
 phrases.0: I checked the running state before making a change.
 phrases.1: I found the cause and changed one thing at a time.
 phrases.2: I checked the workload state and its readiness after the change.
 stages.0.objectives.0.text: OpenTofu records the managed release artifact in state.
-stages.0.objectives.1.text: On the workstation, `release.txt` contains `release-30`.
+stages.0.objectives.1.text: |-
+  On the workstation `release.txt` contains `release-30`, the revision in `approved-release.txt`.
 stages.0.objectives.2.text: The OpenTofu plan exits `0` with no changes.
-stages.1.objectives.0.text: Deployment `relay` completes its rollout and its running process is configured for `release-30`.
-diagnostics.state: OpenTofu state must track the managed release.txt artifact.
-diagnostics.probe_0_0: 'The current inputs could not verify this objective: OpenTofu records the managed release
-  artifact in state.'
+stages.1.objectives.0.text: |-
+  Deployment `relay` completes its rollout. Inside its worker, `RELEASE` is `release-30` and the Service at `http://relay:8080/` returns `signalrail`.
+diagnostics.state: |-
+  OpenTofu state must track the managed release.txt artifact. A file can exist before OpenTofu has recorded it as a managed resource. Compare the artifact with the current state. [Inspecting OpenTofu state](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.probe_0_0: |-
+  The state probe returned no diagnostic result. Inspect the state separately from the working directory. [Inspecting OpenTofu state](https://opentofu.org/docs/cli/commands/show/#json-output)
+diagnostics.release_content: |-
+  The managed release file must contain the approved revision. A clean plan can still describe stale content. Compare the managed file with the approved release record. [OpenTofu plan](https://opentofu.org/docs/cli/commands/plan/)
+diagnostics.consumer_release: |-
+  The rollout must complete and the worker must see the approved release. The Pod template can still supply a stale value or the new Pods may still be starting. Compare the template and running worker. [Updating a Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.service_http: |-
+  The request through the relay Service must return the expected body. A ready Pod can serve HTTP directly while the Service has no usable backend. Compare the Service port mapping with the Pod and its EndpointSlice. [Service port definitions](https://kubernetes.io/docs/concepts/services-networking/service/#port-definitions)
