@@ -582,8 +582,13 @@ def test_local_destination_identity_shell(tmp_path, destination, good):
 ])
 @pytest.mark.parametrize('variant', ['reference', 'observer-first', 'wrong'])
 def test_consumer_exec_selects_worker(tmp_path, number, stage, index, value, variant):
+    code = goal(number, stage, index)
+    if number == 60:
+        # This fixture supplies only running process observations. The native
+        # shortcut test separately proves that an inline value bypasses the source.
+        code = code.split("<<'DQ_LEGACY'\n", 1)[1].split("\nDQ_LEGACY", 1)[0]
     result = shell_observation(
-        tmp_path, goal(number, stage, index), expected=value, variant=variant,
+        tmp_path, code, expected=value, variant=variant,
         relay_response='signalrail' if number == 30 else None,
     )
     assert (result.returncode == 0) is (variant != 'wrong'), result.stdout + result.stderr

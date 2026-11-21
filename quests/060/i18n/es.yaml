@@ -1,66 +1,80 @@
 title: Incidente de flota
-brief: "La flota y su consumidor Kubernetes aún no coinciden en la versión requerida.\n\nTrabaja en `~/quest` en\
-  \ la estación de trabajo. Entradas por etapa:\n- Etapa 1: `inventory.ini`, `ansible.cfg`, `rollout.yml`.\n- Etapa\
-  \ 2: `deployment.yaml`.\n\n**Requisitos:**\n\n- Etapa 1:\n  - En cada host gestionado (`app1`, `app2`, `app3`),\
-  \ `/srv/site/message` contiene `release-60` con modo `0644`.\n  - Desde la estación de trabajo, `app1`, `app2`\
-  \ y `app3` devuelven cada uno `release-60` por HTTP en el puerto `8080`.\n- Etapa 2:\n  - El Deployment `relay`\
-  \ completa su rollout y su proceso en ejecución está configurado para `release-60`.\n\nHTTP se comprueba en los\
-  \ hosts gestionados; el consumidor Kubernetes se comprueba mediante rollout y entorno del proceso. Estas observaciones\
-  \ no prueban los comandos usados."
+brief: |-
+  La flota y su consumidor Kubernetes aún no coinciden en la versión requerida.
+
+  Trabaja en la estación de trabajo en `~/quest`. En la etapa 1 usa `inventory.ini`, `ansible.cfg`, `rollout.yml` y `service-interface.json`. En la etapa 2 usa `deployment.yaml`, `release-config.yaml` y `fleet-release.txt`.
+
+  **Requirements:**
+
+  - En cada host administrado (`app1`, `app2`, `app3`), `/srv/site/message` contiene `release-60` con modo `0644`. Conserva el proceso que ya sirve la versión esperada.
+  - Desde la estación de trabajo, `app1`, `app2` y `app3` devuelven cada uno `release-60` por HTTP en el puerto `8080`.
+  - El Deployment `relay` completa su despliegue. El worker usa `release-60` en `RELEASE` desde la clave de versión suministrada en el ConfigMap existente. Conserva su identidad y publica la revisión observada en `fleet-release.txt`.
+
+  La verificación usa los archivos actuales, las respuestas HTTP y las identidades registradas. Elige los comandos para obtener el resultado requerido.
 stages.0.brief: La flota debe exponer una versión coherente.
 stages.1.brief: El consumidor en ejecución debe reflejar la misma versión.
-hints.0.text: Recupere el fleet activo antes de cambiar el reader.
-hints.1.text: 'El archivo y la respuesta del servicio almacenado en caché deben coincidir en la publicación.
-
-
-  Compara la definición de entrega con el consumidor en ejecución.
-
+hints.0.text: |-
+  Recupera por separado el estado en disco y el del proceso. Registra el servicio sano antes de decidir qué necesita recarga.
+hints.1.text: |-
+  En la etapa 1 compara archivo, modo y respuesta HTTP en cada host. En la etapa 2 compara la revisión registrada, el ConfigMap actual y el origen del entorno del Deployment.
 
   ```sh
+  cat rollout.yml service-interface.json
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message; cat /run/quest-service.pid'
+    curl -fsS --max-time 3 "http://$host:8080/"
+  done
+  ```
 
-  cat rollout.yml
-
-  kubectl describe deployment relay
-
-  ```'
+  ```sh
+  cat release-config.yaml fleet-release.txt
+  kubectl get deployment relay -o yaml
+  kubectl get configmap -o yaml
+  ```
 hints.2.text: |-
-  Utilice un reload handler, luego corrija el valor de RELEASE Kubernetes reader y verifique readiness.
-
-  Verifica la etapa correspondiente tras repararla.
-
-  Etapa 1: Cada host gestionado muestra `release-60`, modo de archivo `644` y HTTP `release-60` en el puerto `8080`.
+  Etapa 1: los tres archivos muestran `release-60` con modo `644` y las respuestas HTTP coinciden. El proceso inicialmente sano conserva su identidad. Etapa 2: termina el despliegue y el worker lee `release-60` del ConfigMap original.
 
   ```sh
   for n in 1 2 3; do
     host="app${n}-${DQ_NAMESPACE#dq-}"
-    printf "%s: " "$host"
-    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message'
-    curl -fsS --max-time 3 "http://$host:8080"
-    printf "\n"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message; cat /run/quest-service.pid'
+    curl -fsS --max-time 3 "http://$host:8080/"
   done
   ```
 
-  Etapa 2: El rollout está completo y el proceso en ejecución imprime `release-60`.
-
   ```sh
+  kubectl get configmap relay-release -o yaml
+  kubectl get deployment relay -o yaml
   kubectl rollout status deployment/relay --timeout=3s
   kubectl exec deployment/relay -c worker -- printenv RELEASE
   ```
-
-debrief: La flota cumplió con una versión anterior y su reader falló en readiness. Recuperaste los banners en vivo
-  antes de reparar el Kubernetes reader.
+debrief: |-
+  Un handler de copia responde al cambio de archivo. Un archivo correcto puede dejar obsoleto un proceso en ejecución. La respuesta de la flota aporta la revisión para la configuración publicada y su consumidor de Kubernetes.
 phrases.0: Verifiqué el estado de ejecución antes de realizar un cambio.
 phrases.1: Encontré la causa y cambié una cosa a la vez.
 phrases.2: Verifiqué el estado de workload y su preparación después del cambio.
-diagnostics.file_1: En app1, /srv/site/message debe contener release-60 con modo 0644.
-diagnostics.file_2: En app2, /srv/site/message debe contener release-60 con modo 0644.
-diagnostics.file_3: En app3, /srv/site/message debe contener release-60 con modo 0644.
-diagnostics.http_1: HTTP en app1:8080 debe devolver release-60.
-diagnostics.http_2: HTTP en app2:8080 debe devolver release-60.
-diagnostics.http_3: HTTP en app3:8080 debe devolver release-60.
-stages.0.objectives.0.text: En cada host gestionado (`app1`, `app2`, `app3`), `/srv/site/message` contiene `release-60`
-  con modo `0644`.
+diagnostics.file_1: |-
+  En app1, /srv/site/message debe contener release-60 con modo 0644. El play puede no haber entregado contenido y modo al host. Compara el resultado con el archivo. [Documentación](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.file_2: |-
+  En app2, /srv/site/message debe contener release-60 con modo 0644. El play puede no haber entregado contenido y modo al host. Compara el resultado con el archivo. [Documentación](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.file_3: |-
+  En app3, /srv/site/message debe contener release-60 con modo 0644. El play puede no haber entregado contenido y modo al host. Compara el resultado con el archivo. [Documentación](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.http_1: |-
+  HTTP en app1:8080 debe devolver release-60. El archivo puede estar correcto mientras el proceso sirve datos antiguos. Compara la respuesta HTTP con el archivo. [Documentación](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.http_2: |-
+  HTTP en app2:8080 debe devolver release-60. El archivo puede estar correcto mientras el proceso sirve datos antiguos. Compara la respuesta HTTP con el archivo. [Documentación](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.http_3: |-
+  HTTP en app3:8080 debe devolver release-60. El archivo puede estar correcto mientras el proceso sirve datos antiguos. Compara la respuesta HTTP con el archivo. [Documentación](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+stages.0.objectives.0.text: |-
+  En cada host administrado (`app1`, `app2`, `app3`), `/srv/site/message` contiene `release-60` con modo `0644`. Conserva el proceso que ya sirve la versión esperada.
 stages.0.objectives.1.text: Desde la estación de trabajo, `app1`, `app2` y `app3` devuelven cada uno `release-60`
   por HTTP en el puerto `8080`.
-stages.1.objectives.0.text: El Deployment `relay` completa su rollout y su proceso en ejecución está configurado
-  para `release-60`.
+stages.1.objectives.0.text: |-
+  El Deployment `relay` completa su despliegue. El worker usa `release-60` en `RELEASE` desde la clave de versión suministrada en el ConfigMap existente. Conserva su identidad y publica la revisión observada en `fleet-release.txt`.
+diagnostics.healthy_service: |-
+  No se pudo verificar la identidad del proceso inicialmente sano. Una recarga general puede sustituir un proceso ya actualizado. [Documentación](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.relay_release: |-
+  El despliegue de relay o su valor activo no se han completado. Compara la plantilla del Pod con el worker actual. [Documentación](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.release_source: |-
+  La publicación puede faltar, estar obsoleta o haberse sustituido u omitido. Compara el ConfigMap y el origen que usa el worker de relay con el registro de la flota. [Documentación](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/#define-a-container-environment-variable-with-data-from-a-single-configmap)

@@ -1,4 +1,21 @@
 set -euo pipefail
+cd ~/quest
+fleet_release=$(curl -fsS --max-time 3 "http://app1-${DQ_NAMESPACE#dq-}:8080/")
+for host in app2 app3; do
+  test "$(curl -fsS --max-time 3 "http://$host-${DQ_NAMESPACE#dq-}:8080/")" = "$fleet_release"
+done
+test "$fleet_release" = release-60
+printf '%s\n' "$fleet_release" > fleet-release.txt
+cat > release-config.yaml <<'DQ_ASSET'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: relay-release
+data:
+  revision: retired
+DQ_ASSET
+kubectl apply -f release-config.yaml
+kubectl get configmap relay-release -o jsonpath='{.metadata.uid}' > release-config-uid
 cat > deployment.yaml <<'DQ_ASSET'
 apiVersion: apps/v1
 kind: Deployment

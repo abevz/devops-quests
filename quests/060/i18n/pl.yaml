@@ -1,65 +1,80 @@
 title: Incydent flotowy
-brief: "Flota i jej konsument Kubernetes nie są jeszcze zgodne co do wymaganego wydania.\n\nPracuj w `~/quest` na\
-  \ stacji roboczej. Dane wejściowe według etapu:\n- Etap 1: `inventory.ini`, `ansible.cfg`, `rollout.yml`.\n- Etap\
-  \ 2: `deployment.yaml`.\n\n**Wymagania:**\n\n- Etap 1:\n  - Na każdym zarządzanym hoście (`app1`, `app2`, `app3`)\
-  \ `/srv/site/message` zawiera `release-60` i ma tryb `0644`.\n  - Ze stacji roboczej każdy z hostów `app1`, `app2`\
-  \ i `app3` zwraca `release-60` przez HTTP na porcie `8080`.\n- Etap 2:\n  - Deployment `relay` kończy rollout,\
-  \ a jego działający proces jest skonfigurowany dla `release-60`.\n\nHTTP jest sprawdzane na zarządzanych hostach;\
-  \ konsument Kubernetes jest sprawdzany przez rollout i środowisko procesu. Te obserwacje nie dowodzą użytych poleceń."
+brief: |-
+  Flota i jej konsument Kubernetes nie są jeszcze zgodne co do wymaganego wydania.
+
+  Pracuj na stacji roboczej w `~/quest`. Na etapie 1 użyj `inventory.ini`, `ansible.cfg`, `rollout.yml` i `service-interface.json`. Na etapie 2 użyj `deployment.yaml`, `release-config.yaml` i `fleet-release.txt`.
+
+  **Requirements:**
+
+  - Na każdym zarządzanym hoście (`app1`, `app2`, `app3`) plik `/srv/site/message` zawiera `release-60` z trybem `0644`. Zachowaj proces już udostępniający właściwe wydanie.
+  - Ze stacji roboczej każdy z hostów `app1`, `app2` i `app3` zwraca `release-60` przez HTTP na porcie `8080`.
+  - Deployment `relay` kończy rollout. Kontener worker używa `release-60` w `RELEASE` z dostarczonego klucza wydania istniejącej ConfigMap. Zachowaj jej tożsamość i opublikuj rewizję zaobserwowaną w `fleet-release.txt`.
+
+  Weryfikacja opiera się na aktualnych plikach, odpowiedziach HTTP i zapisanych tożsamościach. Wybierz polecenia, które prowadzą do wymaganego wyniku.
 stages.0.brief: Flota musi udostępniać jedno spójne wydanie.
 stages.1.brief: Działający konsument musi odzwierciedlać to samo wydanie.
-hints.0.text: Odzyskaj aktualną wersję fleet przed zmianą reader.
-hints.1.text: 'Plik i odpowiedź usługi buforowanej muszą zgadzać się na wydanie.
-
-
-  Porównaj definicję dostarczania z działającym odbiorcą.
-
+hints.0.text: |-
+  Odzyskaj stan pliku i procesu niezależnie. Zapisz stan zdrowej usługi przed decyzją o przeładowaniu.
+hints.1.text: |-
+  Na etapie 1 porównaj plik, tryb i odpowiedź HTTP każdego hosta. Na etapie 2 porównaj zapisaną rewizję, aktualną ConfigMap i źródło środowiska Deployment.
 
   ```sh
+  cat rollout.yml service-interface.json
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message; cat /run/quest-service.pid'
+    curl -fsS --max-time 3 "http://$host:8080/"
+  done
+  ```
 
-  cat rollout.yml
-
-  kubectl describe deployment relay
-
-  ```'
+  ```sh
+  cat release-config.yaml fleet-release.txt
+  kubectl get deployment relay -o yaml
+  kubectl get configmap -o yaml
+  ```
 hints.2.text: |-
-  Użyj reload handler, następnie popraw wartość Kubernetes reader RELEASE i zweryfikuj readiness.
-
-  Sprawdź odpowiedni etap po naprawie.
-
-  Etap 1: Każdy zarządzany host pokazuje `release-60`, tryb pliku `644` oraz HTTP `release-60` na porcie `8080`.
+  Etap 1: pliki zawierają `release-60` w trybie `644`, a wszystkie odpowiedzi HTTP są zgodne. Początkowo zdrowy proces zachowuje tożsamość. Etap 2: rollout kończy się, a worker odczytuje `release-60` z pierwotnej ConfigMap.
 
   ```sh
   for n in 1 2 3; do
     host="app${n}-${DQ_NAMESPACE#dq-}"
-    printf "%s: " "$host"
-    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message'
-    curl -fsS --max-time 3 "http://$host:8080"
-    printf "\n"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message; cat /run/quest-service.pid'
+    curl -fsS --max-time 3 "http://$host:8080/"
   done
   ```
 
-  Etap 2: Rollout jest zakończony, a działający proces wypisuje `release-60`.
-
   ```sh
+  kubectl get configmap relay-release -o yaml
+  kubectl get deployment relay -o yaml
   kubectl rollout status deployment/relay --timeout=3s
   kubectl exec deployment/relay -c worker -- printenv RELEASE
   ```
-
-debrief: Flota obsługiwała starą wersję, a jej reader zawiodło, readiness. Odzyskałeś aktywne banery przed naprawą
-  Kubernetes reader.
+debrief: |-
+  Handler kopiowania reaguje na zmianę pliku. Poprawny plik może towarzyszyć starszym danym działającego procesu. Odpowiedź floty daje rewizję dla osobnej publikacji i konsumenta Kubernetes.
 phrases.0: Przed dokonaniem zmiany sprawdziłem stan działania.
 phrases.1: Znalazłem przyczynę i zmieniałem jedną rzecz na raz.
 phrases.2: Sprawdziłem stan workload i jego gotowość po zmianie.
-diagnostics.file_1: Na app1 /srv/site/message musi zawierać release-60 i mieć tryb 0644.
-diagnostics.file_2: Na app2 /srv/site/message musi zawierać release-60 i mieć tryb 0644.
-diagnostics.file_3: Na app3 /srv/site/message musi zawierać release-60 i mieć tryb 0644.
-diagnostics.http_1: HTTP na app1:8080 musi zwracać release-60.
-diagnostics.http_2: HTTP na app2:8080 musi zwracać release-60.
-diagnostics.http_3: HTTP na app3:8080 musi zwracać release-60.
-stages.0.objectives.0.text: Na każdym zarządzanym hoście (`app1`, `app2`, `app3`) `/srv/site/message` zawiera `release-60`
-  i ma tryb `0644`.
+diagnostics.file_1: |-
+  Na app1 /srv/site/message musi zawierać release-60 i mieć tryb 0644. Play mógł nie dostarczyć zawartości i trybu do hosta. Porównaj wynik zadania z plikiem. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.file_2: |-
+  Na app2 /srv/site/message musi zawierać release-60 i mieć tryb 0644. Play mógł nie dostarczyć zawartości i trybu do hosta. Porównaj wynik zadania z plikiem. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.file_3: |-
+  Na app3 /srv/site/message musi zawierać release-60 i mieć tryb 0644. Play mógł nie dostarczyć zawartości i trybu do hosta. Porównaj wynik zadania z plikiem. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/copy_module.html)
+diagnostics.http_1: |-
+  HTTP na app1:8080 musi zwracać release-60. Plik może być prawidłowy, gdy proces zwraca starsze dane. Porównaj odpowiedź HTTP z plikiem. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.http_2: |-
+  HTTP na app2:8080 musi zwracać release-60. Plik może być prawidłowy, gdy proces zwraca starsze dane. Porównaj odpowiedź HTTP z plikiem. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.http_3: |-
+  HTTP na app3:8080 musi zwracać release-60. Plik może być prawidłowy, gdy proces zwraca starsze dane. Porównaj odpowiedź HTTP z plikiem. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+stages.0.objectives.0.text: |-
+  Na każdym zarządzanym hoście (`app1`, `app2`, `app3`) plik `/srv/site/message` zawiera `release-60` z trybem `0644`. Zachowaj proces już udostępniający właściwe wydanie.
 stages.0.objectives.1.text: Ze stacji roboczej każdy z hostów `app1`, `app2` i `app3` zwraca `release-60` przez
   HTTP na porcie `8080`.
-stages.1.objectives.0.text: Deployment `relay` kończy rollout, a jego działający proces jest skonfigurowany dla
-  `release-60`.
+stages.1.objectives.0.text: |-
+  Deployment `relay` kończy rollout. Kontener worker używa `release-60` w `RELEASE` z dostarczonego klucza wydania istniejącej ConfigMap. Zachowaj jej tożsamość i opublikuj rewizję zaobserwowaną w `fleet-release.txt`.
+diagnostics.healthy_service: |-
+  Nie udało się potwierdzić pierwotnej tożsamości zdrowego procesu. Przeładowanie całej floty może wymienić aktualny proces. [Dokumentacja](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html#notifying-handlers)
+diagnostics.relay_release: |-
+  Rollout lub bieżąca wartość relay nie są jeszcze zgodne. Porównaj szablon Poda z aktualnym kontenerem worker. [Dokumentacja](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+diagnostics.release_source: |-
+  Publikacja może być nieobecna, stara, zastąpiona lub pominięta. Porównaj ConfigMap i źródło wydania dla kontenera worker w relay z zapisem floty. [Dokumentacja](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/#define-a-container-environment-variable-with-data-from-a-single-configmap)
