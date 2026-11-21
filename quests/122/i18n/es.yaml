@@ -4,6 +4,8 @@ brief: |-
 
   Trabaja en la workstation en `~/quest` con `platform.env`, `repository/apps/child.yaml`, `repository/`, `parent.yaml`, `wait-apps.sh`.
 
+  La revisión aprobada está registrada en `approved-publication`.
+
   Salvo indicación contraria, los recursos Kubernetes están en el namespace de la bahía (`DQ_NAMESPACE`); las rutas bajo `~/quest` están en la workstation.
 
   **Requirements:**
@@ -13,41 +15,36 @@ brief: |-
   - Las Applications `parent` y `board` están `Synced` en el `HEAD` del repositorio en la workstation y `board` está `Healthy`.
   - La Application padre existente conserva su identidad y su directorio fuente original.
   - El Deployment `board` tiene exactamente `1` réplica lista.
-  - Dentro de un Pod del Deployment `board`, `http://board:8080` devuelve `north-122`.
+  - Desde un Pod del Deployment `board`, el servicio debe devolver `north-122` en `http://board:8080` y la revisión aprobada de `approved-publication` en `http://board:8080/publication/revision`. Usa el ConfigMap suministrado que ya contiene la revisión aprobada. Conserva su nombre y móntalo en solo lectura en la carga guardada en Git y en el Deployment activo.
 
   El seguimiento y el estado actuales no demuestran que los objetos nunca se aplicaran directamente.
-debrief: App-of-Apps concilia los recursos Application como objetos administrados por Git. Una sincronización
-  principal no reemplaza la inspección de la sincronización secundaria, el estado y el comportamiento
-  de la carga de trabajo.
+debrief: |-
+  Git, el seguimiento de recursos y el estado de la carga muestran dónde funcionó la reconciliación. Comparar la proyección con la respuesta HTTP muestra qué publicación entrega el servicio.
 stages.0.brief: Conserva la identidad y la fuente del padre existente.
-hints.0.text: Siga la fuente principal → fuente secundaria → carga de trabajo; un padre sano por sí solo
-  no demuestra que su hijo esté preparado.
+hints.0.text: |-
+  Sigue por separado el padre, el hijo, la carga y los datos servidos. Un hijo Healthy todavía puede entregar una publicación antigua.
 hints.1.text: |-
-  Inspecciona el documento hijo en Git y la relación activa entre padre e hijo.
+  Contrasta el origen del hijo guardado en Git con las Applications activas y los manifiestos de publicación. Cuando responda el servicio, compara la revisión servida con el registro suministrado.
 
   ```bash
-  cat repository/apps/child.yaml
+  git -C repository show HEAD:apps/child.yaml
   kubectl get applications parent board -o yaml
+  git -C repository ls-tree -r --name-only HEAD
+  cat approved-publication
   ```
 hints.2.text: |-
-  Cambie la ruta de origen secundaria a manifests/, confirme y push; Actualice las revisiones principal y inspect. Inspeccione el manifiesto infantil Application en repository/apps/, no solo el niño vivo.
+  Publica las dos correcciones por Git. Contrasta el ConfigMap que rastrea el hijo, el origen del volumen del Deployment y la revisión devuelta por HTTP. La respuesta original del servicio debe conservarse.
 
-  Verifica desde `~/quest` en la workstation:
-
-  - `git -C repository ls-remote origin refs/heads/main`
-  - `git -C repository rev-parse HEAD`
-
-  Ambos hashes son idénticos.
-
-  - `kubectl get applications parent board -o json | jq '.items[] | {name:.metadata.name,sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision,uid:.metadata.uid,path:.spec.source.path,project:.spec.project,destination:.spec.destination.namespace,tracking:.metadata.annotations["argocd.argoproj.io/tracking-id"]}'`
-
-  Ambas están `Synced` en el HEAD local; `board` está `Healthy`. El UID/ruta del padre y proyecto/ruta/destino/tracking del hijo coinciden con Requirements.
-
-  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`
-
-  `north-122`.
-
-  - `bash wait-apps.sh` — código `0`; pasan las comprobaciones de la versión suministrada.
+  ```bash
+  git -C repository ls-remote origin refs/heads/main
+  git -C repository rev-parse HEAD
+  bash wait-apps.sh
+  kubectl get deployment board -o json | jq '.spec.template.spec | {volumes, mounts: [.containers[].volumeMounts[]?]}'
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/publication/revision
+  kubectl get configmaps -o json | jq '.items[] | select(.metadata.annotations["argocd.argoproj.io/tracking-id"] != null) | {name:.metadata.name,revision:.data.revision}'
+  cat approved-publication
+  ```
 phrases.0: Seguí la cadena de reconciliación entre padres e hijos.
 phrases.1: Reparé el estado deseado en Git en lugar del hijo generado.
 phrases.2: Verifiqué ambas revisiones y la respuesta real a la carga de trabajo.
@@ -87,7 +84,12 @@ stages.0.objectives.2.text: Las Applications `parent` y `board` están `Synced` 
 stages.0.objectives.3.text: La Application padre existente conserva su identidad y su directorio fuente
   original.
 stages.0.objectives.4.text: El Deployment `board` tiene exactamente `1` réplica lista.
-stages.0.objectives.5.text: Dentro de un Pod del Deployment `board`, `http://board:8080` devuelve `north-122`.
+stages.0.objectives.5.text: |-
+  Desde un Pod del Deployment `board`, el servicio debe devolver `north-122` en `http://board:8080` y la revisión aprobada de `approved-publication` en `http://board:8080/publication/revision`. Usa el ConfigMap suministrado que ya contiene la revisión aprobada. Conserva su nombre y móntalo en solo lectura en la carga guardada en Git y en el Deployment activo.
 diagnostics.probe_0_1: 'Los datos actuales no permiten verificar este objetivo: La Application hija `board` confirmada
   y activa usa el contenido existente de la carga del repositorio, conserva el proyecto y destino de la bahía previstos
   y sigue gestionada por el padre existente.'
+diagnostics.publication: |-
+  El ConfigMap aprobado que administra el hijo debe estar montado en solo lectura y servirse en la ruta de publicación.
+diagnostics.probe_0_5: |-
+  Los datos actuales no permiten verificar la proyección del ConfigMap o su respuesta HTTP.

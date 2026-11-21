@@ -79,9 +79,46 @@ stages:
       exit "$failed"
   - text: stages.0.objectives.5.text
     check: |-
+      dq_probe_output=$(mktemp)
+      trap 'rm -f "$dq_probe_output"' EXIT
+      set +e
+      (
+      set -euo pipefail
+      failed=0
+      if ! bash -euo pipefail <<'DQ_LEGACY'
       failed=0
       if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = north-122; then printf '%s\n' 'board:8080 = north-122: ✗ [DQ:http]'; failed=1; fi
       exit "$failed"
+      DQ_LEGACY
+      then failed=1; fi
+      approved=$(cat /run/dq/facts/0/approved-publication 2>/dev/null || true)
+      board=$(kubectl --request-timeout=4s get deployment board -o json 2>/dev/null || true)
+      committed=$(git -C repository show HEAD:manifests/board.yaml 2>/dev/null |
+        python3 -I -c 'import json,sys,yaml; json.dump(yaml.safe_load(sys.stdin),sys.stdout)' 2>/dev/null || true)
+      publication=$(kubectl --request-timeout=4s get configmap board-publication -o json 2>/dev/null || true)
+      uses_publication() {
+        jq -e '.spec.template.spec as $pod |
+          any($pod.volumes[]?; .configMap.name=="board-publication" and
+            (.name as $volume | any($pod.containers[]?; .name=="worker" and
+              any(.volumeMounts[]?; .name==$volume and .readOnly==true))))' <<<"$1" >/dev/null 2>&1
+      }
+      if ! test -n "$approved" || ! uses_publication "$committed" || ! uses_publication "$board" ||
+         ! jq -e --arg approved "$approved" --arg ns "$DQ_NAMESPACE" '.data.revision==$approved and .metadata.annotations["argocd.argoproj.io/tracking-id"]==($ns+"_board:/ConfigMap:"+$ns+"/board-publication")' <<<"$publication" >/dev/null 2>&1 ||
+         ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080/publication/revision 2>/dev/null)" = "$approved"; then
+        printf '%s\n' 'The board serves its approved child-managed publication: ✗ [DQ:publication]'
+        failed=1
+      fi
+      exit "$failed"
+      ) >"$dq_probe_output" 2>/dev/null
+      dq_probe_status=$?
+      set -e
+      cat "$dq_probe_output"
+      if [ "$dq_probe_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_probe_output"; then
+      printf '%s\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_0_5]'
+      fi
+      rm -f "$dq_probe_output"
+      trap - EXIT
+      test "$dq_probe_status" -eq 0
 hints:
 - text: hints.0.text
   guide: gitops-delivery
@@ -114,6 +151,7 @@ facts:
   - repository/apps/child.yaml
   - repository/manifests/board.yaml
   - parent.yaml
+  - approved-publication
   - wait-apps.sh
   services: []
 book:
@@ -123,3 +161,4 @@ immutable:
   0:
   - baseline-commit
   - parent-uid
+  - approved-publication

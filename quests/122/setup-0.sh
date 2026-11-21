@@ -32,8 +32,15 @@ spec:
         command:
         - sh
         - -c
-        - mkdir -p /tmp/site; printf "%s\n" "north-122" > /tmp/site/index.html; exec httpd -f -p 8080
-          -h /tmp/site
+        - >-
+          mkdir -p /tmp/site &&
+          ln -s /var/run/board-publication /tmp/site/publication &&
+          printf "%s\n" "north-122" > /tmp/site/index.html &&
+          exec httpd -f -p 8080 -h /tmp/site
+        volumeMounts:
+        - name: publication
+          mountPath: /var/run/board-publication
+          readOnly: true
         resources:
           requests:
             cpu: 10m
@@ -46,6 +53,10 @@ spec:
           capabilities:
             drop:
             - ALL
+      volumes:
+      - name: publication
+        configMap:
+          name: board-archive
       terminationGracePeriodSeconds: 1
 DQ_ASSET
 python3 - repository/manifests/board.yaml <<'DQ_IMAGE'
@@ -72,6 +83,22 @@ import os,sys
 from pathlib import Path
 p=Path(sys.argv[1]);p.write_text(p.read_text().replace('__DQ_APP_IMAGE__',os.environ['DQ_APP_IMAGE']))
 DQ_IMAGE
+cat > repository/manifests/publications.yaml <<'DQ_ASSET'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: board-archive
+data:
+  revision: dispatch-previous
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: board-publication
+data:
+  revision: dispatch-approved
+DQ_ASSET
+printf '%s\n' dispatch-approved > approved-publication
 mkdir -p repository/apps
 cat > repository/apps/child.yaml <<'DQ_ASSET'
 apiVersion: argoproj.io/v1alpha1

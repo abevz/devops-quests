@@ -7,8 +7,11 @@ from .platform import Platform
 from .sandbox_evidence import bounded_yaml_reader
 
 
+RELEASE_REF = "release/approved"
+
+
 class ApplicationSets(Components):
-    def manifest(self, run, repaired=False):
+    def manifest(self, run, repaired=False, *, revision="main"):
         self.namespace(run)
         return {
             "apiVersion": "argoproj.io/v1alpha1",
@@ -31,7 +34,7 @@ class ApplicationSets(Components):
                             "repoURL": "http://gitea-"
                             + run["id"]
                             + ":3000/rail/station.git",
-                            "targetRevision": "main",
+                            "targetRevision": revision,
                             "path": ("stations/" if repaired else "retired/")
                             + "{{.station}}",
                         },
@@ -119,7 +122,12 @@ class ApplicationSets(Components):
             request = json.loads(result.stdout)
         except ValueError:
             return
-        if request not in [self.manifest(run), self.manifest(run, True)]:
+        allowed = [
+            self.manifest(run, repaired, revision=revision)
+            for repaired in (False, True)
+            for revision in ("main", RELEASE_REF)
+        ]
+        if request not in allowed:
             return
         path = r.state / "bays" / run["id"] / "appset-identity.json"
         raw = r.kube(

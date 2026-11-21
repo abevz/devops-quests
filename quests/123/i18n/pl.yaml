@@ -2,7 +2,9 @@ title: Argo CD ApplicationSet
 brief: |-
   Flota station nie dostarcza obu oczekiwanych usług. Przywróć generowane aplikacje i obserwowalne wyniki wydania.
 
-  Pracuj na workstation w `~/quest` z plikami `platform.env`, `appset-target.json`, `applicationset.yaml`, `repository/`, `release-commit`, `wait-apps.sh`.
+  Pracuj na workstation w `~/quest` z plikami `platform.env`, `appset-target.json`, `applicationset.yaml`, `repository/`, `release-ref`, `release-commit`, `maintenance-commit`, `wait-apps.sh`.
+
+  Podczas sprawdzania celów ograniczony adapter przesyła plik `applicationset.yaml` ze stacji roboczej. Akceptuje pierwotną lub właściwą ścieżkę floty oraz pierwotną lub dostarczoną referencję wydania. Generator, projekt, repozytorium, zakres i własność pozostają stałe.
 
   O ile nie wskazano inaczej, zasoby Kubernetes znajdują się w przestrzeni nazw zatoki (`DQ_NAMESPACE`); ścieżki w `~/quest` są na workstation.
 
@@ -10,49 +12,37 @@ brief: |-
 
   - Istniejący ApplicationSet generuje dokładnie Applications `north` i `south`, każdą z zawartością odpowiadającej stacji z dostarczonego repozytorium, zachowując właściwy projekt i cel w zatoce.
   - Obie wygenerowane Applications pozostają własnością istniejącego ApplicationSet.
-  - Obie wygenerowane Applications mają stany `Synced` i `Healthy` dla dostarczonej rewizji wydania.
+  - Obie wygenerowane Application używają wydania z `release-ref` i `release-commit` oraz mają stany `Synced` i `Healthy`. Opublikowana gałąź utrzymaniowa `main` zachowuje rewizję z `maintenance-commit`.
   - Deployments `north` i `south` mają po dokładnie `1` gotowej replice.
   - W ich Podach adresy `http://north:8080` i `http://south:8080` zwracają odpowiednio `north-123` i `south-123`.
 
-    - Wygenerowane Applications i ich ApplicationSet pozostają w dostarczonej przestrzeni nazw kontrolera; Deployments i Services pozostają w przestrzeni nazw zatoki.
-
-  Bieżący wygenerowany stan nie dowodzi, że zmieniono tylko ścieżkę szablonu.
-debrief: ApplicationSet generuje specyfikacje Application; każdy Application nadal godzi swoje obciążenie
-  pracą. Adapter ograniczonego przesyłania zachowuje prywatne project, repository i destination, podczas
-  gdy prawdziwy kontroler o zasięgu namespace wykonuje generowanie.
+  - Wygenerowane Applications i ich ApplicationSet pozostają w dostarczonej przestrzeni nazw kontrolera; Deployments i Services pozostają w przestrzeni nazw zatoki.
+debrief: |-
+  ApplicationSet rozwija szablon do specyfikacji Application. Każda Application rozwiązuje własną rewizję źródła. Zestaw stan z referencją i zatwierdzonym commitem.
 stages.0.brief: Zachowaj dostarczony zakres kontrolera i własność generowanych obiektów.
-hints.0.text: Generator list dostarcza station; szablon rozszerza go do każdego Application source path.
+hints.0.text: |-
+  Porównaj osobno ścieżkę źródła i referencję docelową. Działające manifesty na jednej gałęzi nie dowodzą, że kontroler korzysta z zatwierdzonego commitu.
 hints.1.text: |-
-  Sprawdź dostarczony ApplicationSet i wygenerowane Applications w ich przestrzeni nazw kontrolera.
+  Porównaj szablon, wygenerowane Application i referencje na serwerze Git. Pliki wydania wskazują obie oczekiwane rewizje.
 
   ```bash
-  cat applicationset.yaml
   ns=$(jq -r .namespace appset-target.json)
+  cat applicationset.yaml release-ref release-commit maintenance-commit
+  git -C repository ls-remote origin 'refs/heads/*'
   kubectl -n "$ns" get applications north south -o yaml
   ```
 hints.2.text: |-
-  Użyj stations/{{.station}}, pozostaw wszystkie pola zakresu niezmienione, a następnie porównaj UID właściciela, wersje i obie odpowiedzi HTTP. Zwykłe sprawdzanie celów przesyła `applicationset.yaml` przez ograniczony adapter. Zachowaj `goTemplate: true` i kolejność stacji `[north, south]`; akceptowany jest tylko pierwotny manifest lub poprawka ścieżki jego szablonu. Sprawdź applicationset.yaml i wygenerowane aplikacje tylko do odczytu w namespace z appset-target.json.
-
-  Sprawdź z `~/quest` na workstation:
-
-  - `ns=$(jq -r .namespace appset-target.json)`
-  - `kubectl -n "$ns" get applications north south -o json | jq '.items[] | {name:.metadata.name,sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision,project:.spec.project,repo:.spec.source.repoURL,path:.spec.source.path,destination:.spec.destination.namespace,owners:.metadata.ownerReferences}'`
-
-  Obie mają stany `Synced` i `Healthy` dla `release-commit`. Obie używają projektu `station`, zapisanego repozytorium, odpowiednich ścieżek `stations/north` / `stations/south`, celu `DQ_NAMESPACE` i właściciela `ApplicationSet`.
-
-  - `kubectl get deployments north south -o json | jq '.items[] | {name:.metadata.name,ready:.status.readyReplicas}'`
-
-  Każdy zgłasza `ready: 1`.
+  Użyj `stations/{{.station}}` w szablonie ścieżki i wybierz dostarczoną referencję wydania. Porównaj źródła działających Application z referencjami Git i sprawdź odpowiedzi obu usług.
 
   ```bash
+  ns=$(jq -r .namespace appset-target.json)
+  git -C repository ls-remote origin refs/heads/main "refs/heads/$(cat release-ref)"
+  kubectl -n "$ns" get applications north south -o json | jq '.items[] | {name:.metadata.name,source:.spec.source,sync:.status.sync,health:.status.health.status,owners:.metadata.ownerReferences}'
+  bash wait-apps.sh
   for station in north south; do
     kubectl exec deployment/"$station" -- wget -qO- -T 3 "http://$station:8080"
   done
   ```
-
-  `north-123`, `south-123`.
-
-  - `bash wait-apps.sh` — kod `0`; sprawdzenia dostarczonego wydania przechodzą.
 phrases.0: Oddzieliłem generowanie Application od uzgadniania obciążenia.
 phrases.1: Sprawdziłem wartości generatora i rozwinięcie szablonu.
 phrases.2: Zachowałem zakres uprawnień kontrolera i miejsc docelowych.
@@ -96,8 +86,10 @@ stages.0.objectives.0.text: Istniejący ApplicationSet generuje dokładnie Appli
   każdą z zawartością odpowiadającej stacji z dostarczonego repozytorium, zachowując właściwy projekt
   i cel w zatoce.
 stages.0.objectives.1.text: Obie wygenerowane Applications pozostają własnością istniejącego ApplicationSet.
-stages.0.objectives.2.text: Obie wygenerowane Applications mają stany `Synced` i `Healthy` dla dostarczonej
-  rewizji wydania.
+stages.0.objectives.2.text: |-
+  Obie wygenerowane Application używają wydania z `release-ref` i `release-commit` oraz mają stany `Synced` i `Healthy`. Opublikowana gałąź utrzymaniowa `main` zachowuje rewizję z `maintenance-commit`.
 stages.0.objectives.3.text: Deployments `north` i `south` mają po dokładnie `1` gotowej replice.
 stages.0.objectives.4.text: W ich Podach adresy `http://north:8080` i `http://south:8080` zwracają odpowiednio
   `north-123` i `south-123`.
+diagnostics.release_source: |-
+  Obie Application muszą otrzymać referencję docelową z szablonu. Opublikowane referencje wydania i gałęzi utrzymaniowej muszą zachować zapisane commity.

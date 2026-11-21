@@ -410,7 +410,7 @@ def test_consumer_readback_targets_the_application_not_a_sidecar(tmp_path, numbe
     stage = 1 if number == 78 else 0
     quest = yaml.safe_load((ROOT / f'quests/{number:03}/quest.yaml').read_text())
     code = next(item['check'] for item in quest['stages'][stage]['objectives'] if 'kubectl exec' in item['check'])
-    if number in {75, 83}:
+    if number in {75, 83, 122}:
         # This sidecar fixture exercises the retained original readback predicate;
         # real process/source identity checks run against actual native bays.
         code = code.split("<<'DQ_LEGACY'\n", 1)[1].split("\nDQ_LEGACY", 1)[0]

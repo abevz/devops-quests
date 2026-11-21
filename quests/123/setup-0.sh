@@ -145,7 +145,18 @@ DQ_IMAGE
 git -C repository add .
 git -C repository commit -m 'Publish two independent station directories'
 git -C repository push origin main
+git -C repository rev-parse HEAD > maintenance-commit
+printf '%s\n' 'release/approved' > release-ref
+git -C repository switch -c "$(cat release-ref)"
+for station in north south; do
+  printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap' "metadata: {name: $station-release}" \
+    'data: {release: approved}' > "repository/stations/$station/release.yaml"
+done
+git -C repository add stations
+git -C repository commit -m 'Approve the fleet release'
+git -C repository push origin "HEAD:refs/heads/$(cat release-ref)"
 git -C repository rev-parse HEAD > release-commit
+git -C repository switch main
 cat > applicationset.yaml <<'DQ_ASSET'
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
