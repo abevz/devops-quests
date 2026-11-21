@@ -124,7 +124,7 @@ def get(kind, name=None):
 def require(good, marker):
     if not good:raise AssertionError(marker)
 
-from dq_check import current_pods
+from dq_check import current_pods, readiness_probe, workload_worker
 
 try:
     d=get('deployment','board');pods=current_pods(d,get('replicasets'),get('pods'));pods=[p for p in pods if p.get('status',{}).get('phase')=='Running']
@@ -132,6 +132,21 @@ try:
     for pod in pods:
         value=subprocess.check_output(['kubectl','exec','--pod-running-timeout=2s',pod['metadata']['name'],'-c','worker','--','wget','-qO-','-T','3','http://board:8080'],stderr=subprocess.DEVNULL,timeout=4)
         require(value.rstrip(b'\n')==b'north-40','http')
+    try:
+        probe_matches = readiness_probe(d) and workload_worker(d)['readinessProbe']['httpGet'].get('path') == '/ready'
+    except (ValueError, TypeError, KeyError, AttributeError):
+        probe_matches = False
+    require(probe_matches, 'readiness_probe')
+    for pod in pods:
+        try:
+            value = subprocess.check_output(
+                ['kubectl', 'exec', '--pod-running-timeout=2s', pod['metadata']['name'], '-c', 'worker',
+                 '--', 'wget', '-qO-', '-T', '2', 'http://127.0.0.1:8080/ready'],
+                stderr=subprocess.DEVNULL, timeout=3,
+            )
+        except (OSError, subprocess.SubprocessError):
+            value = b''
+        require(value.rstrip(b'\n') == b'ready', 'readiness_endpoint')
 
 except Exception as error:
     marker = str(error) if isinstance(error,AssertionError) and re.fullmatch(r'[a-z0-9_]+',str(error)) else 'http'

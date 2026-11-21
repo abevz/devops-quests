@@ -27,6 +27,21 @@ OLD_FIXES = {
     (30, 1): '''kubectl set env deployment/relay RELEASE=release-30
 kubectl rollout status deployment/relay --timeout=90s
 ''',
+    # Equivalent replay of the two content-only repairs at ec6cef5:
+    # the original policy and workload manifests remain unchanged at setup.
+    (40, 0): """sed -i "s/content: 'retired/content: 'north-40/" rollout.yml
+ansible-playbook rollout.yml
+""",
+    (40, 1): """sed -i 's/"retired"/"north-40"/' board.yaml
+kubectl apply -f board.yaml
+kubectl rollout status deployment/board --timeout=90s
+retiring=$(kubectl get pods -l app=board -o json | jq -r '.items[] | select(.metadata.deletionTimestamp!=null) | "pod/"+.metadata.name')
+if test -n "$retiring"; then
+  mapfile -t pods <<< "$retiring"
+  kubectl wait --for=delete "${pods[@]}" --timeout=60s
+fi
+kubectl wait --for='jsonpath={.status.availableReplicas}=2' deployment/board --timeout=45s
+""",
     (85, 0): """kubectl patch pdb relay --type=merge -p '{"spec":{"minAvailable":1}}'
 sleep 3
 """,
@@ -124,6 +139,8 @@ def test_old_minimal_fix_does_not_complete(number, stage):
     log = {"quest": number, "stage": stage, "old_source": "5d34145" if number in {66, 75, 78} else "ae87ab3"}
     if number == 30:
         log["old_source"] = "b235ecb"
+    if number == 40:
+        log["old_source"] = "ec6cef5"
     stop = threading.Event()
     errors = []
     thread = None
@@ -184,6 +201,20 @@ def test_old_minimal_fix_does_not_complete(number, stage):
 test "$(kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/)" = signalrail
 """, timeout=15)
             log["old_repair_converged_with_failure"] = marker
+        if number == 40:
+            assert old.returncode == 0, old.stdout + old.stderr
+            marker = "fleet_http" if stage == 0 else "readiness_probe"
+            detail = after.stdout + after.stderr
+            failures = [line for line in detail.splitlines() if "[DQ:" in line]
+            assert len(failures) == 1 and f"[DQ:{marker}]" in failures[0], detail
+            if stage == 1:
+                missing = runtime.exec(
+                    run, "kubectl exec deployment/board -c worker -- wget -qO- -T 2 http://127.0.0.1:8080/ready",
+                    check=False, timeout=10,
+                )
+                assert missing.returncode != 0
+            log["old_repair_converged_with_failure"] = marker
+            log["old_repair_diagnostics"] = failures
         if number == 77:
             healthy = runtime.exec(run, "kubectl get pdb board-budget -o jsonpath='{.status.currentHealthy}'").stdout
             assert healthy == "1", "Readiness fault must still be independently observable"

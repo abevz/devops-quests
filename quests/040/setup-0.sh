@@ -94,3 +94,11 @@ cat > rollout.yml <<'DQ_ASSET'
         '
       mode: '0644'
 DQ_ASSET
+cat > maintenance-interface.json <<'DQ_INTERFACE'
+{
+  "httpPort": 8080,
+  "messageFile": "/srv/site/message",
+  "configLoadedAt": "process-start",
+  "reload": ["dq-service", "reload"]
+}
+DQ_INTERFACE
