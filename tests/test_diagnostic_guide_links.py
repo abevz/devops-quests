@@ -19,7 +19,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 18))
+@pytest.mark.parametrize("quest", range(1, 21))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -38,6 +38,14 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                     f"directory_{route}_{host}"
                     for route in ("north", "south", "east")
                     for host in (1, 2, 3)
+                )
+            if "require(found,'state')" in check:
+                emitted.add("state")
+            if "dialect='by_counter'" in check:
+                emitted.update(
+                    f"recap_{host}_{counter}"
+                    for host in (1, 2, 3)
+                    for counter in ("changed", "failed")
                 )
             assert emitted, (quest, goal["text"])
             markers.update(emitted)
