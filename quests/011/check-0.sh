@@ -4,7 +4,11 @@ failed=0
 set +e
 (
 set -e
-kubectl rollout status deployment/clock --timeout=3s
+kubectl rollout status deployment/clock --timeout=3s || {
+  code=$?
+  printf '%s\n' 'Deployment clock rollout is complete: ✗ [DQ:condition_0]' >&2
+  exit "$code"
+}
 )
 [ $? -eq 0 ] || failed=1
 (
