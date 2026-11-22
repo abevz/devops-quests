@@ -19,7 +19,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 21))
+@pytest.mark.parametrize("quest", range(1, 24))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -47,6 +47,8 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                     for host in (1, 2, 3)
                     for counter in ("changed", "failed")
                 )
+            if "DQ_TEMPLATE_CAPABILITY" in check:
+                emitted.update(re.findall(r"'(template_(?:render|inputs|observation))'", check))
             assert emitted, (quest, goal["text"])
             markers.update(emitted)
     explanations = catalog.public(quest)["diagnostics"]
