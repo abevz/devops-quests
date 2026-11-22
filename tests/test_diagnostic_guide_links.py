@@ -1,5 +1,6 @@
 """Condition explanations link to named sections in the public guide."""
 
+import ast
 import re
 
 import pytest
@@ -19,7 +20,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 39))
+@pytest.mark.parametrize("quest", range(1, 41))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -53,6 +54,15 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                 emitted.update(re.findall(r"'(cpu_[a-z_]+)'", check))
             if "dialect='by_host'" in check:
                 emitted.update(f"recap_{host}" for host in (1, 2, 3))
+            for body in re.findall(r"<<'DQ_BOSS'\n(.*?)\nDQ_BOSS(?:\n|$)", check, re.S):
+                for call in ast.walk(ast.parse(body)):
+                    if (isinstance(call, ast.Call)
+                            and isinstance(call.func, ast.Name)
+                            and call.func.id == "require"
+                            and len(call.args) > 1
+                            and isinstance(call.args[1], ast.Constant)
+                            and isinstance(call.args[1].value, str)):
+                        emitted.add(call.args[1].value)
             assert emitted, (quest, goal["text"])
             markers.update(emitted)
     explanations = catalog.public(quest)["diagnostics"]
