@@ -20,13 +20,19 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 44))
+@pytest.mark.parametrize("quest", range(1, 47))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
         for goal in stage["objectives"]:
             check = goal["check"]
             emitted = set(MARKER.findall(check))
+            if "[DQ:cap_${path//" in check:
+                paths, = re.findall(r"for path in ([a-z_/ ]+); do", check)
+                emitted.update("cap_" + path.replace("/", "_") for path in paths.split())
+            if "[DQ:inspection_recap_'+str(number)+']" in check:
+                numbers, = re.findall(r"for number in \(([0-9,]+)\):", check)
+                emitted.update("inspection_recap_" + value for value in numbers.split(","))
             for body in re.findall(r"<<'(DQ_NOTICE|DQ_PRIVATE_DECLARED_ONLY)'\n(.*?)\n\1(?:\n|$)", check, re.S):
                 for node in ast.walk(ast.parse(body[1])):
                     if not isinstance(node, ast.For) or not isinstance(node.iter, ast.List):
