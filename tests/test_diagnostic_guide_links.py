@@ -1,6 +1,7 @@
 """Condition explanations link to named sections in the public guide."""
 
 import ast
+from pathlib import Path
 import re
 
 import pytest
@@ -20,7 +21,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 56))
+@pytest.mark.parametrize("quest", range(1, 59))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -46,6 +47,7 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
             for delimiter, function, position in (
                 ("DQ_HANDOVER", "reject", 0),
                 ("DQ_PROFILE_SCOPE", "require", 1),
+                ("DQ_ROLE_CAPABILITY", "require", 1),
             ):
                 for body in re.findall(
                     rf"<<'{delimiter}'\n(.*?)\n{delimiter}(?:\n|$)", check, re.S
@@ -58,6 +60,47 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                                 and isinstance(call.args[position], ast.Constant)
                                 and isinstance(call.args[position].value, str)):
                             emitted.add(call.args[position].value)
+            for body in re.findall(
+                r"<<'DQ_STORAGE_(?:POLICY|DATA)'\n(.*?)\nDQ_STORAGE_(?:POLICY|DATA)(?:\n|$)",
+                check, re.S,
+            ):
+                tree = ast.parse(body)
+                for call in ast.walk(tree):
+                    positions = {"require": 1, "command": 1, "get": 2}
+                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name):
+                        position = positions.get(call.func.id)
+                        if position is not None and len(call.args) > position:
+                            value = call.args[position]
+                            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                                emitted.add(value.value)
+                # Resolve dynamic suffixes from the setup's actual source/target
+                # contract, rather than assuming names from the locale mapping.
+                setup = (Path(__file__).resolve().parents[1]
+                         / f"quests/{quest:03}/setup-0.sh").read_text()
+                seed, = re.findall(
+                    r"<<'DQ_STORAGE_SEED'\n(.*?)\nDQ_STORAGE_SEED(?:\n|$)", setup, re.S
+                )
+                contract, = [
+                    node.value for node in ast.walk(ast.parse(seed))
+                    if isinstance(node, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == "contract" for t in node.targets)
+                ]
+                deployments = set()
+                for key, role in zip(contract.keys, contract.values, strict=True):
+                    if isinstance(key, ast.Constant) and key.value in ("source", "target"):
+                        for field, value in zip(role.keys, role.values, strict=True):
+                            if field.value == "deployment":
+                                deployments.add(value.value)
+                assert len(deployments) == 2
+                prefixes = {
+                    node.left.value for node in ast.walk(tree)
+                    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add)
+                    and isinstance(node.left, ast.Constant)
+                    and node.left.value in (
+                        "storage_mount_", "storage_ready_", "storage_data_", "storage_publication_"
+                    )
+                }
+                emitted.update(prefix + name for prefix in prefixes for name in deployments)
             if "[DQ:cap_${path//" in check:
                 paths, = re.findall(r"for path in ([a-z_/ ]+); do", check)
                 emitted.update("cap_" + path.replace("/", "_") for path in paths.split())
