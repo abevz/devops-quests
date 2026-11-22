@@ -265,12 +265,32 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 test "$(cat depot.txt)" = north:depot
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The depot route file could not be verified: ✗ [DQ:fanout_depot]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 test "$(cat junction.txt)" = north:junction
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The junction route file could not be verified: ✗ [DQ:fanout_junction]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -326,7 +346,17 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 tofu plan -detailed-exitcode -input=false -no-color >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The default regional plan did not complete without changes: ✗ [DQ:fanout_plan]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

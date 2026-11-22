@@ -21,7 +21,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 62))
+@pytest.mark.parametrize("quest", range(1, 65))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -47,6 +47,7 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
             for delimiter, function, position in (
                 ("DQ_HANDOVER", "reject", 0),
                 ("DQ_GIT_ACCESS", "reject", 0),
+                ("DQ_ISOLATION_MEMBERSHIP", "require", 1),
                 ("DQ_PROFILE_SCOPE", "require", 1),
                 ("DQ_ROLE_CAPABILITY", "require", 1),
             ):
@@ -102,6 +103,41 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                     )
                 }
                 emitted.update(prefix + name for prefix in prefixes for name in deployments)
+            for body in re.findall(
+                r"<<'DQ_CALLER_CAPABILITY'\n(.*?)\nDQ_CALLER_CAPABILITY(?:\n|$)",
+                check, re.S,
+            ):
+                tree = ast.parse(body)
+                forwarded = {
+                    marker for assignment in ast.walk(tree)
+                    if isinstance(assignment, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == "markers"
+                            for t in assignment.targets)
+                    for value in assignment.value.elts
+                    for marker in MARKER.findall(value.value)
+                }
+                producers = [tree]
+                for call in ast.walk(tree):
+                    if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                            and call.func.attr == "run" and call.args
+                            and isinstance(call.args[0], ast.List)):
+                        arguments = call.args[0].elts
+                        for index, argument in enumerate(arguments[:-1]):
+                            if isinstance(argument, ast.Constant) and argument.value == "-c":
+                                producers.append(ast.parse(arguments[index + 1].value))
+                assert len(producers) == 2  # Actual outer process and its Python child.
+                printed = {
+                    marker for producer in producers for call in ast.walk(producer)
+                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                    and call.func.id == "print"
+                    for argument in call.args
+                    if isinstance(argument, ast.Constant) and isinstance(argument.value, str)
+                    for marker in MARKER.findall(argument.value)
+                }
+                # A forwarding whitelist accepts output; it does not emit it.
+                # preview_effects has no producer in this caller entrypoint.
+                emitted.difference_update(forwarded)
+                emitted.update(printed)
             if "[DQ:cap_${path//" in check:
                 paths, = re.findall(r"for path in ([a-z_/ ]+); do", check)
                 emitted.update("cap_" + path.replace("/", "_") for path in paths.split())

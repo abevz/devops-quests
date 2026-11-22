@@ -177,17 +177,47 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 test "$(kubectl get networkpolicy -o json | jq '.items|length')" = 1
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The single policy boundary could not be verified: ✗ [DQ:isolation_policy_count]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 test "$(kubectl exec deployment/dispatcher -- wget -qO- -T 3 http://board:8080)" = north-62
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The permitted caller response could not be verified: ✗ [DQ:isolation_allowed]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 if kubectl exec deployment/visitor -- wget -qO- -T 2 http://board:8080 >/dev/null 2>&1; then exit 1; fi
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The excluded caller request unexpectedly succeeded: ✗ [DQ:isolation_denied]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
