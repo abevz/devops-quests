@@ -63,22 +63,62 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 test "$(cat ledger.txt)" = revision-36
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The ledger content could not be verified: ✗ [DQ:ledger_content]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 test ! -e retired-ledger.txt
 )
-[ $? -eq 0 ] || failed=1
-(
+code=$?
 set -e
-test "$(tofu output -raw ledger_id)" = "$(cat original-id)"
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The rejected ledger path is still present: ✗ [DQ:retired_absent]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
+test "$(tofu output -raw ledger_id)" = "$(cat original-id)"
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The ledger output could not be matched to the original ID: ✗ [DQ:ledger_identity]' >&2
+  exit "$code"
+fi
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
+(
+set -e
 tofu plan -input=false -detailed-exitcode -no-color >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The recovery plan did not finish without changes: ✗ [DQ:ledger_plan]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
