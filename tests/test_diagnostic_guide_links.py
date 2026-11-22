@@ -20,7 +20,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 53))
+@pytest.mark.parametrize("quest", range(1, 56))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -43,6 +43,21 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                             value.value for value in node.args.defaults
                             if isinstance(value, ast.Constant) and isinstance(value.value, str)
                         )
+            for delimiter, function, position in (
+                ("DQ_HANDOVER", "reject", 0),
+                ("DQ_PROFILE_SCOPE", "require", 1),
+            ):
+                for body in re.findall(
+                    rf"<<'{delimiter}'\n(.*?)\n{delimiter}(?:\n|$)", check, re.S
+                ):
+                    for call in ast.walk(ast.parse(body)):
+                        if (isinstance(call, ast.Call)
+                                and isinstance(call.func, ast.Name)
+                                and call.func.id == function
+                                and len(call.args) > position
+                                and isinstance(call.args[position], ast.Constant)
+                                and isinstance(call.args[position].value, str)):
+                            emitted.add(call.args[position].value)
             if "[DQ:cap_${path//" in check:
                 paths, = re.findall(r"for path in ([a-z_/ ]+); do", check)
                 emitted.update("cap_" + path.replace("/", "_") for path in paths.split())
