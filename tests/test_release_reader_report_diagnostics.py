@@ -296,3 +296,34 @@ def test_064_live_plan_retains_detailed_exit_code(tmp_path, code):
     result = run_check(tmp_path, 64, 6, {"tofu": f"exit {code}\n"})
     assert result.returncode == code
     assert ("[DQ:fanout_plan]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("code", [0, 1, 2, 3, 127])
+def test_066_retention_plan_preserves_jq_status(tmp_path, code):
+    result = run_check(tmp_path, 66, 0, {"jq": f"exit {code}\n"})
+    assert result.returncode == code
+    assert ("[DQ:retention_plan]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("helm_code,jq_code,code", [(0, 0, 0), (7, 0, 7), (0, 3, 3)])
+def test_067_history_preserves_both_pipeline_statuses(tmp_path, helm_code, jq_code, code):
+    result = run_check(tmp_path, 67, 1, {
+        "helm": f"printf '[]'\nexit {helm_code}\n",
+        "jq": f"cat >/dev/null\nexit {jq_code}\n",
+    })
+    assert result.returncode == code
+    assert ("[DQ:helm_history]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("code", [0, 1, 7, 127])
+def test_067_rollout_preserves_command_status(tmp_path, code):
+    result = run_check(tmp_path, 67, 4, {"kubectl": f"exit {code}\n"})
+    assert result.returncode == code
+    assert ("[DQ:helm_rollout]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("response,code", [("north-67", 0), ("retired", 1), ("", 1)])
+def test_067_observes_local_worker_response(tmp_path, response, code):
+    result = run_check(tmp_path, 67, 5, {"kubectl": f"printf '%s' '{response}'\n"})
+    assert result.returncode == code
+    assert ("[DQ:helm_http]" in result.stderr) == (code != 0)

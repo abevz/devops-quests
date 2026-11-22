@@ -229,6 +229,13 @@ def test_quest(number, tmp_path):
                 # The old oracle accepted a fabricated missing digest without
                 # deleting the real obsolete manifest. Working files are not
                 # authoritative; only backend-frozen setup evidence is.
+                original_inputs = json.loads(runtime.exec(
+                    run,
+                    "cd ~/quest\npython3 - <<'SAVE_INPUTS'\n"
+                    "import json\nfrom pathlib import Path\n"
+                    "print(json.dumps({name:Path(name).read_text() for name in "
+                    "['release-catalog.json','retention.json']}))\nSAVE_INPUTS\n",
+                ).stdout)
                 runtime.exec(
                     run,
                     "cd ~/quest\npython3 - <<'POISON'\n"
@@ -241,9 +248,14 @@ def test_quest(number, tmp_path):
                 )
                 forged = runtime.exec(run, check, check=False)
                 assert forged.returncode != 0, "Mutable catalog must not forge success"
-                rejected = runtime.exec(run, "cd ~/quest; bash prune.sh", check=False)
-                assert rejected.returncode != 0, (
-                    "Prune must reject an unapproved digest"
+                # Restore the supplied starting files before the normal matrix.
+                # prune.sh is a construction scaffold until the reference runs.
+                runtime.exec(
+                    run,
+                    "cd ~/quest\npython3 - <<'RESTORE_INPUTS'\n"
+                    "from pathlib import Path\ninputs=" + repr(original_inputs)
+                    + "\nfor name, content in inputs.items():Path(name).write_text(content)"
+                    "\nRESTORE_INPUTS\n",
                 )
                 log.append({"forged_retention_catalog_rejected": True})
             if number == 1 and stage == 0:
@@ -339,6 +351,30 @@ def test_quest(number, tmp_path):
                     "reference_stderr": fixed.stderr,
                 }
             )
+            if number == 66:
+                # Exercise the actual adapter only after the reference constructs
+                # it. A real protected manifest avoids mistaking a 404 response
+                # for rejection by the plan validator.
+                approved_plan = runtime.exec(run, "cd ~/quest\ncat retention.json").stdout
+                runtime.exec(
+                    run,
+                    "cd ~/quest\npython3 - <<'PROTECTED_PLAN'\n"
+                    "import json\nfrom pathlib import Path\n"
+                    "catalog=json.loads(Path('/run/dq/facts/0/release-catalog.json').read_text())\n"
+                    "Path('retention.json').write_text(json.dumps({'delete':[catalog['rollback']]}))"
+                    "\nPROTECTED_PLAN\n",
+                )
+                try:
+                    rejected = runtime.exec(run, "cd ~/quest; bash prune.sh", check=False)
+                    assert rejected.returncode != 0, "Prune must reject a protected digest"
+                finally:
+                    runtime.exec(
+                        run,
+                        "cd ~/quest\npython3 - <<'RESTORE_PLAN'\n"
+                        "from pathlib import Path\nPath('retention.json').write_text("
+                        + repr(approved_plan) + ")\nRESTORE_PLAN\n",
+                    )
+                log[-1]["constructed_prune_rejects_protected_digest"] = True
             if number in {78, 93, 121, 123}:
                 runtime.game_controls(run)
             if production_engine is not None:
