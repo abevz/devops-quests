@@ -171,3 +171,85 @@ def test_056_live_plan_retains_detailed_exit_code(tmp_path, code):
     result = run_check(tmp_path, 56, 2, {"tofu": f"exit {code}\n"})
     assert result.returncode == code
     assert ("[DQ:capacity_plan]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("code", [7, 127])
+def test_059_failed_state_prefix_stops_before_identity_checks(tmp_path, code):
+    result = run_check(tmp_path, 59, 0, {
+        "tofu": f"printf 'local_file.ledger\\n'\nexit {code}\n",
+    })
+    assert result.returncode == code
+    assert "[DQ:move_state]" in result.stderr
+    assert "[DQ:move_identity]" not in result.stdout + result.stderr
+
+
+def test_059_existing_identity_marker_is_not_duplicated(tmp_path):
+    result = run_check(tmp_path, 59, 0, {
+        "tofu": "if [ \"$1\" = state ]; then printf 'local_file.ledger\\n'; else printf '{}'; fi\n",
+        "jq": "cat >/dev/null\nprintf file-id\n",
+        "cat": """
+case "$1" in
+  original-id) printf file-id ;;
+  /run/dq/facts/0/original-id) printf different-id ;;
+  *) /bin/cat "$@" ;;
+esac
+""",
+    })
+    assert result.returncode == 1
+    assert "[DQ:move_identity]" in result.stdout
+    assert "[DQ:move_state]" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("code", [0, 1, 2, 127])
+def test_059_plan_retains_detailed_exit_code(tmp_path, code):
+    result = run_check(tmp_path, 59, 1, {"tofu": f"exit {code}\n"})
+    assert result.returncode == code
+    assert ("[DQ:move_plan]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("index,marker", [
+    (0, "delivery_permissions"), (2, "delivery_source"), (3, "delivery_sync"),
+])
+def test_061_missing_environment_stops_before_api(tmp_path, index, marker):
+    result = run_check(tmp_path, 61, index, {"kubectl": "touch api-called\n"})
+    assert result.returncode == 1
+    assert f"[DQ:{marker}]" in result.stderr
+    assert not (tmp_path / "api-called").exists()
+
+
+def test_061_required_denials_are_successful_observations(tmp_path):
+    (tmp_path / "platform.env").write_text("ARGO_NAMESPACE=argo\n")
+    result = run_check(tmp_path, 61, 0, {"kubectl": """
+if [ "$3" = patch ] && [ "$4" = secret/station-repository ]; then
+  printf yes; exit 0
+fi
+printf no
+exit 1
+"""})
+    assert result.returncode == 0
+    assert "[DQ:" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("index,marker", [(2, "delivery_source"), (3, "delivery_sync")])
+def test_061_api_failure_is_not_hidden_by_successful_jq(tmp_path, index, marker):
+    (tmp_path / "platform.env").write_text("GIT_URL=http://git/repository.git\n")
+    (tmp_path / "release-commit").write_text("original-release\n")
+    result = run_check(tmp_path, 61, index, {
+        "kubectl": "printf '{}'\nexit 7\n", "jq": "cat >/dev/null\nexit 0\n",
+    })
+    assert result.returncode == 7
+    assert f"[DQ:{marker}]" in result.stderr
+
+
+@pytest.mark.parametrize("code", [0, 1, 7, 127])
+def test_061_rollout_retains_command_status(tmp_path, code):
+    result = run_check(tmp_path, 61, 4, {"kubectl": f"exit {code}\n"})
+    assert result.returncode == code
+    assert ("[DQ:delivery_rollout]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("response,code", [("north-61", 0), ("retired", 1), ("", 1)])
+def test_061_observes_service_response(tmp_path, response, code):
+    result = run_check(tmp_path, 61, 5, {"kubectl": f"printf '%s' '{response}'\n"})
+    assert result.returncode == code
+    assert ("[DQ:delivery_http]" in result.stderr) == (code != 0)

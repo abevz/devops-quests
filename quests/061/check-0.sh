@@ -4,10 +4,20 @@ failed=0
 set +e
 (
 set -e
+set +e
+(
+set -e
 source platform.env
 test "$(kubectl auth can-i patch secret/station-repository -n "$ARGO_NAMESPACE")" = yes
 test "$(kubectl auth can-i list secrets -n "$ARGO_NAMESPACE")" = no
 test "$(kubectl auth can-i patch secret/unrelated -n "$ARGO_NAMESPACE")" = no
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The scoped credential access could not be verified: ✗ [DQ:delivery_permissions]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -127,24 +137,64 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 source platform.env
 kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" 'def same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url and (.spec.source.path | same_dir("manifests")) and .spec.source.targetRevision=="main"' >/dev/null
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The Git delivery source could not be verified: ✗ [DQ:delivery_source]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 source platform.env
 kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" '.status.sync.status=="Synced" and .status.health.status=="Healthy" and .status.sync.revision==$rev' >/dev/null
 )
-[ $? -eq 0 ] || failed=1
-(
+code=$?
 set -e
-kubectl rollout status deployment/board --timeout=3s >/dev/null
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The published release adoption could not be verified: ✗ [DQ:delivery_sync]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
+kubectl rollout status deployment/board --timeout=3s >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The board rollout could not be verified: ✗ [DQ:delivery_rollout]' >&2
+  exit "$code"
+fi
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
+(
+set -e
 test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-61
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The board Service response could not be verified: ✗ [DQ:delivery_http]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
