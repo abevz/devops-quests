@@ -4,14 +4,34 @@ failed=0
 set +e
 (
 set -e
+set +e
+(
+set -e
 test "$(cat fleet.txt)" = "$(printf 'app1
 app2
 app3')"
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The workstation report does not list the supplied fleet in order: ✗ [DQ:report_content]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 test "$(stat -c %a fleet.txt)" = 644
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The workstation report mode could not be verified as 0644: ✗ [DQ:report_mode]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (

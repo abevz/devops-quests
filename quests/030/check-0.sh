@@ -58,7 +58,17 @@ fi
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 tofu plan -input=false -detailed-exitcode -no-color >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The release plan did not finish without changes: ✗ [DQ:release_plan]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
