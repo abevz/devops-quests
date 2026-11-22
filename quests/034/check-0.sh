@@ -4,7 +4,17 @@ failed=0
 set +e
 (
 set -e
+set +e
+(
+set -e
 kubectl get deployment board -o json | jq -e ' .spec.replicas==1' >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The board replica count could not be verified as one: ✗ [DQ:board_replicas]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -319,8 +329,18 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 pod=$(kubectl get pods -l app=board -o jsonpath='{.items[0].metadata.name}')
 test "$(kubectl exec "$pod" -c worker -- wget -qO- http://127.0.0.1:8080)" = north
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The board HTTP response could not be verified: ✗ [DQ:board_http]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

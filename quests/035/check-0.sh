@@ -4,7 +4,17 @@ failed=0
 set +e
 (
 set -e
+set +e
+(
+set -e
 test "$(cat safety-check.txt)" = 'healthy fleet checked'
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The workstation safety record could not be verified: ✗ [DQ:safety_record]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (

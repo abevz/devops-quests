@@ -95,3 +95,34 @@ def test_032_observes_local_report(tmp_path, text, mode, content_ok, mode_ok):
         result = run_check(case_path, 32, index)
         assert result.returncode == (0 if good else 1)
         assert (f"[DQ:{marker}]" in result.stderr) == (not good)
+
+
+@pytest.mark.parametrize("code", [0, 1, 7, 127])
+def test_034_replica_observation_preserves_pipeline_status(tmp_path, code):
+    result = run_check(tmp_path, 34, 0, {
+        "kubectl": f"exit {code}\n", "jq": "cat >/dev/null\nexit 0\n",
+    })
+    assert result.returncode == code
+    assert ("[DQ:board_replicas]" in result.stderr) == (code != 0)
+
+
+def test_034_failed_pod_selection_stops_before_http_exec(tmp_path):
+    result = run_check(tmp_path, 34, 4, {"kubectl": """
+if [ "$1" = get ]; then exit 7; fi
+printf touched > exec-called
+printf north
+"""})
+    assert result.returncode == 7
+    assert "[DQ:board_http]" in result.stderr
+    assert not (tmp_path / "exec-called").exists()
+
+
+@pytest.mark.parametrize("text,good", [
+    (None, False), ("old record\n", False), ("healthy fleet checked\n", True),
+])
+def test_035_observes_workstation_safety_record(tmp_path, text, good):
+    if text is not None:
+        (tmp_path / "safety-check.txt").write_text(text)
+    result = run_check(tmp_path, 35, 0)
+    assert result.returncode == (0 if good else 1)
+    assert ("[DQ:safety_record]" in result.stderr) == (not good)
