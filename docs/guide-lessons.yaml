@@ -1661,6 +1661,54 @@ kubernetes-11:
       The worker did not read north-45 from /data/route.txt; exec may fail while the Pod is unready, or the wrong volume, path or altered stored data may be visible. `kubectl exec deployment/reader -c worker -- cat /data/route.txt`.
 
 
+      ### Preserve the source and workload identities {#storage-preserved-identities}
+
+
+      An original Deployment or the source PVC changed UID or could not be read; deleting and recreating it can preserve a name while losing the retained identity. The unbound target PVC is outside that retained identity set.  `kubectl get deployment relay reserve -o yaml; kubectl get pvc reserve -o yaml`.
+
+
+      ### Source binding and workload observations {#storage-source-availability}
+
+
+      The retained source PVC is not Bound, or Pod/ReplicaSet observation failed; losing the source volume binding or unavailable Kubernetes objects can prevent proving recovery from the original dataset.  `kubectl get pvc reserve -o yaml; kubectl get pods,replicasets -o wide`.
+
+
+      ### Retain the worker image {#storage-retained-worker-image}
+
+
+      A checked worker image no longer matches the supplied reference or digest; replacing the application image to manufacture a response bypasses the required recovery of the mounted data.  `kubectl get deployments,pods -o yaml`.
+
+
+      ### Target rollout before data observation {#storage-rollout-observation-gate}
+
+
+      The relay rollout did not complete within 3 seconds, or the data observer stopped without a named marker; the unbound target, unavailable mounts or missing/malformed protected and API data may explain it.  `kubectl rollout status deployment/relay --timeout=10s; cat storage-contract.json`.
+
+
+      ### Dataset mounts and read-only source {#storage-dataset-pvc-mounts}
+
+
+      reserve does not expose its declared PVC at the dataset path, or the source is writable; a wrong claim, missing mount or file overlay can hide the preserved dataset instead of recovering it. relay does not expose the declared target PVC at its dataset path; a wrong claim, missing mount or overlaid file can hide the target dataset instead of recovering it. The source reserve uses /archive and remains read-only; target relay uses /spool. Compare both the Deployment templates and their live owned Pods. Each declared path needs exactly one mount of its contracted PVC; a second mount below the dataset root must not cover a contracted file. Preserve the source data and both Deployment UIDs while recovering the target. `cat storage-contract.json; kubectl get deployments,pods -o yaml`.
+
+
+      ### Readiness of the original workloads {#storage-original-workload-readiness}
+
+
+      reserve is not rolled out with the contracted replica counts and ready owned Pods, or observation failed; a pending volume, failed mount or changed replica count can prevent checking the recovered data. relay is not rolled out with the contracted replica counts and ready owned Pods, or observation failed; a pending volume, failed mount or changed replica count can prevent checking the recovered data.  `kubectl get deployments,pods,replicasets -o wide`.
+
+
+      ### Recover the regular files on the target {#storage-regular-file-recovery}
+
+
+      reserve source files are missing, have the wrong type, size or SHA-256, or exec failed; changed source bytes, an overlaid dataset path or an unreadable original volume can prevent preserving the original dataset. relay dataset files are missing, have the wrong type, size or SHA-256, or exec failed; an empty target volume, incomplete copy, damaged source or file substitution can break recovery. Binding the previously empty target only provides capacity. Recover both index.html and payload.bin from the retained source without changing it. Compare regular-file types, byte sizes and SHA-256 against storage-contract.json on the target and source; for reserve use /archive. A correct HTTP page alone does not prove the binary payload is recovered. `kubectl exec deployment/relay -c worker -- stat -c ''%F:%s'' /spool/index.html /spool/payload.bin; kubectl exec deployment/relay -c worker -- sha256sum /spool/index.html /spool/payload.bin`.
+
+
+      ### Publish the mounted source record {#storage-mounted-http-publication}
+
+
+      reserve does not serve the exact original HTTP body or the request failed; serving the wrong directory, altered index.html or an unavailable source process can prevent publication of the retained source record. relay does not serve the exact preserved HTTP body or the request failed; serving the wrong directory, stale index.html or an unavailable process can hide an otherwise copied dataset.  `kubectl exec deployment/relay -c worker -- wget -qO- http://127.0.0.1:8080; kubectl exec deployment/reserve -c worker -- wget -qO- http://127.0.0.1:8080`.
+
+
       ## Try it
 
 
@@ -1727,6 +1775,54 @@ kubernetes-11:
 
 
       worker не прочитал north-45 из /data/route.txt: exec может завершиться ошибкой у неготового Pod либо видны неверный том, путь или изменённые данные. `kubectl exec deployment/reader -c worker -- cat /data/route.txt`.
+
+
+      ### Сохранение идентичности источника и нагрузок {#storage-preserved-identities}
+
+
+      Исходный Deployment или PVC источника сменил UID либо недоступен: удаление и пересоздание сохраняет имя, но теряет исходную идентичность. Несвязанный целевой PVC не входит в набор сохраняемых UID.  `kubectl get deployment relay reserve -o yaml; kubectl get pvc reserve -o yaml`.
+
+
+      ### Привязка источника и наблюдение нагрузок {#storage-source-availability}
+
+
+      Сохранённый PVC источника не Bound либо не удалось прочитать Pod и ReplicaSet: потеря привязки исходного тома или недоступность объектов Kubernetes мешают доказать восстановление исходных данных.  `kubectl get pvc reserve -o yaml; kubectl get pods,replicasets -o wide`.
+
+
+      ### Сохранение образа worker {#storage-retained-worker-image}
+
+
+      Проверяемый образ worker не совпадает с выданной ссылкой или digest: замена образа ради нужного ответа обходит требуемое восстановление смонтированных данных.  `kubectl get deployments,pods -o yaml`.
+
+
+      ### Rollout цели перед наблюдением данных {#storage-rollout-observation-gate}
+
+
+      Rollout relay не завершился за 3 секунды либо проверка данных остановилась без именованного маркера: причиной могут быть несвязанный целевой том, недоступные mount или отсутствующие и некорректные защищённые данные и ответы API.  `kubectl rollout status deployment/relay --timeout=10s; cat storage-contract.json`.
+
+
+      ### Монтирование данных и источник только для чтения {#storage-dataset-pvc-mounts}
+
+
+      reserve не использует объявленный PVC по пути данных либо источник доступен для записи: неверный claim, отсутствующий mount или перекрывающий файл могут скрывать исходные данные вместо восстановления. relay не использует объявленный целевой PVC по пути данных: неверный claim, отсутствующий mount или перекрывающий файл могут скрывать целевые данные вместо восстановления. Источник reserve использует /archive только для чтения, цель relay — /spool. Сравните шаблоны Deployment и принадлежащие им Pod. По объявленному пути нужен ровно один mount контрактного PVC; другой mount под корнем данных не должен перекрывать контрактный файл. Сохраните данные источника и UID обоих Deployment при восстановлении цели. `cat storage-contract.json; kubectl get deployments,pods -o yaml`.
+
+
+      ### Готовность исходных нагрузок {#storage-original-workload-readiness}
+
+
+      reserve не завершил rollout с нужным числом реплик и готовыми принадлежащими ему Pod либо наблюдение не удалось: ожидающий том, сбой mount или другое число реплик мешают проверке восстановленных данных. relay не завершил rollout с нужным числом реплик и готовыми принадлежащими ему Pod либо наблюдение не удалось: ожидающий том, сбой mount или другое число реплик мешают проверке восстановленных данных.  `kubectl get deployments,pods,replicasets -o wide`.
+
+
+      ### Восстановление обычных файлов на цели {#storage-regular-file-recovery}
+
+
+      Исходные файлы reserve отсутствуют, имеют другой тип, размер или SHA-256 либо exec завершился ошибкой: изменённые байты источника, перекрытый путь данных или недоступный исходный том мешают сохранению исходных данных. Файлы данных relay отсутствуют, имеют другой тип, размер или SHA-256 либо exec завершился ошибкой: причиной могут быть пустой целевой том, неполное копирование, повреждённый источник или подмена файлов. Привязка пустой цели даёт только ёмкость. Восстановите index.html и payload.bin из сохранённого источника без его изменения. Сравните тип обычного файла, размер и SHA-256 со storage-contract.json на цели и источнике; для reserve используйте /archive. Одной правильной HTTP-страницы недостаточно для подтверждения бинарных данных. `kubectl exec deployment/relay -c worker -- stat -c ''%F:%s'' /spool/index.html /spool/payload.bin; kubectl exec deployment/relay -c worker -- sha256sum /spool/index.html /spool/payload.bin`.
+
+
+      ### Публикация смонтированной исходной записи {#storage-mounted-http-publication}
+
+
+      reserve не отдаёт точное исходное тело HTTP либо запрос завершился ошибкой: другой обслуживаемый каталог, изменённый index.html или недоступный процесс источника мешают публикации сохранённой исходной записи. relay не отдаёт точное сохранённое тело HTTP либо запрос завершился ошибкой: другой обслуживаемый каталог, устаревший index.html или недоступный процесс могут скрывать уже скопированные данные.  `kubectl exec deployment/relay -c worker -- wget -qO- http://127.0.0.1:8080; kubectl exec deployment/reserve -c worker -- wget -qO- http://127.0.0.1:8080`.
 
 
       ## Попробуйте
@@ -1797,6 +1893,54 @@ kubernetes-11:
       Worker nie odczytał north-45 z /data/route.txt; exec może zawieść przy niegotowym Podzie albo widoczny jest zły wolumen, ścieżka lub zmienione dane. `kubectl exec deployment/reader -c worker -- cat /data/route.txt`.
 
 
+      ### Zachowanie tożsamości źródła i aplikacji {#storage-preserved-identities}
+
+
+      Pierwotny Deployment lub źródłowy PVC zmienił UID albo jest nieczytelny; usunięcie i odtworzenie zachowuje nazwę, lecz traci tożsamość. Niezwiązany docelowy PVC nie należy do zachowanego zestawu UID.  `kubectl get deployment relay reserve -o yaml; kubectl get pvc reserve -o yaml`.
+
+
+      ### Powiązanie źródła i obserwacje aplikacji {#storage-source-availability}
+
+
+      Zachowany źródłowy PVC nie jest Bound lub obserwacja Pod/ReplicaSet zawiodła; utrata powiązania wolumenu lub niedostępne obiekty Kubernetes blokują potwierdzenie odtworzenia pierwotnych danych.  `kubectl get pvc reserve -o yaml; kubectl get pods,replicasets -o wide`.
+
+
+      ### Zachowanie obrazu worker {#storage-retained-worker-image}
+
+
+      Sprawdzany obraz worker nie odpowiada dostarczonej referencji lub digest; zastąpienie obrazu dla uzyskania odpowiedzi omija wymagane odtworzenie zamontowanych danych.  `kubectl get deployments,pods -o yaml`.
+
+
+      ### Rollout celu przed obserwacją danych {#storage-rollout-observation-gate}
+
+
+      Rollout relay nie zakończył się w 3 sekundy lub obserwator danych zatrzymał się bez markera; przyczyną mogą być niezwiązany cel, niedostępne montowania lub brakujące i błędne dane chronione/API.  `kubectl rollout status deployment/relay --timeout=10s; cat storage-contract.json`.
+
+
+      ### Montowanie danych i źródło tylko do odczytu {#storage-dataset-pvc-mounts}
+
+
+      reserve nie udostępnia zadeklarowanego PVC w ścieżce danych lub źródło jest zapisywalne; błędny claim, brak montowania lub nakładka pliku może ukryć zachowane dane. relay nie udostępnia zadeklarowanego docelowego PVC w ścieżce danych; błędny claim, brak montowania lub nakładka pliku może ukryć dane celu. Źródło reserve używa /archive tylko do odczytu, cel relay używa /spool. Porównaj szablony Deployment i ich własne Pody. W zadeklarowanej ścieżce musi być dokładnie jedno montowanie wymaganego PVC; drugie pod korzeniem danych nie może przesłaniać pliku kontraktu. Zachowaj źródło i oba UID Deployment podczas odtwarzania celu. `cat storage-contract.json; kubectl get deployments,pods -o yaml`.
+
+
+      ### Gotowość pierwotnych aplikacji {#storage-original-workload-readiness}
+
+
+      reserve nie ukończył rollout z wymaganą liczbą replik i gotowymi własnymi Podami lub obserwacja zawiodła; oczekujący wolumen, błąd montowania lub zmieniona liczba replik blokują kontrolę danych. relay nie ukończył rollout z wymaganą liczbą replik i gotowymi własnymi Podami lub obserwacja zawiodła; oczekujący wolumen, błąd montowania lub zmieniona liczba replik blokują kontrolę danych.  `kubectl get deployments,pods,replicasets -o wide`.
+
+
+      ### Odtworzenie zwykłych plików na celu {#storage-regular-file-recovery}
+
+
+      Plików źródła reserve brakuje, mają zły typ, rozmiar lub SHA-256 albo exec zawiódł; zmienione bajty źródła, przesłonięta ścieżka lub nieczytelny pierwotny wolumen blokują zachowanie oryginalnych danych. Plików danych relay brakuje, mają zły typ, rozmiar lub SHA-256 albo exec zawiódł; pusty wolumen celu, niepełna kopia, uszkodzone źródło lub podstawienie plików może psuć odtworzenie. Powiązanie pustego celu daje tylko pojemność. Odtwórz index.html i payload.bin z zachowanego źródła bez jego zmiany. Porównaj zwykły typ pliku, bajty i SHA-256 ze storage-contract.json na celu i źródle; dla reserve użyj /archive. Sama poprawna strona HTTP nie potwierdza odtworzenia danych binarnych. `kubectl exec deployment/relay -c worker -- stat -c ''%F:%s'' /spool/index.html /spool/payload.bin; kubectl exec deployment/relay -c worker -- sha256sum /spool/index.html /spool/payload.bin`.
+
+
+      ### Publikacja zamontowanego rekordu źródła {#storage-mounted-http-publication}
+
+
+      reserve nie serwuje dokładnej pierwotnej treści HTTP lub żądanie zawiodło; inny katalog, zmieniony index.html lub niedostępny proces źródła blokuje publikację zachowanego rekordu źródłowego. relay nie serwuje dokładnej zachowanej treści HTTP lub żądanie zawiodło; inny katalog, stary index.html lub niedostępny proces może ukrywać skopiowane dane.  `kubectl exec deployment/relay -c worker -- wget -qO- http://127.0.0.1:8080; kubectl exec deployment/reserve -c worker -- wget -qO- http://127.0.0.1:8080`.
+
+
       ## Wypróbuj
 
 
@@ -1863,6 +2007,54 @@ kubernetes-11:
       worker no leyó north-45 de /data/route.txt; exec puede fallar si el Pod no está listo o puede verse un volumen, ruta o datos alterados incorrectos. `kubectl exec deployment/reader -c worker -- cat /data/route.txt`.
 
 
+      ### Conservar identidades de origen y aplicaciones {#storage-preserved-identities}
+
+
+      Un Deployment original o PVC de origen cambió UID o no pudo leerse; recrearlo puede conservar nombre y perder identidad. El PVC destino sin enlazar no pertenece al conjunto de UID conservados.  `kubectl get deployment relay reserve -o yaml; kubectl get pvc reserve -o yaml`.
+
+
+      ### Enlace de origen y observación de aplicaciones {#storage-source-availability}
+
+
+      El PVC de origen conservado no está Bound o falló observar Pod/ReplicaSet; perder el enlace del volumen o no acceder a objetos Kubernetes impide acreditar recuperación desde los datos originales.  `kubectl get pvc reserve -o yaml; kubectl get pods,replicasets -o wide`.
+
+
+      ### Conservar imagen worker {#storage-retained-worker-image}
+
+
+      La imagen worker comprobada no coincide con la referencia o digest suministrado; sustituir la imagen para fabricar una respuesta elude la recuperación de los datos montados.  `kubectl get deployments,pods -o yaml`.
+
+
+      ### Rollout destino antes de observar datos {#storage-rollout-observation-gate}
+
+
+      El rollout relay no terminó en 3 segundos o la observación de datos acabó sin marcador; destino sin enlazar, montajes no disponibles o datos protegidos/API ausentes o malformados pueden explicarlo.  `kubectl rollout status deployment/relay --timeout=10s; cat storage-contract.json`.
+
+
+      ### Montajes de datos y origen de solo lectura {#storage-dataset-pvc-mounts}
+
+
+      reserve no expone su PVC declarado en la ruta de datos o el origen permite escritura; claim incorrecto, montaje ausente o archivo superpuesto puede ocultar los datos conservados. relay no expone el PVC destino declarado en su ruta de datos; claim incorrecto, montaje ausente o archivo superpuesto puede ocultar los datos destino. El origen reserve usa /archive de solo lectura; destino relay usa /spool. Compare plantillas Deployment y sus Pods propios. Cada ruta requiere exactamente un montaje del PVC contratado; otro montaje bajo la raíz no debe cubrir un archivo contratado. Conserve datos de origen y ambos UID Deployment al recuperar destino. `cat storage-contract.json; kubectl get deployments,pods -o yaml`.
+
+
+      ### Disponibilidad de aplicaciones originales {#storage-original-workload-readiness}
+
+
+      reserve no completó rollout con las réplicas contratadas y Pods propios listos o falló observarlo; volumen pendiente, montaje fallido o número de réplicas cambiado puede impedir comprobar datos recuperados. relay no completó rollout con las réplicas contratadas y Pods propios listos o falló observarlo; volumen pendiente, montaje fallido o número de réplicas cambiado puede impedir comprobar datos recuperados.  `kubectl get deployments,pods,replicasets -o wide`.
+
+
+      ### Recuperar archivos regulares en destino {#storage-regular-file-recovery}
+
+
+      Faltan archivos de origen reserve, tienen tipo, tamaño o SHA-256 incorrectos, o falló exec; bytes de origen cambiados, ruta superpuesta o volumen original ilegible impiden conservar los datos originales. Faltan archivos de datos relay, tienen tipo, tamaño o SHA-256 incorrectos, o falló exec; volumen vacío, copia incompleta, origen dañado o sustitución de archivos puede romper la recuperación. Enlazar el destino vacío solo aporta capacidad. Recupere index.html y payload.bin del origen conservado sin modificarlo. Compare tipo regular, bytes y SHA-256 con storage-contract.json en ambos; para reserve use /archive. Una página HTTP correcta no acredita por sí sola recuperar datos binarios. `kubectl exec deployment/relay -c worker -- stat -c ''%F:%s'' /spool/index.html /spool/payload.bin; kubectl exec deployment/relay -c worker -- sha256sum /spool/index.html /spool/payload.bin`.
+
+
+      ### Publicar registro de origen montado {#storage-mounted-http-publication}
+
+
+      reserve no sirve el cuerpo HTTP original exacto o falló la petición; otro directorio, index.html alterado o proceso de origen no disponible impide publicar el registro de origen conservado. relay no sirve el cuerpo HTTP conservado exacto o falló la petición; otro directorio, index.html obsoleto o proceso no disponible puede ocultar datos ya copiados.  `kubectl exec deployment/relay -c worker -- wget -qO- http://127.0.0.1:8080; kubectl exec deployment/reserve -c worker -- wget -qO- http://127.0.0.1:8080`.
+
+
       ## Pruébalo
 
 
@@ -1927,6 +2119,54 @@ kubernetes-11:
 
 
       Der worker las nicht north-45 aus /data/route.txt; exec kann bei einem nicht bereiten Pod scheitern oder ein falsches Volume, ein falscher Pfad beziehungsweise veränderte Daten sind sichtbar. `kubectl exec deployment/reader -c worker -- cat /data/route.txt`.
+
+
+      ### Quell- und Workload-Identitäten erhalten {#storage-preserved-identities}
+
+
+      Ein ursprüngliches Deployment oder die Quell-PVC hat ihre UID geändert oder konnte nicht gelesen werden; Neuerstellung kann den Namen erhalten und die Identität verlieren. Die ungebundene Ziel-PVC gehört nicht zu diesen erhaltenen UIDs.  `kubectl get deployment relay reserve -o yaml; kubectl get pvc reserve -o yaml`.
+
+
+      ### Quellbindung und Workload-Beobachtung {#storage-source-availability}
+
+
+      Die erhaltene Quell-PVC ist nicht Bound oder die Pod-/ReplicaSet-Beobachtung schlug fehl; eine verlorene Volumenbindung oder unerreichbare Kubernetes-Objekte verhindern den Nachweis der Wiederherstellung aus dem ursprünglichen Datenbestand.  `kubectl get pvc reserve -o yaml; kubectl get pods,replicasets -o wide`.
+
+
+      ### worker Image erhalten {#storage-retained-worker-image}
+
+
+      Das geprüfte worker Image entspricht nicht mehr der gelieferten Referenz oder dem Digest; ein Austausch des Anwendungsimages für eine passende Antwort umgeht die erforderliche Wiederherstellung der eingebundenen Daten.  `kubectl get deployments,pods -o yaml`.
+
+
+      ### Ziel-Rollout vor Datenbeobachtung {#storage-rollout-observation-gate}
+
+
+      Der Rollout von relay wurde nicht innerhalb von 3 Sekunden abgeschlossen oder die Datenbeobachtung endete ohne benannten Marker; ungebundenes Ziel, nicht verfügbare Mounts oder fehlende beziehungsweise fehlerhafte geschützte/API-Daten können die Ursache sein.  `kubectl rollout status deployment/relay --timeout=10s; cat storage-contract.json`.
+
+
+      ### Daten-Mounts und schreibgeschützte Quelle {#storage-dataset-pvc-mounts}
+
+
+      reserve stellt die deklarierte PVC nicht am Datenpfad bereit oder die Quelle ist beschreibbar; falscher Claim, fehlender Mount oder Dateiüberlagerung kann den erhaltenen Datenbestand verdecken. relay stellt die deklarierte Ziel-PVC nicht am Datenpfad bereit; falscher Claim, fehlender Mount oder Dateiüberlagerung kann den Zieldatenbestand verdecken. Die Quelle reserve nutzt /archive schreibgeschützt; das Ziel relay nutzt /spool. Vergleichen Sie Deployment-Vorlagen und deren eigene Pods. Jeder deklarierte Pfad benötigt genau einen Mount der vertraglichen PVC; ein weiterer Mount unterhalb des Datenwurzelpfads darf keine Vertragsdatei verdecken. Erhalten Sie Quelldaten und beide Deployment-UIDs während der Zielwiederherstellung. `cat storage-contract.json; kubectl get deployments,pods -o yaml`.
+
+
+      ### Bereitschaft ursprünglicher Workloads {#storage-original-workload-readiness}
+
+
+      reserve ist nicht mit den vereinbarten Replikazahlen und bereiten eigenen Pods ausgerollt oder die Beobachtung schlug fehl; ein wartendes Volumen, Mount-Fehler oder geänderte Replikazahl verhindert die Datenprüfung. relay ist nicht mit den vereinbarten Replikazahlen und bereiten eigenen Pods ausgerollt oder die Beobachtung schlug fehl; ein wartendes Volumen, Mount-Fehler oder geänderte Replikazahl verhindert die Datenprüfung.  `kubectl get deployments,pods,replicasets -o wide`.
+
+
+      ### Reguläre Dateien am Ziel wiederherstellen {#storage-regular-file-recovery}
+
+
+      Quelldateien von reserve fehlen, haben falschen Typ, Größe oder SHA-256 oder exec schlug fehl; geänderte Quellbytes, ein überlagerter Datenpfad oder ein unlesbares ursprüngliches Volumen verhindern den Erhalt der Originaldaten. Datendateien von relay fehlen, haben falschen Typ, Größe oder SHA-256 oder exec schlug fehl; ein leeres Zielvolumen, unvollständige Kopie, beschädigte Quelle oder Dateiersetzung kann die Wiederherstellung verletzen. Das Binden des leeren Ziels liefert lediglich Kapazität. Stellen Sie index.html und payload.bin aus der erhaltenen Quelle wieder her, ohne sie zu ändern. Vergleichen Sie regulären Dateityp, Bytegröße und SHA-256 mit storage-contract.json an Ziel und Quelle; verwenden Sie bei reserve /archive. Eine korrekte HTTP-Seite allein belegt keine Wiederherstellung der Binärdaten. `kubectl exec deployment/relay -c worker -- stat -c ''%F:%s'' /spool/index.html /spool/payload.bin; kubectl exec deployment/relay -c worker -- sha256sum /spool/index.html /spool/payload.bin`.
+
+
+      ### Eingebundenen Quelldatensatz veröffentlichen {#storage-mounted-http-publication}
+
+
+      reserve liefert nicht den exakten ursprünglichen HTTP-Inhalt oder die Anfrage schlug fehl; falsches Auslieferungsverzeichnis, geänderte index.html oder ein unerreichbarer Quellprozess verhindert die Veröffentlichung des erhaltenen Quelldatensatzes. relay liefert nicht den exakt erhaltenen HTTP-Inhalt oder die Anfrage schlug fehl; falsches Auslieferungsverzeichnis, veraltete index.html oder ein unerreichbarer Prozess kann bereits kopierte Daten verdecken.  `kubectl exec deployment/relay -c worker -- wget -qO- http://127.0.0.1:8080; kubectl exec deployment/reserve -c worker -- wget -qO- http://127.0.0.1:8080`.
 
 
       ## Probieren Sie es aus
@@ -2723,6 +2963,12 @@ kubernetes-20:
       In quest 014, read current or `--previous` logs from the `route-worker` Pod and save the exact line `route must equal north` in `diagnosis.txt`. The process reads ConfigMap `route`, key `name`, through `ROUTE`. Set that key to `north`, restart `deployment/route-worker`, then verify rollout and `printenv ROUTE`. Changing the ConfigMap alone does not update the environment of a running process.
 
 
+      ### Diagnose the unbound target claim {#storage-target-binding-gate}
+
+
+      The target PVC spool is not Bound, or the policy observer stopped without a named marker; its supplied unknown storage class can leave it Pending, while missing frozen facts, malformed JSON or probe startup failures also prevent observation.  `kubectl get pvc spool reserve -o yaml; kubectl describe pvc spool`.
+
+
       ## Try it
 
 
@@ -2782,6 +3028,12 @@ kubernetes-20:
 
 
       В квесте 014 прочитайте текущие или `--previous` логи Pod `route-worker` и сохраните точную строку `route must equal north` в `diagnosis.txt`. Процесс читает ConfigMap `route`, ключ `name`, через `ROUTE`. Установите ключ в `north`, перезапустите `deployment/route-worker`, затем проверьте rollout и `printenv ROUTE`. Одно изменение ConfigMap не обновляет окружение работающего процесса.
+
+
+      ### Диагностика несвязанного целевого PVC {#storage-target-binding-gate}
+
+
+      Целевой PVC spool не Bound либо проверка политики остановилась без именованного маркера: выданный неизвестный StorageClass оставляет его Pending; отсутствующие сохранённые данные, некорректный JSON или сбой запуска также мешают наблюдению.  `kubectl get pvc spool reserve -o yaml; kubectl describe pvc spool`.
 
 
       ## Попробуйте
@@ -2845,6 +3097,12 @@ kubernetes-20:
       W zadaniu 014 odczytaj bieżące lub `--previous` logi Poda `route-worker` i zapisz dokładny wiersz `route must equal north` w `diagnosis.txt`. Proces odczytuje ConfigMap `route`, klucz `name`, przez `ROUTE`. Ustaw klucz na `north`, uruchom ponownie `deployment/route-worker`, a następnie sprawdź rollout i `printenv ROUTE`. Sama zmiana ConfigMap nie aktualizuje środowiska działającego procesu.
 
 
+      ### Diagnoza niezwiązanego docelowego PVC {#storage-target-binding-gate}
+
+
+      Docelowy PVC spool nie jest Bound lub obserwator polityki zakończył się bez markera; nieznana klasa pamięci może pozostawić go Pending, a brak chronionych danych, błędny JSON lub błąd startu także blokuje obserwację.  `kubectl get pvc spool reserve -o yaml; kubectl describe pvc spool`.
+
+
       ## Wypróbuj
 
 
@@ -2905,6 +3163,12 @@ kubernetes-20:
       En el ejercicio 014, lee los logs actuales o `--previous` del Pod `route-worker` y guarda la línea exacta `route must equal north` en `diagnosis.txt`. El proceso lee la clave `name` del ConfigMap `route` mediante `ROUTE`. Cambia esa clave a `north`, reinicia `deployment/route-worker` y comprueba el rollout y `printenv ROUTE`. Cambiar solo el ConfigMap no actualiza el entorno de un proceso en ejecución.
 
 
+      ### Diagnosticar PVC destino sin enlazar {#storage-target-binding-gate}
+
+
+      El PVC destino spool no está Bound o la prueba de política terminó sin marcador; la clase de almacenamiento desconocida puede dejarlo Pending, y datos protegidos ausentes, JSON inválido o fallos de inicio también impiden observar.  `kubectl get pvc spool reserve -o yaml; kubectl describe pvc spool`.
+
+
       ## Pruébalo
 
 
@@ -2963,6 +3227,12 @@ kubernetes-20:
 
 
       Lies in Aufgabe 014 die aktuellen oder `--previous`-Logs des Pods `route-worker` und speichere die genaue Zeile `route must equal north` in `diagnosis.txt`. Der Prozess liest den Schlüssel `name` der ConfigMap `route` über `ROUTE`. Setze den Schlüssel auf `north`, starte `deployment/route-worker` neu und prüfe Rollout und `printenv ROUTE`. Die Änderung der ConfigMap allein aktualisiert die Umgebung eines laufenden Prozesses nicht.
+
+
+      ### Ungebundene Ziel-PVC diagnostizieren {#storage-target-binding-gate}
+
+
+      Die Ziel-PVC spool ist nicht Bound oder die Richtlinienbeobachtung endete ohne benannten Marker; die gelieferte unbekannte Speicherklasse kann sie Pending lassen, während fehlende geschützte Belege, fehlerhaftes JSON oder Startfehler ebenfalls die Beobachtung verhindern.  `kubectl get pvc spool reserve -o yaml; kubectl describe pvc spool`.
 
 
       ## Probieren Sie es aus
@@ -5827,6 +6097,54 @@ ansible-12:
       app1 did not return north-46 from its banner or SSH failed; a selected deploy task may have overwritten the retained file, or host access is unavailable. `ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" ''cat /srv/site/banner.txt''`. A missing or incorrect DQ_NAMESPACE can also prevent the per-host SSH observation. Repeat the check for app2 and app3; all three banners must retain north-46.
 
 
+      ### Dependencies for repeated role calls {#role-repeated-caller-entry}
+
+
+      The role replay failed to execute successfully; the banner role may omit its base dependency, create the wrong directory, suppress a repeated dependency, or fail under the unprivileged local caller. The supplied contract calls roles/banner twice in one local unprivileged play with different install_root and banner_route values, then repeats the entire play. A base dependency must build each caller directory: allow_duplicates: false can suppress the second dependency even after adding it to banner metadata. Keep the default fleet result while making each caller independent. `cat role-contract.json roles/banner/meta/main.yml roles/base/meta/main.yml; ansible-playbook rollout.yml --list-tasks`.
+
+
+      ### Caller-specific paths and values {#role-caller-specific-output}
+
+
+      A caller output is missing or contains the wrong route; hardcoded /srv/routes or north-ready, or a skipped dependency on the second call, may ignore install_root and banner_route.  `cat roles/banner/defaults/main.yml roles/base/tasks/main.yml roles/banner/tasks/main.yml`.
+
+
+      ### Preserve data outside the owned output {#role-preserve-caller-data}
+
+
+      The retained control file or existing data inside a caller directory changed or disappeared; broad cleanup or replacing an entire output directory can erase data outside the role-owned current file.  `cat roles/base/tasks/main.yml roles/banner/tasks/main.yml`.
+
+
+      ### Converge on the second application {#role-second-run-convergence}
+
+
+      The second replay did not report localhost with zero changed, failed and unreachable counters; unconditional rewrites, non-idempotent tasks or failed host execution may prevent a converged second application. The isolated caller replay requires a localhost recap on its second application, with changed=0, failed=0 and unreachable=0 for every reported host. Successful default fleet runs are useful observations but do not replace the two distinct caller cases. A malformed recap belongs to the observation failure instead. `ansible-playbook rollout.yml; ansible-playbook rollout.yml`.
+
+
+      ### Replay within the observation deadline {#role-bounded-replay}
+
+
+      The role replay subprocess exceeded the remaining observation deadline; slow tasks or waiting for unavailable external services can exhaust the two-run probe budget.  `cat roles/base/tasks/main.yml roles/banner/tasks/main.yml`.
+
+
+      ### Observe caller outputs and recap {#role-replay-observation}
+
+
+      The role replay could not be observed; missing protected contract or caller directories, unreadable output, a malformed recap, tool errors or an exhausted observation budget can prevent evaluating its result.  `cat role-contract.json; command -v ansible-playbook`.
+
+
+      ### Fleet and role probe startup {#role-probe-startup}
+
+
+      The combined fleet/role probe stopped without a detailed marker; a missing workstation directory, Python or its module, or an interrupted bounded SSH group, may prevent reaching the role replay.  `command -v python3; command -v ssh`.
+
+
+      ### Retain default fleet delivery {#role-default-fleet-result}
+
+
+      app1 does not provide north-ready in /srv/routes/current; a missing base dependency or failed fleet delivery can leave the default route absent, and SSH/namespace failures can also prevent observing it.  `ansible fleet -m ansible.builtin.command -a "cat /srv/routes/current"`. Repeat the observation on app2 and app3.
+
+
       ## Try it
 
 
@@ -5901,6 +6219,54 @@ ansible-12:
 
 
       app1 не вернул north-46 из banner либо SSH завершился ошибкой: выбранная задача deploy могла перезаписать файл либо хост недоступен. `ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" ''cat /srv/site/banner.txt''`. Отсутствующий или неверный DQ_NAMESPACE также может помешать наблюдению по SSH для хоста. Повторите проверку для app2 и app3: все три banner должны сохранить north-46.
+
+
+      ### Зависимости повторных вызовов роли {#role-repeated-caller-entry}
+
+
+      Повторное выполнение роли завершилось ошибкой: у banner может отсутствовать зависимость base, создаваться неверный каталог, подавляться повторная зависимость или возникать сбой у локального пользователя без привилегий. Контракт вызывает roles/banner дважды в одном локальном play без привилегий с разными install_root и banner_route, затем повторяет весь play. Зависимость base должна создавать каталог каждого вызова: allow_duplicates: false может подавлять вторую зависимость даже после её добавления в metadata banner. Сохраните результат по умолчанию на хостах и независимость вызовов. `cat role-contract.json roles/banner/meta/main.yml roles/base/meta/main.yml; ansible-playbook rollout.yml --list-tasks`.
+
+
+      ### Пути и значения каждого вызова {#role-caller-specific-output}
+
+
+      Выход вызывающего кода отсутствует или содержит другой маршрут: захардкоженные /srv/routes или north-ready либо пропущенная зависимость второго вызова могут игнорировать install_root и banner_route.  `cat roles/banner/defaults/main.yml roles/base/tasks/main.yml roles/banner/tasks/main.yml`.
+
+
+      ### Сохранение данных помимо результата роли {#role-preserve-caller-data}
+
+
+      Контрольный файл или существующие данные внутри каталога вызывающего кода изменены либо исчезли: широкая очистка или замена всего каталога может удалить данные помимо принадлежащего роли current.  `cat roles/base/tasks/main.yml roles/banner/tasks/main.yml`.
+
+
+      ### Сходимость второго применения {#role-second-run-convergence}
+
+
+      Второй запуск не сообщил localhost с нулевыми changed, failed и unreachable: безусловная перезапись, неидемпотентные задачи или сбой выполнения на хосте могут мешать сходимости. Изолированное выполнение требует recap с localhost во втором применении и changed=0, failed=0, unreachable=0 для каждого указанного хоста. Успешные стандартные запуски полезны для наблюдения, но не заменяют два разных вызова. Некорректный recap относится к сбою наблюдения. `ansible-playbook rollout.yml; ansible-playbook rollout.yml`.
+
+
+      ### Повторное выполнение в пределах лимита {#role-bounded-replay}
+
+
+      Процесс повторного выполнения роли превысил оставшееся время: медленные задачи или ожидание недоступных внешних сервисов могут исчерпать лимит проверки двух запусков.  `cat roles/base/tasks/main.yml roles/banner/tasks/main.yml`.
+
+
+      ### Наблюдение результатов вызовов и recap {#role-replay-observation}
+
+
+      Не удалось наблюдать выполнение роли: отсутствующий защищённый контракт или каталоги вызовов, нечитаемый результат, некорректный recap, ошибки инструментов или исчерпанное время мешают оценке.  `cat role-contract.json; command -v ansible-playbook`.
+
+
+      ### Запуск проверки хостов и роли {#role-probe-startup}
+
+
+      Общая проверка хостов и роли остановилась без подробного маркера: отсутствующий рабочий каталог, Python или модуль либо прерванная SSH-группа с лимитом времени могут мешать запуску роли.  `command -v python3; command -v ssh`.
+
+
+      ### Сохранение доставки по умолчанию на хосты {#role-default-fleet-result}
+
+
+      app1 не предоставляет north-ready в /srv/routes/current: отсутствующая зависимость base или сбой доставки могут оставить маршрут по умолчанию отсутствующим; ошибки SSH или namespace также мешают наблюдению.  `ansible fleet -m ansible.builtin.command -a "cat /srv/routes/current"`. Повторите наблюдение на app2 и app3.
 
 
       ## Попробуйте
@@ -5979,6 +6345,54 @@ ansible-12:
       app1 nie zwrócił north-46 z bannera lub SSH zawiódł; wybrane zadanie deploy mogło nadpisać plik albo host jest niedostępny. `ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" ''cat /srv/site/banner.txt''`. Brak lub błędna wartość DQ_NAMESPACE może też uniemożliwić obserwację hosta przez SSH. Powtórz kontrolę dla app2 i app3; wszystkie trzy bannery muszą zachować north-46.
 
 
+      ### Zależności powtórzonych wywołań roli {#role-repeated-caller-entry}
+
+
+      Ponowne wykonanie roli zakończyło się błędem; banner może nie deklarować zależności base, tworzyć błędny katalog, pomijać powtórzoną zależność lub nie działać dla lokalnego nieuprzywilejowanego wywołania. Kontrakt wywołuje roles/banner dwa razy w jednym lokalnym nieuprzywilejowanym play z różnymi install_root i banner_route, następnie powtarza cały play. Zależność base musi tworzyć katalog każdego wywołania: allow_duplicates: false może pomijać drugą zależność nawet po dodaniu jej do metadanych banner. Zachowaj domyślny wynik hostów i niezależność wywołań. `cat role-contract.json roles/banner/meta/main.yml roles/base/meta/main.yml; ansible-playbook rollout.yml --list-tasks`.
+
+
+      ### Ścieżki i wartości poszczególnych wywołań {#role-caller-specific-output}
+
+
+      Brakuje wyniku wywołania lub zawiera inną trasę; wpisane na stałe /srv/routes lub north-ready albo pominięta zależność drugiego wywołania mogą ignorować install_root i banner_route.  `cat roles/banner/defaults/main.yml roles/base/tasks/main.yml roles/banner/tasks/main.yml`.
+
+
+      ### Zachowanie danych poza wynikiem roli {#role-preserve-caller-data}
+
+
+      Plik kontrolny lub istniejące dane w katalogu wywołania zmieniły się lub zniknęły; szerokie czyszczenie lub wymiana całego katalogu może usunąć dane poza plikiem current należącym do roli.  `cat roles/base/tasks/main.yml roles/banner/tasks/main.yml`.
+
+
+      ### Zbieżność drugiego zastosowania {#role-second-run-convergence}
+
+
+      Drugie wykonanie nie zgłosiło localhost z zerowymi changed, failed i unreachable; bezwarunkowe zapisy, nieidempotentne zadania lub błędy wykonania hosta mogą uniemożliwiać zbieżność. Izolowane wykonanie wymaga recap z localhost przy drugim zastosowaniu i changed=0, failed=0, unreachable=0 dla każdego zgłoszonego hosta. Udane domyślne wykonania pomagają w obserwacji, lecz nie zastępują dwóch różnych wywołań. Błędny recap należy do błędu obserwacji. `ansible-playbook rollout.yml; ansible-playbook rollout.yml`.
+
+
+      ### Wykonanie w limicie obserwacji {#role-bounded-replay}
+
+
+      Proces wykonania roli przekroczył pozostały czas; wolne zadania lub oczekiwanie na niedostępne usługi zewnętrzne mogą wyczerpać limit dwóch wykonań.  `cat roles/base/tasks/main.yml roles/banner/tasks/main.yml`.
+
+
+      ### Obserwacja wyników i recap {#role-replay-observation}
+
+
+      Nie dało się obserwować roli; brak chronionego kontraktu lub katalogów wywołań, nieczytelny wynik, błędny recap, błędy narzędzi lub wyczerpany czas blokują ocenę.  `cat role-contract.json; command -v ansible-playbook`.
+
+
+      ### Start kontroli hostów i roli {#role-probe-startup}
+
+
+      Łączna kontrola hostów i roli zatrzymała się bez szczegółowego markera; brak katalogu roboczego, Python lub modułu albo przerwana ograniczona czasowo grupa SSH może blokować wykonanie roli.  `command -v python3; command -v ssh`.
+
+
+      ### Zachowanie domyślnego dostarczenia na hosty {#role-default-fleet-result}
+
+
+      app1 nie udostępnia north-ready w /srv/routes/current; brak zależności base lub błąd dostarczenia może pozostawić brak domyślnej trasy, a błędy SSH lub namespace też blokują obserwację.  `ansible fleet -m ansible.builtin.command -a "cat /srv/routes/current"`. Powtórz obserwację na app2 i app3.
+
+
       ## Wypróbuj
 
 
@@ -6053,6 +6467,54 @@ ansible-12:
       app1 no devolvió north-46 desde su banner o falló SSH; una tarea deploy seleccionada puede haber sobrescrito el archivo o el host no está disponible. `ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" ''cat /srv/site/banner.txt''`. DQ_NAMESPACE ausente o incorrecto también puede impedir la observación SSH del host. Repita la comprobación en app2 y app3; los tres banners deben conservar north-46.
 
 
+      ### Dependencias de llamadas repetidas a la role {#role-repeated-caller-entry}
+
+
+      La ejecución repetida de la role falló; banner puede omitir la dependencia base, crear otra carpeta, suprimir una dependencia repetida o fallar para la llamada local sin privilegios. El contrato llama roles/banner dos veces en un play local sin privilegios con distintos install_root y banner_route, y repite todo el play. La dependencia base crea cada carpeta: allow_duplicates: false puede suprimir la segunda dependencia incluso tras añadirla a metadata banner. Conserve el resultado predeterminado y la independencia de llamadas. `cat role-contract.json roles/banner/meta/main.yml roles/base/meta/main.yml; ansible-playbook rollout.yml --list-tasks`.
+
+
+      ### Rutas y valores por llamada {#role-caller-specific-output}
+
+
+      Falta una salida de llamada o contiene otra ruta; /srv/routes o north-ready fijos, o una dependencia omitida en la segunda llamada, pueden ignorar install_root y banner_route.  `cat roles/banner/defaults/main.yml roles/base/tasks/main.yml roles/banner/tasks/main.yml`.
+
+
+      ### Conservar datos ajenos a la salida propia {#role-preserve-caller-data}
+
+
+      El archivo de control o datos existentes del directorio cambiaron o desaparecieron; una limpieza amplia o sustituir todo el directorio puede borrar datos ajenos al archivo current de la role.  `cat roles/base/tasks/main.yml roles/banner/tasks/main.yml`.
+
+
+      ### Convergencia de segunda aplicación {#role-second-run-convergence}
+
+
+      La segunda ejecución no informó localhost con changed, failed y unreachable en cero; reescrituras incondicionales, tareas no idempotentes o ejecución fallida pueden impedir convergencia. La prueba aislada exige recap con localhost en la segunda aplicación y changed=0, failed=0, unreachable=0 para cada host informado. Ejecuciones predeterminadas correctas ayudan a observar, pero no sustituyen dos llamadas distintas. Un recap malformado corresponde al fallo de observación. `ansible-playbook rollout.yml; ansible-playbook rollout.yml`.
+
+
+      ### Ejecución dentro del plazo de observación {#role-bounded-replay}
+
+
+      El proceso de la role superó el plazo restante; tareas lentas o esperar servicios externos no disponibles pueden agotar el presupuesto de dos ejecuciones.  `cat roles/base/tasks/main.yml roles/banner/tasks/main.yml`.
+
+
+      ### Observar salidas de llamada y recap {#role-replay-observation}
+
+
+      No se pudo observar la role; contrato protegido o carpetas ausentes, salida ilegible, recap malformado, errores de herramientas o presupuesto agotado impiden evaluar el resultado.  `cat role-contract.json; command -v ansible-playbook`.
+
+
+      ### Inicio de prueba de hosts y role {#role-probe-startup}
+
+
+      La prueba conjunta de hosts/role terminó sin marcador detallado; directorio de trabajo, Python o módulo ausentes, o un grupo SSH acotado interrumpido, pueden impedir llegar a la role.  `command -v python3; command -v ssh`.
+
+
+      ### Conservar entrega predeterminada a hosts {#role-default-fleet-result}
+
+
+      app1 no proporciona north-ready en /srv/routes/current; dependencia base ausente o entrega fallida puede dejar la ruta predeterminada sin crear, y fallos SSH o namespace también impiden observarla.  `ansible fleet -m ansible.builtin.command -a "cat /srv/routes/current"`. Repita la observación en app2 y app3.
+
+
       ## Pruébalo
 
 
@@ -6125,6 +6587,54 @@ ansible-12:
 
 
       app1 lieferte aus dem Banner nicht north-46 oder SSH schlug fehl; eine ausgewählte Deploy-Aufgabe hat möglicherweise die Datei überschrieben oder der Host ist nicht erreichbar. `ssh -n -o BatchMode=yes -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" ''cat /srv/site/banner.txt''`. Ein fehlender oder falscher DQ_NAMESPACE kann auch die SSH-Beobachtung des Hosts verhindern. Wiederholen Sie die Prüfung für app2 und app3; alle drei Banner müssen north-46 behalten.
+
+
+      ### Abhängigkeiten wiederholter Rollenaufrufe {#role-repeated-caller-entry}
+
+
+      Die wiederholte Rollenausführung schlug fehl; banner kann die Abhängigkeit base auslassen, das falsche Verzeichnis erzeugen, eine wiederholte Abhängigkeit unterdrücken oder beim lokalen unprivilegierten Aufruf scheitern. Der Vertrag ruft roles/banner zweimal in einem lokalen unprivilegierten Play mit verschiedenen install_root und banner_route auf und wiederholt dann den gesamten Play. Die Abhängigkeit base muss jedes Aufrufverzeichnis erzeugen: allow_duplicates: false kann die zweite Abhängigkeit auch nach Ergänzung in den banner Metadaten unterdrücken. Erhalten Sie das Standardergebnis auf den Hosts und unabhängige Aufrufe. `cat role-contract.json roles/banner/meta/main.yml roles/base/meta/main.yml; ansible-playbook rollout.yml --list-tasks`.
+
+
+      ### Aufrufspezifische Pfade und Werte {#role-caller-specific-output}
+
+
+      Eine Aufrufausgabe fehlt oder enthält die falsche Route; fest eingetragene /srv/routes oder north-ready beziehungsweise eine beim zweiten Aufruf übersprungene Abhängigkeit können install_root und banner_route ignorieren.  `cat roles/banner/defaults/main.yml roles/base/tasks/main.yml roles/banner/tasks/main.yml`.
+
+
+      ### Daten außerhalb der eigenen Ausgabe erhalten {#role-preserve-caller-data}
+
+
+      Die erhaltene Kontrolldatei oder vorhandene Daten im Aufrufverzeichnis wurden geändert oder entfernt; großflächiges Aufräumen oder Ersetzen des gesamten Verzeichnisses kann Daten außerhalb der rolleneigenen Datei current löschen.  `cat roles/base/tasks/main.yml roles/banner/tasks/main.yml`.
+
+
+      ### Konvergenz beim zweiten Durchlauf {#role-second-run-convergence}
+
+
+      Der zweite Durchlauf meldete localhost nicht mit changed, failed und unreachable gleich null; bedingungsloses Neuschreiben, nicht idempotente Tasks oder fehlgeschlagene Host-Ausführung können Konvergenz verhindern. Die isolierte Aufrufprüfung verlangt beim zweiten Durchlauf einen recap mit localhost sowie changed=0, failed=0 und unreachable=0 für jeden gemeldeten Host. Erfolgreiche Standarddurchläufe helfen bei der Beobachtung, ersetzen jedoch nicht die zwei verschiedenen Aufruffälle. Ein fehlerhafter recap gehört stattdessen zum Beobachtungsfehler. `ansible-playbook rollout.yml; ansible-playbook rollout.yml`.
+
+
+      ### Ausführung innerhalb der Beobachtungsfrist {#role-bounded-replay}
+
+
+      Der Rollenprozess überschritt die verbleibende Frist; langsame Tasks oder Warten auf unerreichbare externe Dienste können das Budget der zwei Durchläufe erschöpfen.  `cat roles/base/tasks/main.yml roles/banner/tasks/main.yml`.
+
+
+      ### Aufrufausgaben und recap beobachten {#role-replay-observation}
+
+
+      Die Rollenausführung konnte nicht beobachtet werden; fehlender geschützter Vertrag oder Aufrufverzeichnisse, unlesbare Ausgabe, fehlerhafter recap, Werkzeugfehler oder ein erschöpftes Beobachtungsbudget verhindern die Auswertung.  `cat role-contract.json; command -v ansible-playbook`.
+
+
+      ### Start der Host- und Rollenprüfung {#role-probe-startup}
+
+
+      Die gemeinsame Host-/Rollenprüfung endete ohne Detailmarker; ein fehlendes Arbeitsverzeichnis, Python oder Modul beziehungsweise eine unterbrochene zeitbegrenzte SSH-Gruppe kann die Rollenausführung verhindern.  `command -v python3; command -v ssh`.
+
+
+      ### Standardbereitstellung auf Hosts erhalten {#role-default-fleet-result}
+
+
+      app1 liefert nicht north-ready in /srv/routes/current; eine fehlende Abhängigkeit base oder fehlgeschlagene Bereitstellung kann die Standardroute fehlen lassen, und SSH-/Namespace-Fehler verhindern ebenfalls die Beobachtung.  `ansible fleet -m ansible.builtin.command -a "cat /srv/routes/current"`. Wiederholen Sie die Beobachtung auf app2 und app3.
 
 
       ## Probieren Sie es aus
@@ -6657,6 +7167,30 @@ terraform-2:
       In quest 039, negative-input plans do not apply configuration. Return to the supplied normal input and run tofu plan -input=false -detailed-exitcode -no-color visibly. Exit 2 means pending changes; exit 1 means planning failed. Review the changes or configuration/provider/state error. The final normal plan must exit 0 without changes.
 
 
+      ### Unsafe replica acceptance and probe startup {#capacity-validation-start}
+
+
+      An invalid replica value was accepted, or the validation probe stopped before its detailed marker; the supplied replicas >= 0 rule admits unsafe values, while missing protected inputs or tool startup can also prevent observation.  `cat main.tf terraform.tfvars capacity-contract.json; tofu plan -input=false -var=replicas=0`.
+
+
+      ### Valid requests and capacity rejection {#capacity-valid-and-unsafe-cases}
+
+
+      A valid request could not plan or an unsafe request planned successfully; incomplete replica bounds, pool validation or the relationship between replicas and available slots may explain it. A blanket plan failure also rejects valid callers. The protected contract requires integer replicas from 1 through 3, a nonempty distinct zone list, positive integer slots_per_zone and replicas no larger than total slots. Check all accepted and rejected cases; a validation that only rejects requests is insufficient. These alternate plans are not applied. `cat capacity-contract.json; tofu validate`.
+
+
+      ### Applied replica file {#capacity-applied-replica-file}
+
+
+      replicas.txt does not contain 2 or cannot be read; the supplied zero-replica configuration may still be applied, or corrected inputs have not been delivered to the managed file.  `cat replicas.txt; cat terraform.tfvars`.
+
+
+      ### Safe request with no pending changes {#capacity-live-no-change-plan}
+
+
+      The plan for replicas=2 did not exit 0; configuration may still need applying, the managed file or recorded values may drift, or invalid pool inputs and tool/provider errors may prevent planning.  `tofu plan -input=false -var=replicas=2 -detailed-exitcode`.
+
+
       ## Try it
 
 
@@ -6747,6 +7281,30 @@ terraform-2:
 
 
       В квесте 039 планы отрицательных примеров не применяют конфигурацию. Вернитесь к обычному входу и запустите tofu plan -input=false -detailed-exitcode -no-color с видимым выводом. Код 2 означает оставшиеся изменения; код 1 — ошибку планирования. Изучите изменения или ошибку конфигурации/провайдера/state. Итоговый обычный план должен дать код 0 без изменений.
+
+
+      ### Принятие опасных значений и запуск проверки {#capacity-validation-start}
+
+
+      Принято недопустимое число реплик либо проверка остановилась до подробного маркера: выданное правило replicas >= 0 пропускает небезопасные значения; защищённые данные или запуск инструментов также могут быть недоступны.  `cat main.tf terraform.tfvars capacity-contract.json; tofu plan -input=false -var=replicas=0`.
+
+
+      ### Допустимые запросы и отказ по ёмкости {#capacity-valid-and-unsafe-cases}
+
+
+      Допустимый запрос не строит план либо небезопасный запрос принят: причиной могут быть неполные ограничения числа реплик, проверки пула или связи реплик с доступными слотами. Безусловный сбой плана отвергает и допустимые вызовы. Защищённый контракт требует целые replicas от 1 до 3, непустой список разных зон, положительные целые slots_per_zone и число реплик не больше суммы слотов. Проверьте все допустимые и недопустимые варианты: только отказов недостаточно. Альтернативные планы не применяются. `cat capacity-contract.json; tofu validate`.
+
+
+      ### Применённый файл реплик {#capacity-applied-replica-file}
+
+
+      replicas.txt не содержит 2 либо недоступен: ещё может быть применена выданная конфигурация с нулём реплик или исправленные входы не доставлены в управляемый файл.  `cat replicas.txt; cat terraform.tfvars`.
+
+
+      ### Безопасный запрос без ожидающих изменений {#capacity-live-no-change-plan}
+
+
+      План для replicas=2 не вернул 0: конфигурацию ещё нужно применить, файл или записанные значения могли разойтись либо некорректный пул и ошибки инструментов или провайдера мешают плану.  `tofu plan -input=false -var=replicas=2 -detailed-exitcode`.
 
 
       ## Попробуйте
@@ -6841,6 +7399,30 @@ terraform-2:
       W zadaniu 039 plany negatywnych wejść nie stosują konfiguracji. Wróć do zwykłego wejścia i uruchom tofu plan -input=false -detailed-exitcode -no-color z widocznym wynikiem. Kod 2 oznacza oczekujące zmiany; kod 1 błąd planowania. Sprawdź zmiany lub błąd konfiguracji/dostawcy/stanu. Końcowy zwykły plan musi zwrócić kod 0 bez zmian.
 
 
+      ### Akceptacja niebezpiecznych replik i start kontroli {#capacity-validation-start}
+
+
+      Zaakceptowano nieprawidłową liczbę replik lub kontrola zatrzymała się przed szczegółowym markerem; dostarczona reguła replicas >= 0 dopuszcza niebezpieczne wartości, a brak chronionych danych lub startu narzędzi też blokuje obserwację.  `cat main.tf terraform.tfvars capacity-contract.json; tofu plan -input=false -var=replicas=0`.
+
+
+      ### Poprawne żądania i odrzucenie ponad pojemność {#capacity-valid-and-unsafe-cases}
+
+
+      Poprawne żądanie nie tworzy planu lub niebezpieczne żądanie przeszło; przyczyną mogą być niepełne granice replik, walidacja puli lub zależność od dostępnych slotów. Bezwarunkowy błąd planu odrzuca też poprawne wywołania. Chroniony kontrakt wymaga całkowitych replicas od 1 do 3, niepustej listy różnych stref, dodatnich całkowitych slots_per_zone i replik nie większych niż suma slotów. Sprawdź wszystkie przypadki akceptowane i odrzucane; same odmowy nie wystarczą. Alternatywnych planów nie stosuje się. `cat capacity-contract.json; tofu validate`.
+
+
+      ### Zastosowany plik replik {#capacity-applied-replica-file}
+
+
+      replicas.txt nie zawiera 2 lub nie da się go odczytać; dostarczona konfiguracja zerowych replik może nadal obowiązywać albo poprawione dane nie trafiły do zarządzanego pliku.  `cat replicas.txt; cat terraform.tfvars`.
+
+
+      ### Bezpieczne żądanie bez oczekujących zmian {#capacity-live-no-change-plan}
+
+
+      Plan dla replicas=2 nie zwrócił 0; konfiguracja może wymagać zastosowania, plik lub zapisane wartości mogą się różnić albo błędna pula i błędy narzędzi lub providera blokują plan.  `tofu plan -input=false -var=replicas=2 -detailed-exitcode`.
+
+
       ## Wypróbuj
 
 
@@ -6931,6 +7513,30 @@ terraform-2:
       En el reto 039, los planes negativos no aplican configuración. Vuelve a la entrada normal y ejecuta tofu plan -input=false -detailed-exitcode -no-color con salida visible. Código 2 indica cambios pendientes; código 1 error de planificación. Revisa cambios o errores de configuración/proveedor/estado. El plan normal final debe salir con 0 sin cambios.
 
 
+      ### Aceptación insegura e inicio de prueba {#capacity-validation-start}
+
+
+      Se aceptó un número de réplicas inválido o la prueba terminó antes del marcador detallado; la regla suministrada replicas >= 0 admite valores inseguros, y entradas protegidas ausentes o fallos de inicio también impiden observar.  `cat main.tf terraform.tfvars capacity-contract.json; tofu plan -input=false -var=replicas=0`.
+
+
+      ### Solicitudes válidas y rechazo por capacidad {#capacity-valid-and-unsafe-cases}
+
+
+      Una solicitud válida no pudo planificarse o una insegura sí; pueden faltar límites de réplicas, validación del pool o relación con los slots disponibles. Un fallo general del plan también rechaza llamadas válidas. El contrato protegido exige replicas enteras de 1 a 3, zonas distintas no vacías, slots_per_zone entero positivo y réplicas no mayores que los slots totales. Compruebe todos los casos válidos e inválidos; rechazar solamente no basta. Los planes alternativos no se aplican. `cat capacity-contract.json; tofu validate`.
+
+
+      ### Archivo de réplicas aplicado {#capacity-applied-replica-file}
+
+
+      replicas.txt no contiene 2 o no puede leerse; puede seguir aplicada la configuración inicial de cero réplicas o las entradas corregidas no se han entregado al archivo gestionado.  `cat replicas.txt; cat terraform.tfvars`.
+
+
+      ### Solicitud segura sin cambios pendientes {#capacity-live-no-change-plan}
+
+
+      El plan para replicas=2 no terminó con 0; puede faltar aplicar configuración, haber drift en el archivo o valores registrados, o entradas de pool y errores de herramientas/proveedor impedir el plan.  `tofu plan -input=false -var=replicas=2 -detailed-exitcode`.
+
+
       ## Pruébalo
 
 
@@ -7019,6 +7625,30 @@ terraform-2:
 
 
       Negative Eingabepläne wenden in Quest 039 keine Konfiguration an. Kehre zur normalen Eingabe zurück und führe tofu plan -input=false -detailed-exitcode -no-color sichtbar aus. Code 2 bedeutet ausstehende Änderungen, Code 1 einen Planungsfehler. Prüfe Änderungen oder Konfigurations-/Provider-/State-Fehler. Der normale Abschlussplan muss ohne Änderungen mit Code 0 enden.
+
+
+      ### Unsichere Replikawerte und Prüfstart {#capacity-validation-start}
+
+
+      Ein ungültiger Replikawert wurde akzeptiert oder die Prüfung endete vor dem Detailmarker; die gelieferte Regel replicas >= 0 lässt unsichere Werte zu, während fehlende geschützte Eingaben oder Werkzeugstartfehler ebenfalls die Beobachtung verhindern.  `cat main.tf terraform.tfvars capacity-contract.json; tofu plan -input=false -var=replicas=0`.
+
+
+      ### Gültige Anfragen und Kapazitätsgrenzen {#capacity-valid-and-unsafe-cases}
+
+
+      Eine gültige Anfrage konnte keinen Plan erzeugen oder eine unsichere Anfrage war erfolgreich; unvollständige Replikagrenzen, Pool-Validierung oder die Beziehung zu verfügbaren Slots können die Ursache sein. Ein pauschaler Planfehler verwirft auch gültige Aufrufe. Der geschützte Vertrag verlangt ganzzahlige replicas von 1 bis 3, eine nichtleere Liste verschiedener Zonen, positive ganzzahlige slots_per_zone und höchstens so viele Replikas wie Slots insgesamt. Prüfen Sie alle gültigen und ungültigen Fälle; ausschließliches Ablehnen reicht nicht. Alternative Pläne werden nicht angewendet. `cat capacity-contract.json; tofu validate`.
+
+
+      ### Angewendete Replikadatei {#capacity-applied-replica-file}
+
+
+      replicas.txt enthält nicht 2 oder ist nicht lesbar; möglicherweise ist noch die gelieferte Null-Replika-Konfiguration angewendet oder korrigierte Eingaben wurden noch nicht in die verwaltete Datei übernommen.  `cat replicas.txt; cat terraform.tfvars`.
+
+
+      ### Sichere Anfrage ohne ausstehende Änderungen {#capacity-live-no-change-plan}
+
+
+      Der Plan für replicas=2 endete nicht mit 0; die Konfiguration muss möglicherweise noch angewendet werden, Datei oder gespeicherte Werte weichen ab, oder ungültige Pool-Eingaben und Werkzeug-/Providerfehler verhindern den Plan.  `tofu plan -input=false -var=replicas=2 -detailed-exitcode`.
 
 
       ## Probieren Sie es aus

@@ -36,12 +36,32 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 test "$(cat replicas.txt)" = 2
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The applied replica file could not be verified: ✗ [DQ:capacity_file]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 tofu plan -input=false -var=replicas=2 -detailed-exitcode >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The safe replica plan did not complete without changes: ✗ [DQ:capacity_plan]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

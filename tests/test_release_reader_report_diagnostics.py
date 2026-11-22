@@ -155,3 +155,19 @@ def test_054_successful_rollout_has_no_failure_marker(tmp_path):
     result = run_check(tmp_path, 54, 2, {"kubectl": "exit 0\n"})
     assert result.returncode == 0
     assert "[DQ:" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("contents,code", [(None, 1), ("0\n", 1), ("2\n", 0)])
+def test_056_observes_applied_replica_file(tmp_path, contents, code):
+    if contents is not None:
+        (tmp_path / "replicas.txt").write_text(contents)
+    result = run_check(tmp_path, 56, 1)
+    assert result.returncode == code
+    assert ("[DQ:capacity_file]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("code", [0, 1, 2, 127])
+def test_056_live_plan_retains_detailed_exit_code(tmp_path, code):
+    result = run_check(tmp_path, 56, 2, {"tofu": f"exit {code}\n"})
+    assert result.returncode == code
+    assert ("[DQ:capacity_plan]" in result.stderr) == (code != 0)
