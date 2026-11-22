@@ -135,12 +135,32 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 kubectl rollout status deployment/board --timeout=3s >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'Private image objective could not be verified: ✗ [DQ:board_rollout]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 test "$(kubectl exec deployment/board -c worker -- wget -qO- http://127.0.0.1:8080)" = north-49
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'Private image objective could not be verified: ✗ [DQ:board_http]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
