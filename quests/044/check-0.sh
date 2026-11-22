@@ -72,6 +72,11 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_fallback_output=$(mktemp)
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
+(
+set -e
 source platform.env
 umask 077
 headers=$(mktemp -d)
@@ -84,8 +89,25 @@ if ! test "$(curl -fsS -H @"$headers/reader" "$VAULT_ADDR/v1/secret/data/dispatc
   failed=1
 fi
 exit "$failed"
+) >"$dq_fallback_output" 2>/dev/null
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_fallback_output"; then
+  printf '%s\n' 'Vault observation inputs could not be prepared: ✗ [DQ:vault_inputs]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
+(
+set -e
+dq_fallback_output=$(mktemp)
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
 (
 set -e
 source platform.env
@@ -108,6 +130,18 @@ for path in secret/data/dispatch secret/data/wrong secret/data/other sys/mounts;
   fi
 done
 exit "$failed"
+) >"$dq_fallback_output" 2>/dev/null
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_fallback_output"; then
+  printf '%s\n' 'Vault observation inputs could not be prepared: ✗ [DQ:vault_inputs]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
