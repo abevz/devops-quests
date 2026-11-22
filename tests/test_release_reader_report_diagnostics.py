@@ -253,3 +253,46 @@ def test_061_observes_service_response(tmp_path, response, code):
     result = run_check(tmp_path, 61, 5, {"kubectl": f"printf '%s' '{response}'\n"})
     assert result.returncode == code
     assert ("[DQ:delivery_http]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("count,code", [(0, 1), (1, 0), (2, 1)])
+def test_062_observes_exactly_one_policy(tmp_path, count, code):
+    result = run_check(tmp_path, 62, 1, {
+        "kubectl": "printf '{}'\n",
+        "jq": f"cat >/dev/null\nprintf {count}\n",
+    })
+    assert result.returncode == code
+    assert ("[DQ:isolation_policy_count]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("response,code", [("north-62", 0), ("retired", 1), ("", 1)])
+def test_062_observes_permitted_caller_response(tmp_path, response, code):
+    result = run_check(tmp_path, 62, 2, {"kubectl": f"printf '%s' '{response}'\n"})
+    assert result.returncode == code
+    assert ("[DQ:isolation_allowed]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("request_status,code", [(0, 1), (1, 0), (7, 0), (127, 0)])
+def test_062_negative_probe_retains_existing_success_semantics(tmp_path, request_status, code):
+    result = run_check(tmp_path, 62, 3, {"kubectl": f"exit {request_status}\n"})
+    # The original condition rejects a successful unwanted request. A failed
+    # command already counts as no success; this wrapper adds no new predicate.
+    assert result.returncode == code
+    assert ("[DQ:isolation_denied]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("index,station", [(3, "depot"), (4, "junction")])
+@pytest.mark.parametrize("value,code", [(None, 1), ("retired", 1), ("north", 0)])
+def test_064_observes_each_station_file(tmp_path, index, station, value, code):
+    if value is not None:
+        (tmp_path / f"{station}.txt").write_text(f"{value}:{station}\n")
+    result = run_check(tmp_path, 64, index)
+    assert result.returncode == code
+    assert (f"[DQ:fanout_{station}]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("code", [0, 1, 2, 127])
+def test_064_live_plan_retains_detailed_exit_code(tmp_path, code):
+    result = run_check(tmp_path, 64, 6, {"tofu": f"exit {code}\n"})
+    assert result.returncode == code
+    assert ("[DQ:fanout_plan]" in result.stderr) == (code != 0)
