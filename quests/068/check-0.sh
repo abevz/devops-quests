@@ -4,27 +4,70 @@ failed=0
 set +e
 (
 set -e
+set +e
+(
+set -e
 source platform.env
 kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" 'def same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url and (.spec.source.path | same_dir("manifests")) and .spec.source.targetRevision=="main"' >/dev/null
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'Application Git source could not be verified: ✗ [DQ:git_source]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 source platform.env
 kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" '.status.sync.status=="Synced" and .status.health.status=="Healthy" and .status.sync.revision==$rev' >/dev/null
 kubectl get application board -o json | jq -e '.spec.syncPolicy.automated.selfHeal==true and .spec.syncPolicy.automated.prune==true' >/dev/null
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'Application health and automation could not be verified: ✗ [DQ:git_health]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 kubectl rollout status deployment/board --timeout=3s >/dev/null
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'Git workload rollout could not be verified: ✗ [DQ:git_rollout]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-68
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'Git workload response could not be verified: ✗ [DQ:git_http]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 source platform.env
@@ -32,6 +75,13 @@ git -C repository fetch origin main >/dev/null 2>&1
 test "$(git -C repository rev-parse origin/main)" = "$(cat release-commit)"
 git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/baseline-commit)" origin/main
 test "$(git -C repository rev-parse origin/main)" != "$(cat /run/dq/facts/0/baseline-commit)"
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'Published descendant revision could not be verified: ✗ [DQ:git_descendant]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (

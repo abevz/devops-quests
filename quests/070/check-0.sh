@@ -4,8 +4,18 @@ failed=0
 set +e
 (
 set -e
+set +e
+(
+set -e
 source platform.env
 kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" '(.spec.source.path | (startswith("/")|not) and ([splits("/") | select(.!="" and .!=".")]==["manifests"])) and .status.sync.status=="Synced" and .status.sync.revision==$rev' >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'First stage Application path and sync could not be verified: ✗ [DQ:secret_git_path]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
