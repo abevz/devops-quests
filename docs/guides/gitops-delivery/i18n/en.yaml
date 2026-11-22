@@ -121,5 +121,87 @@ text: '# Private registry and GitOps recovery
   References: [registry API](https://distribution.github.io/distribution/spec/api/), [private image pulls](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/),
   [Argo CD webhooks](https://argo-cd.readthedocs.io/en/stable/operator-manual/webhook/), [ConfigMap adoption](https://kubernetes.io/docs/tutorials/configuration/updating-configuration-via-a-configmap/).
 
-  '
-source_hash: 9466397956d5c23cc8cfabc51405b8fa7c40a50883cc719c5b534bc09987f2b8
+
+  ### Git check inputs {#git-environment}
+
+
+  Git checks stopped before observing the repository; platform.env may be missing, unreadable or failing when sourced. The committed notices could not be inspected; platform.env, the repository, Git or Python may be unavailable before the per-ref checks run. Run from ~/quest and restore the supplied platform.env if it was removed; sourcing it must succeed before Git is inspected. The probe fallback also covers missing Python or failed Git process startup.
+
+
+  ### Fetching delivery branches {#git-fetch}
+
+
+  Fetching main and release-candidate failed; origin may have the wrong URL, lack access or lack one of these branches. `git -C repository ls-remote --heads origin main release-candidate`.
+
+
+  ### Current branch and working tree {#git-worktree}
+
+
+  The current branch is not main or cannot be read; the repository may still be on release-candidate or a detached HEAD. The working tree has tracked changes or untracked files; an edit may not have been committed or temporary files remain. `git -C repository status --short --branch`.
+
+
+  ### Notice in committed Git objects {#git-committed-notice}
+
+
+  origin/main:notice.txt is unreadable or differs from north-41; main may not have been pushed or the fetched remote ref is stale. HEAD:notice.txt is unreadable or differs from north-41; the candidate commit may not be on local main, even if the working file was edited. `git -C repository show HEAD:notice.txt; git -C repository show origin/main:notice.txt`.
+
+
+  ### Published identity and history {#git-publication-history}
+
+
+  The baseline is missing, invalid or not an ancestor of origin/main; published history may have been replaced instead of extended. HEAD is invalid or differs from origin/main; a local commit may be unpushed or the remote tracking ref has not been refreshed. `git -C repository rev-parse HEAD origin/main; git -C repository merge-base --is-ancestor "$(cat baseline-commit)" origin/main`.
+
+
+  ### Inputs for private workload checks {#registry-observation}
+
+
+  The replica check stopped before reading board; platform.env may be missing, unreadable or fail when sourced. The private workload could not be inspected; environment values, API JSON, Deployment ownership or a unique worker container may be missing or malformed. The credential probe stopped before its detailed checks; platform.env, required registry variables or the Python probe may be unavailable. Load platform.env without printing its passwords. Inspect Deployment board, ReplicaSets and Pods in the bay namespace: active Pods are nonterminal, not deleting, and owned through a controller ReplicaSet belonging to the Deployment UID. Missing or malformed worker or pull-Secret identities may also prevent the detailed checks.
+
+
+  ### Private image in active Pods {#registry-pod-contract}
+
+
+  The worker image differs from PRIVATE_IMAGE in board or its active Pods; a template edit or an older ReplicaSet may still use another image. Always is missing from the board worker or an active Pod; cached-image settings or Pods from an older template can bypass a fresh registry pull. No active board Pod was found or its effective pull Secrets differ from registry-pull alone; template or ServiceAccount changes may have added or omitted a Secret. Compare both the Deployment template and current owned Pods. Changing a template does not change an existing Pod; a new rollout must replace it. ServiceAccount admission can contribute effective imagePullSecrets, so inspect Pod specs as well as board.yaml.
+
+
+  ### Desired private consumer count {#registry-replicas}
+
+
+  The desired replica count is not 1 or board cannot be read; scaling the workload down does not repair private image authentication. `kubectl get deployment board -o jsonpath=''{.spec.replicas}''`.
+
+
+  ### Docker credential document {#registry-credential-document}
+
+
+  registry-pull has no supported Docker credential type; a generic Secret or an unreadable/missing type cannot supply registry credentials. The Docker credential document cannot be decoded; the required data key, base64, JSON or unique JSON fields may be invalid. Use type kubernetes.io/dockerconfigjson with data[".dockerconfigjson"] containing base64 JSON {"auths":{...}}, or kubernetes.io/dockercfg with data[".dockercfg"] containing the registry map directly. Duplicate JSON keys are rejected. Inspect structure without exposing credential values.
+
+
+  ### Registry entry and rotated credentials {#registry-credential-auth}
+
+
+  Authentication data is unreadable or unusable; check the exact registry entry, base64 auth containing a colon, or string username/password fields. The decoded credentials differ from platform.env; registry-pull may still hold the retired password or credentials for another user. The entry key must exactly equal REGISTRY. A nonempty auth field takes precedence over username/password and must decode to the supplied user, a colon and the supplied password; stale auth is not repaired by adding matching separate fields. Updating the Secret does not itself prove a successful new pull; verify rollout and HTTP separately.
+
+
+  ### Private consumer readiness and HTTP {#registry-consumer-health}
+
+
+  board did not complete rollout within 3 seconds; rejected registry credentials, image pull backoff or a failing worker may still block readiness. The worker did not return north-42 at localhost:8080; it may not be running yet, exec may have failed, or its HTTP command or content changed. `kubectl describe pods; kubectl rollout status deployment/board --timeout=10s`.
+
+
+  ### Application source and destination {#argo-source-contract}
+
+
+  The Application source or destination does not match the supplied release, or its inputs cannot be read; the initial path retired does not point to manifests on main. `kubectl get application station -o jsonpath=''{.spec}''; cat application.yaml repository/manifests/board.yaml`. Check project station, the supplied GIT_URL, targetRevision main, relative directory manifests and the bay namespace. The local cluster is selected either by server https://kubernetes.default.svc with no name, or by name in-cluster with no server. Absolute paths and parent traversal do not identify the required directory.
+
+
+  ### Observed revision, sync and health {#argo-observed-revision}
+
+
+  Synced and Healthy at remote main could not be verified; reconciliation may still be blocked by the source path, repository access, unhealthy resources or an unreadable remote ref. `git -C repository ls-remote origin refs/heads/main; kubectl get application station -o jsonpath=''{.status}''; kubectl describe application station`. Loading platform.env or starting Git, kubectl or jq may also have failed before status could be observed.
+
+
+  ### Consumer rollout and response {#argo-consumer-health}
+
+
+  board rollout failed or exceeded 3 seconds; Argo may not have applied the manifests yet or the worker may still be unavailable. The worker response was not north-43 or exec failed; the Git-managed workload may be absent, unready or serving changed content. `kubectl rollout status deployment/board --timeout=10s; kubectl exec deployment/board -c worker -- wget -qO- http://127.0.0.1:8080`.'
+source_hash: 8458eecfa3253614845749fb481150678912a0f851a6bfe9b4cc2c0eeddde6f4
