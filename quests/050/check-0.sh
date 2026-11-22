@@ -4,11 +4,21 @@ failed=0
 set +e
 (
 set -e
+set +e
+(
+set -e
 source platform.env
 git -C repository fetch origin main >/dev/null 2>&1
 test "$(git -C repository branch --show-current)" = main
 test "$(git -C repository rev-parse HEAD)" = "$(git -C repository rev-parse origin/main)"
 test -z "$(git -C repository status --porcelain)"
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'Private Git delivery could not be verified: ✗ [DQ:git_state]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -54,9 +64,19 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 source platform.env
 git -C repository fetch origin main >/dev/null 2>&1
 git -C repository merge-base --is-ancestor "$(cat baseline-commit)" origin/main
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'Private Git delivery could not be verified: ✗ [DQ:git_ancestry]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

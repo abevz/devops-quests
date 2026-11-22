@@ -20,13 +20,29 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 50))
+@pytest.mark.parametrize("quest", range(1, 53))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
         for goal in stage["objectives"]:
             check = goal["check"]
             emitted = set(MARKER.findall(check))
+            for body in re.findall(r"<<'DQ_PROPERTY'\n(.*?)\nDQ_PROPERTY(?:\n|$)", check, re.S):
+                # Source-declared marker arguments; phase reachability is audited
+                # against the actual producer/failover checks, not locale keys.
+                for node in ast.walk(ast.parse(body)):
+                    positions = {"require": 1, "command": 1, "document": 1, "get": 2}
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                        position = positions.get(node.func.id)
+                        if position is not None and len(node.args) > position:
+                            value = node.args[position]
+                            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                                emitted.add(value.value)
+                    if isinstance(node, ast.FunctionDef) and node.name == "get":
+                        emitted.update(
+                            value.value for value in node.args.defaults
+                            if isinstance(value, ast.Constant) and isinstance(value.value, str)
+                        )
             if "[DQ:cap_${path//" in check:
                 paths, = re.findall(r"for path in ([a-z_/ ]+); do", check)
                 emitted.update("cap_" + path.replace("/", "_") for path in paths.split())

@@ -10,12 +10,12 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def objective(number, index):
+def objective(number, index, stage=0):
     quest = yaml.safe_load((ROOT / f"quests/{number:03}/quest.yaml").read_text())
-    return quest["stages"][0]["objectives"][index]["check"]
+    return quest["stages"][stage]["objectives"][index]["check"]
 
 
-def run_check(tmp_path, number, index, commands=None):
+def run_check(tmp_path, number, index, commands=None, *, stage=0):
     bin_path = tmp_path / "bin"
     bin_path.mkdir()
     for name, body in (commands or {}).items():
@@ -23,7 +23,7 @@ def run_check(tmp_path, number, index, commands=None):
         command.write_text("#!/bin/bash\n" + body)
         command.chmod(0o755)
     return subprocess.run(
-        ["bash", "-euo", "pipefail", "-c", objective(number, index)],
+        ["bash", "-euo", "pipefail", "-c", objective(number, index, stage=stage)],
         cwd=tmp_path,
         env={**os.environ, "PATH": f"{bin_path}:{os.environ['PATH']}"},
         capture_output=True,
