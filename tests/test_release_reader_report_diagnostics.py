@@ -327,3 +327,73 @@ def test_067_observes_local_worker_response(tmp_path, response, code):
     result = run_check(tmp_path, 67, 5, {"kubectl": f"printf '%s' '{response}'\n"})
     assert result.returncode == code
     assert ("[DQ:helm_http]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("number,stage,index,marker", [
+    (68, 0, 0, "git_source"), (68, 0, 1, "git_health"),
+    (68, 0, 4, "git_descendant"), (70, 0, 0, "secret_git_path"),
+    (70, 1, 0, "secret_git_health"), (70, 1, 1, "secret_rollout"),
+    (70, 1, 3, "secret_value"), (70, 1, 4, "secret_capabilities"),
+    (70, 1, 5, "secret_http"),
+])
+def test_068_070_missing_environment_stops_before_external_commands(
+    tmp_path, number, stage, index, marker,
+):
+    result = run_check(tmp_path, number, index, {
+        "kubectl": "touch external-called\n", "git": "touch external-called\n",
+        "curl": "touch external-called\n",
+    }, stage=stage)
+    assert result.returncode == 1
+    assert result.stderr.count(f"[DQ:{marker}]") == 1
+    assert not (tmp_path / "external-called").exists()
+
+
+@pytest.mark.parametrize("number,stage,index,marker", [
+    (68, 0, 2, "git_rollout"), (70, 1, 1, "secret_rollout"),
+])
+@pytest.mark.parametrize("code", [0, 1, 7, 127])
+def test_068_070_rollout_retains_exit_status(tmp_path, number, stage, index, marker, code):
+    (tmp_path / "platform.env").touch()
+    result = run_check(tmp_path, number, index, {"kubectl": f"exit {code}\n"}, stage=stage)
+    assert result.returncode == code
+    assert (f"[DQ:{marker}]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("number,stage,index,marker", [
+    (68, 0, 0, "git_source"), (68, 0, 1, "git_health"),
+    (70, 0, 0, "secret_git_path"), (70, 1, 0, "secret_git_health"),
+])
+@pytest.mark.parametrize("api_code,json_code,expected", [(7, 0, 7), (0, 4, 4), (0, 0, 0)])
+def test_068_070_application_pipeline_retains_both_failures(
+    tmp_path, number, stage, index, marker, api_code, json_code, expected,
+):
+    (tmp_path / "platform.env").write_text("GIT_URL=provided\n")
+    (tmp_path / "release-commit").write_text("abc\n")
+    result = run_check(tmp_path, number, index, {
+        "kubectl": f"exit {api_code}\n", "jq": f"cat >/dev/null\nexit {json_code}\n",
+    }, stage=stage)
+    assert result.returncode == expected
+    assert (f"[DQ:{marker}]" in result.stderr) == (expected != 0)
+
+
+@pytest.mark.parametrize("number,stage,marker", [(68, 0, "git_http"), (70, 1, "secret_http")])
+@pytest.mark.parametrize("correct", [True, False])
+def test_068_070_observes_service_body(tmp_path, number, stage, marker, correct):
+    (tmp_path / "platform.env").touch()
+    index = 3 if number == 68 else 5
+    response = f"north-{number}" if correct else "other"
+    result = run_check(tmp_path, number, index, {"kubectl": f"printf %s {response}\n"}, stage=stage)
+    assert result.returncode == (0 if correct else 1)
+    assert (f"[DQ:{marker}]" in result.stderr) == (not correct)
+
+
+@pytest.mark.parametrize("transport,json_status,expected", [(7, 0, 7), (0, 1, 1), (0, 0, 0)])
+def test_070_capabilities_pipeline_retains_transport_and_denial_semantics(
+    tmp_path, transport, json_status, expected,
+):
+    (tmp_path / "platform.env").write_text("VAULT_READER_TOKEN=provided\nVAULT_ADDR=http://provided\n")
+    result = run_check(tmp_path, 70, 4, {
+        "curl": f"exit {transport}\n", "jq": f"cat >/dev/null\nexit {json_status}\n",
+    }, stage=1)
+    assert result.returncode == expected
+    assert ("[DQ:secret_capabilities]" in result.stderr) == (expected != 0)

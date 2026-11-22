@@ -21,7 +21,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 68))
+@pytest.mark.parametrize("quest", range(1, 71))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -47,6 +47,7 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
             for delimiter, function, position in (
                 ("DQ_HANDOVER", "reject", 0),
                 ("DQ_GIT_ACCESS", "reject", 0),
+                ("DQ_PUBLICATION", "reject", 0),
                 ("DQ_ISOLATION_MEMBERSHIP", "require", 1),
                 ("DQ_PROFILE_SCOPE", "require", 1),
                 ("DQ_ROLE_CAPABILITY", "require", 1),

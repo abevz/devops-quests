@@ -8,8 +8,18 @@ stages:
   objectives:
   - text: stages.0.objectives.0.text
     check: |-
+      set +e
+      (
+      set -e
       source platform.env
       kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" '(.spec.source.path | (startswith("/")|not) and ([splits("/") | select(.!="" and .!=".")]==["manifests"])) and .status.sync.status=="Synced" and .status.sync.revision==$rev' >/dev/null
+      )
+      code=$?
+      set -e
+      if [ "$code" -ne 0 ]; then
+        printf '%s\n' 'First stage Application path and sync could not be verified: ✗ [DQ:secret_git_path]' >&2
+        exit "$code"
+      fi
   - text: stages.0.objectives.1.text
     check: |-
       dq_probe_output=$(mktemp)
@@ -65,12 +75,32 @@ stages:
   objectives:
   - text: stages.1.objectives.0.text
     check: |-
+      set +e
+      (
+      set -e
       source platform.env
       kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" '.spec.source.repoURL==$url and (.spec.source.path | (startswith("/")|not) and ([splits("/") | select(.!="" and .!=".")]==["manifests"])) and .spec.source.targetRevision=="main" and .status.sync.status=="Synced" and .status.health.status=="Healthy" and .status.sync.revision==$rev' >/dev/null
+      )
+      code=$?
+      set -e
+      if [ "$code" -ne 0 ]; then
+        printf '%s\n' 'Second stage Application source and health could not be verified: ✗ [DQ:secret_git_health]' >&2
+        exit "$code"
+      fi
   - text: stages.1.objectives.1.text
     check: |-
+      set +e
+      (
+      set -e
       source platform.env
       kubectl rollout status deployment/board --timeout=3s >/dev/null
+      )
+      code=$?
+      set -e
+      if [ "$code" -ne 0 ]; then
+        printf '%s\n' 'Secret workload rollout could not be verified: ✗ [DQ:secret_rollout]' >&2
+        exit "$code"
+      fi
   - text: stages.1.objectives.2.text
     keep: true
     check: |-
@@ -125,16 +155,46 @@ stages:
       test "$dq_probe_status" -eq 0
   - text: stages.1.objectives.3.text
     check: |-
+      set +e
+      (
+      set -e
       source platform.env
       test "$(kubectl get secret route-secret -o jsonpath='{.data.value}' | base64 -d)" = north-secret
+      )
+      code=$?
+      set -e
+      if [ "$code" -ne 0 ]; then
+        printf '%s\n' 'Published Secret value could not be verified: ✗ [DQ:secret_value]' >&2
+        exit "$code"
+      fi
   - text: stages.1.objectives.4.text
     check: |-
+      set +e
+      (
+      set -e
       source platform.env
       curl -fsS -H "X-Vault-Token: $VAULT_READER_TOKEN" -H 'Content-Type: application/json' --request POST --data '{"paths":["secret/data/dispatch","secret/data/unrelated","sys/mounts"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq -e '."secret/data/dispatch"==["read"] and ."secret/data/unrelated"==["deny"] and ."sys/mounts"==["deny"]' >/dev/null
+      )
+      code=$?
+      set -e
+      if [ "$code" -ne 0 ]; then
+        printf '%s\n' 'Vault path capabilities could not be verified: ✗ [DQ:secret_capabilities]' >&2
+        exit "$code"
+      fi
   - text: stages.1.objectives.5.text
     check: |-
+      set +e
+      (
+      set -e
       source platform.env
       test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-70
+      )
+      code=$?
+      set -e
+      if [ "$code" -ne 0 ]; then
+        printf '%s\n' 'Secret workload response could not be verified: ✗ [DQ:secret_http]' >&2
+        exit "$code"
+      fi
 hints:
 - text: hints.0.text
   guide: gitops-delivery

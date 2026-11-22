@@ -158,3 +158,20 @@ unseal-shares.json не является читаемым JSON-массивом:
 ### Учётные данные и кэш исходного потребителя {#sealed-original-consumer-adoption}
 
 Исходный потребитель не подтвердил одобренную публикацию Vault с приватной идентичностью reader: файл ещё содержит выданный manager или кэш ошибки не обновлён; изменённые процесс, программа, конфигурация, хранение токена или недоступные наблюдения также могут быть причиной. Выданное приложение запускается при sealed Vault, а token_file исходно содержит manager. Оно читает конфигурацию при запуске или SIGHUP; запросы не обновляют кэш. Исправьте конфигурацию с точными полями url/path/token_file и обычный файл reader, принадлежащий UID 1000, с режимом 0600 и защищённым fingerprint; пути допустимы относительные и абсолютные. После исправления отправьте SIGHUP существующему PID, сохранив процесс, программу и привилегии. Ответ сохраняет источник и путь Vault, SHA-256 публикации, целую версию 1 и ready=true. `cat consumer/source.json consumer/README.md; curl -fsS --max-time 3 http://127.0.0.1:18081/status`.
+
+
+### Причина и наблюдение (070, secret_value) {#secret-vault-to-kubernetes-publication}
+
+Исправление политики Vault само не доставляет значение в Kubernetes; выданный sync-secret.sh должен прочитать и опубликовать route-secret/value. Первая стадия исправляет путь Application; вторая исправляет выданную политику reader и публикует Secret готовым sync-secret.sh. Верная политика сама не создаёт объект Kubernetes. Наблюдайте из ~/quest после загрузки platform.env.
+
+```bash
+kubectl get secret route-secret -o json | jq '(.data.value | @base64d)=="north-secret"'
+```
+
+### Причина и наблюдение (070, secret_capabilities) {#secret-reader-exact-path-capabilities}
+
+Выданная политика reader обращается к неверному пути KV-v2 либо даёт лишний доступ; нужны read на secret/data/dispatch и deny на secret/data/unrelated и sys/mounts. Первая стадия исправляет путь Application; вторая исправляет выданную политику reader и публикует Secret готовым sync-secret.sh. Верная политика сама не создаёт объект Kubernetes. Наблюдайте из ~/quest после загрузки platform.env.
+
+```bash
+curl -fsS -H "X-Vault-Token: $VAULT_READER_TOKEN" -H "Content-Type: application/json" --request POST --data '{"paths":["secret/data/dispatch","secret/data/unrelated","sys/mounts"]}' "$VAULT_ADDR/v1/sys/capabilities-self"
+```
