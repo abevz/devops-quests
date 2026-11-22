@@ -38,17 +38,47 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 test "$(cat timetable.txt)" = 3
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The timetable content could not be verified: ✗ [DQ:timetable_content]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 tofu output -json departures | jq -e '.==3' >/dev/null
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The applied departures output could not be verified: ✗ [DQ:departures_output]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 tofu plan -input=false -detailed-exitcode -no-color >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The normal-input plan did not finish without changes: ✗ [DQ:validation_plan]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
