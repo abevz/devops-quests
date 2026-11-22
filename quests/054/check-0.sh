@@ -172,12 +172,32 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 test "$(kubectl exec deployment/relay -c worker -- printenv ROUTE)" = north
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The current route could not be verified: ✗ [DQ:handover_route]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 kubectl rollout status deployment/relay --timeout=3s >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The managed workload rollout could not be verified: ✗ [DQ:handover_rollout]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

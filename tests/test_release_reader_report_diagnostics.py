@@ -126,3 +126,32 @@ def test_035_observes_workstation_safety_record(tmp_path, text, good):
     result = run_check(tmp_path, 35, 0)
     assert result.returncode == (0 if good else 1)
     assert ("[DQ:safety_record]" in result.stderr) == (not good)
+
+
+@pytest.mark.parametrize("code", [0, 1, 2, 127])
+def test_053_live_plan_retains_detailed_exit_code(tmp_path, code):
+    result = run_check(tmp_path, 53, 2, {"tofu": f"exit {code}\n"})
+    assert result.returncode == code
+    assert ("[DQ:module_plan]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("route,code", [("north", 0), ("south", 1), ("", 1)])
+def test_054_observes_current_process_route(tmp_path, route, code):
+    result = run_check(tmp_path, 54, 1, {"kubectl": f"printf '%s' '{route}'\n"})
+    assert result.returncode == code
+    assert ("[DQ:handover_route]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("index,marker", [(1, "handover_route"), (2, "handover_rollout")])
+@pytest.mark.parametrize("code", [1, 7, 127])
+def test_054_failed_observation_is_explained(tmp_path, index, marker, code):
+    result = run_check(tmp_path, 54, index, {"kubectl": f"exit {code}\n"})
+    # The route objective is a test of command substitution; its status is 1.
+    assert result.returncode == (1 if index == 1 else code)
+    assert f"[DQ:{marker}]" in result.stderr
+
+
+def test_054_successful_rollout_has_no_failure_marker(tmp_path):
+    result = run_check(tmp_path, 54, 2, {"kubectl": "exit 0\n"})
+    assert result.returncode == 0
+    assert "[DQ:" not in result.stdout + result.stderr
