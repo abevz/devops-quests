@@ -113,7 +113,17 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 helm history board -o json | jq -e 'length>=3 and .[-1].status=="deployed"' >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The required deployed release history could not be verified: ✗ [DQ:helm_history]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -290,12 +300,32 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 kubectl rollout status deployment/board --timeout=3s >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The release workload rollout could not be verified: ✗ [DQ:helm_rollout]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080)" = north-67
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The release worker response could not be verified: ✗ [DQ:helm_http]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

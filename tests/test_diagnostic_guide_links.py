@@ -21,14 +21,14 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 65))
+@pytest.mark.parametrize("quest", range(1, 68))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
         for goal in stage["objectives"]:
             check = goal["check"]
             emitted = set(MARKER.findall(check))
-            for body in re.findall(r"<<'DQ_PROPERTY'\n(.*?)\nDQ_PROPERTY(?:\n|$)", check, re.S):
+            for _, body in re.findall(r"<<'(DQ_PROPERTY|DQ_RELEASE_BUNDLE)'\n(.*?)\n\1(?:\n|$)", check, re.S):
                 # Source-declared marker arguments; phase reachability is audited
                 # against the actual producer/failover checks, not locale keys.
                 for node in ast.walk(ast.parse(body)):

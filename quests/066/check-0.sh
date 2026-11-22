@@ -4,7 +4,17 @@ failed=0
 set +e
 (
 set -e
+set +e
+(
+set -e
 jq -e --slurpfile c /run/dq/facts/0/release-catalog.json '(.delete|type)=="array" and (.delete|unique)==[$c[0].obsolete]' retention.json >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The approved retention selection could not be verified: ✗ [DQ:retention_plan]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
