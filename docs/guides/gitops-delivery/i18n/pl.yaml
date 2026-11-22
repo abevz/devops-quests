@@ -113,5 +113,87 @@ text: '# Naprawa prywatnego rejestru i GitOps
   Dokumentacja: [API registry](https://distribution.github.io/distribution/spec/api/), [prywatne obrazy](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/),
   [webhook Argo CD](https://argo-cd.readthedocs.io/en/stable/operator-manual/webhook/), [przyjęcie ConfigMap](https://kubernetes.io/docs/tutorials/configuration/updating-configuration-via-a-configmap/).
 
-  '
-source_hash: 9466397956d5c23cc8cfabc51405b8fa7c40a50883cc719c5b534bc09987f2b8
+
+  ### Dane wejściowe kontroli Git {#git-environment}
+
+
+  Kontrola Git zatrzymała się przed odczytem repozytorium; platform.env może nie istnieć, być nieczytelny lub kończyć się błędem podczas ładowania. Nie udało się sprawdzić zatwierdzonych komunikatów; platform.env, repozytorium, Git lub Python mogą być niedostępne przed kontrolą referencji. Pracuj w ~/quest i przywróć dostarczony platform.env, jeśli został usunięty; plik musi załadować się przed kontrolą Git. Fallback obejmuje też brak Pythona lub błąd uruchomienia Git.
+
+
+  ### Pobieranie gałęzi dostarczania {#git-fetch}
+
+
+  Pobranie main i release-candidate nie powiodło się; origin może mieć błędny URL, brak dostępu lub brak jednej z gałęzi. `git -C repository ls-remote --heads origin main release-candidate`.
+
+
+  ### Bieżąca gałąź i drzewo robocze {#git-worktree}
+
+
+  Bieżąca gałąź nie jest main lub nie można jej odczytać; repozytorium może nadal być na release-candidate albo w stanie detached HEAD. Drzewo robocze ma zmiany lub nieśledzone pliki; edycja mogła nie zostać zatwierdzona albo pozostały pliki tymczasowe. `git -C repository status --short --branch`.
+
+
+  ### Komunikat w zatwierdzonych obiektach Git {#git-committed-notice}
+
+
+  origin/main:notice.txt jest nieczytelny lub różni się od north-41; main mógł nie zostać wysłany albo pobrana referencja jest nieaktualna. HEAD:notice.txt jest nieczytelny lub różni się od north-41; lokalny main może nie zawierać zatwierdzenia kandydata mimo edycji pliku roboczego. `git -C repository show HEAD:notice.txt; git -C repository show origin/main:notice.txt`.
+
+
+  ### Opublikowany commit i historia {#git-publication-history}
+
+
+  Punkt bazowy nie istnieje, jest nieprawidłowy lub nie jest przodkiem origin/main; opublikowana historia mogła zostać zastąpiona zamiast rozszerzona. HEAD jest nieprawidłowy lub różni się od origin/main; lokalny commit mógł nie zostać wysłany albo referencja zdalna nie została odświeżona. `git -C repository rev-parse HEAD origin/main; git -C repository merge-base --is-ancestor "$(cat baseline-commit)" origin/main`.
+
+
+  ### Dane kontroli prywatnej aplikacji {#registry-observation}
+
+
+  Kontrola replik zatrzymała się przed odczytem board; platform.env może nie istnieć, być nieczytelny lub kończyć się błędem podczas ładowania. Nie udało się sprawdzić prywatnej aplikacji; zmienne środowiska, JSON API, właściciele Deployment lub jednoznaczny kontener worker mogą nie istnieć albo być nieprawidłowe. Kontrola poświadczeń zatrzymała się przed szczegółową diagnostyką; platform.env, zmienne rejestru lub Python mogą być niedostępne. Załaduj platform.env bez wypisywania haseł. Sprawdź Deployment board, ReplicaSety i Pody w przestrzeni bay: aktywne Pody nie są zakończone ani usuwane i należą do Deployment przez kontrolujący ReplicaSet według UID. Brak lub błędna tożsamość worker albo pull Secret może przerwać szczegółowe kontrole.
+
+
+  ### Prywatny obraz w aktywnych Podach {#registry-pod-contract}
+
+
+  Obraz worker w board lub aktywnych Podach różni się od PRIVATE_IMAGE; szablon mógł zostać zmieniony albo starszy ReplicaSet nadal używa innego obrazu. Worker w board lub aktywnym Podzie nie ma Always; ustawienia pamięci podręcznej lub Pody ze starszego szablonu mogą omijać nowe pobranie z rejestru. Nie znaleziono aktywnego Poda board lub jego efektywne pull Secrets różnią się od samego registry-pull; szablon lub ServiceAccount mógł dodać albo pominąć Secret. Porównaj szablon Deployment i jego aktualne Pody. Edycja szablonu nie zmienia istniejącego Poda; nowy rollout musi go zastąpić. ServiceAccount może dodać efektywne imagePullSecrets przy tworzeniu, więc sprawdź specyfikacje Podów oraz board.yaml.
+
+
+  ### Żądana liczba prywatnych odbiorców {#registry-replicas}
+
+
+  Żądana liczba replik nie wynosi 1 lub board jest nieczytelny; skalowanie w dół nie naprawia uwierzytelniania prywatnego obrazu. `kubectl get deployment board -o jsonpath=''{.spec.replicas}''`.
+
+
+  ### Dokument poświadczeń Docker {#registry-credential-document}
+
+
+  registry-pull nie ma obsługiwanego typu poświadczeń Docker; ogólny Secret lub brak czytelnego typu nie zapewnia danych logowania do rejestru. Nie można zdekodować dokumentu poświadczeń Docker; wymagany klucz data, base64, JSON lub unikalność pól JSON mogą być nieprawidłowe. Typ kubernetes.io/dockerconfigjson wymaga data[".dockerconfigjson"] z base64 JSON {"auths":{...}}; kubernetes.io/dockercfg wymaga data[".dockercfg"] z bezpośrednią mapą rejestrów. Powtórzone klucze JSON są odrzucane. Sprawdzaj strukturę bez ujawniania wartości poświadczeń.
+
+
+  ### Wpis rejestru i zmienione poświadczenia {#registry-credential-auth}
+
+
+  Dane uwierzytelniania są nieczytelne lub bezużyteczne; sprawdź dokładny wpis rejestru, base64 auth z dwukropkiem lub tekstowe pola username/password. Zdekodowane poświadczenia różnią się od platform.env; registry-pull może nadal zawierać stare hasło lub dane innego użytkownika. Klucz wpisu musi dokładnie odpowiadać REGISTRY. Niepuste auth ma pierwszeństwo przed username/password i musi dekodować się do dostarczonego użytkownika, dwukropka i hasła; dodanie osobnych pól nie naprawia starego auth. Aktualizacja Secret nie dowodzi nowego pobrania; sprawdź oddzielnie rollout i HTTP.
+
+
+  ### Gotowość i HTTP prywatnego odbiorcy {#registry-consumer-health}
+
+
+  board nie zakończył rollout w 3 sekundy; odrzucone poświadczenia rejestru, ponawianie pobrania obrazu lub awaria worker mogą blokować gotowość. Worker nie zwrócił north-42 na localhost:8080; może jeszcze nie działać, exec mógł się nie udać lub zmieniono polecenie HTTP albo treść. `kubectl describe pods; kubectl rollout status deployment/board --timeout=10s`.
+
+
+  ### Źródło i cel Application {#argo-source-contract}
+
+
+  Źródło lub cel Application nie odpowiada dostarczonemu wydaniu albo dane są nieczytelne; początkowa ścieżka retired nie wskazuje manifests na main. `kubectl get application station -o jsonpath=''{.spec}''; cat application.yaml repository/manifests/board.yaml`. Sprawdź project station, dostarczony GIT_URL, targetRevision main, względny katalog manifests i przestrzeń bay. Lokalny klaster wybiera server https://kubernetes.default.svc bez name albo name in-cluster bez server. Ścieżki absolutne i przejścia do katalogu nadrzędnego nie wskazują wymaganego katalogu.
+
+
+  ### Obserwowana rewizja, synchronizacja i kondycja {#argo-observed-revision}
+
+
+  Nie potwierdzono Synced i Healthy na zdalnym main; uzgadnianie może blokować ścieżka źródła, dostęp do repozytorium, niezdrowe zasoby lub nieczytelna referencja zdalna. `git -C repository ls-remote origin refs/heads/main; kubectl get application station -o jsonpath=''{.status}''; kubectl describe application station`. Ładowanie platform.env lub uruchomienie Git, kubectl albo jq mogło też zakończyć się błędem przed odczytem stanu.
+
+
+  ### Rollout i odpowiedź odbiorcy {#argo-consumer-health}
+
+
+  Rollout board nie powiódł się lub przekroczył 3 sekundy; Argo mógł jeszcze nie zastosować manifestów albo worker pozostaje niedostępny. Odpowiedź worker nie była north-43 albo exec się nie powiódł; aplikacja zarządzana przez Git może nie istnieć, nie być gotowa lub zwracać zmienioną treść. `kubectl rollout status deployment/board --timeout=10s; kubectl exec deployment/board -c worker -- wget -qO- http://127.0.0.1:8080`.'
+source_hash: 8458eecfa3253614845749fb481150678912a0f851a6bfe9b4cc2c0eeddde6f4

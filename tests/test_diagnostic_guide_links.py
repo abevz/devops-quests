@@ -20,13 +20,27 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 41))
+@pytest.mark.parametrize("quest", range(1, 44))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
         for goal in stage["objectives"]:
             check = goal["check"]
             emitted = set(MARKER.findall(check))
+            for body in re.findall(r"<<'(DQ_NOTICE|DQ_PRIVATE_DECLARED_ONLY)'\n(.*?)\n\1(?:\n|$)", check, re.S):
+                for node in ast.walk(ast.parse(body[1])):
+                    if not isinstance(node, ast.For) or not isinstance(node.iter, ast.List):
+                        continue
+                    if not isinstance(node.target, ast.Tuple):
+                        continue
+                    variables = [name.id for name in node.target.elts if isinstance(name, ast.Name)]
+                    if "marker" not in variables:
+                        continue
+                    position = variables.index("marker")
+                    for item in node.iter.elts:
+                        value = item.elts[position]
+                        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                            emitted.add(value.value)
             emitted.update(
                 f"{prefix}{host}"
                 for prefix in FLEET_MARKER.findall(check)

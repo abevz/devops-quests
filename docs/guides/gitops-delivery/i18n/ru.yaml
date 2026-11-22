@@ -118,5 +118,87 @@ text: '# Восстановление приватного реестра и Git
   Справочники: [API registry](https://distribution.github.io/distribution/spec/api/), [приватные образы](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/),
   [webhook Argo CD](https://argo-cd.readthedocs.io/en/stable/operator-manual/webhook/), [принятие ConfigMap](https://kubernetes.io/docs/tutorials/configuration/updating-configuration-via-a-configmap/).
 
-  '
-source_hash: 9466397956d5c23cc8cfabc51405b8fa7c40a50883cc719c5b534bc09987f2b8
+
+  ### Входные данные проверки Git {#git-environment}
+
+
+  Проверка Git остановилась до чтения репозитория: platform.env может отсутствовать, быть недоступен или завершаться ошибкой при загрузке. Не удалось прочитать закоммиченные уведомления: platform.env, репозиторий, Git или Python могли быть недоступны до проверки отдельных ссылок. Работайте из ~/quest и восстановите выданный platform.env, если он удалён; загрузка файла должна пройти до проверки Git. Fallback также охватывает отсутствие Python и сбой запуска Git.
+
+
+  ### Получение веток доставки {#git-fetch}
+
+
+  Не удалось получить main и release-candidate: у origin может быть неверный URL, отсутствовать доступ или одна из веток. `git -C repository ls-remote --heads origin main release-candidate`.
+
+
+  ### Текущая ветка и рабочее дерево {#git-worktree}
+
+
+  Текущая ветка не main или недоступна: репозиторий мог остаться на release-candidate или в состоянии detached HEAD. В рабочем дереве есть изменения или неотслеживаемые файлы: правки могли остаться без коммита либо сохранились временные файлы. `git -C repository status --short --branch`.
+
+
+  ### Уведомление в объектах Git {#git-committed-notice}
+
+
+  origin/main:notice.txt недоступен или отличается от north-41: main мог не попасть на сервер либо локальная ссылка на удалённую ветку устарела. HEAD:notice.txt недоступен или отличается от north-41: коммит кандидата мог не попасть в локальный main, даже если рабочий файл изменён. `git -C repository show HEAD:notice.txt; git -C repository show origin/main:notice.txt`.
+
+
+  ### Опубликованный коммит и история {#git-publication-history}
+
+
+  Базовый коммит отсутствует, некорректен или не является предком origin/main: опубликованная история могла быть заменена вместо продолжения. HEAD некорректен или отличается от origin/main: локальный коммит мог остаться без push либо ссылка на удалённую ветку ещё не обновлена. `git -C repository rev-parse HEAD origin/main; git -C repository merge-base --is-ancestor "$(cat baseline-commit)" origin/main`.
+
+
+  ### Входные данные проверки приватной нагрузки {#registry-observation}
+
+
+  Проверка реплик остановилась до чтения board: platform.env может отсутствовать, быть недоступен или завершаться ошибкой при загрузке. Не удалось проверить приватную нагрузку: переменные окружения, JSON API, цепочка владельцев Deployment или единственный контейнер worker могут отсутствовать либо быть некорректны. Проверка credentials остановилась до подробной диагностики: platform.env, переменные реестра или Python могут быть недоступны. Загрузите platform.env, не выводя пароли. Проверьте Deployment board, ReplicaSet и Pod в пространстве bay: активные Pod не завершены, не удаляются и принадлежат Deployment через управляющий ReplicaSet по UID. Отсутствующие или некорректные worker и имена pull Secret также могут прервать подробные проверки.
+
+
+  ### Приватный образ в активных Pod {#registry-pod-contract}
+
+
+  Образ worker в board или активных Pod отличается от PRIVATE_IMAGE: шаблон мог быть изменён либо старый ReplicaSet ещё использует другой образ. У worker в board или активном Pod не задано Always: настройки кэша образов либо Pod старого шаблона могут обходить новое скачивание из реестра. Нет активного Pod board либо его фактические pull Secrets отличаются от единственного registry-pull: шаблон или ServiceAccount могли добавить либо пропустить Secret. Сравните шаблон Deployment и его текущие Pod. Изменение шаблона не изменяет существующий Pod: его должен заменить новый rollout. ServiceAccount может добавить фактические imagePullSecrets при создании Pod, поэтому проверяйте спецификации Pod вместе с board.yaml.
+
+
+  ### Желаемое число приватных потребителей {#registry-replicas}
+
+
+  Желаемое число реплик не равно 1 либо board недоступен: уменьшение числа реплик не исправляет аутентификацию приватного образа. `kubectl get deployment board -o jsonpath=''{.spec.replicas}''`.
+
+
+  ### Документ учётных данных Docker {#registry-credential-document}
+
+
+  У registry-pull нет поддерживаемого типа Docker credentials: обычный Secret либо отсутствующий или недоступный тип не задаёт учётные данные реестра. Документ Docker credentials не декодируется: нужный ключ data, base64, JSON или уникальность полей JSON могут быть нарушены. Тип kubernetes.io/dockerconfigjson требует data[".dockerconfigjson"] с base64 JSON {"auths":{...}}; kubernetes.io/dockercfg требует data[".dockercfg"] с самой картой реестров. Повторяющиеся ключи JSON отклоняются. Проверяйте структуру без вывода значений credentials.
+
+
+  ### Запись реестра и обновлённые credentials {#registry-credential-auth}
+
+
+  Данные аутентификации недоступны или непригодны: проверьте точный ключ реестра, base64 auth с двоеточием либо строковые поля username/password. Декодированные учётные данные отличаются от platform.env: registry-pull мог сохранить старый пароль либо данные другого пользователя. Ключ записи должен точно совпадать с REGISTRY. Непустой auth имеет приоритет над username/password и должен декодироваться в выданные имя пользователя, двоеточие и пароль; добавление отдельных полей не исправляет старый auth. Обновление Secret само по себе не доказывает новое скачивание: отдельно проверьте rollout и HTTP.
+
+
+  ### Готовность и HTTP приватного потребителя {#registry-consumer-health}
+
+
+  board не завершил rollout за 3 секунды: отклонённые credentials реестра, задержка скачивания или сбой worker могут блокировать готовность. worker не вернул north-42 на localhost:8080: он мог ещё не запуститься, exec мог завершиться ошибкой либо команда HTTP или содержимое изменены. `kubectl describe pods; kubectl rollout status deployment/board --timeout=10s`.
+
+
+  ### Источник и назначение Application {#argo-source-contract}
+
+
+  Источник или назначение Application не соответствуют выданному релизу либо данные недоступны: начальный путь retired не указывает на manifests в main. `kubectl get application station -o jsonpath=''{.spec}''; cat application.yaml repository/manifests/board.yaml`. Проверьте project station, выданный GIT_URL, targetRevision main, относительный каталог manifests и пространство bay. Локальный кластер задаётся либо server https://kubernetes.default.svc без name, либо name in-cluster без server. Абсолютные пути и переходы к родительскому каталогу не задают требуемый каталог.
+
+
+  ### Наблюдаемый коммит, синхронизация и готовность {#argo-observed-revision}
+
+
+  Не подтверждены Synced и Healthy на коммите удалённого main: согласование могут блокировать путь источника, доступ к репозиторию, неготовые ресурсы или недоступная удалённая ссылка. `git -C repository ls-remote origin refs/heads/main; kubectl get application station -o jsonpath=''{.status}''; kubectl describe application station`. Загрузка platform.env или запуск Git, kubectl либо jq также могли завершиться ошибкой до чтения состояния.
+
+
+  ### Rollout и ответ потребителя {#argo-consumer-health}
+
+
+  Rollout board завершился ошибкой или превысил 3 секунды: Argo мог ещё не применить манифесты либо worker остаётся недоступен. Ответ worker отличается от north-43 либо exec завершился ошибкой: управляемая Git нагрузка может отсутствовать, быть неготовой или выдавать изменённое содержимое. `kubectl rollout status deployment/board --timeout=10s; kubectl exec deployment/board -c worker -- wget -qO- http://127.0.0.1:8080`.'
+source_hash: 8458eecfa3253614845749fb481150678912a0f851a6bfe9b4cc2c0eeddde6f4

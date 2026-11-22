@@ -73,12 +73,29 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_fallback_output=$(mktemp)
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
+(
+set -e
 source platform.env
 check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<"$document" >/dev/null 2>&1; then printf '%s\n' "$label: ✗"; failed=1; fi; }
 board=$(kubectl get deployment board -o json 2>/dev/null || true)
 failed=0
 check 'deployment/board replicas = 1 [DQ:replicas]' '.spec.replicas==1' "$board"
 exit "$failed"
+) >"$dq_fallback_output" 2>/dev/null
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_fallback_output"; then
+  printf '%s\n' 'Platform environment could not be loaded: ✗ [DQ:platform_inputs]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (

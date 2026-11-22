@@ -4,6 +4,11 @@ failed=0
 set +e
 (
 set -e
+dq_fallback_output=$(mktemp)
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
+(
+set -e
 source platform.env
 failed=0
 if ! git -C repository fetch origin main release-candidate >/dev/null 2>&1; then
@@ -11,8 +16,25 @@ if ! git -C repository fetch origin main release-candidate >/dev/null 2>&1; then
   failed=1
 fi
 exit "$failed"
+) >"$dq_fallback_output" 2>/dev/null
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_fallback_output"; then
+  printf '%s\n' 'Platform environment could not be loaded: ✗ [DQ:platform_inputs]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
+(
+set -e
+dq_fallback_output=$(mktemp)
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
 (
 set -e
 source platform.env
@@ -27,6 +49,18 @@ if ! test -z "$(git -C repository status --porcelain 2>/dev/null)"; then
   failed=1
 fi
 exit "$failed"
+) >"$dq_fallback_output" 2>/dev/null
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_fallback_output"; then
+  printf '%s\n' 'Platform environment could not be loaded: ✗ [DQ:platform_inputs]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -61,6 +95,11 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_fallback_output=$(mktemp)
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
+(
+set -e
 source platform.env
 failed=0
 if ! test -s baseline-commit || ! git -C repository merge-base --is-ancestor "$(cat baseline-commit 2>/dev/null)" origin/main 2>/dev/null; then
@@ -68,8 +107,25 @@ if ! test -s baseline-commit || ! git -C repository merge-base --is-ancestor "$(
   failed=1
 fi
 exit "$failed"
+) >"$dq_fallback_output" 2>/dev/null
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_fallback_output"; then
+  printf '%s\n' 'Platform environment could not be loaded: ✗ [DQ:platform_inputs]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
+(
+set -e
+dq_fallback_output=$(mktemp)
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
 (
 set -e
 source platform.env
@@ -79,6 +135,18 @@ if ! test "$(git -C repository rev-parse HEAD 2>/dev/null)" = "$(git -C reposito
   failed=1
 fi
 exit "$failed"
+) >"$dq_fallback_output" 2>/dev/null
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:[a-z0-9_]+\]' "$dq_fallback_output"; then
+  printf '%s\n' 'Platform environment could not be loaded: ✗ [DQ:platform_inputs]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
