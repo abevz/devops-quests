@@ -21,7 +21,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 106))
+@pytest.mark.parametrize("quest", range(1, 111))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -434,11 +434,11 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                             and isinstance(node.value.value, str)):
                         emitted.add(node.value.value)
             for delimiter, body in re.findall(
-                r"<<'(DQ_HEARTBEAT|DQ_ROLLING|DQ_SECURITY)'\n(.*?)\n\1(?:\n|$)",
+                r"<<'(DQ_HEARTBEAT|DQ_INGRESS_ROUTE|DQ_ROLLING|DQ_SECURITY)'\n(.*?)\n\1(?:\n|$)",
                 check, re.S,
             ):
                 tree = ast.parse(body)
-                if delimiter == "DQ_HEARTBEAT":
+                if delimiter in {"DQ_HEARTBEAT", "DQ_INGRESS_ROUTE"}:
                     for node in tree.body:
                         if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.List):
                             continue
@@ -469,6 +469,24 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                 )
             if "[DQ:field_${field,,}]" in check:
                 emitted.update("field_" + field.lower() for field in re.findall(r"^field=(\w+)$", check, re.M))
+            if "[DQ:http_${name//-/_}]" in check:
+                emitted.update("http_" + name.replace("-", "_")
+                               for name in re.findall(r"^name=([a-z0-9-]+)$", check, re.M))
+            for body in re.findall(r"<<'DQ_SERVICE_CONTRACTS'\n(.*?)\nDQ_SERVICE_CONTRACTS(?:\n|$)", check, re.S):
+                tree = ast.parse(body)
+                for call in ast.walk(tree):
+                    if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                            and call.func.id == "report" and isinstance(call.args[0], ast.Constant)):
+                        emitted.add(ast.literal_eval(call.args[0]))
+                name_loop, = (node for node in tree.body if isinstance(node, ast.For)
+                              and isinstance(node.target, ast.Name) and node.target.id == "name")
+                field_loop, = (node for node in name_loop.body if isinstance(node, ast.For)
+                               and isinstance(node.target, ast.Name) and node.target.id == "field")
+                emitted.update(f"contract_{name.replace('-', '_')}_{field.lower()}"
+                               for name in ast.literal_eval(name_loop.iter)
+                               for field in ast.literal_eval(field_loop.iter))
+            if "[DQ:$id]" in check:
+                emitted.update(re.findall(r"^check ([a-z0-9_]+) ", check, re.M))
             assert emitted, (quest, goal["text"])
             markers.update(emitted)
     explanations = catalog.public(quest)["diagnostics"]

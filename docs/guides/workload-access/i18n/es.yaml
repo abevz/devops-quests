@@ -61,4 +61,205 @@ text: |
   ### Comprobar ambos límites de denegación {#reader-denial-boundaries}
 
   En el reto 037, leer restricted y listar Secrets deben seguir fallando para la misma identidad que lee route. Los permisos RBAC se suman: otro RoleBinding o ClusterRoleBinding puede ampliar acceso aunque route-reader sea limitado. Si una petición prohibida tiene éxito, inspecciona todos los vínculos de esa identidad. Cada comprobación actual primero busca el Pod y lee su credencial; fallar ahí es distinto del acceso inesperado. Usa la lectura correcta de route como control, sin inferir todos los permisos efectivos de dos peticiones negativas.
-source_hash: 0c45748b88da261dfbaa9d530586c4addbdf926bae12800d0e2a94e8b746f370
+
+
+  ### Entradas de la comprobación de seguridad {#q109-security-observer-input}
+
+  El observador puede detenerse antes de señalar un control si falla Python o la entrada. Revise el acceso al Deployment y las herramientas.
+
+  ```bash
+  command -v python3; kubectl get deployment board -o name
+  ```
+
+  ### Espacio de red del Pod {#q109-board-network-namespace}
+
+  La reparación puede haber activado la red del host. Revise hostNetwork y mantenga el espacio de red del Pod board.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.template.spec.hostNetwork}'
+  ```
+
+  ### Espacio de procesos del Pod {#q109-board-process-namespace}
+
+  La plantilla puede compartir los procesos del host. Revise hostPID y manténgalo desactivado.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.template.spec.hostPID}'
+  ```
+
+  ### Espacio IPC del Pod {#q109-board-ipc-namespace}
+
+  La plantilla puede compartir IPC con el host. Revise hostIPC y mantenga aislado el IPC del Pod.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.template.spec.hostIPC}'
+  ```
+
+  ### Orígenes de los volúmenes de board {#q109-board-volume-sources}
+
+  Al cambiar la plantilla se pudo añadir un volumen hostPath. Revise las fuentes y elimine la dependencia de hostPath.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.volumes'
+  ```
+
+  ### Ejecución sin root {#q109-board-user-policy}
+
+  Un contenedor puede carecer de runAsNonRoot efectivo, sobrescribirlo o indicar UID 0. Revise el Pod y todos los contenedores, incluidos init. Mantenga positivos los UID explícitos.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | {pod: .securityContext, worker: [.containers[], .initContainers[]? | .securityContext]}'
+  ```
+
+  ### Filtro efectivo de llamadas al sistema {#q109-board-syscall-filter}
+
+  El filtro de llamadas puede haberse quitado o sobrescrito. Compruebe RuntimeDefault efectivo en contenedores normales e init, incluida la herencia del Pod.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | {pod: .securityContext.seccompProfile, containers: [.containers[], .initContainers[]? | .securityContext.seccompProfile]}'
+  ```
+
+  ### Modo privilegiado {#q109-board-privileged-mode}
+
+  Un contenedor normal o init puede estar en modo privilegiado. Revise securityContext de cada uno y quite privileged: true.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.privileged]'
+  ```
+
+  ### Indicador de escalada de privilegios {#q109-board-privilege-escalation}
+
+  Un contenedor puede permitir escalada si el indicador falta o está activo. Defina allowPrivilegeEscalation: false en cada contenedor normal e init.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.allowPrivilegeEscalation]'
+  ```
+
+  ### Capacidades eliminadas {#q109-board-drop-capabilities}
+
+  Un contenedor puede haber dejado de eliminar las capacidades por defecto. Compruebe ALL en drop de cada contenedor normal e init.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.capabilities.drop]'
+  ```
+
+  ### Capacidades añadidas {#q109-board-no-added-capabilities}
+
+  La plantilla puede volver a añadir capacidades tras eliminarlas. Revise que add esté vacío en cada contenedor normal e init.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.capabilities.add]'
+  ```
+
+  ### Política restricted en el namespace {#q109-restricted-namespace}
+
+  El namespace puede carecer de la etiqueta restricted o fallar al leerlo. Revise la etiqueta del entorno y conserve la aplicación de restricted al corregir la carga.
+
+  ```bash
+  kubectl get namespace "$DQ_NAMESPACE" -o json | jq '.metadata.labels["pod-security.kubernetes.io/enforce"]'
+  ```
+
+  ### Cantidad de réplicas de board {#q109-board-replica-contract}
+
+  El Deployment puede haberse escalado durante la reparación o faltar. Compruebe que board siga solicitando una réplica.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.replicas}'
+  ```
+
+  ### Réplica lista de board {#q109-board-ready-replica}
+
+  La plantilla puede existir aunque admission o el despliegue impidan tener una réplica lista. Revise los eventos y confirme una réplica lista en el estado de board.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.status.readyReplicas}'; kubectl get pods -l app=board
+  ```
+
+  ### Identidad del contenedor worker {#q109-board-worker-identity}
+
+  La carga puede tener el worker renombrado, un contenedor adicional o ninguno. Mantenga un solo contenedor normal denominado worker.
+
+  ```bash
+  kubectl get deployment board -o json | jq '[.spec.template.spec.containers[].name]'
+  ```
+
+  ### UID explícitos {#q109-board-explicit-user-ids}
+
+  Un runAsUser explícito puede ser cero o inválido. Revise que los UID explícitos del Pod y los contenedores, incluidos init, sean enteros positivos.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | {pod: .securityContext.runAsUser, containers: [.containers[], .initContainers[]? | .securityContext.runAsUser]}'
+  ```
+
+  ### Raíz declarada de solo lectura {#q109-board-declared-readonly-root}
+
+  Un contenedor puede seguir permitiendo escribir en el sistema de archivos de la imagen. Defina readOnlyRootFilesystem en true en todos los contenedores normales e init y use el volumen separado para archivos temporales.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.readOnlyRootFilesystem]'
+  ```
+
+  ### Ajuste seccomp en el contenedor {#q109-board-container-seccomp-override}
+
+  Un ajuste seccomp del contenedor puede sustituir RuntimeDefault. Revise todos los contenedores normales e init y conserve el perfil heredado o su equivalente explícito.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.seccompProfile]'
+  ```
+
+  ### Origen del volumen temporal {#q109-board-temporary-volume-type}
+
+  El montaje /tmp puede faltar o apuntar a un volumen distinto de emptyDir. Siga el montaje con nombre desde worker hasta el origen temporal declarado.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | {volumes, worker: [.containers[] | select(.name == "worker") | .volumeMounts]}'
+  ```
+
+  ### Montaje temporal escribible {#q109-board-writable-temporary-mount}
+
+  El contenedor worker puede montar /tmp en solo lectura o tener entradas incompatibles. Compruebe que existe un único montaje escribible respaldado por emptyDir temporal.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.containers[] | select(.name == "worker") | [.volumeMounts[] | select(.mountPath == "/tmp")]'
+  ```
+
+  ### Otros montajes de volúmenes {#q109-board-other-mounts-readonly}
+
+  Un montaje distinto de /tmp puede permitir escritura. Revise los montajes normales e init, incluidas las fuentes proyectadas de solo lectura.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | {volumes, mounts: [.containers[], .initContainers[]? | .volumeMounts]}'
+  ```
+
+  ### Montaje raíz activo de solo lectura {#q109-board-live-readonly-root}
+
+  El Deployment puede declarar la raíz de solo lectura mientras el worker activo sigue con un montaje anterior. Revise las opciones de / en /proc/mounts y confirme ro tras el despliegue.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- awk '$2 == "/" {print $4}' /proc/mounts
+  ```
+
+  ### UID activo del worker {#q109-board-live-worker-uid}
+
+  El worker seleccionado puede seguir como root o fallar exec. Lea el UID real del proceso y confirme que es positivo.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- id -u
+  ```
+
+  ### Escritura y lectura en /tmp {#q109-board-live-tmp-reads-writes}
+
+  El volumen temporal puede ser de solo lectura o bloquear al worker por permisos. Pruebe una escritura y lectura reales en /tmp desde el worker activo.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- sh -c 'p=$(mktemp /tmp/dq-check.XXXXXX) && trap "rm -f $p" EXIT && printf writable > "$p" && test "$(cat "$p")" = writable'
+  ```
+
+  ### Respuesta de board tras el endurecimiento {#q109-board-live-security-http}
+
+  La seguridad puede estar correcta mientras worker no puede escribir el contenido o el Service carece de endpoint listo. Consulte board tras el despliegue y compare con north-109.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  ```
+source_hash: de3c7a2570583e66677d5f5c38c812866ef052c18a004f0e72945c8275dd5bb0

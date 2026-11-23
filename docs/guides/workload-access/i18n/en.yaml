@@ -61,4 +61,205 @@ text: |
   ### Check both retained denial boundaries {#reader-denial-boundaries}
 
   In quest 037, reading restricted and listing Secrets must remain unsuccessful for the same workload identity that can read route. RBAC grants add together: another RoleBinding or ClusterRoleBinding can broaden access even when route-reader is narrow. Inspect all bindings for that principal if a forbidden request succeeds. Each current check first locates the Pod and reads its credential; failure there is separate from unexpected access. Use the successful route read as the control, without inferring every effective permission from these two negative requests.
-source_hash: 0c45748b88da261dfbaa9d530586c4addbdf926bae12800d0e2a94e8b746f370
+
+
+  ### Inputs to the security check {#q109-security-observer-input}
+
+  The security observer can stop before reporting a control if its Python process or workspace input fails. Confirm that the live Deployment is readable and the local tools can start.
+
+  ```bash
+  command -v python3; kubectl get deployment board -o name
+  ```
+
+  ### Pod network namespace {#q109-board-network-namespace}
+
+  A workload repair may have enabled host networking. Inspect hostNetwork and keep board in its Pod network namespace.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.template.spec.hostNetwork}'
+  ```
+
+  ### Pod process namespace {#q109-board-process-namespace}
+
+  The Pod template may have been changed to share the host process namespace. Inspect hostPID and keep it disabled.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.template.spec.hostPID}'
+  ```
+
+  ### Pod IPC namespace {#q109-board-ipc-namespace}
+
+  The Pod template may have been changed to share host IPC. Inspect hostIPC and keep the Pod IPC namespace isolated.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.template.spec.hostIPC}'
+  ```
+
+  ### Relay volume sources {#q109-board-volume-sources}
+
+  A hostPath volume may have been added while changing the template. Inspect the declared sources and remove any hostPath dependency.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.volumes'
+  ```
+
+  ### Non-root execution {#q109-board-user-policy}
+
+  A container may lack effective runAsNonRoot, override it, or specify UID 0. Inspect both Pod and container settings, including init containers, and keep all explicit user IDs positive.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | {pod: .securityContext, worker: [.containers[], .initContainers[]? | .securityContext]}'
+  ```
+
+  ### Effective syscall filter {#q109-board-syscall-filter}
+
+  The default syscall filter may have been removed or overridden. Check the effective RuntimeDefault profile on regular and init containers, including inherited Pod settings.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | {pod: .securityContext.seccompProfile, containers: [.containers[], .initContainers[]? | .securityContext.seccompProfile]}'
+  ```
+
+  ### Privileged mode {#q109-board-privileged-mode}
+
+  A regular or init container may have gained privileged mode. Inspect each container’s securityContext and remove the privileged override.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.privileged]'
+  ```
+
+  ### Privilege escalation flag {#q109-board-privilege-escalation}
+
+  A container may allow privilege escalation because its flag is absent or enabled. Set allowPrivilegeEscalation explicitly to false on each regular and init container.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.allowPrivilegeEscalation]'
+  ```
+
+  ### Dropped capabilities {#q109-board-drop-capabilities}
+
+  A container may no longer drop the default capability set. Check that the drop list contains ALL on each regular and init container.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.capabilities.drop]'
+  ```
+
+  ### Added capabilities {#q109-board-no-added-capabilities}
+
+  The template may add capabilities back after dropping them. Check the add list of every regular and init container and keep it empty.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.capabilities.add]'
+  ```
+
+  ### Restricted namespace enforcement {#q109-restricted-namespace}
+
+  The namespace may lack the restricted enforcement label or the namespace read may fail. Check the current bay label and retain restricted enforcement while fixing the workload.
+
+  ```bash
+  kubectl get namespace "$DQ_NAMESPACE" -o json | jq '.metadata.labels["pod-security.kubernetes.io/enforce"]'
+  ```
+
+  ### Board replica count {#q109-board-replica-contract}
+
+  The Deployment may have been scaled during repair or may be missing. Check that board still requests one replica.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.replicas}'
+  ```
+
+  ### Ready board replica {#q109-board-ready-replica}
+
+  The pod template can exist while admission or rollout prevents a ready replica. Check the events and confirm one ready replica in the live board status.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.status.readyReplicas}'; kubectl get pods -l app=board
+  ```
+
+  ### Worker container identity {#q109-board-worker-identity}
+
+  The workload may contain a renamed worker, an extra regular container or no regular container. Keep exactly one regular container named worker.
+
+  ```bash
+  kubectl get deployment board -o json | jq '[.spec.template.spec.containers[].name]'
+  ```
+
+  ### Explicit user IDs {#q109-board-explicit-user-ids}
+
+  An explicit runAsUser may be zero or otherwise invalid. Check all explicit Pod and container user IDs and keep them positive integers, including on init containers.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | {pod: .securityContext.runAsUser, containers: [.containers[], .initContainers[]? | .securityContext.runAsUser]}'
+  ```
+
+  ### Declared read-only root {#q109-board-declared-readonly-root}
+
+  One container may still allow writes to its image filesystem. Set readOnlyRootFilesystem to true for each regular and init container, and keep temporary writes on the separate volume.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.readOnlyRootFilesystem]'
+  ```
+
+  ### Container seccomp override {#q109-board-container-seccomp-override}
+
+  A container-level seccomp override may replace the supplied RuntimeDefault filter. Check overrides on every regular and init container and retain the inherited default or its explicit equivalent.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.seccompProfile]'
+  ```
+
+  ### Source of the temporary volume {#q109-board-temporary-volume-type}
+
+  The /tmp mount may be missing or refer to a volume other than emptyDir. Follow the named mount from worker to the declared temporary volume source.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | {volumes, worker: [.containers[] | select(.name == "worker") | .volumeMounts]}'
+  ```
+
+  ### Writable temporary mount {#q109-board-writable-temporary-mount}
+
+  The named worker may mount /tmp read-only or have conflicting entries. Check that it has a single writable mount backed by the temporary emptyDir.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.containers[] | select(.name == "worker") | [.volumeMounts[] | select(.mountPath == "/tmp")]'
+  ```
+
+  ### Other volume mounts {#q109-board-other-mounts-readonly}
+
+  A mount other than the supplied /tmp scratch mount may permit writes. Inspect all regular and init container mounts, including inherently read-only projected sources.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | {volumes, mounts: [.containers[], .initContainers[]? | .volumeMounts]}'
+  ```
+
+  ### Live read-only root mount {#q109-board-live-readonly-root}
+
+  The Deployment may declare a read-only root while the selected running worker still has an older filesystem mount. Inspect the options for / in /proc/mounts and verify ro after rollout.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- awk '$2 == "/" {print $4}' /proc/mounts
+  ```
+
+  ### Live worker user ID {#q109-board-live-worker-uid}
+
+  The selected worker may still run as root or the exec may fail. Read the actual process user ID and confirm it is a positive number.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- id -u
+  ```
+
+  ### Write and read in /tmp {#q109-board-live-tmp-reads-writes}
+
+  The temporary mount may be read-only or have permissions that block the worker. Verify an actual write and read in /tmp from the running worker.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- sh -c 'p=$(mktemp /tmp/dq-check.XXXXXX) && trap "rm -f $p" EXIT && printf writable > "$p" && test "$(cat "$p")" = writable'
+  ```
+
+  ### Board response after hardening {#q109-board-live-security-http}
+
+  Security settings may now be correct while worker cannot write its served content or the Service lacks a ready endpoint. Query board after rollout and compare with north-109.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  ```
+source_hash: de3c7a2570583e66677d5f5c38c812866ef052c18a004f0e72945c8275dd5bb0
