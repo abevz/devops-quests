@@ -762,6 +762,96 @@ kubernetes-9:
       In quest 034, prepare-route copies /source/index.html into the shared route volume, and worker serves /site on port 8080. A Ready Pod alone does not prove this content path. After rollout, request http://127.0.0.1:8080 from worker in the selected app=board Pod; expect north. Pod lookup, exec and HTTP errors also prevent this observation.
 
 
+      ### Producer limit and early observations {#startup-ram-producer-limit-and-early-inputs}
+
+
+      The producer may still have its supplied 16Mi limit instead of the required 96Mi equivalent; that early quantity check stops before named budget results. Helper startup, frozen-input and unexpected JSON errors can also reach this fallback.  `kubectl get deployment relay -o json | jq .spec.template.spec.containers[].resources; python3 -I -c "import dq_check"`.
+
+
+      ### Retain the original resource identities {#startup-ram-original-resources}
+
+
+      A Deployment, Service or source ConfigMap may have been recreated while repairing startup; keep all seven frozen resource UIDs. A failed resource read also uses this marker, while replacement Pod identities are allowed.  `jq .identities /run/dq/facts/0/startup-identities.json; kubectl get deployments,services,configmaps -o json | jq ".items[] | {kind,name:.metadata.name,uid:.metadata.uid}"`.
+
+
+      ### Memory envelope across startup phases {#startup-ram-phase-memory-envelope}
+
+
+      A template or selected ready Pod may exceed the 96Mi envelope or omit a required memory limit. Account for ordinary initializer peaks and resident restartable initializers; an optional bounded Pod memory limit is also accepted. Increasing limits beyond the contract does not repair this condition. Without a Pod memory limit, the observer compares the largest ordinary-init peak with the sum of main limits and resident restartable initializers, counting already running restartable initializers during later initialization. A valid Pod memory limit bounds the envelope itself, so missing individual limits or a larger declared sum can be accepted; each explicitly declared container limit must still be positive and within the ceiling. Requests are not the measured limit here. `kubectl get deployments -o json | jq .items[].spec.template.spec; jq .memory startup-contract.json`.
+
+
+      ### Retain the immutable application image {#startup-ram-immutable-worker-image}
+
+
+      The named application container may have been switched to another image while repairing its program or limits; retain the supplied immutable image. The exact reference or a reference carrying the same frozen digest is accepted.  `kubectl get deployments -o json | jq .items[].spec.template.spec.containers[].image`.
+
+
+      ### Retain successful ordinary initialization {#startup-ram-ordinary-warmup-contract}
+
+
+      The required warmer may be missing, duplicated, use another image or become restartable, or its observed termination may not be successful; retain one ordinary initializer with the supplied image and exit code 0 before the application starts. The warmup initializer is an ordinary phase, not a permanent sidecar. The reference gives it enough memory for the preserved dataset while retaining the shared envelope. If that role cannot roll out, the role payload marker appears before the completed-init-status inspection; removing the initializer or shrinking source data bypasses neither requirement. `kubectl get deployment stager -o json | jq .spec.template.spec.initContainers; kubectl get pods -o json | jq .items[].status.initContainerStatuses`.
+
+
+      ### Retain the current source data {#startup-ram-current-source-data}
+
+
+      Source values may have been reduced or replaced to make startup easier; retain the supplied CACHE_MIB and CACHE_ID entries while repairing consumers. Additional ConfigMap data keys are allowed, and source API failures share this marker.  `kubectl get configmap startup-source -o json | jq .data`.
+
+
+      ### Match the declared Service interface {#startup-ram-declared-service-interface}
+
+
+      A Service may have the wrong type, a selector that does not match its application template, or a missing or duplicate declared TCP port; retain ClusterIP type, a nonempty matching selector and one port 8080. Resource read errors also use this marker.  `kubectl get services -o json | jq ".items[] | {name:.metadata.name,type:.spec.type,selector:.spec.selector,ports:.spec.ports}"`.
+
+
+      ### Repair producer startup first {#startup-ram-producer-startup-gate}
+
+
+      The supplied producer grows memory indefinitely and probes the wrong port; its rollout can fail before the per-role dataset observer starts. Build the current RAM payload and serve the declared HTTP interface within the required limit; later Pod or ReplicaSet observation errors also use this marker.  `kubectl rollout status deployment/relay --timeout=3s; kubectl get pods; kubectl get deployment relay -o json | jq .spec.template.spec.containers`.
+
+
+      ### Dataset observation fallback {#startup-ram-data-observer-fallback}
+
+
+      Frozen facts, helpers, numeric file metadata or returned JSON may be unreadable or malformed before a named result; inspect these inputs separately. Normal rollout, payload-command and publication-command failures retain their named markers; this fallback does not imply an image or memory fault by itself.  `python3 -I -c "import dq_check"; jq .dataset startup-contract.json`.
+
+
+      ### relay: allocated RAM payload {#startup-ram-relay-allocated-payload}
+
+
+      relay: The producer may lack a usable RAM mount or fully allocated current payload despite rollout; inspect tmpfs, file size, allocated blocks and checksum in its current ready owned Pods.  `kubectl rollout status deployment/relay --timeout=3s; kubectl exec deployment/relay -c worker -- sh -c "stat -f -c %T /cache; stat -c ''%s %b'' /cache/payload; sha256sum /cache/payload"`.
+
+
+      ### relay: current HTTP metadata {#startup-ram-relay-current-metadata}
+
+
+      relay: The Service may publish stale cache metadata or fail the request; compare its current cache ID, byte count and checksum with the frozen publication. Additional JSON fields are allowed, but a healthy HTTP response alone does not prove the allocated dataset.  `kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://relay:8080/record.json; jq .dataset startup-contract.json`.
+
+
+      ### stager: allocated RAM payload {#startup-ram-stager-allocated-payload}
+
+
+      stager: The supplied initializer has only 32Mi for the 80Mi dataset; repair its allocation within the 96Mi envelope and retain the ordinary warmup phase. A failed role rollout reports this marker before initializer-status checks; a ready Pod must still have the complete allocated payload.  `kubectl rollout status deployment/stager --timeout=3s; kubectl exec deployment/stager -c worker -- sh -c "stat -f -c %T /cache; stat -c ''%s %b'' /cache/payload; sha256sum /cache/payload"`.
+
+
+      ### stager: current HTTP metadata {#startup-ram-stager-current-metadata}
+
+
+      stager: The Service may publish stale cache metadata or fail the request; compare its current cache ID, byte count and checksum with the frozen publication. Additional JSON fields are allowed, but a healthy HTTP response alone does not prove the allocated dataset.  `kubectl exec deployment/stager -c worker -- wget -qO- -T 3 http://stager:8080/record.json; jq .dataset startup-contract.json`.
+
+
+      ### reader: allocated RAM payload {#startup-ram-reader-allocated-payload}
+
+
+      reader: The supplied input requests 112Mi under the 96Mi envelope instead of the current 80Mi dataset; use the preserved source values, then verify rollout and the actually allocated RAM file rather than shrinking or sparsely declaring the payload.  `kubectl rollout status deployment/reader --timeout=3s; kubectl exec deployment/reader -c worker -- sh -c "stat -f -c %T /cache; stat -c ''%s %b'' /cache/payload; sha256sum /cache/payload"`.
+
+
+      ### reader: current HTTP metadata {#startup-ram-reader-current-metadata}
+
+
+      reader: The Service may publish stale cache metadata or fail the request; compare its current cache ID, byte count and checksum with the frozen publication. Additional JSON fields are allowed, but a healthy HTTP response alone does not prove the allocated dataset.  `kubectl exec deployment/reader -c worker -- wget -qO- -T 3 http://reader:8080/record.json; jq .dataset startup-contract.json`.
+
+
       ## Try it
 
 
@@ -849,6 +939,96 @@ kubernetes-9:
 
 
       В квесте 034 prepare-route копирует /source/index.html в общий том route, а worker обслуживает /site на порту 8080. Готовность Pod сама по себе не доказывает этот путь содержимого. После rollout запросите http://127.0.0.1:8080 из worker выбранного Pod app=board; ожидается north. Ошибки поиска Pod, exec и HTTP также мешают наблюдению.
+
+
+      ### Лимит источника и раннее наблюдение {#startup-ram-producer-limit-and-early-inputs}
+
+
+      У источника мог остаться выданный лимит 16Mi вместо эквивалента требуемых 96Mi; ранняя проверка quantity останавливается до именованных результатов budget. Ошибки загрузки helpers, зафиксированных входов и неожиданного JSON также дают fallback.  `kubectl get deployment relay -o json | jq .spec.template.spec.containers[].resources; python3 -I -c "import dq_check"`.
+
+
+      ### Исходные идентичности ресурсов {#startup-ram-original-resources}
+
+
+      Deployment, Service или исходный ConfigMap могли быть пересозданы при исправлении запуска; сохраните все семь зафиксированных UID ресурсов. Ошибка чтения ресурса также даёт этот маркер, а смена идентичностей Pod допустима.  `jq .identities /run/dq/facts/0/startup-identities.json; kubectl get deployments,services,configmaps -o json | jq ".items[] | {kind,name:.metadata.name,uid:.metadata.uid}"`.
+
+
+      ### Память по фазам запуска {#startup-ram-phase-memory-envelope}
+
+
+      Template или выбранный готовый Pod могут выходить за предел 96Mi либо не иметь нужного memory limit. Учитывайте пики обычных initializer и постоянно работающие restartable initializer; допустим также ограниченный Pod memory limit. Увеличение лимитов сверх contract не исправляет условие. Без Pod memory limit наблюдатель сравнивает максимальный пик ordinary init с суммой main limits и постоянных restartable initializer, учитывая уже запущенные restartable initializer при поздней инициализации. Корректный Pod memory limit сам ограничивает envelope, поэтому отдельные лимиты могут отсутствовать или иметь большую сумму; каждый явный container limit всё равно положителен и не выше потолка. Requests здесь не являются измеряемым лимитом. `kubectl get deployments -o json | jq .items[].spec.template.spec; jq .memory startup-contract.json`.
+
+
+      ### Сохранение неизменяемого image приложения {#startup-ram-immutable-worker-image}
+
+
+      Именованный контейнер приложения мог получить другой image при исправлении программы или лимитов; сохраните выданный неизменяемый image. Допустимы точная ссылка или ссылка с тем же зафиксированным digest.  `kubectl get deployments -o json | jq .items[].spec.template.spec.containers[].image`.
+
+
+      ### Успешная обычная инициализация {#startup-ram-ordinary-warmup-contract}
+
+
+      Обязательный warmer может отсутствовать, дублироваться, использовать другой image или стать restartable, либо завершиться неуспешно; сохраните один обычный initializer с выданным image и кодом завершения 0 перед запуском приложения. Warmup initializer — обычная фаза, не постоянный sidecar. Решение даёт ему достаточно памяти для сохранённых данных в общем envelope. Если роль не завершает rollout, payload-маркер роли появляется до проверки completed init status; удаление initializer или уменьшение источника не обходят требования. `kubectl get deployment stager -o json | jq .spec.template.spec.initContainers; kubectl get pods -o json | jq .items[].status.initContainerStatuses`.
+
+
+      ### Сохранение текущих данных источника {#startup-ram-current-source-data}
+
+
+      Значения источника могли быть уменьшены или заменены ради облегчения запуска; сохраните выданные CACHE_MIB и CACHE_ID при исправлении потребителей. Дополнительные data-ключи ConfigMap допустимы, ошибки API источника дают тот же маркер.  `kubectl get configmap startup-source -o json | jq .data`.
+
+
+      ### Интерфейс объявленного Service {#startup-ram-declared-service-interface}
+
+
+      Service может иметь неверный type, selector вне template приложения или отсутствующий/повторный TCP-порт; сохраните type ClusterIP, непустой совпадающий selector и один порт 8080. Ошибки чтения ресурса дают тот же маркер.  `kubectl get services -o json | jq ".items[] | {name:.metadata.name,type:.spec.type,selector:.spec.selector,ports:.spec.ports}"`.
+
+
+      ### Сначала запуск источника {#startup-ram-producer-startup-gate}
+
+
+      Выданный источник бесконечно увеличивает память и проверяет неверный порт; rollout может упасть до наблюдения данных по ролям. Создайте текущий RAM payload и HTTP-интерфейс в требуемом лимите; поздние ошибки наблюдения Pod или ReplicaSet дают тот же маркер.  `kubectl rollout status deployment/relay --timeout=3s; kubectl get pods; kubectl get deployment relay -o json | jq .spec.template.spec.containers`.
+
+
+      ### Fallback наблюдения данных {#startup-ram-data-observer-fallback}
+
+
+      Зафиксированные факты, helpers, числовые metadata файла или JSON могут не читаться либо иметь неверную структуру до именованного результата; изучите эти входы отдельно. Обычные сбои rollout, payload-команд и publication-команд сохраняют свои маркеры; fallback сам по себе не доказывает ошибку image или памяти.  `python3 -I -c "import dq_check"; jq .dataset startup-contract.json`.
+
+
+      ### relay: выделенный RAM payload {#startup-ram-relay-allocated-payload}
+
+
+      relay: У источника может отсутствовать рабочий RAM mount или полностью выделенный текущий payload при завершённом rollout; проверьте tmpfs, размер, выделенные блоки и checksum в текущих готовых принадлежащих Pod.  `kubectl rollout status deployment/relay --timeout=3s; kubectl exec deployment/relay -c worker -- sh -c "stat -f -c %T /cache; stat -c ''%s %b'' /cache/payload; sha256sum /cache/payload"`.
+
+
+      ### relay: текущие HTTP metadata {#startup-ram-relay-current-metadata}
+
+
+      relay: Service может отдавать старые metadata кэша либо не отвечать; сравните текущие cache ID, размер и checksum с зафиксированной публикацией. Дополнительные JSON-поля допустимы, но здоровый HTTP-ответ не доказывает выделенный dataset.  `kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://relay:8080/record.json; jq .dataset startup-contract.json`.
+
+
+      ### stager: выделенный RAM payload {#startup-ram-stager-allocated-payload}
+
+
+      stager: Выданный initializer имеет лишь 32Mi для данных 80Mi; исправьте выделение в пределах 96Mi, сохранив обычную warmup-фазу. Сбой rollout роли даёт этот маркер до проверки init status; готовый Pod всё равно содержит полный выделенный payload.  `kubectl rollout status deployment/stager --timeout=3s; kubectl exec deployment/stager -c worker -- sh -c "stat -f -c %T /cache; stat -c ''%s %b'' /cache/payload; sha256sum /cache/payload"`.
+
+
+      ### stager: текущие HTTP metadata {#startup-ram-stager-current-metadata}
+
+
+      stager: Service может отдавать старые metadata кэша либо не отвечать; сравните текущие cache ID, размер и checksum с зафиксированной публикацией. Дополнительные JSON-поля допустимы, но здоровый HTTP-ответ не доказывает выделенный dataset.  `kubectl exec deployment/stager -c worker -- wget -qO- -T 3 http://stager:8080/record.json; jq .dataset startup-contract.json`.
+
+
+      ### reader: выделенный RAM payload {#startup-ram-reader-allocated-payload}
+
+
+      reader: Выданный вход запрашивает 112Mi при пределе 96Mi вместо текущих данных 80Mi; используйте сохранённые значения источника и проверьте rollout и реально выделенный RAM-файл, не уменьшая payload и не создавая sparse-файл.  `kubectl rollout status deployment/reader --timeout=3s; kubectl exec deployment/reader -c worker -- sh -c "stat -f -c %T /cache; stat -c ''%s %b'' /cache/payload; sha256sum /cache/payload"`.
+
+
+      ### reader: текущие HTTP metadata {#startup-ram-reader-current-metadata}
+
+
+      reader: Service может отдавать старые metadata кэша либо не отвечать; сравните текущие cache ID, размер и checksum с зафиксированной публикацией. Дополнительные JSON-поля допустимы, но здоровый HTTP-ответ не доказывает выделенный dataset.  `kubectl exec deployment/reader -c worker -- wget -qO- -T 3 http://reader:8080/record.json; jq .dataset startup-contract.json`.
 
 
       ## Попробуйте
@@ -940,6 +1120,96 @@ kubernetes-9:
       W zadaniu 034 prepare-route kopiuje /source/index.html do wspólnego wolumenu route, a worker serwuje /site na porcie 8080. Gotowy Pod nie dowodzi działania tej ścieżki treści. Po rollout wywołaj http://127.0.0.1:8080 z worker wybranego Poda app=board; oczekuj north. Błędy wyszukania Poda, exec i HTTP też blokują obserwację.
 
 
+      ### Limit źródła i wczesna obserwacja {#startup-ram-producer-limit-and-early-inputs}
+
+
+      Źródło może nadal mieć dostarczony limit 16Mi zamiast wymaganego odpowiednika 96Mi; wczesna kontrola quantity zatrzymuje się przed nazwanymi wynikami budget. Błędy startu helpers, zamrożonych danych i nieoczekiwanego JSON też dają fallback.  `kubectl get deployment relay -o json | jq .spec.template.spec.containers[].resources; python3 -I -c "import dq_check"`.
+
+
+      ### Pierwotne tożsamości zasobów {#startup-ram-original-resources}
+
+
+      Deployment, Service lub źródłowy ConfigMap mogły zostać odtworzone przy naprawie startu; zachowaj siedem zamrożonych UID zasobów. Błąd odczytu zasobu też daje marker, zmiana tożsamości Pod jest dozwolona.  `jq .identities /run/dq/facts/0/startup-identities.json; kubectl get deployments,services,configmaps -o json | jq ".items[] | {kind,name:.metadata.name,uid:.metadata.uid}"`.
+
+
+      ### Pamięć w fazach startu {#startup-ram-phase-memory-envelope}
+
+
+      Template lub wybrany gotowy Pod może przekroczyć limit 96Mi lub pomijać wymagany memory limit. Uwzględnij szczyty zwykłych initializer i stale działające restartable initializer; dopuszczalny jest też ograniczony Pod memory limit. Podnoszenie limitów ponad contract nie naprawia warunku. Bez Pod memory limit obserwator porównuje największy szczyt ordinary init z sumą main limits i stale działających restartable initializer, uwzględniając już działające restartable initializer w późniejszej inicjalizacji. Poprawny Pod memory limit sam ogranicza envelope, więc pojedyncze limity mogą brakować lub mieć większą sumę; każdy jawny container limit nadal musi być dodatni i nie wyższy od sufitu. Requests nie są tu mierzonym limitem. `kubectl get deployments -o json | jq .items[].spec.template.spec; jq .memory startup-contract.json`.
+
+
+      ### Zachowanie niezmiennego image aplikacji {#startup-ram-immutable-worker-image}
+
+
+      Nazwany kontener aplikacji mógł otrzymać inny image przy naprawie programu lub limitów; zachowaj dostarczony niezmienny image. Dopuszczalna jest dokładna referencja lub referencja z tym samym zamrożonym digest.  `kubectl get deployments -o json | jq .items[].spec.template.spec.containers[].image`.
+
+
+      ### Udana zwykła inicjalizacja {#startup-ram-ordinary-warmup-contract}
+
+
+      Wymagany warmer może brakować, być podwójny, używać innego image lub stać się restartable, albo zakończenie nie jest udane; zachowaj jeden zwykły initializer z dostarczonym image i kodem wyjścia 0 przed startem aplikacji. Warmup initializer jest zwykłą fazą, nie stałym sidecar. Rozwiązanie daje dość pamięci na zachowane dane w ogólnym envelope. Gdy rola nie kończy rollout, jej payload marker pojawia się przed kontrolą completed init status; usunięcie initializer ani zmniejszenie źródła nie omija wymagań. `kubectl get deployment stager -o json | jq .spec.template.spec.initContainers; kubectl get pods -o json | jq .items[].status.initContainerStatuses`.
+
+
+      ### Zachowanie bieżących danych źródła {#startup-ram-current-source-data}
+
+
+      Wartości źródła mogły zostać zmniejszone lub zastąpione dla łatwiejszego startu; zachowaj dostarczone CACHE_MIB i CACHE_ID podczas naprawy odbiorców. Dodatkowe klucze data ConfigMap są dozwolone, błędy API źródła dzielą marker.  `kubectl get configmap startup-source -o json | jq .data`.
+
+
+      ### Interfejs zadeklarowanego Service {#startup-ram-declared-service-interface}
+
+
+      Service może mieć błędny type, selector niepasujący do template aplikacji lub brakujący/podwójny port TCP; zachowaj type ClusterIP, niepusty pasujący selector i jeden port 8080. Błędy odczytu zasobu też dają marker.  `kubectl get services -o json | jq ".items[] | {name:.metadata.name,type:.spec.type,selector:.spec.selector,ports:.spec.ports}"`.
+
+
+      ### Najpierw start źródła {#startup-ram-producer-startup-gate}
+
+
+      Dostarczone źródło bez końca zwiększa pamięć i sprawdza błędny port; rollout może zawieść przed obserwacją danych ról. Zbuduj bieżący RAM payload i interfejs HTTP w wymaganym limicie; późniejsze błędy obserwacji Pod lub ReplicaSet też dają marker.  `kubectl rollout status deployment/relay --timeout=3s; kubectl get pods; kubectl get deployment relay -o json | jq .spec.template.spec.containers`.
+
+
+      ### Fallback obserwacji danych {#startup-ram-data-observer-fallback}
+
+
+      Zamrożone fakty, helpers, liczbowe metadata pliku lub JSON mogą być nieczytelne albo wadliwe przed nazwanym wynikiem; sprawdź te wejścia osobno. Zwykłe błędy rollout, poleceń payload i publication zachowują swoje markery; sam fallback nie dowodzi błędu image ani pamięci.  `python3 -I -c "import dq_check"; jq .dataset startup-contract.json`.
+
+
+      ### relay: zaalokowany RAM payload {#startup-ram-relay-allocated-payload}
+
+
+      relay: Źródło może nie mieć działającego RAM mount lub w pełni zaalokowanego bieżącego payload mimo rollout; sprawdź tmpfs, rozmiar, zaalokowane bloki i checksum w bieżących gotowych należących Pod.  `kubectl rollout status deployment/relay --timeout=3s; kubectl exec deployment/relay -c worker -- sh -c "stat -f -c %T /cache; stat -c ''%s %b'' /cache/payload; sha256sum /cache/payload"`.
+
+
+      ### relay: bieżące HTTP metadata {#startup-ram-relay-current-metadata}
+
+
+      relay: Service może publikować stare metadata cache albo żądanie zawodzi; porównaj bieżące cache ID, rozmiar i checksum z zamrożoną publikacją. Dodatkowe pola JSON są dozwolone, sama zdrowa odpowiedź HTTP nie dowodzi zaalokowanego dataset.  `kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://relay:8080/record.json; jq .dataset startup-contract.json`.
+
+
+      ### stager: zaalokowany RAM payload {#startup-ram-stager-allocated-payload}
+
+
+      stager: Dostarczony initializer ma tylko 32Mi na dane 80Mi; napraw alokację w granicach 96Mi, zachowując zwykłą fazę warmup. Błąd rollout roli daje ten marker przed kontrolą init status; gotowy Pod nadal ma zawierać pełny zaalokowany payload.  `kubectl rollout status deployment/stager --timeout=3s; kubectl exec deployment/stager -c worker -- sh -c "stat -f -c %T /cache; stat -c ''%s %b'' /cache/payload; sha256sum /cache/payload"`.
+
+
+      ### stager: bieżące HTTP metadata {#startup-ram-stager-current-metadata}
+
+
+      stager: Service może publikować stare metadata cache albo żądanie zawodzi; porównaj bieżące cache ID, rozmiar i checksum z zamrożoną publikacją. Dodatkowe pola JSON są dozwolone, sama zdrowa odpowiedź HTTP nie dowodzi zaalokowanego dataset.  `kubectl exec deployment/stager -c worker -- wget -qO- -T 3 http://stager:8080/record.json; jq .dataset startup-contract.json`.
+
+
+      ### reader: zaalokowany RAM payload {#startup-ram-reader-allocated-payload}
+
+
+      reader: Dostarczone wejście żąda 112Mi przy granicy 96Mi zamiast bieżących danych 80Mi; użyj zachowanych wartości źródła i sprawdź rollout oraz faktycznie zaalokowany plik RAM, bez zmniejszania payload ani pliku sparse.  `kubectl rollout status deployment/reader --timeout=3s; kubectl exec deployment/reader -c worker -- sh -c "stat -f -c %T /cache; stat -c ''%s %b'' /cache/payload; sha256sum /cache/payload"`.
+
+
+      ### reader: bieżące HTTP metadata {#startup-ram-reader-current-metadata}
+
+
+      reader: Service może publikować stare metadata cache albo żądanie zawodzi; porównaj bieżące cache ID, rozmiar i checksum z zamrożoną publikacją. Dodatkowe pola JSON są dozwolone, sama zdrowa odpowiedź HTTP nie dowodzi zaalokowanego dataset.  `kubectl exec deployment/reader -c worker -- wget -qO- -T 3 http://reader:8080/record.json; jq .dataset startup-contract.json`.
+
+
       ## Wypróbuj
 
 
@@ -1027,6 +1297,96 @@ kubernetes-9:
       En el reto 034, prepare-route copia /source/index.html al volumen route compartido y worker sirve /site en el puerto 8080. Un Pod Ready no demuestra esa ruta del contenido. Tras el rollout, solicita http://127.0.0.1:8080 desde worker del Pod seleccionado app=board; espera north. Los fallos al buscar el Pod, de exec y HTTP también impiden observarlo.
 
 
+      ### Límite del productor y observaciones iniciales {#startup-ram-producer-limit-and-early-inputs}
+
+
+      El productor puede conservar límite 16Mi suministrado en vez del equivalente 96Mi requerido; control inicial quantity se detiene antes de resultados budget nombrados. Inicio de helpers, entradas congeladas y JSON inesperado también pueden dar fallback.  `kubectl get deployment relay -o json | jq .spec.template.spec.containers[].resources; python3 -I -c "import dq_check"`.
+
+
+      ### Identidades originales de recursos {#startup-ram-original-resources}
+
+
+      Deployment, Service o ConfigMap fuente pueden recrearse al reparar inicio; conserve siete UIDs congelados. Fallo de lectura de recurso también usa marcador, pero se permite reemplazar identidades Pod.  `jq .identities /run/dq/facts/0/startup-identities.json; kubectl get deployments,services,configmaps -o json | jq ".items[] | {kind,name:.metadata.name,uid:.metadata.uid}"`.
+
+
+      ### Memoria entre fases de inicio {#startup-ram-phase-memory-envelope}
+
+
+      Template o Pod listo seleccionado puede superar envolvente 96Mi u omitir memory limit necesario. Cuente picos de initializer ordinarios y restartable initializer residentes; también se acepta límite de memoria Pod acotado. Elevar límites sobre contract no repara condición. Sin límite memoria Pod, observador compara mayor pico ordinary init con suma de main limits y restartable initializer residentes, contando los ya activos durante inicialización posterior. Límite Pod válido acota envelope, por lo que pueden aceptarse límites individuales ausentes o suma mayor; cada container limit explícito debe seguir positivo y dentro del techo. Requests no son límite medido aquí. `kubectl get deployments -o json | jq .items[].spec.template.spec; jq .memory startup-contract.json`.
+
+
+      ### Conservar image inmutable de aplicación {#startup-ram-immutable-worker-image}
+
+
+      El contenedor nombrado puede cambiar a otro image al reparar programa o límites; conserve image inmutable suministrado. Se acepta referencia exacta u otra con mismo digest congelado.  `kubectl get deployments -o json | jq .items[].spec.template.spec.containers[].image`.
+
+
+      ### Conservar inicialización ordinaria exitosa {#startup-ram-ordinary-warmup-contract}
+
+
+      warmer requerido puede faltar, duplicarse, usar otro image o hacerse restartable, o no terminar correctamente; conserve un initializer ordinario con image suministrado y código 0 antes de iniciar aplicación. Warmup initializer es fase ordinaria, no sidecar permanente. Referencia le da memoria suficiente para dataset conservado dentro del envelope. Si rol no completa rollout, su payload marker aparece antes de inspeccionar completed init status; eliminar initializer o reducir fuente no evita requisitos. `kubectl get deployment stager -o json | jq .spec.template.spec.initContainers; kubectl get pods -o json | jq .items[].status.initContainerStatuses`.
+
+
+      ### Conservar datos fuente actuales {#startup-ram-current-source-data}
+
+
+      Valores fuente pueden reducirse o reemplazarse para facilitar inicio; conserve CACHE_MIB y CACHE_ID suministrados al reparar consumidores. Se permiten claves data adicionales y errores API fuente comparten marcador.  `kubectl get configmap startup-source -o json | jq .data`.
+
+
+      ### Interfaz Service declarada {#startup-ram-declared-service-interface}
+
+
+      Service puede tener type erróneo, selector que no coincide con template o puerto TCP ausente/duplicado; conserve type ClusterIP, selector coincidente no vacío y un puerto 8080. Errores de lectura también usan marcador.  `kubectl get services -o json | jq ".items[] | {name:.metadata.name,type:.spec.type,selector:.spec.selector,ports:.spec.ports}"`.
+
+
+      ### Reparar primero inicio del productor {#startup-ram-producer-startup-gate}
+
+
+      Productor suministrado crece memoria indefinidamente y sondea puerto incorrecto; rollout puede fallar antes de observar datos por rol. Construya RAM payload actual e interfaz HTTP dentro del límite requerido; errores posteriores de observación Pod o ReplicaSet también dan marcador.  `kubectl rollout status deployment/relay --timeout=3s; kubectl get pods; kubectl get deployment relay -o json | jq .spec.template.spec.containers`.
+
+
+      ### Fallback de observación de datos {#startup-ram-data-observer-fallback}
+
+
+      Hechos congelados, helpers, metadata numéricos de archivo o JSON pueden ser ilegibles o mal formados antes de resultado nombrado; inspeccione entradas aparte. Fallos ordinarios rollout, comandos payload y publication conservan marcadores; fallback por sí solo no prueba fallo de image o memoria.  `python3 -I -c "import dq_check"; jq .dataset startup-contract.json`.
+
+
+      ### relay: RAM payload asignado {#startup-ram-relay-allocated-payload}
+
+
+      relay: El productor puede carecer de RAM mount usable o payload actual completamente asignado pese a rollout; inspeccione tmpfs, tamaño, bloques asignados y checksum en Pod listos actuales propios.  `kubectl rollout status deployment/relay --timeout=3s; kubectl exec deployment/relay -c worker -- sh -c "stat -f -c %T /cache; stat -c ''%s %b'' /cache/payload; sha256sum /cache/payload"`.
+
+
+      ### relay: metadata HTTP actuales {#startup-ram-relay-current-metadata}
+
+
+      relay: Service puede publicar metadata antiguos o fallar solicitud; compare cache ID actual, bytes y checksum con publicación congelada. Se permiten campos JSON adicionales, pero respuesta HTTP saludable no prueba dataset asignado.  `kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://relay:8080/record.json; jq .dataset startup-contract.json`.
+
+
+      ### stager: RAM payload asignado {#startup-ram-stager-allocated-payload}
+
+
+      stager: Initializer suministrado solo tiene 32Mi para dataset 80Mi; repare asignación dentro de envolvente 96Mi conservando fase warmup ordinaria. Rollout fallido del rol da marcador antes de init status; Pod listo aún debe contener payload completo asignado.  `kubectl rollout status deployment/stager --timeout=3s; kubectl exec deployment/stager -c worker -- sh -c "stat -f -c %T /cache; stat -c ''%s %b'' /cache/payload; sha256sum /cache/payload"`.
+
+
+      ### stager: metadata HTTP actuales {#startup-ram-stager-current-metadata}
+
+
+      stager: Service puede publicar metadata antiguos o fallar solicitud; compare cache ID actual, bytes y checksum con publicación congelada. Se permiten campos JSON adicionales, pero respuesta HTTP saludable no prueba dataset asignado.  `kubectl exec deployment/stager -c worker -- wget -qO- -T 3 http://stager:8080/record.json; jq .dataset startup-contract.json`.
+
+
+      ### reader: RAM payload asignado {#startup-ram-reader-allocated-payload}
+
+
+      reader: La entrada suministrada pide 112Mi bajo envolvente 96Mi en vez de dataset actual 80Mi; use valores fuente conservados y verifique rollout y archivo RAM realmente asignado, sin reducir payload ni declararlo sparse.  `kubectl rollout status deployment/reader --timeout=3s; kubectl exec deployment/reader -c worker -- sh -c "stat -f -c %T /cache; stat -c ''%s %b'' /cache/payload; sha256sum /cache/payload"`.
+
+
+      ### reader: metadata HTTP actuales {#startup-ram-reader-current-metadata}
+
+
+      reader: Service puede publicar metadata antiguos o fallar solicitud; compare cache ID actual, bytes y checksum con publicación congelada. Se permiten campos JSON adicionales, pero respuesta HTTP saludable no prueba dataset asignado.  `kubectl exec deployment/reader -c worker -- wget -qO- -T 3 http://reader:8080/record.json; jq .dataset startup-contract.json`.
+
+
       ## Pruébalo
 
 
@@ -1112,6 +1472,96 @@ kubernetes-9:
 
 
       In Quest 034 kopiert prepare-route /source/index.html ins gemeinsame route-Volume; worker liefert /site auf Port 8080 aus. Ein Ready-Pod beweist diesen Inhaltspfad nicht. Rufe nach dem Rollout http://127.0.0.1:8080 aus worker des ausgewählten app=board-Pods ab; erwartet wird north. Auch Pod-Suche, exec- und HTTP-Fehler verhindern diese Beobachtung.
+
+
+      ### Quellenlimit und frühe Beobachtungen {#startup-ram-producer-limit-and-early-inputs}
+
+
+      Die Quelle hat möglicherweise noch das gelieferte 16Mi Limit statt des geforderten 96Mi Äquivalents; diese frühe Quantity-Prüfung endet vor benannten Budgetergebnissen. Helper-Start, eingefrorene Eingaben und unerwartete JSON-Fehler können ebenfalls diesen Fallback ergeben.  `kubectl get deployment relay -o json | jq .spec.template.spec.containers[].resources; python3 -I -c "import dq_check"`.
+
+
+      ### Ursprüngliche Ressourcenidentitäten erhalten {#startup-ram-original-resources}
+
+
+      Deployment, Service oder Quell-ConfigMap wurden möglicherweise bei der Startreparatur neu erstellt; erhalten Sie alle sieben eingefrorenen Ressourcen-UIDs. Ein gescheiterter Ressourcenabruf nutzt denselben Marker, neue Pod-Identitäten sind erlaubt.  `jq .identities /run/dq/facts/0/startup-identities.json; kubectl get deployments,services,configmaps -o json | jq ".items[] | {kind,name:.metadata.name,uid:.metadata.uid}"`.
+
+
+      ### Speichergrenzen über Startphasen {#startup-ram-phase-memory-envelope}
+
+
+      Ein Template oder ausgewählter bereiter Pod überschreitet möglicherweise die 96Mi Grenze oder lässt ein erforderliches Speicherlimit aus. Berücksichtigen Sie Spitzen gewöhnlicher Initializer und dauerhaft laufende restartable Initializer; ein begrenztes Pod-Speicherlimit ist ebenfalls erlaubt. Limits über dem Vertrag zu erhöhen behebt diese Bedingung nicht. Ohne Pod-Speicherlimit vergleicht der Observer die größte gewöhnliche Init-Spitze mit der Summe aus Main-Limits und residenten restartable Initializern und zählt bereits laufende restartable Initializer in späterer Initialisierung mit. Ein gültiges Pod-Speicherlimit begrenzt die Grenze selbst, daher können fehlende Einzelgrenzen oder eine größere deklarierte Summe erlaubt sein; jedes ausdrücklich deklarierte Containerlimit muss dennoch positiv und innerhalb der Obergrenze sein. Requests sind hier nicht das gemessene Limit. `kubectl get deployments -o json | jq .items[].spec.template.spec; jq .memory startup-contract.json`.
+
+
+      ### Unveränderliches Anwendungsimage erhalten {#startup-ram-immutable-worker-image}
+
+
+      Der benannte Anwendungscontainer wurde möglicherweise bei der Programm- oder Limitreparatur auf ein anderes Image umgestellt; erhalten Sie das gelieferte unveränderliche Image. Die exakte Referenz oder eine mit demselben eingefrorenen Digest wird akzeptiert.  `kubectl get deployments -o json | jq .items[].spec.template.spec.containers[].image`.
+
+
+      ### Erfolgreiche gewöhnliche Initialisierung erhalten {#startup-ram-ordinary-warmup-contract}
+
+
+      Der erforderliche warmer fehlt möglicherweise, ist doppelt vorhanden, nutzt ein anderes Image oder wurde restartable, oder sein beobachtetes Ende war nicht erfolgreich; erhalten Sie einen gewöhnlichen Initializer mit geliefertem Image und Exitcode 0 vor dem Anwendungsstart. Der Warmup-Initializer ist eine gewöhnliche Phase, kein permanenter Sidecar. Die Referenz gibt ihm genug Speicher für den erhaltenen Datensatz innerhalb der gemeinsamen Grenze. Kann die Rolle nicht ausrollen, erscheint ihr Payload-Marker vor der Prüfung des abgeschlossenen Init-Status; Initializer zu entfernen oder Quelldaten zu verkleinern umgeht keine Anforderung. `kubectl get deployment stager -o json | jq .spec.template.spec.initContainers; kubectl get pods -o json | jq .items[].status.initContainerStatuses`.
+
+
+      ### Aktuelle Quelldaten erhalten {#startup-ram-current-source-data}
+
+
+      Quellwerte wurden möglicherweise zum leichteren Start verkleinert oder ersetzt; erhalten Sie die gelieferten CACHE_MIB und CACHE_ID Einträge bei der Verbraucherreparatur. Zusätzliche ConfigMap-Data-Schlüssel sind erlaubt, Quell-API-Fehler nutzen denselben Marker.  `kubectl get configmap startup-source -o json | jq .data`.
+
+
+      ### Deklarierte Service-Schnittstelle einhalten {#startup-ram-declared-service-interface}
+
+
+      Ein Service hat möglicherweise den falschen Typ, einen nicht zum Anwendungstemplate passenden Selector oder einen fehlenden beziehungsweise doppelten TCP-Port; erhalten Sie Typ ClusterIP, einen nichtleeren passenden Selector und einen Port 8080. Ressourcenabruf-Fehler nutzen denselben Marker.  `kubectl get services -o json | jq ".items[] | {name:.metadata.name,type:.spec.type,selector:.spec.selector,ports:.spec.ports}"`.
+
+
+      ### Zuerst Quellenstart reparieren {#startup-ram-producer-startup-gate}
+
+
+      Die gelieferte Quelle vergrößert Speicher endlos und prüft den falschen Port; ihr Rollout kann vor dem Datenobserver je Rolle scheitern. Erstellen Sie den aktuellen RAM-Payload und die deklarierte HTTP-Schnittstelle innerhalb des erforderlichen Limits; spätere Pod- oder ReplicaSet-Beobachtungsfehler nutzen denselben Marker.  `kubectl rollout status deployment/relay --timeout=3s; kubectl get pods; kubectl get deployment relay -o json | jq .spec.template.spec.containers`.
+
+
+      ### Fallback der Datenbeobachtung {#startup-ram-data-observer-fallback}
+
+
+      Eingefrorene Fakten, helpers, numerische Dateimetadaten oder JSON sind möglicherweise vor einem benannten Ergebnis unlesbar oder fehlerhaft; prüfen Sie diese Eingaben separat. Gewöhnliche Rollout-, Payload- und Publication-Befehlsfehler behalten eigene Marker; der Fallback allein belegt keinen Image- oder Speicherfehler.  `python3 -I -c "import dq_check"; jq .dataset startup-contract.json`.
+
+
+      ### relay: zugewiesener RAM-Payload {#startup-ram-relay-allocated-payload}
+
+
+      relay: Der Quelle fehlt möglicherweise trotz Rollout ein nutzbarer RAM-Mount oder vollständig zugewiesener aktueller Payload; prüfen Sie tmpfs, Dateigröße, zugewiesene Blöcke und Prüfsumme in ihren aktuellen bereiten zugehörigen Pods.  `kubectl rollout status deployment/relay --timeout=3s; kubectl exec deployment/relay -c worker -- sh -c "stat -f -c %T /cache; stat -c ''%s %b'' /cache/payload; sha256sum /cache/payload"`.
+
+
+      ### relay: aktuelle HTTP-Metadaten {#startup-ram-relay-current-metadata}
+
+
+      relay: Der Service veröffentlicht möglicherweise alte Cache-Metadaten oder die Anfrage scheitert; vergleichen Sie aktuelle Cache-ID, Bytezahl und Prüfsumme mit der eingefrorenen Veröffentlichung. Zusätzliche JSON-Felder sind erlaubt, eine gesunde HTTP-Antwort allein belegt keinen zugewiesenen Datensatz.  `kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://relay:8080/record.json; jq .dataset startup-contract.json`.
+
+
+      ### stager: zugewiesener RAM-Payload {#startup-ram-stager-allocated-payload}
+
+
+      stager: Der gelieferte Initializer hat nur 32Mi für den 80Mi Datensatz; korrigieren Sie die Zuweisung innerhalb der 96Mi Grenze und erhalten Sie die gewöhnliche Warmup-Phase. Ein gescheiterter Rollen-Rollout meldet diesen Marker vor Init-Statusprüfungen; ein bereiter Pod braucht weiterhin den vollständig zugewiesenen Payload.  `kubectl rollout status deployment/stager --timeout=3s; kubectl exec deployment/stager -c worker -- sh -c "stat -f -c %T /cache; stat -c ''%s %b'' /cache/payload; sha256sum /cache/payload"`.
+
+
+      ### stager: aktuelle HTTP-Metadaten {#startup-ram-stager-current-metadata}
+
+
+      stager: Der Service veröffentlicht möglicherweise alte Cache-Metadaten oder die Anfrage scheitert; vergleichen Sie aktuelle Cache-ID, Bytezahl und Prüfsumme mit der eingefrorenen Veröffentlichung. Zusätzliche JSON-Felder sind erlaubt, eine gesunde HTTP-Antwort allein belegt keinen zugewiesenen Datensatz.  `kubectl exec deployment/stager -c worker -- wget -qO- -T 3 http://stager:8080/record.json; jq .dataset startup-contract.json`.
+
+
+      ### reader: zugewiesener RAM-Payload {#startup-ram-reader-allocated-payload}
+
+
+      reader: Die gelieferte Eingabe verlangt 112Mi unter der 96Mi Grenze statt des aktuellen 80Mi Datensatzes; nutzen Sie die erhaltenen Quellwerte und prüfen Sie Rollout und tatsächlich zugewiesene RAM-Datei, statt den Payload zu verkleinern oder nur dünn zu deklarieren.  `kubectl rollout status deployment/reader --timeout=3s; kubectl exec deployment/reader -c worker -- sh -c "stat -f -c %T /cache; stat -c ''%s %b'' /cache/payload; sha256sum /cache/payload"`.
+
+
+      ### reader: aktuelle HTTP-Metadaten {#startup-ram-reader-current-metadata}
+
+
+      reader: Der Service veröffentlicht möglicherweise alte Cache-Metadaten oder die Anfrage scheitert; vergleichen Sie aktuelle Cache-ID, Bytezahl und Prüfsumme mit der eingefrorenen Veröffentlichung. Zusätzliche JSON-Felder sind erlaubt, eine gesunde HTTP-Antwort allein belegt keinen zugewiesenen Datensatz.  `kubectl exec deployment/reader -c worker -- wget -qO- -T 3 http://reader:8080/record.json; jq .dataset startup-contract.json`.
 
 
       ## Probieren Sie es aus
@@ -7588,6 +8038,156 @@ ansible-9:
       app1 does not serve stable-63 on HTTP 8080 or the request failed; restoring disk bytes without notifying the consumer reload, or refreshing before rescue finishes, can leave a stale cached response.  `curl -fsS --max-time 3 "http://app1-${DQ_NAMESPACE#dq-}:8080"`. Compare app1, app2 and app3.
 
 
+      ### Trust the backup bytes before recovery {#recovery-publication-trusted-backup-bytes}
+
+
+      The controller backup may have been edited or replaced by the rejected candidate; previous.txt must match the approved publication hash, including its newline. Verify that receipt before using the backup as the recovery source. The supplied backup is initially correct: its approved release includes a final line feed. The reference validates it before copying the rejected candidate, restores it after an observed rejection and then refreshes the original source and dependent caches. The check observes current publication and identity, without certifying a complete block/rescue execution history. `sha256sum previous.txt; jq .publication application-contract.json`.
+
+
+      ### Bounded application observation {#recovery-publication-bounded-application-observation}
+
+
+      DNS, SSH identity reads or application HTTP observations may exhaust the shared ten-second Python observation budget; inspect the existing applications and connections. This marker belongs to the application observer, while an earlier legacy HTTP timeout uses its outer fallback.  `ansible-playbook --syntax-check rollout.yml; jq .roles application-contract.json`.
+
+
+      ### Inputs before the host observations {#recovery-publication-global-input-observation}
+
+
+      The controller artifact or frozen contract may be unreadable, or the source address may not resolve before host observations begin; inspect the supplied receipt and DNS context. Caught input, parsing and command errors at this phase share this marker.  `test -r previous.txt; jq "{sourceHost,controllerArtifact,roles}" application-contract.json`.
+
+
+      ### Earlier HTTP and unexpected observation failures {#recovery-publication-legacy-or-observer-fallback}
+
+
+      The earlier legacy HTTP group may stop before a named result, or Python startup or an unexpected metadata shape may abort the application observer. Correct the legacy response first: its failure skips the application checks; ordinary named host errors keep their own diagnostics. The legacy HTTP group has its own ten-second shell limit and must pass before the application observer begins. The later Python observer has a separate ten-second budget. JSON decoding errors caught there use an observation marker; an uncaught unexpected object shape can instead reach this fallback. No authentication credential is required by this quest’s supplied application contract. `python3 -I -c "import json,urllib.request"; ansible-playbook --syntax-check rollout.yml`.
+
+
+      ### app1: message content {#recovery-publication-app1-content}
+
+
+      app1: The file may still contain unconfigured or candidate data, or SSH could not read it; deliver the trusted stable-ready content to /srv/site/message. This shell comparison removes trailing line feeds.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /srv/site/message`.
+
+
+      ### app1: message permissions {#recovery-publication-app1-mode}
+
+
+      app1: Copying recovery data may leave restrictive or unintended permissions, or SSH cannot stat the file; explicitly set /srv/site/message mode to 0644 in the play.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" stat -c %a /srv/site/message`.
+
+
+      ### app1: legacy cached response {#recovery-publication-app1-http}
+
+
+      app1: The legacy process may still cache its old message despite a correct file, or HTTP may be unavailable; refresh dq-service so port 8080 returns stable-ready.  `curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8080`.
+
+
+      ### app1: original application identity {#recovery-publication-app1-identity}
+
+
+      app1: Restarting or replacing the supplied application may change its PID, start time, principal, groups, capabilities, command or installed program bytes; preserve its original identity and refresh inputs with SIGHUP instead.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; jq . original-application-identities.json`.
+
+
+      ### app1: approved live publication {#recovery-publication-app1-ready}
+
+
+      app1: The application may retain a rejected source or startup cache, or its current role and publication fields may disagree with the receipt; repair the source and upstream inputs, then signal the same process and verify HTTP 8081.  `curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8081/; jq .publication application-contract.json`.
+
+
+      ### app1: existing publication source {#recovery-publication-app1-origin}
+
+
+      app1: The source response may come from a different implementation: the supplied publisher sets origin to local when reading its actual source file. Preserve its original process/program and compare the live receipt rather than forging an origin field.  `curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8081/; ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /srv/site/application.json`.
+
+
+      ### app1: host observation errors {#recovery-publication-app1-observation}
+
+
+      app1: SSH may not return a readable process receipt, HTTP may be unreachable or caught JSON/input parsing may fail during this host observation; inspect its existing process, configuration and endpoint. Python observation timeouts use the separate budget marker.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8081/`.
+
+
+      ### app2: message content {#recovery-publication-app2-content}
+
+
+      app2: The file may still contain unconfigured or candidate data, or SSH could not read it; deliver the trusted stable-ready content to /srv/site/message. This shell comparison removes trailing line feeds.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /srv/site/message`.
+
+
+      ### app2: message permissions {#recovery-publication-app2-mode}
+
+
+      app2: Copying recovery data may leave restrictive or unintended permissions, or SSH cannot stat the file; explicitly set /srv/site/message mode to 0644 in the play.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" stat -c %a /srv/site/message`.
+
+
+      ### app2: legacy cached response {#recovery-publication-app2-http}
+
+
+      app2: The legacy process may still cache its old message despite a correct file, or HTTP may be unavailable; refresh dq-service so port 8080 returns stable-ready.  `curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8080`.
+
+
+      ### app2: original application identity {#recovery-publication-app2-identity}
+
+
+      app2: Restarting or replacing the supplied application may change its PID, start time, principal, groups, capabilities, command or installed program bytes; preserve its original identity and refresh inputs with SIGHUP instead.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; jq . original-application-identities.json`.
+
+
+      ### app2: approved live publication {#recovery-publication-app2-ready}
+
+
+      app2: The application may retain a rejected source or startup cache, or its current role and publication fields may disagree with the receipt; repair the source and upstream inputs, then signal the same process and verify HTTP 8081.  `curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8081/; jq .publication application-contract.json`.
+
+
+      ### app2: existing publication source {#recovery-publication-app2-origin}
+
+
+      app2: The dependent application may consume another host or the legacy endpoint; its reported origin must resolve to the existing app1 source and use HTTP port 8081. A source DNS alias or its IP can satisfy this observation.  `curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8081/; ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /srv/site/application.json`.
+
+
+      ### app2: host observation errors {#recovery-publication-app2-observation}
+
+
+      app2: SSH may not return a readable process receipt, HTTP may be unreachable or caught JSON/input parsing may fail during this host observation; inspect its existing process, configuration and endpoint. Python observation timeouts use the separate budget marker.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8081/`.
+
+
+      ### app3: message content {#recovery-publication-app3-content}
+
+
+      app3: The file may still contain unconfigured or candidate data, or SSH could not read it; deliver the trusted stable-ready content to /srv/site/message. This shell comparison removes trailing line feeds.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /srv/site/message`.
+
+
+      ### app3: message permissions {#recovery-publication-app3-mode}
+
+
+      app3: Copying recovery data may leave restrictive or unintended permissions, or SSH cannot stat the file; explicitly set /srv/site/message mode to 0644 in the play.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" stat -c %a /srv/site/message`.
+
+
+      ### app3: legacy cached response {#recovery-publication-app3-http}
+
+
+      app3: The legacy process may still cache its old message despite a correct file, or HTTP may be unavailable; refresh dq-service so port 8080 returns stable-ready.  `curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8080`.
+
+
+      ### app3: original application identity {#recovery-publication-app3-identity}
+
+
+      app3: Restarting or replacing the supplied application may change its PID, start time, principal, groups, capabilities, command or installed program bytes; preserve its original identity and refresh inputs with SIGHUP instead.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; jq . original-application-identities.json`.
+
+
+      ### app3: approved live publication {#recovery-publication-app3-ready}
+
+
+      app3: The application may retain a rejected source or startup cache, or its current role and publication fields may disagree with the receipt; repair the source and upstream inputs, then signal the same process and verify HTTP 8081.  `curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8081/; jq .publication application-contract.json`.
+
+
+      ### app3: existing publication source {#recovery-publication-app3-origin}
+
+
+      app3: The dependent application may consume another host or the legacy endpoint; its reported origin must resolve to the existing app1 source and use HTTP port 8081. A source DNS alias or its IP can satisfy this observation.  `curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8081/; ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /srv/site/application.json`.
+
+
+      ### app3: host observation errors {#recovery-publication-app3-observation}
+
+
+      app3: SSH may not return a readable process receipt, HTTP may be unreachable or caught JSON/input parsing may fail during this host observation; inspect its existing process, configuration and endpoint. Python observation timeouts use the separate budget marker.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8081/`.
+
+
       ## Try it
 
 
@@ -7711,6 +8311,156 @@ ansible-9:
 
 
       app1 не отдаёт stable-63 по HTTP 8080 либо запрос завершился ошибкой: восстановление файла без обновления потребителя или refresh до завершения rescue оставляют старый кэш.  `curl -fsS --max-time 3 "http://app1-${DQ_NAMESPACE#dq-}:8080"`. Сравните app1, app2 и app3.
+
+
+      ### Байты резервной копии до восстановления {#recovery-publication-trusted-backup-bytes}
+
+
+      Резервная копия на контроллере могла быть изменена или заменена отклонённым candidate; previous.txt совпадает с хэшем одобренной публикации, включая перевод строки. Проверьте квитанцию до использования копии как источника восстановления. Выданная копия изначально правильна: одобренный релиз содержит завершающий перевод строки. Решение проверяет её до candidate, восстанавливает после наблюдаемого отказа и обновляет исходный источник и зависимые кэши. Проверка наблюдает текущую публикацию и идентичности, не доказывая полную историю block/rescue. `sha256sum previous.txt; jq .publication application-contract.json`.
+
+
+      ### Ограниченное наблюдение приложений {#recovery-publication-bounded-application-observation}
+
+
+      DNS, чтение идентичности через SSH или HTTP-наблюдения могут исчерпать общий десятисекундный бюджет Python; изучите существующие приложения и соединения. Этот маркер относится к application observer, а ранний таймаут legacy HTTP даёт внешний fallback.  `ansible-playbook --syntax-check rollout.yml; jq .roles application-contract.json`.
+
+
+      ### Входы до наблюдения хостов {#recovery-publication-global-input-observation}
+
+
+      Артефакт контроллера или зафиксированный contract могут не читаться, либо адрес источника не разрешаться до наблюдения хостов; изучите выданную квитанцию и DNS-контекст. Перехваченные ошибки входов, разбора и команд этой фазы дают один маркер.  `test -r previous.txt; jq "{sourceHost,controllerArtifact,roles}" application-contract.json`.
+
+
+      ### Ранний HTTP и неожиданные ошибки наблюдения {#recovery-publication-legacy-or-observer-fallback}
+
+
+      Ранняя legacy HTTP-группа может оборваться до именованного результата, либо запуск Python или неожиданная структура metadata прерывают application observer. Сначала исправьте legacy-ответ: его сбой пропускает проверки приложений; обычные именованные ошибки хостов сохраняют свою диагностику. Legacy HTTP имеет собственный десятисекундный shell-лимит и должен пройти до application observer. Поздний Python observer имеет отдельный десятисекундный бюджет. Перехваченные ошибки разбора JSON дают observation-маркер, а неперехваченная неожиданная структура может попасть в fallback. Выданный contract этого квеста не требует credential аутентификации приложения. `python3 -I -c "import json,urllib.request"; ansible-playbook --syntax-check rollout.yml`.
+
+
+      ### app1: содержимое сообщения {#recovery-publication-app1-content}
+
+
+      app1: Файл может сохранять unconfigured или candidate, либо SSH не смог его прочитать; доставьте доверенное stable-ready в /srv/site/message. Shell-сравнение удаляет завершающие переводы строк.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /srv/site/message`.
+
+
+      ### app1: права сообщения {#recovery-publication-app1-mode}
+
+
+      app1: Копирование данных восстановления могло оставить ограничивающие или случайные права, либо SSH не выполняет stat; явно задайте /srv/site/message mode 0644 в play.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" stat -c %a /srv/site/message`.
+
+
+      ### app1: legacy-ответ из кэша {#recovery-publication-app1-http}
+
+
+      app1: Legacy-процесс может хранить старое сообщение при правильном файле, либо HTTP недоступен; обновите dq-service, чтобы порт 8080 вернул stable-ready.  `curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8080`.
+
+
+      ### app1: исходная идентичность приложения {#recovery-publication-app1-identity}
+
+
+      app1: Перезапуск или замена выданного приложения могут изменить PID, время старта, principal, группы, capabilities, команду или байты установленной программы; сохраните исходную идентичность и обновляйте входы через SIGHUP.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; jq . original-application-identities.json`.
+
+
+      ### app1: одобренная живая публикация {#recovery-publication-app1-ready}
+
+
+      app1: Приложение может сохранять отклонённый источник или стартовый кэш, либо role/publication расходятся с квитанцией; исправьте источник и upstream, затем подайте сигнал тому же процессу и проверьте HTTP 8081.  `curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8081/; jq .publication application-contract.json`.
+
+
+      ### app1: существующий источник публикации {#recovery-publication-app1-origin}
+
+
+      app1: Ответ источника может поступать от другой реализации: выданный publisher задаёт origin=local при чтении реального файла. Сохраните исходный процесс/программу и сравните живую квитанцию, не подменяя поле origin.  `curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8081/; ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /srv/site/application.json`.
+
+
+      ### app1: ошибки наблюдения хоста {#recovery-publication-app1-observation}
+
+
+      app1: SSH может не вернуть читаемую квитанцию процесса, HTTP быть недоступным, либо перехваченный разбор JSON/входов завершиться ошибкой при наблюдении хоста; изучите его процесс, конфигурацию и endpoint. Таймауты Python дают отдельный budget-маркер.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8081/`.
+
+
+      ### app2: содержимое сообщения {#recovery-publication-app2-content}
+
+
+      app2: Файл может сохранять unconfigured или candidate, либо SSH не смог его прочитать; доставьте доверенное stable-ready в /srv/site/message. Shell-сравнение удаляет завершающие переводы строк.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /srv/site/message`.
+
+
+      ### app2: права сообщения {#recovery-publication-app2-mode}
+
+
+      app2: Копирование данных восстановления могло оставить ограничивающие или случайные права, либо SSH не выполняет stat; явно задайте /srv/site/message mode 0644 в play.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" stat -c %a /srv/site/message`.
+
+
+      ### app2: legacy-ответ из кэша {#recovery-publication-app2-http}
+
+
+      app2: Legacy-процесс может хранить старое сообщение при правильном файле, либо HTTP недоступен; обновите dq-service, чтобы порт 8080 вернул stable-ready.  `curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8080`.
+
+
+      ### app2: исходная идентичность приложения {#recovery-publication-app2-identity}
+
+
+      app2: Перезапуск или замена выданного приложения могут изменить PID, время старта, principal, группы, capabilities, команду или байты установленной программы; сохраните исходную идентичность и обновляйте входы через SIGHUP.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; jq . original-application-identities.json`.
+
+
+      ### app2: одобренная живая публикация {#recovery-publication-app2-ready}
+
+
+      app2: Приложение может сохранять отклонённый источник или стартовый кэш, либо role/publication расходятся с квитанцией; исправьте источник и upstream, затем подайте сигнал тому же процессу и проверьте HTTP 8081.  `curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8081/; jq .publication application-contract.json`.
+
+
+      ### app2: существующий источник публикации {#recovery-publication-app2-origin}
+
+
+      app2: Зависимое приложение может читать другой хост или legacy endpoint; его origin разрешается в существующий источник app1 и использует HTTP-порт 8081. DNS-псевдоним источника или его IP допустимы.  `curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8081/; ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /srv/site/application.json`.
+
+
+      ### app2: ошибки наблюдения хоста {#recovery-publication-app2-observation}
+
+
+      app2: SSH может не вернуть читаемую квитанцию процесса, HTTP быть недоступным, либо перехваченный разбор JSON/входов завершиться ошибкой при наблюдении хоста; изучите его процесс, конфигурацию и endpoint. Таймауты Python дают отдельный budget-маркер.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8081/`.
+
+
+      ### app3: содержимое сообщения {#recovery-publication-app3-content}
+
+
+      app3: Файл может сохранять unconfigured или candidate, либо SSH не смог его прочитать; доставьте доверенное stable-ready в /srv/site/message. Shell-сравнение удаляет завершающие переводы строк.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /srv/site/message`.
+
+
+      ### app3: права сообщения {#recovery-publication-app3-mode}
+
+
+      app3: Копирование данных восстановления могло оставить ограничивающие или случайные права, либо SSH не выполняет stat; явно задайте /srv/site/message mode 0644 в play.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" stat -c %a /srv/site/message`.
+
+
+      ### app3: legacy-ответ из кэша {#recovery-publication-app3-http}
+
+
+      app3: Legacy-процесс может хранить старое сообщение при правильном файле, либо HTTP недоступен; обновите dq-service, чтобы порт 8080 вернул stable-ready.  `curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8080`.
+
+
+      ### app3: исходная идентичность приложения {#recovery-publication-app3-identity}
+
+
+      app3: Перезапуск или замена выданного приложения могут изменить PID, время старта, principal, группы, capabilities, команду или байты установленной программы; сохраните исходную идентичность и обновляйте входы через SIGHUP.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; jq . original-application-identities.json`.
+
+
+      ### app3: одобренная живая публикация {#recovery-publication-app3-ready}
+
+
+      app3: Приложение может сохранять отклонённый источник или стартовый кэш, либо role/publication расходятся с квитанцией; исправьте источник и upstream, затем подайте сигнал тому же процессу и проверьте HTTP 8081.  `curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8081/; jq .publication application-contract.json`.
+
+
+      ### app3: существующий источник публикации {#recovery-publication-app3-origin}
+
+
+      app3: Зависимое приложение может читать другой хост или legacy endpoint; его origin разрешается в существующий источник app1 и использует HTTP-порт 8081. DNS-псевдоним источника или его IP допустимы.  `curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8081/; ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /srv/site/application.json`.
+
+
+      ### app3: ошибки наблюдения хоста {#recovery-publication-app3-observation}
+
+
+      app3: SSH может не вернуть читаемую квитанцию процесса, HTTP быть недоступным, либо перехваченный разбор JSON/входов завершиться ошибкой при наблюдении хоста; изучите его процесс, конфигурацию и endpoint. Таймауты Python дают отдельный budget-маркер.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8081/`.
 
 
       ## Попробуйте
@@ -7838,6 +8588,156 @@ ansible-9:
       app1 nie serwuje stable-63 przez HTTP 8080 lub żądanie zawiodło; odtworzenie pliku bez powiadomienia odbiorcy lub odświeżenie przed końcem rescue pozostawia starą pamięć podręczną.  `curl -fsS --max-time 3 "http://app1-${DQ_NAMESPACE#dq-}:8080"`. Porównaj app1, app2 i app3.
 
 
+      ### Bajty kopii przed naprawą {#recovery-publication-trusted-backup-bytes}
+
+
+      Kopia na kontrolerze mogła zostać zmieniona lub zastąpiona odrzuconym candidate; previous.txt ma odpowiadać hash zatwierdzonej publikacji, wraz z nową linią. Sprawdź potwierdzenie przed użyciem kopii jako źródła naprawy. Dostarczona kopia jest początkowo poprawna: zatwierdzone wydanie zawiera końcową nową linię. Rozwiązanie sprawdza ją przed candidate, przywraca po zaobserwowanym odrzuceniu i odświeża pierwotne źródło oraz zależne cache. Kontrola obserwuje bieżącą publikację i tożsamości, nie pełną historię block/rescue. `sha256sum previous.txt; jq .publication application-contract.json`.
+
+
+      ### Ograniczona obserwacja aplikacji {#recovery-publication-bounded-application-observation}
+
+
+      DNS, odczyty tożsamości SSH lub obserwacje HTTP mogą wyczerpać wspólny dziesięciosekundowy budżet Python; sprawdź istniejące aplikacje i połączenia. Marker należy do obserwatora aplikacji, wcześniejszy limit legacy HTTP daje zewnętrzny fallback.  `ansible-playbook --syntax-check rollout.yml; jq .roles application-contract.json`.
+
+
+      ### Wejścia przed obserwacją hostów {#recovery-publication-global-input-observation}
+
+
+      Artefakt kontrolera lub zamrożony contract może być nieczytelny albo adres źródła nie rozwiązuje się przed obserwacją hostów; sprawdź potwierdzenie i kontekst DNS. Obsłużone błędy wejść, parsowania i poleceń tej fazy dzielą marker.  `test -r previous.txt; jq "{sourceHost,controllerArtifact,roles}" application-contract.json`.
+
+
+      ### Wczesne HTTP i nieoczekiwane błędy obserwacji {#recovery-publication-legacy-or-observer-fallback}
+
+
+      Wcześniejsza grupa legacy HTTP może zakończyć się przed nazwanym wynikiem albo start Python lub nieoczekiwana struktura metadata przerywa obserwator aplikacji. Najpierw popraw odpowiedź legacy: jej błąd pomija kontrole aplikacji; nazwane błędy hostów zachowują diagnostykę. Legacy HTTP ma własny dziesięciosekundowy limit shell i musi przejść przed obserwatorem aplikacji. Późniejszy Python observer ma osobny budżet dziesięciu sekund. Obsłużone błędy dekodowania JSON dają marker observation, nieobsłużona struktura obiektu może dać fallback. Dostarczony contract tego zadania nie wymaga credential uwierzytelniania aplikacji. `python3 -I -c "import json,urllib.request"; ansible-playbook --syntax-check rollout.yml`.
+
+
+      ### app1: treść wiadomości {#recovery-publication-app1-content}
+
+
+      app1: Plik może nadal zawierać unconfigured lub candidate albo SSH nie odczytuje go; dostarcz zaufane stable-ready do /srv/site/message. Porównanie shell usuwa końcowe znaki nowej linii.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /srv/site/message`.
+
+
+      ### app1: prawa wiadomości {#recovery-publication-app1-mode}
+
+
+      app1: Kopiowanie danych naprawy mogło pozostawić ograniczające lub przypadkowe prawa albo SSH nie wykonuje stat; jawnie ustaw mode 0644 dla /srv/site/message w play.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" stat -c %a /srv/site/message`.
+
+
+      ### app1: odpowiedź legacy z cache {#recovery-publication-app1-http}
+
+
+      app1: Proces legacy może zachować starą wiadomość mimo poprawnego pliku albo HTTP jest niedostępne; odśwież dq-service, aby port 8080 zwracał stable-ready.  `curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8080`.
+
+
+      ### app1: pierwotna tożsamość aplikacji {#recovery-publication-app1-identity}
+
+
+      app1: Restart lub zastąpienie aplikacji może zmienić PID, czas startu, principal, grupy, capabilities, komendę lub bajty programu; zachowaj pierwotną tożsamość i odświeżaj wejścia przez SIGHUP.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; jq . original-application-identities.json`.
+
+
+      ### app1: zatwierdzona żywa publikacja {#recovery-publication-app1-ready}
+
+
+      app1: Aplikacja może zachować odrzucone źródło lub cache startowy albo role/publication różnią się od potwierdzenia; napraw źródło i upstream, potem wyślij sygnał do tego samego procesu i sprawdź HTTP 8081.  `curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8081/; jq .publication application-contract.json`.
+
+
+      ### app1: istniejące źródło publikacji {#recovery-publication-app1-origin}
+
+
+      app1: Odpowiedź źródła może pochodzić z innej implementacji: dostarczony publisher ustawia origin=local przy odczycie rzeczywistego pliku. Zachowaj pierwotny proces/program i porównaj żywe potwierdzenie zamiast fałszować origin.  `curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8081/; ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /srv/site/application.json`.
+
+
+      ### app1: błędy obserwacji hosta {#recovery-publication-app1-observation}
+
+
+      app1: SSH może nie zwrócić czytelnego potwierdzenia procesu, HTTP być nieosiągalne lub obsłużone parsowanie JSON/wejść zawieść podczas obserwacji hosta; sprawdź proces, konfigurację i endpoint. Limity Python używają osobnego markera budżetu.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8081/`.
+
+
+      ### app2: treść wiadomości {#recovery-publication-app2-content}
+
+
+      app2: Plik może nadal zawierać unconfigured lub candidate albo SSH nie odczytuje go; dostarcz zaufane stable-ready do /srv/site/message. Porównanie shell usuwa końcowe znaki nowej linii.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /srv/site/message`.
+
+
+      ### app2: prawa wiadomości {#recovery-publication-app2-mode}
+
+
+      app2: Kopiowanie danych naprawy mogło pozostawić ograniczające lub przypadkowe prawa albo SSH nie wykonuje stat; jawnie ustaw mode 0644 dla /srv/site/message w play.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" stat -c %a /srv/site/message`.
+
+
+      ### app2: odpowiedź legacy z cache {#recovery-publication-app2-http}
+
+
+      app2: Proces legacy może zachować starą wiadomość mimo poprawnego pliku albo HTTP jest niedostępne; odśwież dq-service, aby port 8080 zwracał stable-ready.  `curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8080`.
+
+
+      ### app2: pierwotna tożsamość aplikacji {#recovery-publication-app2-identity}
+
+
+      app2: Restart lub zastąpienie aplikacji może zmienić PID, czas startu, principal, grupy, capabilities, komendę lub bajty programu; zachowaj pierwotną tożsamość i odświeżaj wejścia przez SIGHUP.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; jq . original-application-identities.json`.
+
+
+      ### app2: zatwierdzona żywa publikacja {#recovery-publication-app2-ready}
+
+
+      app2: Aplikacja może zachować odrzucone źródło lub cache startowy albo role/publication różnią się od potwierdzenia; napraw źródło i upstream, potem wyślij sygnał do tego samego procesu i sprawdź HTTP 8081.  `curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8081/; jq .publication application-contract.json`.
+
+
+      ### app2: istniejące źródło publikacji {#recovery-publication-app2-origin}
+
+
+      app2: Aplikacja zależna może czytać inny host lub endpoint legacy; jej origin ma rozwiązywać się do istniejącego źródła app1 i używać portu HTTP 8081. Alias DNS źródła lub jego IP są dopuszczalne.  `curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8081/; ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /srv/site/application.json`.
+
+
+      ### app2: błędy obserwacji hosta {#recovery-publication-app2-observation}
+
+
+      app2: SSH może nie zwrócić czytelnego potwierdzenia procesu, HTTP być nieosiągalne lub obsłużone parsowanie JSON/wejść zawieść podczas obserwacji hosta; sprawdź proces, konfigurację i endpoint. Limity Python używają osobnego markera budżetu.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8081/`.
+
+
+      ### app3: treść wiadomości {#recovery-publication-app3-content}
+
+
+      app3: Plik może nadal zawierać unconfigured lub candidate albo SSH nie odczytuje go; dostarcz zaufane stable-ready do /srv/site/message. Porównanie shell usuwa końcowe znaki nowej linii.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /srv/site/message`.
+
+
+      ### app3: prawa wiadomości {#recovery-publication-app3-mode}
+
+
+      app3: Kopiowanie danych naprawy mogło pozostawić ograniczające lub przypadkowe prawa albo SSH nie wykonuje stat; jawnie ustaw mode 0644 dla /srv/site/message w play.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" stat -c %a /srv/site/message`.
+
+
+      ### app3: odpowiedź legacy z cache {#recovery-publication-app3-http}
+
+
+      app3: Proces legacy może zachować starą wiadomość mimo poprawnego pliku albo HTTP jest niedostępne; odśwież dq-service, aby port 8080 zwracał stable-ready.  `curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8080`.
+
+
+      ### app3: pierwotna tożsamość aplikacji {#recovery-publication-app3-identity}
+
+
+      app3: Restart lub zastąpienie aplikacji może zmienić PID, czas startu, principal, grupy, capabilities, komendę lub bajty programu; zachowaj pierwotną tożsamość i odświeżaj wejścia przez SIGHUP.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; jq . original-application-identities.json`.
+
+
+      ### app3: zatwierdzona żywa publikacja {#recovery-publication-app3-ready}
+
+
+      app3: Aplikacja może zachować odrzucone źródło lub cache startowy albo role/publication różnią się od potwierdzenia; napraw źródło i upstream, potem wyślij sygnał do tego samego procesu i sprawdź HTTP 8081.  `curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8081/; jq .publication application-contract.json`.
+
+
+      ### app3: istniejące źródło publikacji {#recovery-publication-app3-origin}
+
+
+      app3: Aplikacja zależna może czytać inny host lub endpoint legacy; jej origin ma rozwiązywać się do istniejącego źródła app1 i używać portu HTTP 8081. Alias DNS źródła lub jego IP są dopuszczalne.  `curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8081/; ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /srv/site/application.json`.
+
+
+      ### app3: błędy obserwacji hosta {#recovery-publication-app3-observation}
+
+
+      app3: SSH może nie zwrócić czytelnego potwierdzenia procesu, HTTP być nieosiągalne lub obsłużone parsowanie JSON/wejść zawieść podczas obserwacji hosta; sprawdź proces, konfigurację i endpoint. Limity Python używają osobnego markera budżetu.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8081/`.
+
+
       ## Wypróbuj
 
 
@@ -7963,6 +8863,156 @@ ansible-9:
       app1 no sirve stable-63 por HTTP 8080 o falló la petición; restaurar bytes sin recargar consumidor, o refrescar antes de acabar rescue, deja respuesta antigua en caché.  `curl -fsS --max-time 3 "http://app1-${DQ_NAMESPACE#dq-}:8080"`. Compare app1, app2 y app3.
 
 
+      ### Bytes de copia antes de recuperar {#recovery-publication-trusted-backup-bytes}
+
+
+      La copia del controlador puede editarse o reemplazarse por candidate rechazado; previous.txt debe coincidir con hash aprobado, incluido salto final. Verifique recibo antes de usar copia como fuente de recuperación. La copia inicial es correcta y publicación aprobada incluye salto final. Referencia la valida antes del candidate, restaura tras rechazo observado y actualiza fuente original y cachés dependientes. Se observa publicación e identidad actuales, sin certificar historial completo block/rescue. `sha256sum previous.txt; jq .publication application-contract.json`.
+
+
+      ### Observación limitada de aplicaciones {#recovery-publication-bounded-application-observation}
+
+
+      DNS, lecturas de identidad SSH u observaciones HTTP pueden agotar presupuesto Python compartido de diez segundos; inspeccione aplicaciones y conexiones existentes. Este marcador corresponde al observador de aplicaciones; timeout previo de HTTP legacy usa fallback exterior.  `ansible-playbook --syntax-check rollout.yml; jq .roles application-contract.json`.
+
+
+      ### Entradas antes de observar hosts {#recovery-publication-global-input-observation}
+
+
+      Artefacto controlador o contract congelado pueden ser ilegibles o no resolverse dirección fuente antes de observar hosts; inspeccione recibo y contexto DNS. Errores capturados de entradas, análisis y comandos en esta fase comparten marcador.  `test -r previous.txt; jq "{sourceHost,controllerArtifact,roles}" application-contract.json`.
+
+
+      ### HTTP previo y fallos inesperados {#recovery-publication-legacy-or-observer-fallback}
+
+
+      Grupo HTTP legacy previo puede detenerse antes de resultado nombrado, o inicio Python o estructura metadata inesperada abortar observador. Corrija primero respuesta legacy: su fallo omite controles de aplicaciones; errores nombrados por host conservan diagnósticos. HTTP legacy tiene límite shell propio de diez segundos y debe pasar antes del observador de aplicaciones. Observador Python posterior tiene presupuesto separado de diez segundos. Errores JSON capturados usan observation; forma inesperada no capturada puede dar fallback. Contract suministrado de este caso no exige credential de autenticación de aplicación. `python3 -I -c "import json,urllib.request"; ansible-playbook --syntax-check rollout.yml`.
+
+
+      ### app1: contenido del mensaje {#recovery-publication-app1-content}
+
+
+      app1: El archivo puede conservar unconfigured o candidate, o fallar lectura SSH; entregue stable-ready confiable en /srv/site/message. Comparación shell elimina saltos finales.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /srv/site/message`.
+
+
+      ### app1: permisos del mensaje {#recovery-publication-app1-mode}
+
+
+      app1: Copiar datos de recuperación puede dejar permisos restrictivos o imprevistos, o fallar stat SSH; fije explícitamente mode 0644 de /srv/site/message en play.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" stat -c %a /srv/site/message`.
+
+
+      ### app1: respuesta legacy en caché {#recovery-publication-app1-http}
+
+
+      app1: El proceso legacy puede almacenar mensaje antiguo con archivo correcto, o HTTP estar indisponible; actualice dq-service para devolver stable-ready en puerto 8080.  `curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8080`.
+
+
+      ### app1: identidad original de aplicación {#recovery-publication-app1-identity}
+
+
+      app1: Reiniciar o reemplazar aplicación puede cambiar PID, inicio, principal, grupos, capabilities, comando o bytes del programa; conserve identidad original y actualice entradas con SIGHUP.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; jq . original-application-identities.json`.
+
+
+      ### app1: publicación viva aprobada {#recovery-publication-app1-ready}
+
+
+      app1: La aplicación puede conservar fuente rechazada o caché inicial, o diferir role/publication del recibo; repare fuente y upstream, señale mismo proceso y verifique HTTP 8081.  `curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8081/; jq .publication application-contract.json`.
+
+
+      ### app1: fuente existente de publicación {#recovery-publication-app1-origin}
+
+
+      app1: La respuesta fuente puede venir de otra implementación: publisher suministrado fija origin=local al leer archivo real. Conserve proceso/programa original y compare recibo vivo sin falsificar origin.  `curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8081/; ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /srv/site/application.json`.
+
+
+      ### app1: errores de observación del host {#recovery-publication-app1-observation}
+
+
+      app1: SSH puede no devolver recibo legible, HTTP ser inalcanzable o fallar análisis capturado JSON/entradas durante observación del host; inspeccione proceso, configuración y endpoint. Tiempos Python usan marcador budget separado.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8081/`.
+
+
+      ### app2: contenido del mensaje {#recovery-publication-app2-content}
+
+
+      app2: El archivo puede conservar unconfigured o candidate, o fallar lectura SSH; entregue stable-ready confiable en /srv/site/message. Comparación shell elimina saltos finales.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /srv/site/message`.
+
+
+      ### app2: permisos del mensaje {#recovery-publication-app2-mode}
+
+
+      app2: Copiar datos de recuperación puede dejar permisos restrictivos o imprevistos, o fallar stat SSH; fije explícitamente mode 0644 de /srv/site/message en play.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" stat -c %a /srv/site/message`.
+
+
+      ### app2: respuesta legacy en caché {#recovery-publication-app2-http}
+
+
+      app2: El proceso legacy puede almacenar mensaje antiguo con archivo correcto, o HTTP estar indisponible; actualice dq-service para devolver stable-ready en puerto 8080.  `curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8080`.
+
+
+      ### app2: identidad original de aplicación {#recovery-publication-app2-identity}
+
+
+      app2: Reiniciar o reemplazar aplicación puede cambiar PID, inicio, principal, grupos, capabilities, comando o bytes del programa; conserve identidad original y actualice entradas con SIGHUP.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; jq . original-application-identities.json`.
+
+
+      ### app2: publicación viva aprobada {#recovery-publication-app2-ready}
+
+
+      app2: La aplicación puede conservar fuente rechazada o caché inicial, o diferir role/publication del recibo; repare fuente y upstream, señale mismo proceso y verifique HTTP 8081.  `curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8081/; jq .publication application-contract.json`.
+
+
+      ### app2: fuente existente de publicación {#recovery-publication-app2-origin}
+
+
+      app2: La aplicación dependiente puede consumir otro host o endpoint legacy; su origin debe resolver a fuente app1 existente y usar puerto HTTP 8081. Se acepta alias DNS fuente o su IP.  `curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8081/; ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /srv/site/application.json`.
+
+
+      ### app2: errores de observación del host {#recovery-publication-app2-observation}
+
+
+      app2: SSH puede no devolver recibo legible, HTTP ser inalcanzable o fallar análisis capturado JSON/entradas durante observación del host; inspeccione proceso, configuración y endpoint. Tiempos Python usan marcador budget separado.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8081/`.
+
+
+      ### app3: contenido del mensaje {#recovery-publication-app3-content}
+
+
+      app3: El archivo puede conservar unconfigured o candidate, o fallar lectura SSH; entregue stable-ready confiable en /srv/site/message. Comparación shell elimina saltos finales.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /srv/site/message`.
+
+
+      ### app3: permisos del mensaje {#recovery-publication-app3-mode}
+
+
+      app3: Copiar datos de recuperación puede dejar permisos restrictivos o imprevistos, o fallar stat SSH; fije explícitamente mode 0644 de /srv/site/message en play.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" stat -c %a /srv/site/message`.
+
+
+      ### app3: respuesta legacy en caché {#recovery-publication-app3-http}
+
+
+      app3: El proceso legacy puede almacenar mensaje antiguo con archivo correcto, o HTTP estar indisponible; actualice dq-service para devolver stable-ready en puerto 8080.  `curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8080`.
+
+
+      ### app3: identidad original de aplicación {#recovery-publication-app3-identity}
+
+
+      app3: Reiniciar o reemplazar aplicación puede cambiar PID, inicio, principal, grupos, capabilities, comando o bytes del programa; conserve identidad original y actualice entradas con SIGHUP.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; jq . original-application-identities.json`.
+
+
+      ### app3: publicación viva aprobada {#recovery-publication-app3-ready}
+
+
+      app3: La aplicación puede conservar fuente rechazada o caché inicial, o diferir role/publication del recibo; repare fuente y upstream, señale mismo proceso y verifique HTTP 8081.  `curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8081/; jq .publication application-contract.json`.
+
+
+      ### app3: fuente existente de publicación {#recovery-publication-app3-origin}
+
+
+      app3: La aplicación dependiente puede consumir otro host o endpoint legacy; su origin debe resolver a fuente app1 existente y usar puerto HTTP 8081. Se acepta alias DNS fuente o su IP.  `curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8081/; ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /srv/site/application.json`.
+
+
+      ### app3: errores de observación del host {#recovery-publication-app3-observation}
+
+
+      app3: SSH puede no devolver recibo legible, HTTP ser inalcanzable o fallar análisis capturado JSON/entradas durante observación del host; inspeccione proceso, configuración y endpoint. Tiempos Python usan marcador budget separado.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8081/`.
+
+
       ## Pruébalo
 
 
@@ -8086,6 +9136,156 @@ ansible-9:
 
 
       app1 liefert nicht stable-63 über HTTP 8080 oder die Anfrage schlug fehl; Wiederherstellung der Datei ohne Neuladen des Verbrauchers oder Aktualisierung vor Abschluss von rescue kann eine alte Cache-Antwort belassen.  `curl -fsS --max-time 3 "http://app1-${DQ_NAMESPACE#dq-}:8080"`. Vergleichen Sie app1, app2 und app3.
+
+
+      ### Backup-Bytes vor der Wiederherstellung prüfen {#recovery-publication-trusted-backup-bytes}
+
+
+      Das Controller-Backup wurde möglicherweise bearbeitet oder durch den abgelehnten Candidate ersetzt; previous.txt muss einschließlich Zeilenumbruch zum Hash der freigegebenen Veröffentlichung passen. Prüfen Sie den Beleg vor Verwendung des Backups als Wiederherstellungsquelle. Das gelieferte Backup ist zunächst korrekt: die freigegebene Veröffentlichung enthält einen abschließenden Zeilenumbruch. Die Referenz prüft es vor dem Candidate, stellt es nach beobachteter Ablehnung wieder her und aktualisiert ursprüngliche Quelle und abhängige Caches. Die Prüfung beobachtet aktuelle Veröffentlichung und Identität, keinen vollständigen Block-/Rescue-Verlauf. `sha256sum previous.txt; jq .publication application-contract.json`.
+
+
+      ### Begrenzte Anwendungsbeobachtung {#recovery-publication-bounded-application-observation}
+
+
+      DNS, SSH-Identitätsabrufe oder Anwendungs-HTTP-Beobachtungen schöpfen möglicherweise das gemeinsame zehnsekündige Python-Budget aus; prüfen Sie bestehende Anwendungen und Verbindungen. Dieser Marker gehört zum Anwendungsobserver, ein früherer Legacy-HTTP-Zeitablauf nutzt den äußeren Fallback.  `ansible-playbook --syntax-check rollout.yml; jq .roles application-contract.json`.
+
+
+      ### Eingaben vor den Host-Beobachtungen {#recovery-publication-global-input-observation}
+
+
+      Controller-Artefakt oder eingefrorener Vertrag sind möglicherweise unlesbar oder die Quelladresse wird vor den Host-Beobachtungen nicht aufgelöst; prüfen Sie Beleg und DNS-Kontext. Abgefangene Eingabe-, Parse- und Befehlsfehler dieser Phase teilen diesen Marker.  `test -r previous.txt; jq "{sourceHost,controllerArtifact,roles}" application-contract.json`.
+
+
+      ### Frühes HTTP und unerwartete Beobachtungsfehler {#recovery-publication-legacy-or-observer-fallback}
+
+
+      Die frühere Legacy-HTTP-Gruppe endet möglicherweise vor einem benannten Ergebnis oder Python-Start beziehungsweise unerwartete Metadatenstruktur brechen den Anwendungsobserver ab. Korrigieren Sie zuerst die Legacy-Antwort: ihr Fehler überspringt die Anwendungsprüfungen; benannte Hostfehler behalten eigene Diagnosen. Die Legacy-HTTP-Gruppe hat ein eigenes Shell-Limit von zehn Sekunden und muss vor dem Anwendungsobserver bestehen. Der spätere Python-Observer hat ein separates Zehnsekundenbudget. Dort abgefangene JSON-Dekodierungsfehler nutzen einen Observation-Marker, eine unbehandelte unerwartete Objektform kann stattdessen diesen Fallback erreichen. Der gelieferte Anwendungsvertrag dieses Quests verlangt kein Authentifizierungs-Credential. `python3 -I -c "import json,urllib.request"; ansible-playbook --syntax-check rollout.yml`.
+
+
+      ### app1: Nachrichteninhalt {#recovery-publication-app1-content}
+
+
+      app1: Die Datei enthält möglicherweise noch unconfigured oder Candidate-Daten oder SSH kann sie nicht lesen; liefern Sie den vertrauenswürdigen Inhalt stable-ready nach /srv/site/message. Der Shell-Vergleich entfernt abschließende Zeilenumbrüche.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /srv/site/message`.
+
+
+      ### app1: Nachrichtenrechte {#recovery-publication-app1-mode}
+
+
+      app1: Das Kopieren der Wiederherstellungsdaten hat möglicherweise einschränkende oder unerwünschte Rechte hinterlassen oder SSH kann stat nicht ausführen; setzen Sie den Mode von /srv/site/message im Play ausdrücklich auf 0644.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" stat -c %a /srv/site/message`.
+
+
+      ### app1: gecachte Legacy-Antwort {#recovery-publication-app1-http}
+
+
+      app1: Der Legacy-Prozess hält möglicherweise trotz korrekter Datei die alte Nachricht im Cache oder HTTP ist unerreichbar; aktualisieren Sie dq-service, damit Port 8080 stable-ready liefert.  `curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8080`.
+
+
+      ### app1: ursprüngliche Anwendungsidentität {#recovery-publication-app1-identity}
+
+
+      app1: Neustart oder Ersatz der gelieferten Anwendung können PID, Startzeit, Principal, Gruppen, Capabilities, Befehl oder installierte Programmbytes ändern; erhalten Sie ihre ursprüngliche Identität und aktualisieren Sie Eingaben mit SIGHUP.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; jq . original-application-identities.json`.
+
+
+      ### app1: freigegebene aktuelle Veröffentlichung {#recovery-publication-app1-ready}
+
+
+      app1: Die Anwendung hält möglicherweise eine abgelehnte Quelle oder einen Start-Cache, oder Felder für Rolle und Veröffentlichung weichen vom Beleg ab; korrigieren Sie Quelle und Upstream-Eingaben, signalisieren Sie denselben Prozess und prüfen Sie HTTP 8081.  `curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8081/; jq .publication application-contract.json`.
+
+
+      ### app1: bestehende Veröffentlichungsquelle {#recovery-publication-app1-origin}
+
+
+      app1: Die Quellantwort stammt möglicherweise aus einer anderen Implementierung: der gelieferte Publisher setzt beim Lesen der tatsächlichen Quelldatei origin auf local. Erhalten Sie ursprünglichen Prozess/Programm und vergleichen Sie den aktuellen Beleg, statt ein Origin-Feld vorzutäuschen.  `curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8081/; ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /srv/site/application.json`.
+
+
+      ### app1: Host-Beobachtungsfehler {#recovery-publication-app1-observation}
+
+
+      app1: SSH liefert möglicherweise keinen lesbaren Prozessbeleg, HTTP ist unerreichbar oder abgefangenes JSON-/Eingabeparsen scheitert bei dieser Host-Beobachtung; prüfen Sie bestehenden Prozess, Konfiguration und Endpunkt. Python-Beobachtungszeitabläufe nutzen den separaten Budgetmarker.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app1-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; curl -fsS --max-time 3 http://app1-${DQ_NAMESPACE#dq-}:8081/`.
+
+
+      ### app2: Nachrichteninhalt {#recovery-publication-app2-content}
+
+
+      app2: Die Datei enthält möglicherweise noch unconfigured oder Candidate-Daten oder SSH kann sie nicht lesen; liefern Sie den vertrauenswürdigen Inhalt stable-ready nach /srv/site/message. Der Shell-Vergleich entfernt abschließende Zeilenumbrüche.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /srv/site/message`.
+
+
+      ### app2: Nachrichtenrechte {#recovery-publication-app2-mode}
+
+
+      app2: Das Kopieren der Wiederherstellungsdaten hat möglicherweise einschränkende oder unerwünschte Rechte hinterlassen oder SSH kann stat nicht ausführen; setzen Sie den Mode von /srv/site/message im Play ausdrücklich auf 0644.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" stat -c %a /srv/site/message`.
+
+
+      ### app2: gecachte Legacy-Antwort {#recovery-publication-app2-http}
+
+
+      app2: Der Legacy-Prozess hält möglicherweise trotz korrekter Datei die alte Nachricht im Cache oder HTTP ist unerreichbar; aktualisieren Sie dq-service, damit Port 8080 stable-ready liefert.  `curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8080`.
+
+
+      ### app2: ursprüngliche Anwendungsidentität {#recovery-publication-app2-identity}
+
+
+      app2: Neustart oder Ersatz der gelieferten Anwendung können PID, Startzeit, Principal, Gruppen, Capabilities, Befehl oder installierte Programmbytes ändern; erhalten Sie ihre ursprüngliche Identität und aktualisieren Sie Eingaben mit SIGHUP.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; jq . original-application-identities.json`.
+
+
+      ### app2: freigegebene aktuelle Veröffentlichung {#recovery-publication-app2-ready}
+
+
+      app2: Die Anwendung hält möglicherweise eine abgelehnte Quelle oder einen Start-Cache, oder Felder für Rolle und Veröffentlichung weichen vom Beleg ab; korrigieren Sie Quelle und Upstream-Eingaben, signalisieren Sie denselben Prozess und prüfen Sie HTTP 8081.  `curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8081/; jq .publication application-contract.json`.
+
+
+      ### app2: bestehende Veröffentlichungsquelle {#recovery-publication-app2-origin}
+
+
+      app2: Die abhängige Anwendung nutzt möglicherweise einen anderen Host oder den Legacy-Endpunkt; ihr gemeldeter Origin muss zur bestehenden app1 Quelle auflösen und HTTP-Port 8081 nutzen. Ein Quell-DNS-Alias oder ihre IP kann diese Beobachtung erfüllen.  `curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8081/; ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /srv/site/application.json`.
+
+
+      ### app2: Host-Beobachtungsfehler {#recovery-publication-app2-observation}
+
+
+      app2: SSH liefert möglicherweise keinen lesbaren Prozessbeleg, HTTP ist unerreichbar oder abgefangenes JSON-/Eingabeparsen scheitert bei dieser Host-Beobachtung; prüfen Sie bestehenden Prozess, Konfiguration und Endpunkt. Python-Beobachtungszeitabläufe nutzen den separaten Budgetmarker.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app2-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; curl -fsS --max-time 3 http://app2-${DQ_NAMESPACE#dq-}:8081/`.
+
+
+      ### app3: Nachrichteninhalt {#recovery-publication-app3-content}
+
+
+      app3: Die Datei enthält möglicherweise noch unconfigured oder Candidate-Daten oder SSH kann sie nicht lesen; liefern Sie den vertrauenswürdigen Inhalt stable-ready nach /srv/site/message. Der Shell-Vergleich entfernt abschließende Zeilenumbrüche.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /srv/site/message`.
+
+
+      ### app3: Nachrichtenrechte {#recovery-publication-app3-mode}
+
+
+      app3: Das Kopieren der Wiederherstellungsdaten hat möglicherweise einschränkende oder unerwünschte Rechte hinterlassen oder SSH kann stat nicht ausführen; setzen Sie den Mode von /srv/site/message im Play ausdrücklich auf 0644.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" stat -c %a /srv/site/message`.
+
+
+      ### app3: gecachte Legacy-Antwort {#recovery-publication-app3-http}
+
+
+      app3: Der Legacy-Prozess hält möglicherweise trotz korrekter Datei die alte Nachricht im Cache oder HTTP ist unerreichbar; aktualisieren Sie dq-service, damit Port 8080 stable-ready liefert.  `curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8080`.
+
+
+      ### app3: ursprüngliche Anwendungsidentität {#recovery-publication-app3-identity}
+
+
+      app3: Neustart oder Ersatz der gelieferten Anwendung können PID, Startzeit, Principal, Gruppen, Capabilities, Befehl oder installierte Programmbytes ändern; erhalten Sie ihre ursprüngliche Identität und aktualisieren Sie Eingaben mit SIGHUP.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; jq . original-application-identities.json`.
+
+
+      ### app3: freigegebene aktuelle Veröffentlichung {#recovery-publication-app3-ready}
+
+
+      app3: Die Anwendung hält möglicherweise eine abgelehnte Quelle oder einen Start-Cache, oder Felder für Rolle und Veröffentlichung weichen vom Beleg ab; korrigieren Sie Quelle und Upstream-Eingaben, signalisieren Sie denselben Prozess und prüfen Sie HTTP 8081.  `curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8081/; jq .publication application-contract.json`.
+
+
+      ### app3: bestehende Veröffentlichungsquelle {#recovery-publication-app3-origin}
+
+
+      app3: Die abhängige Anwendung nutzt möglicherweise einen anderen Host oder den Legacy-Endpunkt; ihr gemeldeter Origin muss zur bestehenden app1 Quelle auflösen und HTTP-Port 8081 nutzen. Ein Quell-DNS-Alias oder ihre IP kann diese Beobachtung erfüllen.  `curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8081/; ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /srv/site/application.json`.
+
+
+      ### app3: Host-Beobachtungsfehler {#recovery-publication-app3-observation}
+
+
+      app3: SSH liefert möglicherweise keinen lesbaren Prozessbeleg, HTTP ist unerreichbar oder abgefangenes JSON-/Eingabeparsen scheitert bei dieser Host-Beobachtung; prüfen Sie bestehenden Prozess, Konfiguration und Endpunkt. Python-Beobachtungszeitabläufe nutzen den separaten Budgetmarker.  `ssh -n -o BatchMode=yes -o ConnectTimeout=1 -p 2222 root@app3-"${DQ_NAMESPACE#dq-}" cat /run/propagation-consumer.pid; curl -fsS --max-time 3 http://app3-${DQ_NAMESPACE#dq-}:8081/`.
 
 
       ## Probieren Sie es aus
@@ -12812,6 +14012,72 @@ terraform-4:
       A lock coordinates writers to one state; it does not make an old snapshot current or coordinate independent state roots. Each root has its own lineage and serial. Current lock ownership, stored bindings and physical objects are separate observations: an earlier error describes that earlier operation rather than proving present ownership. The local Lab demonstrates contention and bounded waiting; it does not rehearse HTTP-backend recovery or multi-state disaster recovery.
 
 
+      ### Keep the managed notice content {#state-handover-notice-content}
+
+
+      The notice may be missing or retain a manual edit after state recovery; the actual workstation file must contain north-ready, with trailing line feeds removed by the shell comparison.  `cat notice.txt`.
+
+
+      ### The file remains managed {#state-handover-managed-notice-state}
+
+
+      The notice may exist only on disk after a state overwrite, or state could not be read; retain a managed local_file resource targeting notice.txt rather than treating file content as proof of state recovery.  `tofu state list; tofu show -json`.
+
+
+      ### Managed-file observation startup {#state-handover-notice-observer-startup}
+
+
+      The file-state observation may stop while loading Python helpers before a named result; verify dq_check availability. An ordinary missing managed file or unreadable state normally reports condition_1.  `python3 -I -c "import dq_check"`.
+
+
+      ### Recover the original container binding {#state-handover-original-container-binding}
+
+
+      The failed apply created the healthy container but could not save its binding to the newer backend; merge that missing binding without recreating the container. Its original ID must be present in state and still identify a running healthy container. The native fixture creates distinct real revisions: the failed apply checkpoint knows the healthy container, while the newer backend knows completed maintenance. Keep the original checkpoint unchanged and merge only the missing binding into a copy of current state; replacing the entire newer backend can lose completed work. The result checks current state, physical identity and trusted completion, not general command history. `tofu state list; docker inspect rail-operation --format "{{.Id}} {{.State.Running}} {{.State.Health.Status}}"`.
+
+
+      ### Retain the newer completed work {#state-handover-completed-maintenance}
+
+
+      Pushing the entire older errored state may discard the newer maintenance record; merge the missing container binding into the current backend snapshot while retaining the original completed terraform_data identity.  `tofu state show terraform_data.progress; jq .progress_id /run/dq/locking-identities.json`.
+
+
+      ### Retain lineage and serial progress {#state-handover-backend-lineage-and-serial}
+
+
+      A replacement or older state may have changed lineage or rolled serial backward; the recovered backend must keep its original lineage and an integer serial at least as new as the recorded backend snapshot.  `tofu state pull | jq "{lineage,serial}"; jq "{lineage,serial}" /run/dq/locking-identities.json`.
+
+
+      ### Preserve the failed-apply checkpoint bytes {#state-handover-original-checkpoint-bytes}
+
+
+      errored.tfstate may have been overwritten, edited or removed during merging; preserve its original bytes and perform recovery operations on copies. The check compares the complete file hash with the frozen checkpoint receipt.  `sha256sum errored.tfstate; jq .checkpoint_sha256 /run/dq/locking-identities.json`.
+
+
+      ### Save the backend before recovery writes {#state-handover-before-recovery-snapshot}
+
+
+      before-recovery.tfstate may be missing or contain the older checkpoint or already-modified state; retain the backend snapshot containing the newer completed work before recovery writes. Its JSON meaning must match the recorded snapshot; whitespace formatting may differ.  `jq "{lineage,serial,types:[.resources[].type]}" before-recovery.tfstate; jq .backup_sha256 /run/dq/locking-identities.json`.
+
+
+      ### Complete the registered console normally {#state-handover-registered-console-completion}
+
+
+      The current registered console may still hold its own lock; an old incident lock ID or a forced unlock does not prove its normal completion. Request EOF through the documented handle interface and wait for completed=true and running=false; HTTP 202 only acknowledges the request. The trusted service closes stdin only for the registered native console handle. Its completed flag requires requested EOF, actual exit zero, empty native stderr and successful matching owner unlock. The interface accepts no replacement command or PID; finishing another operation does not satisfy this receipt. `curl -fsS http://127.0.0.1:18787/owner; curl -fsS http://127.0.0.1:18787/diagnostic`.
+
+
+      ### Fresh plan after recovery {#state-handover-fresh-convergence-plan}
+
+
+      The current owner may still block planning, or state recovery may leave missing bindings or pending changes; complete the registered operation and reconcile the current state so a fresh detailed plan returns 0. Exit 2 means proposed changes and exit 1 an error.  `tofu plan -input=false -detailed-exitcode -no-color`.
+
+
+      ### Recover the observation path {#state-handover-recovery-observation}
+
+
+      Frozen facts, state retrieval, Docker inspection, owner access or planning may abort without a named result, or Python helpers may fail to load. Inspect these observation paths separately; earlier named binding, checkpoint, backup or owner failures retain their own markers.  `python3 -I -c "import dq_check"; curl -fsS http://127.0.0.1:18787/owner; tofu state pull | jq "{lineage,serial}"`.
+
+
       ## Try it
 
 
@@ -12851,6 +14117,72 @@ terraform-4:
 
 
       Блокировка координирует запись в один state; она не делает старый снимок актуальным и не координирует независимые корни state. У каждого корня свои lineage и serial. Текущий владелец блокировки, сохранённые привязки и физические объекты — разные наблюдения: старая ошибка описывает прежнюю операцию, а не доказывает текущее владение. Локальная лаборатория показывает конкуренцию и ограниченное ожидание; она не воспроизводит восстановление HTTP backend или нескольких state.
+
+
+      ### Содержимое управляемого notice {#state-handover-notice-content}
+
+
+      Notice может отсутствовать или сохранять ручную правку после восстановления state; реальный файл рабочей станции содержит north-ready, с удалением завершающих переводов строк при shell-сравнении.  `cat notice.txt`.
+
+
+      ### Файл остаётся управляемым {#state-handover-managed-notice-state}
+
+
+      Notice может существовать лишь на диске после перезаписи state, либо state не читается; сохраните управляемый local_file для notice.txt, поскольку содержимое файла не доказывает восстановление state.  `tofu state list; tofu show -json`.
+
+
+      ### Запуск наблюдения управляемого файла {#state-handover-notice-observer-startup}
+
+
+      Наблюдение файла в state может оборваться при загрузке Python helpers до именованного результата; проверьте dq_check. Обычное отсутствие управляемого файла или нечитаемый state обычно дают condition_1.  `python3 -I -c "import dq_check"`.
+
+
+      ### Привязка исходного контейнера {#state-handover-original-container-binding}
+
+
+      Неудачный apply создал здоровый контейнер, но не сохранил привязку в обновлённый backend; объедините недостающую привязку без пересоздания контейнера. Исходный ID присутствует в state и по-прежнему указывает на running/healthy контейнер. Native fixture создаёт разные реальные ревизии: checkpoint неудачного apply знает здоровый контейнер, более новый backend — завершённое maintenance. Сохраните исходный checkpoint и объедините только недостающую привязку с копией текущего state; полная замена backend теряет выполненную работу. Наблюдаются текущий state, физическая идентичность и доверенное завершение, не общая история команд. `tofu state list; docker inspect rail-operation --format "{{.Id}} {{.State.Running}} {{.State.Health.Status}}"`.
+
+
+      ### Сохранение более нового выполненного изменения {#state-handover-completed-maintenance}
+
+
+      Публикация целого старого errored state может удалить более новую maintenance-запись; объединяйте недостающую привязку с текущим снимком backend, сохраняя исходную идентичность выполненного terraform_data.  `tofu state show terraform_data.progress; jq .progress_id /run/dq/locking-identities.json`.
+
+
+      ### Lineage и продвижение serial {#state-handover-backend-lineage-and-serial}
+
+
+      Замещённый или старый state мог изменить lineage либо откатить serial; восстановленный backend сохраняет исходный lineage и целочисленный serial не ниже записанного снимка backend.  `tofu state pull | jq "{lineage,serial}"; jq "{lineage,serial}" /run/dq/locking-identities.json`.
+
+
+      ### Байты checkpoint неудачного apply {#state-handover-original-checkpoint-bytes}
+
+
+      errored.tfstate мог быть перезаписан, изменён или удалён при объединении; сохраните исходные байты и работайте с копиями. Проверка сравнивает хэш всего файла с зафиксированной квитанцией checkpoint.  `sha256sum errored.tfstate; jq .checkpoint_sha256 /run/dq/locking-identities.json`.
+
+
+      ### Снимок backend до записи восстановления {#state-handover-before-recovery-snapshot}
+
+
+      before-recovery.tfstate может отсутствовать, содержать старый checkpoint либо уже изменённый state; сохраните backend с более новым выполненным изменением до записей восстановления. JSON-содержимое совпадает с записанным снимком, форматирование пробелами может отличаться.  `jq "{lineage,serial,types:[.resources[].type]}" before-recovery.tfstate; jq .backup_sha256 /run/dq/locking-identities.json`.
+
+
+      ### Штатное завершение зарегистрированной консоли {#state-handover-registered-console-completion}
+
+
+      Текущая зарегистрированная консоль может удерживать собственный lock; старый ID из incident или принудительный unlock не доказывают штатное завершение. Запросите EOF через документированный handle-интерфейс и дождитесь completed=true и running=false; HTTP 202 лишь принимает запрос. Доверенный сервис закрывает stdin только зарегистрированной native-консоли по handle. Completed требует запрошенный EOF, реальный exit zero, пустой native stderr и успешный совпадающий owner unlock. Интерфейс не принимает другую команду или PID; завершение другой операции не заменяет квитанцию. `curl -fsS http://127.0.0.1:18787/owner; curl -fsS http://127.0.0.1:18787/diagnostic`.
+
+
+      ### Новый план после восстановления {#state-handover-fresh-convergence-plan}
+
+
+      Текущий владелец может блокировать plan, либо восстановление оставило недостающие привязки или изменения; завершите зарегистрированную операцию и согласуйте state до кода нового detailed plan 0. Код 2 означает изменения, код 1 — ошибку.  `tofu plan -input=false -detailed-exitcode -no-color`.
+
+
+      ### Наблюдение восстановления {#state-handover-recovery-observation}
+
+
+      Зафиксированные факты, чтение state, Docker inspect, доступ к owner или plan могут оборваться без именованного результата, либо Python helpers не загрузиться. Изучите эти пути наблюдения отдельно; ранние именованные ошибки привязки, checkpoint, backup или owner сохраняют собственные маркеры.  `python3 -I -c "import dq_check"; curl -fsS http://127.0.0.1:18787/owner; tofu state pull | jq "{lineage,serial}"`.
 
 
       ## Попробуйте
@@ -12894,6 +14226,72 @@ terraform-4:
       Blokada koordynuje zapis do jednego stanu; nie uaktualnia starej migawki ani nie koordynuje niezależnych stanów. Każda główna konfiguracja ma własne lineage i serial. Bieżący właściciel blokady, zapisane powiązania i fizyczne obiekty to oddzielne obserwacje: wcześniejszy błąd opisuje ówczesną operację, a nie dowodzi bieżącej własności. Lokalne Lab pokazuje rywalizację i ograniczone oczekiwanie; nie ćwiczy odzyskiwania backendu HTTP ani wielu stanów.
 
 
+      ### Treść zarządzanego notice {#state-handover-notice-content}
+
+
+      Notice może brakować lub zachować ręczną zmianę po odzyskaniu stanu; rzeczywisty plik stacji ma zawierać north-ready, z końcowymi znakami nowej linii usuwanymi przez porównanie shell.  `cat notice.txt`.
+
+
+      ### Plik pozostaje zarządzany {#state-handover-managed-notice-state}
+
+
+      Notice może istnieć tylko na dysku po nadpisaniu stanu albo odczyt stanu zawodzi; zachowaj zarządzany local_file dla notice.txt, bo treść pliku nie dowodzi odzyskania stanu.  `tofu state list; tofu show -json`.
+
+
+      ### Start obserwacji zarządzanego pliku {#state-handover-notice-observer-startup}
+
+
+      Obserwacja pliku w stanie może zakończyć się przy ładowaniu Python helpers przed nazwanym wynikiem; sprawdź dq_check. Zwykły brak zarządzanego pliku lub nieczytelny stan zwykle daje condition_1.  `python3 -I -c "import dq_check"`.
+
+
+      ### Powiązanie pierwotnego kontenera {#state-handover-original-container-binding}
+
+
+      Nieudany apply utworzył zdrowy kontener, ale nie zapisał powiązania do nowszego backend; scal brakujące powiązanie bez odtwarzania kontenera. Pierwotny ID ma istnieć w stanie i nadal wskazywać działający zdrowy kontener. Native fixture tworzy różne rzeczywiste rewizje: checkpoint nieudanego apply zna zdrowy kontener, nowszy backend zakończone maintenance. Zachowaj pierwotny checkpoint i scal tylko brakujące powiązanie z kopią bieżącego stanu; zastąpienie całego backend może utracić pracę. Obserwowane są bieżący stan, fizyczna tożsamość i zaufane zakończenie, nie ogólna historia komend. `tofu state list; docker inspect rail-operation --format "{{.Id}} {{.State.Running}} {{.State.Health.Status}}"`.
+
+
+      ### Zachowanie nowszej zakończonej pracy {#state-handover-completed-maintenance}
+
+
+      Wysłanie całego starszego errored state może usunąć nowszy zapis maintenance; scal brakujące powiązanie z bieżącym snapshot backend, zachowując pierwotną tożsamość zakończonego terraform_data.  `tofu state show terraform_data.progress; jq .progress_id /run/dq/locking-identities.json`.
+
+
+      ### Lineage i postęp serial {#state-handover-backend-lineage-and-serial}
+
+
+      Zastępczy lub starszy stan mógł zmienić lineage albo cofnąć serial; odzyskany backend ma zachować pierwotny lineage i całkowity serial nie mniejszy niż zapisany snapshot backend.  `tofu state pull | jq "{lineage,serial}"; jq "{lineage,serial}" /run/dq/locking-identities.json`.
+
+
+      ### Bajty checkpoint nieudanego apply {#state-handover-original-checkpoint-bytes}
+
+
+      errored.tfstate mógł zostać nadpisany, zmieniony lub usunięty przy scalaniu; zachowaj pierwotne bajty i pracuj na kopiach. Kontrola porównuje hash całego pliku z zamrożonym potwierdzeniem checkpoint.  `sha256sum errored.tfstate; jq .checkpoint_sha256 /run/dq/locking-identities.json`.
+
+
+      ### Snapshot backend przed zapisem naprawy {#state-handover-before-recovery-snapshot}
+
+
+      before-recovery.tfstate może brakować albo zawierać starszy checkpoint lub już zmieniony stan; zachowaj snapshot backend z nowszą zakończoną pracą przed zapisami naprawy. Treść JSON ma odpowiadać zapisanemu snapshot, format białych znaków może się różnić.  `jq "{lineage,serial,types:[.resources[].type]}" before-recovery.tfstate; jq .backup_sha256 /run/dq/locking-identities.json`.
+
+
+      ### Normalne zakończenie zarejestrowanej konsoli {#state-handover-registered-console-completion}
+
+
+      Bieżąca zarejestrowana konsola może nadal trzymać własny lock; stary ID z incident lub wymuszony unlock nie dowodzi normalnego zakończenia. Poproś o EOF przez udokumentowany interfejs handle i czekaj na completed=true oraz running=false; HTTP 202 tylko potwierdza żądanie. Zaufana usługa zamyka stdin tylko zarejestrowanej natywnej konsoli przez handle. Completed wymaga żądanego EOF, rzeczywistego exit zero, pustego native stderr i udanego zgodnego owner unlock. Interfejs nie przyjmuje zastępczej komendy ani PID; zakończenie innej operacji nie spełnia potwierdzenia. `curl -fsS http://127.0.0.1:18787/owner; curl -fsS http://127.0.0.1:18787/diagnostic`.
+
+
+      ### Nowy plan po odzyskaniu {#state-handover-fresh-convergence-plan}
+
+
+      Bieżący właściciel może nadal blokować plan lub odzyskanie pozostawiło brakujące powiązania albo zmiany; zakończ zarejestrowaną operację i uzgodnij stan do kodu nowego detailed plan 0. Kod 2 oznacza zmiany, 1 błąd.  `tofu plan -input=false -detailed-exitcode -no-color`.
+
+
+      ### Ścieżka obserwacji naprawy {#state-handover-recovery-observation}
+
+
+      Zamrożone fakty, odczyt stanu, Docker inspect, dostęp owner lub plan mogą zakończyć się bez nazwanego wyniku albo Python helpers nie ładują się. Sprawdź te ścieżki obserwacji osobno; wcześniejsze nazwane błędy powiązań, checkpoint, backup lub owner zachowują swoje markery.  `python3 -I -c "import dq_check"; curl -fsS http://127.0.0.1:18787/owner; tofu state pull | jq "{lineage,serial}"`.
+
+
       ## Wypróbuj
 
 
@@ -12933,6 +14331,72 @@ terraform-4:
       Un bloqueo coordina escritores de un estado; no actualiza una instantánea antigua ni coordina raíces independientes. Cada raíz tiene su propia lineage y serial. El propietario actual del bloqueo, los vínculos almacenados y los objetos físicos son observaciones distintas: un error anterior describe aquella operación, no demuestra la propiedad actual. El Lab local muestra competencia y espera limitada; no ensaya recuperación de un backend HTTP ni de varios estados.
 
 
+      ### Contenido de notice gestionado {#state-handover-notice-content}
+
+
+      Notice puede faltar o conservar edición manual tras recuperar estado; archivo real de estación debe contener north-ready, con saltos finales eliminados por comparación shell.  `cat notice.txt`.
+
+
+      ### El archivo sigue gestionado {#state-handover-managed-notice-state}
+
+
+      Notice puede existir solo en disco tras sobrescribir estado o fallar lectura; conserve recurso local_file gestionado para notice.txt, pues contenido no prueba recuperación del estado.  `tofu state list; tofu show -json`.
+
+
+      ### Inicio observación de archivo gestionado {#state-handover-notice-observer-startup}
+
+
+      La observación de archivo en estado puede detenerse cargando Python helpers antes del resultado; compruebe dq_check. Ausencia ordinaria de archivo gestionado o estado ilegible normalmente da condition_1.  `python3 -I -c "import dq_check"`.
+
+
+      ### Vínculo del contenedor original {#state-handover-original-container-binding}
+
+
+      El apply fallido creó contenedor saludable pero no guardó vínculo en backend más reciente; combine vínculo ausente sin recrear contenedor. Su ID original debe estar en estado y seguir identificando contenedor running/healthy. Native fixture crea revisiones reales distintas: checkpoint del apply fallido conoce contenedor saludable y backend más reciente maintenance completado. Conserve checkpoint original y combine solo vínculo ausente con copia de estado actual; reemplazar backend entero puede perder trabajo. Se observa estado actual, identidad física y finalización confiable, no historial general. `tofu state list; docker inspect rail-operation --format "{{.Id}} {{.State.Running}} {{.State.Health.Status}}"`.
+
+
+      ### Conservar trabajo completado más reciente {#state-handover-completed-maintenance}
+
+
+      Enviar entero errored state antiguo puede borrar registro maintenance más reciente; combine vínculo ausente con snapshot actual del backend conservando identidad original de terraform_data completado.  `tofu state show terraform_data.progress; jq .progress_id /run/dq/locking-identities.json`.
+
+
+      ### Lineage y progreso de serial {#state-handover-backend-lineage-and-serial}
+
+
+      Estado reemplazado o antiguo puede cambiar lineage o retroceder serial; backend recuperado debe mantener lineage original y serial entero al menos tan reciente como snapshot registrado.  `tofu state pull | jq "{lineage,serial}"; jq "{lineage,serial}" /run/dq/locking-identities.json`.
+
+
+      ### Bytes del checkpoint de apply fallido {#state-handover-original-checkpoint-bytes}
+
+
+      errored.tfstate puede sobrescribirse, editarse o eliminarse al combinar; conserve bytes originales y opere sobre copias. Se compara hash del archivo completo con recibo checkpoint congelado.  `sha256sum errored.tfstate; jq .checkpoint_sha256 /run/dq/locking-identities.json`.
+
+
+      ### Snapshot backend antes de escribir recuperación {#state-handover-before-recovery-snapshot}
+
+
+      before-recovery.tfstate puede faltar o contener checkpoint antiguo o estado ya modificado; guarde snapshot backend con trabajo completado más reciente antes de escribir recuperación. Significado JSON debe coincidir con snapshot registrado; espacios de formato pueden variar.  `jq "{lineage,serial,types:[.resources[].type]}" before-recovery.tfstate; jq .backup_sha256 /run/dq/locking-identities.json`.
+
+
+      ### Completar consola registrada normalmente {#state-handover-registered-console-completion}
+
+
+      La consola registrada actual puede conservar su lock; ID antiguo del incidente o unlock forzado no prueba finalización normal. Solicite EOF por interfaz handle documentada y espere completed=true y running=false; HTTP 202 solo reconoce solicitud. Servicio confiable cierra stdin solo de consola nativa registrada mediante handle. Completed exige EOF solicitado, exit cero real, native stderr vacío y owner unlock coincidente exitoso. Interfaz no acepta comando ni PID sustitutos; completar otra operación no satisface recibo. `curl -fsS http://127.0.0.1:18787/owner; curl -fsS http://127.0.0.1:18787/diagnostic`.
+
+
+      ### Plan nuevo tras recuperación {#state-handover-fresh-convergence-plan}
+
+
+      El propietario actual puede bloquear planificación o recuperación dejar vínculos ausentes o cambios; complete operación registrada y reconcilie estado hasta código 0 de plan nuevo detallado. Código 2 indica cambios y 1 error.  `tofu plan -input=false -detailed-exitcode -no-color`.
+
+
+      ### Ruta de observación de recuperación {#state-handover-recovery-observation}
+
+
+      Hechos congelados, lectura de estado, Docker inspect, acceso owner o plan pueden abortar sin resultado nombrado, o no cargar Python helpers. Inspeccione esas rutas aparte; fallos nombrados previos de vínculo, checkpoint, backup u owner conservan sus marcadores.  `python3 -I -c "import dq_check"; curl -fsS http://127.0.0.1:18787/owner; tofu state pull | jq "{lineage,serial}"`.
+
+
       ## Pruébalo
 
 
@@ -12970,6 +14434,72 @@ terraform-4:
 
 
       Eine Sperre koordiniert Schreiber für einen State; sie macht weder alte Snapshots aktuell noch koordiniert sie unabhängige State-Roots. Jeder Root hat eine eigene Lineage und Serial. Aktueller Sperreigentümer, gespeicherte Bindungen und physische Objekte sind getrennte Beobachtungen: Ein früherer Fehler beschreibt die damalige Operation, beweist aber keine aktuelle Eigentümerschaft. Das lokale Lab zeigt Konkurrenz und begrenztes Warten; es übt weder HTTP-Backend-Wiederherstellung noch Multi-State-Disaster-Recovery.
+
+
+      ### Verwalteten Notice-Inhalt erhalten {#state-handover-notice-content}
+
+
+      Die Notice fehlt möglicherweise oder enthält nach der Zustandswiederherstellung eine manuelle Änderung; die tatsächliche Workstation-Datei muss north-ready enthalten, mit durch den Shell-Vergleich entfernten abschließenden Zeilenumbrüchen.  `cat notice.txt`.
+
+
+      ### Die Datei bleibt verwaltet {#state-handover-managed-notice-state}
+
+
+      Die Notice existiert nach überschriebenem Zustand möglicherweise nur auf der Platte oder der Zustandsabruf scheitert; erhalten Sie eine verwaltete local_file Ressource für notice.txt, da Dateiinhalte keine Zustandswiederherstellung belegen.  `tofu state list; tofu show -json`.
+
+
+      ### Beobachtung der verwalteten Datei starten {#state-handover-notice-observer-startup}
+
+
+      Die Dateizustandsbeobachtung endet möglicherweise beim Laden von Python helpers vor einem benannten Ergebnis; prüfen Sie dq_check. Eine gewöhnlich fehlende verwaltete Datei oder unlesbarer Zustand meldet normalerweise condition_1.  `python3 -I -c "import dq_check"`.
+
+
+      ### Ursprüngliche Containerbindung wiederherstellen {#state-handover-original-container-binding}
+
+
+      Der fehlgeschlagene Apply hat den gesunden Container erstellt, konnte seine Bindung aber nicht im neueren Backend speichern; führen Sie die fehlende Bindung zusammen, ohne den Container neu zu erstellen. Seine ursprüngliche ID muss im Zustand stehen und weiterhin einen laufenden gesunden Container identifizieren. Die native Fixture erzeugt unterschiedliche reale Revisionen: der Checkpoint des fehlgeschlagenen Apply kennt den gesunden Container, das neuere Backend die abgeschlossene Wartung. Erhalten Sie den ursprünglichen Checkpoint und führen Sie nur die fehlende Bindung mit einer Kopie des aktuellen Zustands zusammen; vollständiger Backend-Ersatz kann abgeschlossene Arbeit verlieren. Beobachtet werden aktueller Zustand, physische Identität und vertrauenswürdiger Abschluss, kein allgemeiner Befehlsverlauf. `tofu state list; docker inspect rail-operation --format "{{.Id}} {{.State.Running}} {{.State.Health.Status}}"`.
+
+
+      ### Neuere abgeschlossene Arbeit erhalten {#state-handover-completed-maintenance}
+
+
+      Das vollständige ältere Errored-State zu übertragen kann den neueren Wartungsdatensatz verwerfen; führen Sie die fehlende Bindung mit dem aktuellen Backend-Snapshot zusammen und erhalten Sie die ursprüngliche abgeschlossene terraform_data Identität.  `tofu state show terraform_data.progress; jq .progress_id /run/dq/locking-identities.json`.
+
+
+      ### Lineage und Serial-Fortschritt erhalten {#state-handover-backend-lineage-and-serial}
+
+
+      Ein Ersatz- oder älterer Zustand hat möglicherweise die Lineage verändert oder die Serial zurückgesetzt; das wiederhergestellte Backend muss seine ursprüngliche Lineage und eine ganzzahlige Serial mindestens auf Stand des aufgezeichneten Backend-Snapshots erhalten.  `tofu state pull | jq "{lineage,serial}"; jq "{lineage,serial}" /run/dq/locking-identities.json`.
+
+
+      ### Bytes des fehlgeschlagenen Apply-Checkpoints erhalten {#state-handover-original-checkpoint-bytes}
+
+
+      errored.tfstate wurde möglicherweise beim Zusammenführen überschrieben, bearbeitet oder entfernt; erhalten Sie seine ursprünglichen Bytes und arbeiten Sie mit Kopien. Die Prüfung vergleicht den vollständigen Datei-Hash mit dem eingefrorenen Checkpoint-Beleg.  `sha256sum errored.tfstate; jq .checkpoint_sha256 /run/dq/locking-identities.json`.
+
+
+      ### Backend vor Wiederherstellungsschreibzugriffen sichern {#state-handover-before-recovery-snapshot}
+
+
+      before-recovery.tfstate fehlt möglicherweise oder enthält den älteren Checkpoint beziehungsweise bereits veränderten Zustand; erhalten Sie den Backend-Snapshot mit der neueren abgeschlossenen Arbeit vor Wiederherstellungsschreibzugriffen. Sein JSON-Inhalt muss dem aufgezeichneten Snapshot entsprechen; Leerraumformatierung darf abweichen.  `jq "{lineage,serial,types:[.resources[].type]}" before-recovery.tfstate; jq .backup_sha256 /run/dq/locking-identities.json`.
+
+
+      ### Registrierte Konsole normal beenden {#state-handover-registered-console-completion}
+
+
+      Die aktuell registrierte Konsole hält möglicherweise noch ihren eigenen Lock; eine alte Incident-Lock-ID oder erzwungenes Unlock belegt keinen normalen Abschluss. Fordern Sie EOF über die dokumentierte Handle-Schnittstelle an und warten Sie auf completed=true und running=false; HTTP 202 bestätigt nur die Anfrage. Der vertrauenswürdige Dienst schließt stdin nur für das registrierte native Konsolen-Handle. Sein Completed-Flag verlangt angefordertes EOF, tatsächlichen Exit null, leeres natives stderr und erfolgreiches passendes Owner-Unlock. Die Schnittstelle akzeptiert weder Ersatzbefehl noch PID; eine andere Operation zu beenden erfüllt diesen Beleg nicht. `curl -fsS http://127.0.0.1:18787/owner; curl -fsS http://127.0.0.1:18787/diagnostic`.
+
+
+      ### Frischer Plan nach Wiederherstellung {#state-handover-fresh-convergence-plan}
+
+
+      Der aktuelle Eigentümer blockiert möglicherweise die Planung oder die Wiederherstellung lässt fehlende Bindungen beziehungsweise Änderungen zurück; beenden Sie die registrierte Operation und gleichen Sie den Zustand ab, bis ein frischer detaillierter Plan 0 liefert. Exit 2 bedeutet vorgeschlagene Änderungen, Exit 1 Fehler.  `tofu plan -input=false -detailed-exitcode -no-color`.
+
+
+      ### Wiederherstellungsbeobachtung ermöglichen {#state-handover-recovery-observation}
+
+
+      Eingefrorene Fakten, Zustandsabruf, Docker-Inspektion, Eigentümerzugriff oder Planung brechen möglicherweise ohne benanntes Ergebnis ab, oder Python helpers laden nicht. Prüfen Sie diese Beobachtungspfade separat; frühere benannte Bindungs-, Checkpoint-, Backup- oder Eigentümerfehler behalten eigene Marker.  `python3 -I -c "import dq_check"; curl -fsS http://127.0.0.1:18787/owner; tofu state pull | jq "{lineage,serial}"`.
 
 
       ## Probieren Sie es aus
