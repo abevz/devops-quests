@@ -21,7 +21,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 121))
+@pytest.mark.parametrize("quest", range(1, 126))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -545,6 +545,28 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                     else:
                         name = ast.literal_eval(destination)
                     emitted.add(f"missing_{name}_{ast.literal_eval(protocol).lower()}_{ast.literal_eval(port)}")
+            for label, body in re.findall(
+                r"<<'(DQ_ADOPTION_CURRENT|DQ_AUTHORITY_POLICY|DQ_AUTHORITY_REQUESTS)'\n(.*?)\n\1(?:\n|$)", check, re.S
+            ):
+                positions = {"require": 1} if label == "DQ_ADOPTION_CURRENT" else {
+                    "require": 1, "command": 1, "get": 1
+                }
+                for call in ast.walk(ast.parse(body)):
+                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name):
+                        position = positions.get(call.func.id)
+                        if position is not None and len(call.args) > position:
+                            value = call.args[position]
+                            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                                emitted.add(value.value)
+            for variable in ("name", "station"):
+                markers_with_suffix = re.findall(r"\[DQ:([a-z0-9_]+_)\$\{" + variable + r"\}\]", check)
+                if markers_with_suffix:
+                    loop_values, = re.findall(r"^for " + variable + r" in ([a-z ]+); do$", check, re.M)
+                    emitted.update(marker + value for marker in markers_with_suffix
+                                   for value in loop_values.split())
+            if r"[DQ:denied_${path//\//_}]" in check:
+                paths, = re.findall(r"^for path in ([a-z/ ]+); do$", check, re.M)
+                emitted.update("denied_" + path.replace("/", "_") for path in paths.split())
             assert emitted, (quest, goal["text"])
             markers.update(emitted)
     explanations = catalog.public(quest)["diagnostics"]

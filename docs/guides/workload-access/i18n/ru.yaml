@@ -335,4 +335,162 @@ text: |
   ```bash
   command -v python3; kubectl get deployment reader -o name; kubectl get serviceaccount reader -o name
   ```
-source_hash: b5f7b2154e61c70a27b253e449456c2096249e91607182389f2ae483acea699e
+
+
+  ### Право чтения записи route {#q125-station-reader-role}
+
+  Роль station-reader может разрешать больше, чем get для ConfigMap route. Проверьте каждое правило для именованного ресурса основной группы API.
+
+  ```bash
+  kubectl get role station-reader -o json | jq '.rules'
+  ```
+
+  ### Субъект привязки station-reader {#q125-station-reader-subject}
+
+  В RoleBinding station-reader может не быть субъекта или указан другой субъект. Проверьте, что каждый субъект обозначает controller в пространстве имён упражнения.
+
+  ```bash
+  kubectl get rolebinding station-reader -o json | jq '.subjects'
+  ```
+
+  ### Фактический доступ controller к route {#q125-station-reader-live-allow}
+
+  У фактического запроса controller к configmaps/route может не быть разрешения на это имя или его токен идёт из неготового rollout. Проверьте селектор, привязку и rollout, затем повторите проверку HTTP 200.
+
+  ```bash
+  kubectl get role,rolebinding station-reader; kubectl rollout status deployment/controller --timeout=10s
+  ```
+
+  ### Значение, полученное для route {#q125-station-reader-route-value}
+
+  Запрос controller мог не вернуть значение маршрута или вернуть значение, отличное от north-125. Убедитесь, что запрос проходит, затем проверьте действующий ConfigMap.
+
+  ```bash
+  kubectl get configmap route -o jsonpath='{.data.route}'
+  ```
+
+  ### Запросы, запрещённые для controller {#q125-station-reader-denials}
+
+  У controller могут быть слишком широкие права, или запрос мог не дойти до API с действующим токеном. Проверьте привязки на лишние ресурсы, имена и глаголы API и повторите отмеченную проверку HTTP 403.
+
+  ```bash
+  kubectl get roles,rolebindings -o yaml
+  ```
+
+  ### Отказ observer в доступе к route {#q125-station-reader-observer-denial}
+
+  Запрос observer к configmaps/route мог получить разрешение или завершиться до авторизации. Проверьте rollout и привязки observer, затем повторите проверку HTTP 403.
+
+  ```bash
+  kubectl get rolebinding station-reader -o json | jq '.subjects'; kubectl rollout status deployment/observer --timeout=10s
+  ```
+
+  ### Список нагрузок и учётных записей {#q125-consumer-authority-actors}
+
+  Проверка могла не прочитать текущие Deployment или ServiceAccount. Проверьте список нагрузок и учётных записей в пространстве имён упражнения.
+
+  ```bash
+  kubectl get deployments,serviceaccounts
+  ```
+
+  ### Сохранённые нагрузки и управляющие учётные записи {#q125-consumer-authority-retained-identity}
+
+  Могли измениться исходный UID, образ worker или управляющая учётная запись. Сравните текущие нагрузки и защищённые ServiceAccount с выданной записью идентификаторов.
+
+  ```bash
+  jq '{identities,images,originalAccounts}' /run/dq/facts/0/authority-identities.json; kubectl get deployment controller observer publisher sampler -o json | jq '.items[] | {name: .metadata.name, uid: .metadata.uid, account: .spec.template.spec.serviceAccountName, image: [.spec.template.spec.containers[] | select(.name == "worker") | .image]}'; kubectl get serviceaccount controller observer -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+  ```
+
+  ### Отдельные учётные записи потребителей {#q125-consumer-authority-separate-accounts}
+
+  Потребители могут использовать один ServiceAccount или зарезервированную учётную запись. Проверьте, что у publisher и sampler в текущем rollout разные незарезервированные учётные записи.
+
+  ```bash
+  kubectl get deployment publisher sampler -o custom-columns=NAME:.metadata.name,ACCOUNT:.spec.template.spec.serviceAccountName
+  ```
+
+  ### Спроецированные токены в текущих Pod {#q125-consumer-authority-projected-credential}
+
+  Токен по умолчанию мог остаться смонтированным, а явно спроецированный токен мог быть недоступен или относиться к другому Pod либо учётной записи. Проверьте настройки автомонтирования и проекцию в текущем rollout.
+
+  ```bash
+  kubectl get deployments publisher sampler -o json | jq '.items[] | {name: .metadata.name, spec: .spec.template.spec | {serviceAccountName, automountServiceAccountToken, volumes}}'
+  kubectl get serviceaccounts -o json | jq '.items[] | {name: .metadata.name, automountServiceAccountToken}'
+  kubectl get replicaset,pod -o json | jq '.items[] | {kind, name: .metadata.name, uid: .metadata.uid, owner: .metadata.ownerReferences, account: .spec.serviceAccountName}'
+  for name in controller observer publisher sampler; do
+    kubectl rollout status "deployment/$name" --timeout=10s
+    kubectl exec "deployment/$name" -c worker -- cat /credential/token |
+      python3 -I -c 'import base64,json,sys; part=sys.stdin.read().split(".")[1]; claims=json.loads(base64.urlsafe_b64decode(part+"===")); print(json.dumps({"subject": claims.get("sub"), "pod_uid": claims.get("kubernetes.io",{}).get("pod",{}).get("uid")}))'
+  done
+  ```
+
+  ### Права на назначенные записи потребителя {#q125-consumer-authority-named-grants}
+
+  Привязки могут не читаться, отсутствовать или выходить за рамки Role с get на единственный назначенный ConfigMap в пространстве имён. Проверьте подходящих субъектов-аккаунты и группы и указанные в их привязках Role.
+
+  Проверка правил читает Role и RoleBinding в пространстве имён упражнения. Проверка доступа выполняет запросы к API, перечисленные в целях.
+
+  ```bash
+  kubectl get roles,rolebindings -o yaml
+  ```
+
+  ### Текущие worker и ответы API {#q125-consumer-authority-live-observation}
+
+  Проверка могла не увидеть текущий готовый worker или не получить корректный ответ API. Проверьте Deployment, его текущий ReplicaSet и Pod, затем повторите проверки запросов.
+
+  ```bash
+  kubectl get deployments,replicasets,pods -o wide
+  ```
+
+  ### Разрешённый запрос к назначенной записи {#q125-consumer-authority-allowed-record}
+
+  Разрешённый запрос потребителя мог завершиться ошибкой или вернуть не ту запись. Проверьте право на именованный ConfigMap и действующие данные этого потребителя по выданному контракту.
+
+  ```bash
+  api=$(cat api-endpoint)
+  jq -c '.consumers[]' authority-contract.json | while IFS= read -r consumer; do
+    name=$(jq -er .deployment <<<"$consumer")
+    record=$(jq -er .configMap <<<"$consumer")
+    jq '{deployment, configMap, key, expected: .response}' <<<"$consumer"
+    kubectl rollout status "deployment/$name" --timeout=10s
+    token=$(kubectl exec "deployment/$name" -c worker -- cat /credential/token)
+    printf 'header = "Authorization: Bearer %s"\n' "$token" |
+      curl --config - --cacert api-ca.pem -sS --max-time 3 -w '\nHTTP %{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/$record"
+    unset token
+  done
+  ```
+
+  ### Отказы в запросах от учётных записей потребителей {#q125-consumer-authority-denied-records}
+
+  Запрещённый запрос мог получить статус, отличный от 403. Проверьте права на записи другого потребителя, перечисление ресурсов и управляющие ресурсы, а также сбои до авторизации.
+
+  ```bash
+  api=$(cat api-endpoint)
+  for name in controller observer publisher sampler; do
+    kubectl rollout status "deployment/$name" --timeout=10s
+    token=$(kubectl exec "deployment/$name" -c worker -- cat /credential/token)
+    for path in configmaps/route configmaps/release-plan configmaps/sampling configmaps secrets secrets/control configmaps/offlimits; do
+      printf '%s %s ' "$name" "$path"
+      printf 'header = "Authorization: Bearer %s"\n' "$token" |
+        curl --config - --cacert api-ca.pem -sS --max-time 3 -o /dev/null -w 'HTTP %{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
+    done
+    unset token
+  done
+  ```
+
+  ### Данные проверки политики доступа {#q125-consumer-authority-policy-observer}
+
+  Проверка политик могла остановиться до вывода конкретного условия. Проверьте выданную запись идентификаторов и доступность данных API о нагрузках, учётных записях и правах.
+
+  ```bash
+  test -s /run/dq/facts/0/authority-identities.json; kubectl get deployments,serviceaccounts,roles,rolebindings
+  ```
+
+  ### Данные проверки фактических запросов {#q125-consumer-authority-request-observer}
+
+  Проверка запросов могла остановиться до вывода конкретного условия. Проверьте выданный адрес API, файл CA и готовность текущих Pod.
+
+  ```bash
+  test -s /run/dq/facts/0/api-ca.pem; test -s /run/dq/facts/0/api-endpoint; kubectl get deployments,pods
+  ```
+source_hash: a371aef6dac29a2c44cde67a8febdf4643573ec8889e40bee31b5acca9fc5203

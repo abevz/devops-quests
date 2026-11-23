@@ -86,4 +86,85 @@ text: |
   ```bash
   kubectl get statefulset shelf -o json | jq '.spec.template.spec.containers[] | select(.name == "worker") | .volumeMounts'
   ```
-source_hash: 183d89e222c9643e8413aa28019a98693907e5e4360e5c2398aed96bc8c149a4
+
+
+  ### Nazwa wolumenu w kontrakcie {#q124-pv-contract-volume}
+
+  Sprawdź, czy dostarczony kontrakt zawiera nazwę wolumenu.
+
+  ```bash
+  jq -er .volume /run/dq/facts/0/volume-contract.json
+  ```
+
+  ### UID pierwotnego PV w kontrakcie {#q124-pv-contract-uid}
+
+  Sprawdź, czy dostarczony kontrakt zawiera UID pierwotnego PV.
+
+  ```bash
+  jq -er .pv_uid /run/dq/facts/0/volume-contract.json
+  ```
+
+  ### Bieżąca tożsamość PV {#q124-pv-live-identity}
+
+  PV zapisany w kontrakcie może nie istnieć lub mieć inny UID. Porównaj bieżący UID z pv_uid w volume-contract.json.
+
+  ```bash
+  contract=/run/dq/facts/0/volume-contract.json; volume=$(jq -er .volume "$contract"); jq -er .pv_uid "$contract"; kubectl get pv "$volume" -o jsonpath='{.metadata.uid}'
+  ```
+
+  ### Klasa pamięci masowej PV {#q124-pv-storage-class}
+
+  PV może mieć inną wartość storageClassName. Porównaj ją z volume w volume-contract.json.
+
+  ```bash
+  volume=$(jq -er .volume /run/dq/facts/0/volume-contract.json); printf '%s\n' "$volume"; kubectl get pv "$volume" -o jsonpath='{.spec.storageClassName}'
+  ```
+
+  ### Polityka Retain w PV {#q124-pv-retain-policy}
+
+  W PV może brakować polityki odzyskiwania Retain. Sprawdź bieżącą politykę przed zmianą PVC.
+
+  ```bash
+  volume=$(jq -er .volume /run/dq/facts/0/volume-contract.json); kubectl get pv "$volume" -o jsonpath='{.spec.persistentVolumeReclaimPolicy}'
+  ```
+
+  ### Bieżąca faza PV {#q124-pv-bound-phase}
+
+  PV może nadal czekać na pasujący PVC. Sprawdź, czy jego bieżąca faza to Bound.
+
+  ```bash
+  volume=$(jq -er .volume /run/dq/facts/0/volume-contract.json); kubectl get pv "$volume" -o jsonpath='{.status.phase}'
+  ```
+
+  ### Odwołanie do bieżącego PVC {#q124-pv-current-claimref}
+
+  PV może nadal odwoływać się do wcześniejszego PVC ledger. Porównaj claimRef.uid z UID bieżącego PVC ledger.
+
+  ```bash
+  volume=$(jq -er .volume /run/dq/facts/0/volume-contract.json); kubectl get pv "$volume" -o jsonpath='{.spec.claimRef.uid}'; kubectl get pvc ledger -o jsonpath='{.metadata.uid}'
+  ```
+
+  ### Pierwotny PVC ledger {#q124-pv-original-claim}
+
+  PVC ledger może nie istnieć lub mógł już zostać zastąpiony. Na tym etapie jego UID musi być zgodny z original-claim-uid.
+
+  ```bash
+  cat /run/dq/facts/0/original-claim-uid; kubectl get pvc ledger -o jsonpath='{.metadata.uid}'
+  ```
+
+  ### Nowy PVC ledger {#q124-pv-replacement-claim}
+
+  Nowy PVC ledger może nie istnieć lub nadal może istnieć pierwotny PVC. Na tym etapie porównaj jego UID z original-claim-uid i potwierdź, że się różnią.
+
+  ```bash
+  cat /run/dq/facts/0/original-claim-uid; kubectl get pvc ledger -o jsonpath='{.metadata.uid}'
+  ```
+
+  ### Dane zwracane przez board {#q124-pv-board-content}
+
+  client może nie mieć dostępu do board:8080 lub może otrzymać inne dane. Sprawdź, czy rzeczywista odpowiedź to north-124.
+
+  ```bash
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+  ```
+source_hash: 5b83695ab3ec52da47e21e160e1a7768262cd0d76569834a3582db99ab365de1
