@@ -188,3 +188,28 @@ curl -fsS -H "X-Vault-Token: $VAULT_READER_TOKEN" -H "Content-Type: application/
 ### Принятие исправленного источника исходным процессом {#audit-original-consumer-path-and-cached-publication}
 
 Исходное приложение запускается с неверным путём KV и кэширует ошибку; исправьте политику reader и source-профиль, затем отправьте SIGHUP тому же PID. Сохраните приватный файл reader, идентичность процесса и одобренные HTTP-метаданные; ручного чтения Vault недостаточно. Исходный отказ относится к secret/data/dispatch; выданное приложение обращается к secret/dispatch с уже выданным reader. Исправьте узкую живую политику и путь приложения, затем обновите кэш исходного процесса. Экспорт содержит только request_id, path, operation и reason. `curl -fsS --max-time 2 http://127.0.0.1:18081/status`.
+
+
+### Узкое чтение одобренного источника {#vault-pod-narrow-source-read}
+
+Выданная policy reader изначально указывает неверный data-путь, либо authenticated read не проходит; разрешите read документированного KV-v2 data-пути, сохранив запрет на other-data и audit.  `cat reader.hcl; cat consumer/README.md`.
+
+### Явная доставка данных {#vault-pod-explicit-delivery}
+
+Рабочий файл синхронизации не содержит реализации, поэтому Kubernetes Secret может отсутствовать или устареть; создайте явное чтение источника и доставку одобренного значения по существующей secret-ссылке. Ошибки чтения источника или Kubernetes дают тот же маркер.  `bash -n sync-secret.sh; kubectl get secret route-secret -o json | jq "{name:.metadata.name,keys:(.data|keys)}"`.
+
+### Принятие доставленного окружения {#vault-pod-effective-secret}
+
+Изменение Secret не обновляет окружение существующего процесса; именованный контейнер может сохранять старое значение или не запускаться. Обновите Pod через исходный контроллер, сохранив выданную secret-ссылку и программу.  `kubectl get deployment relay -o json | jq .spec.template.spec.containers[].env; kubectl get pods`.
+
+### Исходное приложение и приватный источник {#vault-pod-original-application-agreement}
+
+Исходное приложение может использовать выданный manager credential или старый кэш, либо изменились идентичность процесса, источник или узкие capabilities. Сохраните приватную выданную идентичность reader, обновите тот же процесс через SIGHUP и проверьте одобренные metadata; запуск, разбор и таймауты наблюдения также дают общий fallback. Config содержит ровно url/path/token_file, использует зафиксированные URL/API-путь и остаётся обычным ограниченным по размеру файлом. Credential — обычный файл mode0600 владельца uid1000, совпадающий с выданной идентичностью reader. Сохраняются PID, старт процесса, команда, principal/group/capability status и байты программы. Metadata показывают ready=true, исходный источник, digest и целую version. Отдельная capability-проверка требует dispatch read и other-data/audit deny; два отрицательных пути не доказывают запрет всех Vault-путей. Ранние source/Secret/environment и application наблюдения независимы; их ранние сбои и лимиты могут дать общий fallback. `jq . consumer/source.json; curl -fsS --max-time 2 http://127.0.0.1:18081/status; cat consumer/application.pid`.
+
+### Развёртывание после доставки {#vault-pod-secret-blocked-rollout}
+
+Исходный workload может блокироваться отсутствующей доставкой Secret или другой ошибкой запуска; изучите события после синхронизации источника, сохраняя Deployment.  `kubectl rollout status deployment/relay --timeout=3s; kubectl describe deployment relay`.
+
+### Сохранение исходного workload contract {#vault-pod-retained-workload-contract}
+
+Могли измениться UID Deployment, selector, единственная реплика или полная pod specification, либо один текущий принадлежащий Pod не Ready с одобренным эффективным значением. Сохраните image, программу, security и secret-ссылку; ошибки API, запуска и таймауты дают тот же fallback.  `kubectl get deployment relay -o json | jq "{uid:.metadata.uid,replicas:.spec.replicas,selector:.spec.selector,template:.spec.template.spec}"; kubectl get pods -o wide`.

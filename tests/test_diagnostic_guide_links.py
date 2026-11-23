@@ -21,7 +21,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 83))
+@pytest.mark.parametrize("quest", range(1, 86))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -205,6 +205,20 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                             and isinstance(call.args[1], ast.Constant)
                             and isinstance(call.args[1].value, str)):
                         emitted.add(call.args[1].value)
+            for body in re.findall(
+                r"<<'DQ_MAINTENANCE_(?:POLICY|EVICTIONS)'\n(.*?)\nDQ_MAINTENANCE_(?:POLICY|EVICTIONS)(?:\n|$)",
+                check, re.S,
+            ):
+                # The producer prints the current failure variable. Its source
+                # assignments identify the phase-specific emitted keys; merely
+                # declaring a message in the lookup table does not emit it.
+                for node in ast.walk(ast.parse(body)):
+                    if (isinstance(node, ast.Assign)
+                            and any(isinstance(target, ast.Name) and target.id == "failure"
+                                    for target in node.targets)
+                            and isinstance(node.value, ast.Constant)
+                            and isinstance(node.value.value, str)):
+                        emitted.add(node.value.value)
             assert emitted, (quest, goal["text"])
             markers.update(emitted)
     explanations = catalog.public(quest)["diagnostics"]
