@@ -122,7 +122,8 @@ async def test_agent_runs_before_objectives_only_for_an_active_unexpired_bay(
     engine.catalog = SimpleNamespace(
         quests={
             level: {"stages": [{"objectives": [{"check": "probe actual registry"}]}]}
-        }
+        },
+        messages={level: {"en": {}}},
     )
     engine.runtime = SimpleNamespace(
         game_controls=lambda run: calls.append("agent"),
