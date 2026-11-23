@@ -189,7 +189,8 @@ def test_all_quests_assets_bilingual_and_no_check_leaks():
         guides = json.loads((ROOT / "docs/guide-excerpts.json").read_text())
         assert all(
             (
-                h.get("guide") in guides
+                h.keys() == {"text"}
+                or h.get("guide") in guides
                 or h.get("url", "").startswith("https://developer.hashicorp.com/vault/")
                 or h.get("url") in {66: {'https://distribution.github.io/distribution/spec/api/#deleting-an-image', 'https://docs.docker.com/reference/api/registry/latest/operations/HeadImageManifest/'}, 75: {'https://argo-cd.readthedocs.io/en/stable/operator-manual/webhook/', 'https://kubernetes.io/docs/tutorials/configuration/updating-configuration-via-a-configmap/'}, 78: {'https://kubernetes.io/docs/concepts/containers/images/#imagepullbackoff', 'https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/'}}.get(number, set())
                 or (

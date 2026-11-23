@@ -70,7 +70,8 @@ export function attemptState(run) {
 
 // Only compare with the previous revealed hint, so a link can reappear after a different one.
 export function showHintGuide(hints, index) {
-  return index === 0 || hints[index].url !== hints[index - 1].url;
+  const url = hints[index].url;
+  return Boolean(url) && (index === 0 || url !== hints[index - 1].url);
 }
 
 // Presentation only: the server retains confirmation, scoring and one-attempt transfers.
