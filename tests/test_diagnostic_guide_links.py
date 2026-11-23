@@ -21,7 +21,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 101))
+@pytest.mark.parametrize("quest", range(1, 106))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -433,6 +433,42 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                             and isinstance(node.value, ast.Constant)
                             and isinstance(node.value.value, str)):
                         emitted.add(node.value.value)
+            for delimiter, body in re.findall(
+                r"<<'(DQ_HEARTBEAT|DQ_ROLLING|DQ_SECURITY)'\n(.*?)\n\1(?:\n|$)",
+                check, re.S,
+            ):
+                tree = ast.parse(body)
+                if delimiter == "DQ_HEARTBEAT":
+                    for node in tree.body:
+                        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.List):
+                            continue
+                        if any(isinstance(target, ast.Name) and target.id == "checks"
+                               for target in node.targets):
+                            emitted.update(ast.literal_eval(item.elts[0]) for item in node.value.elts)
+                if delimiter == "DQ_ROLLING":
+                    for node in ast.walk(tree):
+                        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                                and isinstance(node.func.value, ast.Name)
+                                and node.func.value.id == "checks" and node.func.attr == "append"):
+                            emitted.add(ast.literal_eval(node.args[0].elts[0]))
+                if delimiter == "DQ_SECURITY":
+                    for node in tree.body:
+                        # Explicitly disabled extensions do not emit live markers.
+                        if isinstance(node, ast.If) and isinstance(node.test, ast.Constant) and node.test.value is False:
+                            continue
+                        for call in ast.walk(node):
+                            if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                                    and call.func.id == "emit" and isinstance(call.args[0], ast.Constant)):
+                                emitted.add(ast.literal_eval(call.args[0]))
+                        if isinstance(node, ast.For) and isinstance(node.target, ast.Name) and node.target.id == "field":
+                            emitted.update("host_" + field.lower() for field in ast.literal_eval(node.iter))
+            if "[DQ:status_${field,,}]" in check:
+                emitted.update(
+                    "status_" + field.lower()
+                    for field in re.findall(r"^field=(\w+)$", check, re.M)
+                )
+            if "[DQ:field_${field,,}]" in check:
+                emitted.update("field_" + field.lower() for field in re.findall(r"^field=(\w+)$", check, re.M))
             assert emitted, (quest, goal["text"])
             markers.update(emitted)
     explanations = catalog.public(quest)["diagnostics"]

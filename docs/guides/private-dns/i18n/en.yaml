@@ -16,5 +16,110 @@ text: '# Private DNS recovery
 
   In quest 110, the client must use the private DNS Service and resolve `station.internal` to the controller Service address in `expected-dns-address`. Repair the private Corefile, restart the supplied DNS Deployment and wait for propagation; then test ingress routing separately.
 
+
+
+  ### Corefile used by the resolver {#q105-resolver-corefile-command}
+
+
+  CoreDNS may start with its default configuration or with a different Corefile. Inspect the named worker’s executable and arguments for /etc/station/Corefile.
+
+
+  ```bash
+
+  kubectl get deployment station-dns -o json | jq ''.spec.template.spec.containers[] | select(.name == "worker") | {command, args}''
+
+  ```
+
+
+  ### Resolver Service ports {#q105-resolver-service-ports}
+
+
+  A Service port may omit one DNS protocol or target the wrong listener. Check TCP and UDP on port 53, both reaching numeric or named target 1053.
+
+
+  ```bash
+
+  kubectl get service station-dns -o json | jq ''.spec.ports''
+
+  ```
+
+
+  ### Direct response from the configured resolver {#q105-configured-resolver-answer}
+
+
+  The supplied Corefile may still point north.station.internal to loopback, or the running resolver may not have loaded the revised file. Query station-dns directly and compare the answer with the supplied board address.
+
+
+  ```bash
+
+  server=$(kubectl get service station-dns -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/client -c worker -- nslookup north.station.internal "$server"
+
+  ```
+
+
+  ### Client DNS policy {#q105-client-dns-policy}
+
+
+  The client template may have reverted to the cluster DNS policy. Inspect its declared dnsPolicy and preserve None so the supplied nameserver configuration can apply.
+
+
+  ```bash
+
+  kubectl get deployment client -o jsonpath=''{.spec.template.spec.dnsPolicy}''
+
+  ```
+
+
+  ### Client nameserver address {#q105-client-nameserver-address}
+
+
+  The client may still list an obsolete address or extra resolvers. Compare its nameservers with the current station-dns ClusterIP and keep only that address.
+
+
+  ```bash
+
+  kubectl get deployment client -o jsonpath=''{.spec.template.spec.dnsConfig.nameservers}''; kubectl get service station-dns -o jsonpath=''{.spec.clusterIP}''
+
+  ```
+
+
+  ### Explicit DNS reply in client {#q105-client-explicit-dns-answer}
+
+
+  Even when the client configuration looks correct, it may get an incorrect or missing answer from the explicitly selected resolver. Inspect the returned address for north.station.internal from the client sandbox.
+
+
+  ```bash
+
+  server=$(kubectl get service station-dns -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/client -- nslookup north.station.internal "$server"
+
+  ```
+
+
+  ### HTTP request by hostname {#q105-client-hostname-http}
+
+
+  The DNS answer may be correct while the Service or endpoint behind it is unready or responds with the wrong content. Request the hostname from client and compare with north-105.
+
+
+  ```bash
+
+  kubectl exec deployment/client -- wget -qO- -T 3 http://north.station.internal:8080
+
+  ```
+
+
+  ### Inputs to the resolver check {#q105-resolver-observer-input}
+
+
+  The resolver observation can stop before naming a condition when local tooling or its input fails. Check the tools and access to the live resolver resources first.
+
+
+  ```bash
+
+  command -v python3; kubectl get deployment station-dns -o name; kubectl get service station-dns -o name
+
+  ```
+
   '
-source_hash: d41fe8f8d19e050c8b1b8b7c70a4b7535c5ba430b0e2047b057c1f803d0bcd72
+source_hash: d73a557c35cebf11f88cd7713ef78a6e588e1b671881ec6da8b00bff49879fbb

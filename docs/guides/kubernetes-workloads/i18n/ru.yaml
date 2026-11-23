@@ -1,5 +1,5 @@
 heading: Восстановление нагрузок Kubernetes
-text: |-
+text: |
   # Восстановление нагрузок Kubernetes
 
   Работайте в одноразовой песочнице задания. Контроллер создаёт Pod из шаблона; изменения и готовность требуют времени. Перед изменениями изучите выданные материалы и текущие определения нагрузок, затем дождитесь результата и проверьте реальные Pod и ответы.
@@ -10,7 +10,7 @@ text: |-
 
   ## Rollout и откат Deployment
 
-  Deployment управляет репликами и ревизиями шаблона Pod. `Recreate` удаляет старые Pod перед заменой; `RollingUpdate` управляет заменой через `maxUnavailable` и `maxSurge`. Перед откатом изучите `kubectl rollout history deployment/board` и выданный `healthy-revision`, затем выполните `kubectl rollout undo deployment/board --to-revision=N`, заменив N записанной ревизией. Дождитесь `kubectl rollout status deployment/board --timeout=90s`, затем проверьте готовность и ответ сервиса. Сохранение UID из `original-deployment-uid` сохраняет тот же объект Deployment. Одно только число готовых реплик не гарантирует бесперебойную работу.
+  Deployment управляет репликами и ревизиями шаблона Pod. `Recreate` удаляет старые Pod перед заменой; `RollingUpdate` управляет заменой через `maxUnavailable` и `maxSurge`. Перед откатом изучите `kubectl rollout history deployment/board` и выданный `healthy-revision`, затем выполните `kubectl rollout undo deployment/board --to-revision=N`, заменив N записанной ревизией. Дождитесь `kubectl rollout status deployment/board --timeout=90s`, затем проверьте готовность и ответ сервиса. Сравните текущий UID с `original-deployment-uid`, чтобы подтвердить, что откат сохранил исходный Deployment. Одно только число готовых реплик не гарантирует бесперебойную работу.
 
   ## Размещение DaemonSet
 
@@ -27,4 +27,460 @@ text: |-
   Стратегия rollout управляет числом замен. Проверка готовности определяет, какие Pod принимают трафик. Прослеживайте её HTTP-путь отдельно от Service, через который идут запросы.
 
   Текущий Job и шаблон контроллера управляют разными запусками. Число повторов, общий срок и перезапуски контейнера ограничивают разные пути сбоя. Создавая будущие запуски из наблюдаемой нагрузки, проверяйте политику и цепочку владельцев Job/Pod. Одного terminal condition без требуемого сбоя worker недостаточно. Это текущие наблюдения, а не полная история запусков.
-source_hash: ff15c544e7d100f5fce99122b66b5d575dd6ad90658c87c9e334aa059787b8f3
+
+  ### Копирование в общий том {#q101-prepare-copy}
+
+  Контейнер prepare мог читать неверный путь или не записать файл в общий том. Проверьте код завершения и сравните байты, которые worker читает из /shared/route, со значением в ConfigMap route.
+
+  ```bash
+  kubectl logs deployment/board -c prepare
+  ```
+
+  ### Стартовая команда watcher {#q101-watcher-startup-command}
+
+  Команда запуска watcher могла проверять другой файл или только его наличие. Проверьте, что она требует непустой /shared/heartbeat.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.initContainers[] | select(.name == "watcher") | .startupProbe.exec.command'
+  ```
+
+  ### Период стартовой проверки watcher {#q101-watcher-startup-period}
+
+  Пропущенный или изменённый период меняет частоту стартовой проверки. Проверьте periodSeconds у watcher и задайте 1 секунду.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.initContainers[] | select(.name == "watcher") | .startupProbe.periodSeconds'
+  ```
+
+  ### Порог отказов watcher {#q101-watcher-startup-threshold}
+
+  Стартовая проверка могла сдаваться слишком рано или допускать лишние отказы. Проверьте, что failureThreshold равен 10.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.initContainers[] | select(.name == "watcher") | .startupProbe.failureThreshold'
+  ```
+
+  ### Перезапускаемый init-контейнер {#q101-restartable-init-watcher}
+
+  Watcher мог стать обычным init-контейнером или потерять политику перезапуска. Оставьте единственный watcher в initContainers с restartPolicy Always.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.initContainers[] | select(.name == "watcher") | .restartPolicy'
+  ```
+
+  ### Входной и общий тома {#q101-input-and-shared-volumes}
+
+  Изменённая проекция, порядок или тип хранилища могли нарушить условия сохранения томов. Проверьте input из ConfigMap route и shared emptyDir с настройками по умолчанию в исходном порядке.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.volumes'
+  ```
+
+  ### Код завершения prepare {#q101-prepare-exit-status}
+
+  В активном Pod board init-контейнер prepare мог завершиться с ошибкой или ещё выполняться. Найдите состояние завершения prepare с кодом 0.
+
+  ```bash
+  kubectl get pods -l app=board -o json | jq '.items[] | .status.initContainerStatuses'
+  ```
+
+  ### Состояние работающего watcher {#q101-watcher-running-status}
+
+  Watcher мог уже работать, но не пройти стартовую проверку, или перезапускаться. Найдите активный Pod board, где watcher одновременно started и running.
+
+  ```bash
+  kubectl get pods -l app=board -o json | jq '.items[] | .status.initContainerStatuses'
+  ```
+
+  ### Готовность worker {#q101-worker-readiness}
+
+  Основной worker мог ждать init-контейнеров или не проходить readiness. Проверьте флаг ready у worker в активном Pod board.
+
+  ```bash
+  kubectl get pods -l app=board -o json | jq '.items[] | .status.containerStatuses'
+  ```
+
+  ### Состояния в одном Pod {#q101-pod-status-agreement}
+
+  При замене три подходящих статуса могли оказаться в разных Pod. Проверьте в одном активном Pod успешный prepare, запущенный работающий watcher и готовый worker.
+
+  ```bash
+  kubectl get pods -l app=board -o json | jq '.items[] | {pod: .metadata.name, init: .status.initContainerStatuses, work: .status.containerStatuses}'
+  ```
+
+  ### Файл heartbeat в работающем Pod {#q101-live-heartbeat-file}
+
+  Watcher мог перестать писать или потерять общий том. Проверьте, что работающий watcher видит непустой /shared/heartbeat.
+
+  ```bash
+  kubectl exec deployment/board -c watcher -- test -s /shared/heartbeat
+  ```
+
+  ### Фактический ответ маршрута {#q101-live-route-http}
+
+  У Service может не быть готового endpoint, либо worker может отдавать старый файл. Запросите /route из worker через порт 8080 и сравните с north-101.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/route
+  ```
+
+  ### Входы проверки prepare {#q101-prepare-observer-input}
+
+  Наблюдение prepare может остановиться до проверки файла, если не запускается Python или недоступны входы. Проверьте инструменты и доступ к board и route.
+
+  ```bash
+  command -v python3; kubectl get pods -l app=board; kubectl get configmap route -o name
+  ```
+
+  ### Входы проверки watcher {#q101-watcher-observer-input}
+
+  Наблюдение watcher может завершиться до сообщения о конкретном поле из-за ошибки Python или разбора входных данных. Проверьте инструменты и живой Deployment.
+
+  ```bash
+  command -v python3; kubectl get deployment board -o name
+  ```
+
+  ### Стратегия постепенного обновления {#q102-rolling-strategy}
+
+  Deployment мог остаться на стратегии Recreate, при которой старые Pod удаляются до замены. Проверьте, что в кластере задан RollingUpdate.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.strategy.type}'
+  ```
+
+  ### Лимиты замены реплик {#q102-replacement-budget}
+
+  Параметры обновления могли разрешить недоступность Pod или дать другое число дополнительных реплик. Для желаемого числа реплик округлите maxSurge вверх и maxUnavailable вниз. Нужна одна дополнительная реплика и ноль недоступных.
+
+  ```bash
+  kubectl get deployment board -o json | jq '{replicas: .spec.replicas, rolling: .spec.strategy.rollingUpdate}'
+  ```
+
+  ### Готовность worker по HTTP {#q102-worker-http-readiness}
+
+  Readiness worker мог остаться на порту 8099 или использовать другой протокол, хост либо именованный порт. Проверьте единственное HTTP-действие у worker и его фактический порт 8080.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.containers[] | select(.name == "worker") | {probe: .readinessProbe, ports}'
+  ```
+
+  ### Исходная запись UID Deployment {#q102-original-deployment-receipt}
+
+  Зафиксированный UID исходного Deployment мог быть недоступен или пуст. Проверьте исходную запись перед сравнением с UID в кластере.
+
+  ```bash
+  test -s /run/dq/facts/0/original-deployment-uid
+  ```
+
+  ### Идентификатор Deployment в кластере {#q102-deployment-identity}
+
+  При пересоздании Deployment под тем же именем исходный UID теряется. Перед откатом существующего объекта сравните его текущий UID с исходной записью.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.metadata.uid}'
+  ```
+
+  ### Желаемое число реплик {#q102-desired-replicas}
+
+  Масштабирование или замена манифеста могли изменить желаемое число реплик. Проверьте, что .spec.replicas равно двум.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.replicas}'
+  ```
+
+  ### Число готовых реплик {#q102-ready-replica-count}
+
+  При желаемых двух репликах новые worker могут не проходить проверку готовности. Проверьте текущие Pod и дождитесь двух готовых реплик в статусе Deployment.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.status.readyReplicas}'; kubectl get pods -l app=board
+  ```
+
+  ### Исходный ответ Service {#q102-baseline-service-response}
+
+  Откат мог не вернуть исходный ответ, либо у Service может не быть готовых endpoints. Прочитайте реальный ответ board и сравните с north-102.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  ```
+
+  ### Ответ обновлённого Service {#q102-updated-service-response}
+
+  Новые Pod могли ещё не пройти readiness, либо Service может временно направлять запросы на старые worker. После rollout сравните ответ с north-102-v3 и отдельно проверьте тайм-ауты или отсутствие endpoints.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  ```
+
+  ### Входы проверки обновления {#q102-rollout-observer-input}
+
+  Проверка rollout может остановиться до сообщения о стратегии, лимите или readiness, если не запускается Python. Проверьте Python и доступ к Deployment board.
+
+  ```bash
+  command -v python3; kubectl get deployment board -o name
+  ```
+
+  ### Входы HTTP-проверки {#q102-service-observer-input}
+
+  HTTP-наблюдение может завершиться до вывода последнего ответа при ошибке Python или входных данных. Проверьте инструменты и Service перед повтором.
+
+  ```bash
+  command -v python3; kubectl get service board -o name
+  ```
+
+  ### Размещение relay на ноде стенда {#q103-relay-bay-placement}
+
+  Селектор мог не подходить ни к одной ноде, или контроллер может ещё показывать старое поколение. Проверьте метки и дождитесь для текущего поколения одного желаемого и обновлённого Pod без лишних размещений.
+
+  ```bash
+  kubectl get daemonset relay -o wide; kubectl get nodes --show-labels
+  ```
+
+  ### Входы проверки размещения {#q103-placement-observer-input}
+
+  Проверка размещения может завершиться до сравнения статуса при ошибке Python или входных данных. Проверьте Python и доступ к relay.
+
+  ```bash
+  command -v python3; kubectl get daemonset relay -o name
+  ```
+
+  ### Входы проверки ограничений {#q103-security-observer-input}
+
+  Проверка ограничений может завершиться до указания условия при ошибке Python или входных данных. Проверьте доступ к DaemonSet и запуск инструментов.
+
+  ```bash
+  command -v python3; kubectl get daemonset relay -o name
+  ```
+
+  ### Сетевое пространство Pod {#q103-relay-network-namespace}
+
+  При исправлении размещения могла включиться сеть хоста. Проверьте hostNetwork и сохраните отдельное сетевое пространство Pod.
+
+  ```bash
+  kubectl get daemonset relay -o jsonpath='{.spec.template.spec.hostNetwork}'
+  ```
+
+  ### Пространство процессов Pod {#q103-relay-process-namespace}
+
+  Шаблон Pod мог начать использовать пространство процессов хоста. Проверьте hostPID и оставьте его выключенным.
+
+  ```bash
+  kubectl get daemonset relay -o jsonpath='{.spec.template.spec.hostPID}'
+  ```
+
+  ### Пространство IPC Pod {#q103-relay-ipc-namespace}
+
+  Шаблон Pod мог начать использовать IPC хоста. Проверьте hostIPC и сохраните отдельное пространство IPC.
+
+  ```bash
+  kubectl get daemonset relay -o jsonpath='{.spec.template.spec.hostIPC}'
+  ```
+
+  ### Источники томов relay {#q103-relay-volume-sources}
+
+  При правке шаблона могли добавить том hostPath. Проверьте источники томов и уберите зависимость от hostPath.
+
+  ```bash
+  kubectl get daemonset relay -o json | jq '.spec.template.spec.volumes'
+  ```
+
+  ### Запуск без прав root {#q103-relay-user-policy}
+
+  У контейнера могло исчезнуть действующее runAsNonRoot, появиться переопределение или UID 0. Проверьте настройки Pod, обычных и init-контейнеров. Явно заданные UID должны быть положительными.
+
+  ```bash
+  kubectl get daemonset relay -o json | jq '.spec.template.spec | {pod: .securityContext, worker: [.containers[], .initContainers[]? | .securityContext]}'
+  ```
+
+  ### Действующий фильтр системных вызовов {#q103-relay-syscall-filter}
+
+  Фильтр системных вызовов мог исчезнуть или быть переопределён. Проверьте, что обычные и init-контейнеры используют RuntimeDefault с учётом настроек Pod.
+
+  ```bash
+  kubectl get daemonset relay -o json | jq '.spec.template.spec | {pod: .securityContext.seccompProfile, containers: [.containers[], .initContainers[]? | .securityContext.seccompProfile]}'
+  ```
+
+  ### Привилегированный режим {#q103-relay-privileged-mode}
+
+  Обычному или init-контейнеру могли включить привилегированный режим. Проверьте securityContext каждого контейнера и уберите privileged: true.
+
+  ```bash
+  kubectl get daemonset relay -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.privileged]'
+  ```
+
+  ### Флаг повышения привилегий {#q103-relay-privilege-escalation}
+
+  Контейнер может допускать повышение привилегий, если флаг отсутствует или включён. Задайте allowPrivilegeEscalation: false каждому обычному и init-контейнеру.
+
+  ```bash
+  kubectl get daemonset relay -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.allowPrivilegeEscalation]'
+  ```
+
+  ### Сброшенные capabilities {#q103-relay-drop-capabilities}
+
+  Контейнер мог перестать сбрасывать стандартный набор capabilities. Проверьте ALL в списке drop каждого обычного и init-контейнера.
+
+  ```bash
+  kubectl get daemonset relay -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.capabilities.drop]'
+  ```
+
+  ### Добавленные capabilities {#q103-relay-no-added-capabilities}
+
+  Шаблон мог снова добавить capabilities после сброса. Проверьте, что список add каждого обычного и init-контейнера пуст.
+
+  ```bash
+  kubectl get daemonset relay -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.capabilities.add]'
+  ```
+
+  ### Желаемое число размещений {#q103-relay-desired-count}
+
+  Селектор мог исключить ноду стенда или выбрать другой набор нод. Проверьте размещение, чтобы контроллер показывал ровно один желаемый Pod.
+
+  ```bash
+  kubectl get daemonset relay -o jsonpath='{.status.desiredNumberScheduled}'
+  ```
+
+  ### Готовые Pod DaemonSet {#q103-relay-ready-count}
+
+  DaemonSet мог разместить Pod, пока его worker ещё не готов. Проверьте события Pod и дождитесь ровно одного готового Pod в статусе DaemonSet.
+
+  ```bash
+  kubectl get daemonset relay -o jsonpath='{.status.numberReady}'; kubectl get pods -l app=relay
+  ```
+
+  ### Доступные Pod DaemonSet {#q103-relay-available-count}
+
+  Недавно готовый Pod мог ещё не считаться доступным, либо его готовность нестабильна. После rollout проверьте, что доступный Pod ровно один.
+
+  ```bash
+  kubectl get daemonset relay -o jsonpath='{.status.numberAvailable}'
+  ```
+
+  ### Принадлежность Pod relay {#q103-relay-pod-ownership}
+
+  Подходящая метка может быть у отдельного или удаляемого Pod. Проверьте UID контроллера relay, нужную ноду и готовность у одного активного Pod этого DaemonSet.
+
+  ```bash
+  kubectl get pods -l app=relay -o json | jq '.items[] | {pod: .metadata.name, node: .spec.nodeName, owners: .metadata.ownerReferences, readiness: .status.containerStatuses}'
+  ```
+
+  ### Ответ relay по loopback {#q103-relay-loopback-response}
+
+  Pod мог не слушать ожидаемый порт или отдавать не тот файл. Проверьте loopback-ответ из relay и сравните с north-103.
+
+  ```bash
+  kubectl exec daemonset/relay -- wget -qO- -T 3 http://127.0.0.1:8080
+  ```
+
+  ### Ответ Service relay {#q103-relay-service-response}
+
+  Service мог не выбрать готовый Pod relay, либо не работает обнаружение или маршрутизация. Проверьте ответ по имени Service отдельно от loopback и сравните с north-103.
+
+  ```bash
+  kubectl exec daemonset/relay -- wget -qO- -T 3 http://relay:8080
+  ```
+
+  ### Приостановленный CronJob {#q104-cronjob-suspension}
+
+  CronJob мог остаться приостановленным. Проверьте route-audit и явно задайте suspend: false, чтобы контроллер запускал следующие задания.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.spec.suspend}'
+  ```
+
+  ### Запуск каждую минуту {#q104-cronjob-minute-schedule}
+
+  Расписание могло пропустить часть минут или содержать неверное выражение из пяти полей. Проверьте запуск каждую минуту во всех часах, днях и месяцах.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.spec.schedule}'
+  ```
+
+  ### Часовая зона контроллера {#q104-cronjob-time-zone}
+
+  При правке манифеста могли удалить явную часовую зону или выбрать местную. Проверьте timeZone в кластере и сохраните Etc/UTC.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.spec.timeZone}'
+  ```
+
+  ### Пересекающиеся запуски {#q104-cronjob-overlap-policy}
+
+  CronJob мог всё ещё разрешать одновременные запуски. Проверьте concurrencyPolicy и задайте Forbid, чтобы пропускать запуск, пока предыдущий активен.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.spec.concurrencyPolicy}'
+  ```
+
+  ### Лимит задержки запуска {#q104-cronjob-start-deadline}
+
+  Допустимую задержку старта могли убрать или изменить. Проверьте startingDeadlineSeconds и сохраните лимит 20 секунд.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.spec.startingDeadlineSeconds}'
+  ```
+
+  ### История успешных Job {#q104-cronjob-success-history}
+
+  Новый манифест или пропущенное поле могли изменить число сохранённых успешных Job. Сохраните successfulJobsHistoryLimit равным 1.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.spec.successfulJobsHistoryLimit}'
+  ```
+
+  ### История неуспешных Job {#q104-cronjob-failure-history}
+
+  Конфигурация могла сохранять другое число неуспешных Job. Сохраните failedJobsHistoryLimit равным 1.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.spec.failedJobsHistoryLimit}'
+  ```
+
+  ### Время последнего запуска по расписанию {#q104-cronjob-last-scheduled-time}
+
+  Контроллер мог ещё не запланировать запуск из-за паузы либо потому, что нужная минута ещё не наступила. После возобновления проверьте lastScheduleTime.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.status.lastScheduleTime}'
+  ```
+
+  ### Принадлежность Job к CronJob {#q104-cronjob-job-owner}
+
+  Job с подходящим именем или меткой мог принадлежать другому контроллеру либо быть запущен вручную. Сравните ссылку на контроллер с текущим UID route-audit.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.metadata.uid}'; kubectl get jobs -o json | jq '.items[] | {name: .metadata.name, owners: .metadata.ownerReferences}'
+  ```
+
+  ### Job для указанного времени {#q104-job-matches-schedule}
+
+  Job этого CronJob могли остаться от предыдущих запусков. Сравните аннотацию времени запуска с текущим lastScheduleTime у CronJob.
+
+  ```bash
+  kubectl get jobs -o json | jq '.items[] | {name: .metadata.name, at: .metadata.annotations["batch.kubernetes.io/cronjob-scheduled-timestamp"]}'
+  ```
+
+  ### Завершение Job по расписанию {#q104-latest-scheduled-job-completion}
+
+  Job последнего запуска мог ещё ожидать, выполняться или завершиться ошибкой. Убедитесь, что подходящий Job этого CronJob сообщает ровно одно успешное завершение.
+
+  ```bash
+  kubectl get jobs -o json | jq '.items[] | {name: .metadata.name, succeeded: .status.succeeded}'
+  ```
+
+  ### Вывод Job по расписанию {#q104-latest-scheduled-job-output}
+
+  Подходящий успешный Job мог вывести другое значение, либо его логи недоступны. Прочитайте логи выбранного Job и сравните с north-104.
+
+  ```bash
+  read -r uid at < <(kubectl get cronjob route-audit -o json | jq -r '[.metadata.uid, .status.lastScheduleTime] | @tsv'); job=$(kubectl get jobs -o json | jq -r --arg uid "$uid" --arg at "$at" '[.items[] | select(.status.succeeded == 1 and .metadata.annotations["batch.kubernetes.io/cronjob-scheduled-timestamp"] == $at and any(.metadata.ownerReferences[]?; .kind == "CronJob" and .uid == $uid and .controller == true))][0].metadata.name // empty'); test -n "$job" && kubectl logs "job/$job"
+  ```
+
+  ### Входы проверки расписания {#q104-cronjob-observer-input}
+
+  Проверка расписания может прерваться до указания поля при ошибке процесса или входных данных. Проверьте инструменты и доступ к route-audit.
+
+  ```bash
+  command -v python3; kubectl get cronjob route-audit -o name
+  ```
+source_hash: 752dc6994863dc84e1562a0e3f1db595754e875c70de1b7a62182c5881e9d571

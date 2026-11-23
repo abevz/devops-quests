@@ -1,5 +1,5 @@
 heading: Kubernetes workload recovery
-text: |-
+text: |
   # Kubernetes workload recovery
 
   Use the disposable quest bay. A controller creates Pods from a template; changes and readiness take time. Inspect supplied inputs and live workload definitions before modifying objects, then wait and verify actual Pods and responses.
@@ -10,7 +10,7 @@ text: |-
 
   ## Deployment rollouts and rollback
 
-  A Deployment manages replicas and rollout revisions of its Pod template. `Recreate` removes old Pods before replacements; `RollingUpdate` controls replacement using `maxUnavailable` and `maxSurge`. Inspect `kubectl rollout history deployment/board` and the supplied `healthy-revision` before a rollback with `kubectl rollout undo deployment/board --to-revision=N`, replacing N with the recorded revision. Wait with `kubectl rollout status deployment/board --timeout=90s`, then inspect readiness and the service response. Keeping the UID in `original-deployment-uid` preserves the same Deployment object. A ready count alone does not guarantee uninterrupted service.
+  A Deployment manages replicas and rollout revisions of its Pod template. `Recreate` removes old Pods before replacements; `RollingUpdate` controls replacement using `maxUnavailable` and `maxSurge`. Inspect `kubectl rollout history deployment/board` and the supplied `healthy-revision` before a rollback with `kubectl rollout undo deployment/board --to-revision=N`, replacing N with the recorded revision. Wait with `kubectl rollout status deployment/board --timeout=90s`, then inspect readiness and the service response. Compare the live UID with `original-deployment-uid` to confirm that the rollback kept the original Deployment object. A ready count alone does not guarantee uninterrupted service.
 
   ## DaemonSet placement
 
@@ -27,4 +27,460 @@ text: |-
   A rolling strategy controls the number of replacements. The readiness probe determines which Pods can serve, so trace its HTTP path separately from the traffic Service.
 
   A current Job and a controller template govern different executions. Retry counts, elapsed deadlines and container restart behavior constrain different failure paths. Construct future execution from the observed workload, then inspect policy and the Job/Pod ownership chain. A terminal condition without the intended worker failure is incomplete evidence. These are current observations, not a full execution history.
-source_hash: ff15c544e7d100f5fce99122b66b5d575dd6ad90658c87c9e334aa059787b8f3
+
+  ### Copy to the shared volume {#q101-prepare-copy}
+
+  The prepare init container may read the wrong projected path or fail to write into the shared volume. Check its exit status and compare the bytes seen by worker at /shared/route with the route ConfigMap.
+
+  ```bash
+  kubectl logs deployment/board -c prepare
+  ```
+
+  ### Watcher startup command {#q101-watcher-startup-command}
+
+  The watcher startup command may check for a different file or only check existence. Inspect whether it tests that /shared/heartbeat is nonempty.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.initContainers[] | select(.name == "watcher") | .startupProbe.exec.command'
+  ```
+
+  ### Watcher startup period {#q101-watcher-startup-period}
+
+  A missing or changed probe period alters the startup cadence. Check periodSeconds on the named watcher and use 1 second.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.initContainers[] | select(.name == "watcher") | .startupProbe.periodSeconds'
+  ```
+
+  ### Watcher failure threshold {#q101-watcher-startup-threshold}
+
+  The startup probe may give up too early or tolerate more failures than intended. Check its failureThreshold for 10 attempts.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.initContainers[] | select(.name == "watcher") | .startupProbe.failureThreshold'
+  ```
+
+  ### Restartable init container {#q101-restartable-init-watcher}
+
+  The watcher may have been declared as an ordinary init container or lost its restart policy. Keep the uniquely named watcher in initContainers with restartPolicy Always.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.initContainers[] | select(.name == "watcher") | .restartPolicy'
+  ```
+
+  ### Input and shared volumes {#q101-input-and-shared-volumes}
+
+  A changed projection, reordered volumes or replacement storage can break the preserved volume contract. Inspect the ordered input volume from ConfigMap route and the default shared emptyDir.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.volumes'
+  ```
+
+  ### Prepare exit status {#q101-prepare-exit-status}
+
+  A nonterminating board Pod may still have a failing or pending prepare init container. Look for the named prepare status terminated with exit code 0.
+
+  ```bash
+  kubectl get pods -l app=board -o json | jq '.items[] | .status.initContainerStatuses'
+  ```
+
+  ### Running watcher status {#q101-watcher-running-status}
+
+  The restartable watcher may be running without passing its startup probe, or may be restarting. Find a nonterminating board Pod whose watcher is both started and running.
+
+  ```bash
+  kubectl get pods -l app=board -o json | jq '.items[] | .status.initContainerStatuses'
+  ```
+
+  ### Worker readiness {#q101-worker-readiness}
+
+  The regular worker may still be blocked by init containers or fail its readiness check. Inspect the worker’s ready flag in a nonterminating board Pod.
+
+  ```bash
+  kubectl get pods -l app=board -o json | jq '.items[] | .status.containerStatuses'
+  ```
+
+  ### Statuses on a single Pod {#q101-pod-status-agreement}
+
+  During replacement, the three matching statuses may belong to different Pods. Inspect each nonterminating Pod individually for successful prepare, a started running watcher and ready worker together.
+
+  ```bash
+  kubectl get pods -l app=board -o json | jq '.items[] | {pod: .metadata.name, init: .status.initContainerStatuses, work: .status.containerStatuses}'
+  ```
+
+  ### Live heartbeat file {#q101-live-heartbeat-file}
+
+  The watcher process may have stopped writing or may not mount the shared path. Check that the running watcher can read a nonempty /shared/heartbeat.
+
+  ```bash
+  kubectl exec deployment/board -c watcher -- test -s /shared/heartbeat
+  ```
+
+  ### Live route response {#q101-live-route-http}
+
+  The Service may lack a ready endpoint or the worker may serve an old shared file. Check the /route response from worker through port 8080 and compare with north-101.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/route
+  ```
+
+  ### Inputs to the prepare check {#q101-prepare-observer-input}
+
+  The prepare observer can stop before it classifies a missing file when the workstation Python process or its inputs cannot start. Check the tools and access to board and route.
+
+  ```bash
+  command -v python3; kubectl get pods -l app=board; kubectl get configmap route -o name
+  ```
+
+  ### Inputs to the watcher check {#q101-watcher-observer-input}
+
+  The watcher observer can fail before reporting any field when its Python process or input parsing fails. Check the workstation tools and the live Deployment.
+
+  ```bash
+  command -v python3; kubectl get deployment board -o name
+  ```
+
+  ### Rolling update strategy {#q102-rolling-strategy}
+
+  The Deployment may still use Recreate, which removes the existing Pods before replacement. Check that the live strategy is RollingUpdate.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.strategy.type}'
+  ```
+
+  ### Replacement budget {#q102-replacement-budget}
+
+  The rollout budget may permit unavailable Pods or resolve to the wrong surge count. Evaluate the limits at the desired replica count, rounding surge up and unavailable down, for an effective budget of one extra and zero unavailable.
+
+  ```bash
+  kubectl get deployment board -o json | jq '{replicas: .spec.replicas, rolling: .spec.strategy.rollingUpdate}'
+  ```
+
+  ### Worker HTTP readiness {#q102-worker-http-readiness}
+
+  The worker readiness probe may still target port 8099 or a different protocol, host or named port. Inspect the single HTTP action on the unique worker and resolve its port to 8080.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.containers[] | select(.name == "worker") | {probe: .readinessProbe, ports}'
+  ```
+
+  ### Original Deployment UID receipt {#q102-original-deployment-receipt}
+
+  The frozen original Deployment UID may be unavailable or empty, making identity verification impossible. Check that the original receipt exists before comparing the live UID.
+
+  ```bash
+  test -s /run/dq/facts/0/original-deployment-uid
+  ```
+
+  ### Live Deployment identity {#q102-deployment-identity}
+
+  Recreating the Deployment under the same name permanently changes its UID. Compare the live UID with the original receipt before rolling back the existing object.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.metadata.uid}'
+  ```
+
+  ### Desired replica count {#q102-desired-replicas}
+
+  Scaling or replacing the manifest may have changed the desired count. Check that .spec.replicas remains two.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.replicas}'
+  ```
+
+  ### Ready replica count {#q102-ready-replica-count}
+
+  The desired count can be two while replacement workers fail readiness. Inspect the current Pods and wait for two ready replicas in the Deployment status.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.status.readyReplicas}'; kubectl get pods -l app=board
+  ```
+
+  ### Baseline Service response {#q102-baseline-service-response}
+
+  The rollback may not have restored the healthy payload or the Service may have no ready endpoints. Read the live response from board and compare it with north-102.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  ```
+
+  ### Updated Service response {#q102-updated-service-response}
+
+  The new Pods may still fail readiness or the Service may temporarily reach older workers. Compare the observed body with north-102-v3 after rollout and examine timeouts or missing endpoints separately.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  ```
+
+  ### Inputs to the rollout check {#q102-rollout-observer-input}
+
+  The rollout observer can fail before it reports a strategy, budget or probe field if its Python process cannot start. Verify Python and access to the board Deployment.
+
+  ```bash
+  command -v python3; kubectl get deployment board -o name
+  ```
+
+  ### Inputs to the HTTP check {#q102-service-observer-input}
+
+  The bounded HTTP observer can fail before reporting a last response when Python or its input fails. Check the tools and the live Service before retrying.
+
+  ```bash
+  command -v python3; kubectl get service board -o name
+  ```
+
+  ### Relay placement on the bay node {#q103-relay-bay-placement}
+
+  The selector may match no bay node, or the controller may still report an older generation. Check node labels and wait for the current generation to report one desired and updated Pod and no misscheduled Pods.
+
+  ```bash
+  kubectl get daemonset relay -o wide; kubectl get nodes --show-labels
+  ```
+
+  ### Inputs to the placement check {#q103-placement-observer-input}
+
+  The placement observer can stop before comparing controller status when its process or input fails. Check the local Python tools and access to relay.
+
+  ```bash
+  command -v python3; kubectl get daemonset relay -o name
+  ```
+
+  ### Inputs to the security check {#q103-security-observer-input}
+
+  The security observer can stop before reporting a control if its Python process or workspace input fails. Confirm that the live DaemonSet is readable and the local tools can start.
+
+  ```bash
+  command -v python3; kubectl get daemonset relay -o name
+  ```
+
+  ### Pod network namespace {#q103-relay-network-namespace}
+
+  A scheduling repair may have enabled host networking. Inspect hostNetwork and keep relay in its Pod network namespace.
+
+  ```bash
+  kubectl get daemonset relay -o jsonpath='{.spec.template.spec.hostNetwork}'
+  ```
+
+  ### Pod process namespace {#q103-relay-process-namespace}
+
+  The Pod template may have been changed to share the host process namespace. Inspect hostPID and keep it disabled.
+
+  ```bash
+  kubectl get daemonset relay -o jsonpath='{.spec.template.spec.hostPID}'
+  ```
+
+  ### Pod IPC namespace {#q103-relay-ipc-namespace}
+
+  The Pod template may have been changed to share host IPC. Inspect hostIPC and keep the Pod IPC namespace isolated.
+
+  ```bash
+  kubectl get daemonset relay -o jsonpath='{.spec.template.spec.hostIPC}'
+  ```
+
+  ### Relay volume sources {#q103-relay-volume-sources}
+
+  A hostPath volume may have been added while changing the template. Inspect the declared sources and remove any hostPath dependency.
+
+  ```bash
+  kubectl get daemonset relay -o json | jq '.spec.template.spec.volumes'
+  ```
+
+  ### Non-root execution {#q103-relay-user-policy}
+
+  A container may lack effective runAsNonRoot, override it, or specify UID 0. Inspect both Pod and container settings, including init containers, and keep all explicit user IDs positive.
+
+  ```bash
+  kubectl get daemonset relay -o json | jq '.spec.template.spec | {pod: .securityContext, worker: [.containers[], .initContainers[]? | .securityContext]}'
+  ```
+
+  ### Effective syscall filter {#q103-relay-syscall-filter}
+
+  The default syscall filter may have been removed or overridden. Check the effective RuntimeDefault profile on regular and init containers, including inherited Pod settings.
+
+  ```bash
+  kubectl get daemonset relay -o json | jq '.spec.template.spec | {pod: .securityContext.seccompProfile, containers: [.containers[], .initContainers[]? | .securityContext.seccompProfile]}'
+  ```
+
+  ### Privileged mode {#q103-relay-privileged-mode}
+
+  A regular or init container may have gained privileged mode. Inspect each container’s securityContext and remove the privileged override.
+
+  ```bash
+  kubectl get daemonset relay -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.privileged]'
+  ```
+
+  ### Privilege escalation flag {#q103-relay-privilege-escalation}
+
+  A container may allow privilege escalation because its flag is absent or enabled. Set allowPrivilegeEscalation explicitly to false on each regular and init container.
+
+  ```bash
+  kubectl get daemonset relay -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.allowPrivilegeEscalation]'
+  ```
+
+  ### Dropped capabilities {#q103-relay-drop-capabilities}
+
+  A container may no longer drop the default capability set. Check that the drop list contains ALL on each regular and init container.
+
+  ```bash
+  kubectl get daemonset relay -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.capabilities.drop]'
+  ```
+
+  ### Added capabilities {#q103-relay-no-added-capabilities}
+
+  The template may add capabilities back after dropping them. Check the add list of every regular and init container and keep it empty.
+
+  ```bash
+  kubectl get daemonset relay -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.capabilities.add]'
+  ```
+
+  ### Desired placement count {#q103-relay-desired-count}
+
+  The selector may exclude the bay node or select a different set of nodes. Check eligibility so the live controller reports exactly one desired placement.
+
+  ```bash
+  kubectl get daemonset relay -o jsonpath='{.status.desiredNumberScheduled}'
+  ```
+
+  ### Ready DaemonSet Pods {#q103-relay-ready-count}
+
+  The DaemonSet may be scheduled before its worker becomes ready. Check current Pod events and wait for exactly one ready Pod in the DaemonSet status.
+
+  ```bash
+  kubectl get daemonset relay -o jsonpath='{.status.numberReady}'; kubectl get pods -l app=relay
+  ```
+
+  ### Available DaemonSet Pods {#q103-relay-available-count}
+
+  A newly ready Pod may not yet count as available, or its readiness may be unstable. Check the reported available count after rollout and confirm exactly one.
+
+  ```bash
+  kubectl get daemonset relay -o jsonpath='{.status.numberAvailable}'
+  ```
+
+  ### Relay Pod ownership {#q103-relay-pod-ownership}
+
+  A matching label can belong to a standalone or terminating Pod. Check the current relay controller UID, node placement and readiness together on one nonterminating owned Pod.
+
+  ```bash
+  kubectl get pods -l app=relay -o json | jq '.items[] | {pod: .metadata.name, node: .spec.nodeName, owners: .metadata.ownerReferences, readiness: .status.containerStatuses}'
+  ```
+
+  ### Relay loopback response {#q103-relay-loopback-response}
+
+  The running Pod may not listen on its expected port or serve the expected file. Check the loopback response inside relay and compare with north-103.
+
+  ```bash
+  kubectl exec daemonset/relay -- wget -qO- -T 3 http://127.0.0.1:8080
+  ```
+
+  ### Relay Service response {#q103-relay-service-response}
+
+  The Service may not select the ready relay Pod, or discovery and service routing may fail. Check the named Service response separately from loopback and compare with north-103.
+
+  ```bash
+  kubectl exec daemonset/relay -- wget -qO- -T 3 http://relay:8080
+  ```
+
+  ### Suspended CronJob {#q104-cronjob-suspension}
+
+  The scheduled job may still be suspended. Inspect route-audit and set suspend explicitly to false so the controller can start future runs.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.spec.suspend}'
+  ```
+
+  ### Every-minute schedule {#q104-cronjob-minute-schedule}
+
+  The schedule may omit some minutes or use an invalid five-field expression. Check that the effective schedule triggers every minute across hours, days and months.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.spec.schedule}'
+  ```
+
+  ### Controller time zone {#q104-cronjob-time-zone}
+
+  A manifest change may have removed the explicit time zone or chosen a local zone. Inspect the live timeZone and keep Etc/UTC.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.spec.timeZone}'
+  ```
+
+  ### Overlapping runs {#q104-cronjob-overlap-policy}
+
+  The CronJob may still allow overlapping runs. Inspect concurrencyPolicy and use Forbid to skip a scheduled run while the preceding Job is active.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.spec.concurrencyPolicy}'
+  ```
+
+  ### Late start deadline {#q104-cronjob-start-deadline}
+
+  The delayed-start allowance may have been removed or changed. Inspect startingDeadlineSeconds and keep the 20-second limit.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.spec.startingDeadlineSeconds}'
+  ```
+
+  ### Successful Job history {#q104-cronjob-success-history}
+
+  A replacement manifest or missing field may retain a different number of successful Jobs. Preserve successfulJobsHistoryLimit at 1.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.spec.successfulJobsHistoryLimit}'
+  ```
+
+  ### Failed Job history {#q104-cronjob-failure-history}
+
+  The configuration may retain a different number of unsuccessful Jobs. Preserve failedJobsHistoryLimit at 1.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.spec.failedJobsHistoryLimit}'
+  ```
+
+  ### Latest scheduled time {#q104-cronjob-last-scheduled-time}
+
+  The controller may not have scheduled a run yet because the CronJob is suspended or no qualifying minute has passed. Check the live lastScheduleTime after resuming.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.status.lastScheduleTime}'
+  ```
+
+  ### CronJob ownership {#q104-cronjob-job-owner}
+
+  A Job with the right name or label may belong to another controller or have been started manually. Compare the controller owner reference with the current route-audit UID.
+
+  ```bash
+  kubectl get cronjob route-audit -o jsonpath='{.metadata.uid}'; kubectl get jobs -o json | jq '.items[] | {name: .metadata.name, owners: .metadata.ownerReferences}'
+  ```
+
+  ### Matching scheduled Job {#q104-job-matches-schedule}
+
+  The owned Jobs may come from earlier scheduled runs. Compare their scheduling annotation with the CronJob’s current lastScheduleTime.
+
+  ```bash
+  kubectl get jobs -o json | jq '.items[] | {name: .metadata.name, at: .metadata.annotations["batch.kubernetes.io/cronjob-scheduled-timestamp"]}'
+  ```
+
+  ### Completion of the scheduled Job {#q104-latest-scheduled-job-completion}
+
+  The Job for the latest scheduled time may still be pending, running or failed. Check that a matching owned Job reports exactly one success.
+
+  ```bash
+  kubectl get jobs -o json | jq '.items[] | {name: .metadata.name, succeeded: .status.succeeded}'
+  ```
+
+  ### Output of the scheduled Job {#q104-latest-scheduled-job-output}
+
+  A matching successful Job can still emit the wrong value, or its logs may be unavailable. Read logs for the selected scheduled Job and compare with north-104.
+
+  ```bash
+  read -r uid at < <(kubectl get cronjob route-audit -o json | jq -r '[.metadata.uid, .status.lastScheduleTime] | @tsv'); job=$(kubectl get jobs -o json | jq -r --arg uid "$uid" --arg at "$at" '[.items[] | select(.status.succeeded == 1 and .metadata.annotations["batch.kubernetes.io/cronjob-scheduled-timestamp"] == $at and any(.metadata.ownerReferences[]?; .kind == "CronJob" and .uid == $uid and .controller == true))][0].metadata.name // empty'); test -n "$job" && kubectl logs "job/$job"
+  ```
+
+  ### Inputs to the scheduling check {#q104-cronjob-observer-input}
+
+  The scheduling observer may stop before reporting a field when the local process or its inputs fail. Check the workstation tools and access to route-audit.
+
+  ```bash
+  command -v python3; kubectl get cronjob route-audit -o name
+  ```
+source_hash: 752dc6994863dc84e1562a0e3f1db595754e875c70de1b7a62182c5881e9d571
