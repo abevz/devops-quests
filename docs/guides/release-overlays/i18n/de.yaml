@@ -201,5 +201,227 @@ text: '# Konfigurations-Overlays und Release-Wechsel
 
   ```
 
+
+
+  ### Selektor nur für green {#q115-green-release-selector}
+
+
+  Der Service wählt möglicherweise noch blue oder übersieht einen aktuellen green-Pod. Prüfen Sie app=green, die Abdeckung der vorgesehenen Pods und den Ausschluss anderer Arbeitslasten.
+
+
+  ```bash
+
+  kubectl get service board -o jsonpath=''{.spec.selector}''; kubectl get pods --show-labels
+
+  ```
+
+
+  ### HTTP-Antwort nur von green {#q115-green-release-service-http}
+
+
+  Ein korrekter Selektor kann ohne bereiten green-Endpoint bleiben oder den alten Release liefern. Fragen Sie board aus client ab und vergleichen Sie mit green-115.
+
+
+  ```bash
+
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  ### Gewünschte blue-Repliken {#q115-canary-blue-desired-count}
+
+
+  Blue hat möglicherweise noch die alte gewünschte Anzahl oder fehlt. Prüfen Sie, ob das Deployment blue drei Repliken im gemeinsamen Pool anfordert.
+
+
+  ```bash
+
+  kubectl get deployment blue -o jsonpath=''{.spec.replicas}''
+
+  ```
+
+
+  ### Bereite blue-Repliken {#q115-canary-blue-ready-count}
+
+
+  Blue fordert möglicherweise drei Repliken an, während einige Pods nicht bereit sind. Prüfen Sie die aktuellen blue-Pods und warten Sie auf drei bereite Repliken.
+
+
+  ```bash
+
+  kubectl get deployment blue -o jsonpath=''{.status.readyReplicas}''; kubectl get pods -l app=blue
+
+  ```
+
+
+  ### Gewünschte green-Repliken {#q115-canary-green-desired-count}
+
+
+  Green wurde möglicherweise auf die falsche Größe für den gemeinsamen Pool skaliert. Prüfen Sie die gewünschte Anzahl und belassen Sie eine Replik.
+
+
+  ```bash
+
+  kubectl get deployment green -o jsonpath=''{.spec.replicas}''
+
+  ```
+
+
+  ### Bereite green-Repliken {#q115-canary-green-ready-count}
+
+
+  Die green-Replik wartet möglicherweise oder verfehlt nach dem Übergang die Bereitschaftsprüfung. Prüfen Sie den green-Pod und warten Sie auf eine bereite Replik.
+
+
+  ```bash
+
+  kubectl get deployment green -o jsonpath=''{.status.readyReplicas}''; kubectl get pods -l app=green
+
+  ```
+
+
+  ### Selektor des gemeinsamen Pools {#q115-shared-release-selector}
+
+
+  Der Service wählt möglicherweise noch eine Farbe oder fremde Arbeitslasten aus. Prüfen Sie release=board und Zusatzselektoren anhand der blue- und green-Pods des gemeinsamen Releases.
+
+
+  ```bash
+
+  kubectl get service board -o jsonpath=''{.spec.selector}''; kubectl get pods --show-labels
+
+  ```
+
+
+  ### Eindeutige Namen bereiter Endpoints {#q115-shared-ready-endpoint-names}
+
+
+  Während des Rollouts können Endpoint-Ziele fehlen, veraltet oder nicht bereit sein. Prüfen Sie EndpointSlices und zählen Sie nach der Konvergenz vier unterschiedliche bereite Zielnamen.
+
+
+  ```bash
+
+  kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''[.items[].endpoints[] | select(.conditions.ready == true) | .targetRef.name] | unique''
+
+  ```
+
+
+  ### Zugewiesene Adressen der blue-Pods {#q115-blue-pod-addresses}
+
+
+  Die Abfrage der blue-Pods liefert möglicherweise keine Adresse, solange Planung oder Netzwerk noch nicht fertig sind. Prüfen Sie zugewiesene IPs für app=blue.
+
+
+  ```bash
+
+  kubectl get pods -l app=blue -o wide
+
+  ```
+
+
+  ### Zugewiesene Adressen der green-Pods {#q115-green-pod-addresses}
+
+
+  Die Abfrage der green-Pods liefert möglicherweise keine Adresse, solange Planung oder Netzwerk noch nicht fertig sind. Prüfen Sie zugewiesene IPs für app=green.
+
+
+  ```bash
+
+  kubectl get pods -l app=green -o wide
+
+  ```
+
+
+  ### Direkte Antwort von blue {#q115-blue-direct-response}
+
+
+  Ein einzelner blue-Pod liefert möglicherweise anderen Inhalt oder antwortet direkt nicht. Fragen Sie die betroffene IP aus client ab und vergleichen Sie mit blue-115.
+
+
+  ```bash
+
+  for address in $(kubectl get pods -l app=blue -o jsonpath=''{.items[*].status.podIP}''); do kubectl exec deployment/client -- wget -qO- -T 2 "http://$address:8080"; done
+
+  ```
+
+
+  ### Direkte Antwort von green {#q115-green-direct-response}
+
+
+  Ein einzelner green-Pod liefert möglicherweise anderen Inhalt oder antwortet direkt nicht. Fragen Sie die betroffene IP aus client ab und vergleichen Sie mit green-115.
+
+
+  ```bash
+
+  for address in $(kubectl get pods -l app=green -o jsonpath=''{.items[*].status.podIP}''); do kubectl exec deployment/client -- wget -qO- -T 2 "http://$address:8080"; done
+
+  ```
+
+
+  ### Antwort des gemeinsamen Services {#q115-shared-canary-service-response}
+
+
+  Der gemeinsame Service hat möglicherweise keinen erreichbaren Endpoint oder liefert Daten einer anderen Arbeitslast. Eine Anfrage aus client soll blue-115 oder green-115 ergeben.
+
+
+  ```bash
+
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  ### Zeitbudget für direkte Anfragen {#q115-bounded-pod-probes}
+
+
+  Langsame Kubernetes-Abfragen, Timeouts oder weitere Pod-Adressen können Adressen im vorgesehenen Prüffenster offen lassen. Prüfen Sie die gemeldeten Adressen einzeln und warten Sie auf die Konvergenz.
+
+
+  ```bash
+
+  kubectl get pods -l release=board -o wide
+
+  ```
+
+
+  ### Eingaben für die reine green-Prüfung {#q115-green-selector-observer-input}
+
+
+  Die green-Prüfung kann vor der Meldung einer Bedingung abbrechen, wenn Prozess oder Eingaben fehlschlagen. Prüfen Sie Werkzeuge sowie Zugriff auf Service und green-Pods.
+
+
+  ```bash
+
+  command -v python3; kubectl get service board -o name; kubectl get pods -l app=green
+
+  ```
+
+
+  ### Eingaben für die gemeinsame Selektorprüfung {#q115-shared-selector-observer-input}
+
+
+  Die gemeinsame Selektor- und Endpoint-Prüfung kann vor der Meldung einer Bedingung abbrechen, wenn Werkzeuge oder Daten fehlen. Prüfen Sie den Zugriff auf Service board und EndpointSlices.
+
+
+  ```bash
+
+  command -v python3; kubectl get service board -o name; kubectl get endpointslices -l kubernetes.io/service-name=board
+
+  ```
+
+
+  ### Eingaben für direkte und Service-Prüfungen {#q115-shared-http-observer-input}
+
+
+  Die direkte und gemeinsame Service-Prüfung kann vor der Adressmeldung abbrechen, wenn Prozess oder Eingaben fehlschlagen. Prüfen Sie Python und die aktuellen Arbeitslasten blue, green und client.
+
+
+  ```bash
+
+  command -v python3; kubectl get pods -l release=board -o wide; kubectl get deployment client -o name
+
+  ```
+
   '
-source_hash: 3b281a013ac3be8f5e4d6e23cfada44690f2b80904a42ee01047f9005723fb0f
+source_hash: 69d4a6822aaed37f494363e7cf3c65c8132c5f597d40d3b8edba05798d2dfc18

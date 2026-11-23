@@ -201,5 +201,227 @@ text: '# Nakładki konfiguracji i zmiana wydania
 
   ```
 
+
+
+  ### Selektor wyłącznie dla green {#q115-green-release-selector}
+
+
+  Service może nadal wybierać blue albo pomijać aktualny pod green. Sprawdź app=green, objęcie właściwych podów i wykluczenie innych obciążeń.
+
+
+  ```bash
+
+  kubectl get service board -o jsonpath=''{.spec.selector}''; kubectl get pods --show-labels
+
+  ```
+
+
+  ### Odpowiedź HTTP wyłącznie green {#q115-green-release-service-http}
+
+
+  Poprawny selektor może nie mieć gotowego endpointu green lub zwracać starsze wydanie. Odpytaj board z client i porównaj z green-115.
+
+
+  ```bash
+
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  ### Żądane repliki blue {#q115-canary-blue-desired-count}
+
+
+  Blue może mieć starą żądaną liczbę lub nie istnieć. Sprawdź, czy Deployment blue żąda trzech replik we wspólnej puli.
+
+
+  ```bash
+
+  kubectl get deployment blue -o jsonpath=''{.spec.replicas}''
+
+  ```
+
+
+  ### Gotowe repliki blue {#q115-canary-blue-ready-count}
+
+
+  Blue może żądać trzech replik, choć część podów nie jest gotowa. Sprawdź aktualne pody blue i poczekaj na trzy gotowe repliki.
+
+
+  ```bash
+
+  kubectl get deployment blue -o jsonpath=''{.status.readyReplicas}''; kubectl get pods -l app=blue
+
+  ```
+
+
+  ### Żądane repliki green {#q115-canary-green-desired-count}
+
+
+  Green mógł mieć niewłaściwy rozmiar we wspólnej puli. Sprawdź liczbę żądaną i zachowaj jedną replikę.
+
+
+  ```bash
+
+  kubectl get deployment green -o jsonpath=''{.spec.replicas}''
+
+  ```
+
+
+  ### Gotowe repliki green {#q115-canary-green-ready-count}
+
+
+  Replika green może czekać lub nie przechodzić gotowości po przejściu. Sprawdź pod green i poczekaj na jedną gotową replikę.
+
+
+  ```bash
+
+  kubectl get deployment green -o jsonpath=''{.status.readyReplicas}''; kubectl get pods -l app=green
+
+  ```
+
+
+  ### Selektor wspólnej puli {#q115-shared-release-selector}
+
+
+  Service może nadal wybierać jeden kolor lub obce obciążenie. Sprawdź release=board i dodatkowe selektory względem podów blue i green we wspólnym wydaniu.
+
+
+  ```bash
+
+  kubectl get service board -o jsonpath=''{.spec.selector}''; kubectl get pods --show-labels
+
+  ```
+
+
+  ### Odrębne nazwy gotowych endpointów {#q115-shared-ready-endpoint-names}
+
+
+  Podczas wdrożenia może brakować celów endpointów albo mogą być stare lub niegotowe. Sprawdź EndpointSlice i po zbieżności policz cztery różne nazwy gotowych celów.
+
+
+  ```bash
+
+  kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''[.items[].endpoints[] | select(.conditions.ready == true) | .targetRef.name] | unique''
+
+  ```
+
+
+  ### Przydzielone adresy podów blue {#q115-blue-pod-addresses}
+
+
+  Odczyt podów blue może nie zwrócić adresu, gdy rozmieszczenie lub sieć nie są gotowe. Sprawdź przydzielone IP podów app=blue.
+
+
+  ```bash
+
+  kubectl get pods -l app=blue -o wide
+
+  ```
+
+
+  ### Przydzielone adresy podów green {#q115-green-pod-addresses}
+
+
+  Odczyt podów green może nie zwrócić adresu, gdy rozmieszczenie lub sieć nie są gotowe. Sprawdź przydzielone IP podów app=green.
+
+
+  ```bash
+
+  kubectl get pods -l app=green -o wide
+
+  ```
+
+
+  ### Bezpośrednia odpowiedź blue {#q115-blue-direct-response}
+
+
+  Pojedynczy pod blue może zwracać złą treść lub nie odpowiadać bezpośrednio. Odpytaj wskazane IP z client i porównaj z blue-115.
+
+
+  ```bash
+
+  for address in $(kubectl get pods -l app=blue -o jsonpath=''{.items[*].status.podIP}''); do kubectl exec deployment/client -- wget -qO- -T 2 "http://$address:8080"; done
+
+  ```
+
+
+  ### Bezpośrednia odpowiedź green {#q115-green-direct-response}
+
+
+  Pojedynczy pod green może zwracać złą treść lub nie odpowiadać bezpośrednio. Odpytaj wskazane IP z client i porównaj z green-115.
+
+
+  ```bash
+
+  for address in $(kubectl get pods -l app=green -o jsonpath=''{.items[*].status.podIP}''); do kubectl exec deployment/client -- wget -qO- -T 2 "http://$address:8080"; done
+
+  ```
+
+
+  ### Odpowiedź wspólnego Service {#q115-shared-canary-service-response}
+
+
+  Wspólny Service może nie mieć osiągalnego endpointu lub zwracać obcą treść. Żądanie z client powinno dać blue-115 lub green-115.
+
+
+  ```bash
+
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  ### Limit czasu kontroli bezpośrednich {#q115-bounded-pod-probes}
+
+
+  Powolne odczyty Kubernetes, timeouty lub dodatkowe IP podów mogą zostawić część adresów poza oknem kontroli. Sprawdź wyświetlone adresy osobno i poczekaj na zbieżność wdrożenia.
+
+
+  ```bash
+
+  kubectl get pods -l release=board -o wide
+
+  ```
+
+
+  ### Dane kontroli wyłącznie green {#q115-green-selector-observer-input}
+
+
+  Kontrola green może zatrzymać się przed wskazaniem warunku przez błąd procesu lub wejść. Sprawdź narzędzia i dostęp do Service oraz podów green.
+
+
+  ```bash
+
+  command -v python3; kubectl get service board -o name; kubectl get pods -l app=green
+
+  ```
+
+
+  ### Dane kontroli wspólnego selektora {#q115-shared-selector-observer-input}
+
+
+  Kontrola wspólnego selektora i endpointów może zatrzymać się przed wskazaniem warunku przy braku narzędzi lub danych. Sprawdź dostęp do Service board i EndpointSlice.
+
+
+  ```bash
+
+  command -v python3; kubectl get service board -o name; kubectl get endpointslices -l kubernetes.io/service-name=board
+
+  ```
+
+
+  ### Dane kontroli bezpośrednich i Service {#q115-shared-http-observer-input}
+
+
+  Kontrola bezpośrednia i wspólnego Service może zatrzymać się przed wskazaniem adresu przez błąd procesu lub danych. Sprawdź Python i aktualne obciążenia blue, green oraz client.
+
+
+  ```bash
+
+  command -v python3; kubectl get pods -l release=board -o wide; kubectl get deployment client -o name
+
+  ```
+
   '
-source_hash: 3b281a013ac3be8f5e4d6e23cfada44690f2b80904a42ee01047f9005723fb0f
+source_hash: 69d4a6822aaed37f494363e7cf3c65c8132c5f597d40d3b8edba05798d2dfc18

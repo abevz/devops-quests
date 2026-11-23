@@ -201,5 +201,227 @@ text: '# Overlays de configuración y cambio de versión
 
   ```
 
+
+
+  ### Selector solo para green {#q115-green-release-selector}
+
+
+  El Service puede seguir seleccionando blue u omitir un Pod green actual. Revise app=green, la cobertura de los Pods previstos y la exclusión de otras cargas.
+
+
+  ```bash
+
+  kubectl get service board -o jsonpath=''{.spec.selector}''; kubectl get pods --show-labels
+
+  ```
+
+
+  ### Respuesta HTTP solo de green {#q115-green-release-service-http}
+
+
+  Un selector correcto puede carecer de endpoint green listo o servir la versión anterior. Consulte board desde client y compare con green-115.
+
+
+  ```bash
+
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  ### Réplicas deseadas de blue {#q115-canary-blue-desired-count}
+
+
+  Blue puede conservar la cantidad deseada anterior o faltar. Compruebe que el Deployment blue solicite tres réplicas en el grupo compartido.
+
+
+  ```bash
+
+  kubectl get deployment blue -o jsonpath=''{.spec.replicas}''
+
+  ```
+
+
+  ### Réplicas listas de blue {#q115-canary-blue-ready-count}
+
+
+  Blue puede solicitar tres réplicas mientras hay Pods pendientes. Revise los Pods blue actuales y espere tres réplicas listas.
+
+
+  ```bash
+
+  kubectl get deployment blue -o jsonpath=''{.status.readyReplicas}''; kubectl get pods -l app=blue
+
+  ```
+
+
+  ### Réplicas deseadas de green {#q115-canary-green-desired-count}
+
+
+  Green puede haberse escalado a un tamaño incorrecto para el grupo compartido. Revise la cantidad deseada y mantenga una réplica.
+
+
+  ```bash
+
+  kubectl get deployment green -o jsonpath=''{.spec.replicas}''
+
+  ```
+
+
+  ### Réplicas listas de green {#q115-canary-green-ready-count}
+
+
+  La réplica green puede estar pendiente o fallar disponibilidad tras el cambio. Revise el Pod green y espere una réplica lista.
+
+
+  ```bash
+
+  kubectl get deployment green -o jsonpath=''{.status.readyReplicas}''; kubectl get pods -l app=green
+
+  ```
+
+
+  ### Selector del grupo compartido {#q115-shared-release-selector}
+
+
+  El Service puede seguir seleccionando un color o incluir una carga ajena. Compare release=board y los selectores extras con Pods blue y green del lanzamiento compartido.
+
+
+  ```bash
+
+  kubectl get service board -o jsonpath=''{.spec.selector}''; kubectl get pods --show-labels
+
+  ```
+
+
+  ### Nombres distintos de endpoints listos {#q115-shared-ready-endpoint-names}
+
+
+  Durante el despliegue pueden faltar destinos o quedar obsoletos o sin preparar. Revise EndpointSlice y cuente cuatro nombres distintos de destinos listos tras la convergencia.
+
+
+  ```bash
+
+  kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''[.items[].endpoints[] | select(.conditions.ready == true) | .targetRef.name] | unique''
+
+  ```
+
+
+  ### Direcciones asignadas a Pods blue {#q115-blue-pod-addresses}
+
+
+  La consulta de Pods blue puede no devolver dirección mientras ubicación o red no estén listas. Revise las IP asignadas a Pods app=blue.
+
+
+  ```bash
+
+  kubectl get pods -l app=blue -o wide
+
+  ```
+
+
+  ### Direcciones asignadas a Pods green {#q115-green-pod-addresses}
+
+
+  La consulta de Pods green puede no devolver dirección mientras ubicación o red no estén listas. Revise las IP asignadas a Pods app=green.
+
+
+  ```bash
+
+  kubectl get pods -l app=green -o wide
+
+  ```
+
+
+  ### Respuesta directa de blue {#q115-blue-direct-response}
+
+
+  Un Pod blue individual puede servir otro contenido o fallar en acceso directo. Consulte la IP afectada desde client y compare con blue-115.
+
+
+  ```bash
+
+  for address in $(kubectl get pods -l app=blue -o jsonpath=''{.items[*].status.podIP}''); do kubectl exec deployment/client -- wget -qO- -T 2 "http://$address:8080"; done
+
+  ```
+
+
+  ### Respuesta directa de green {#q115-green-direct-response}
+
+
+  Un Pod green individual puede servir otro contenido o fallar en acceso directo. Consulte la IP afectada desde client y compare con green-115.
+
+
+  ```bash
+
+  for address in $(kubectl get pods -l app=green -o jsonpath=''{.items[*].status.podIP}''); do kubectl exec deployment/client -- wget -qO- -T 2 "http://$address:8080"; done
+
+  ```
+
+
+  ### Respuesta del Service compartido {#q115-shared-canary-service-response}
+
+
+  El Service compartido puede carecer de endpoint alcanzable o devolver el cuerpo de otra carga. Una petición desde client debe devolver blue-115 o green-115.
+
+
+  ```bash
+
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  ### Límite de tiempo de sondas directas {#q115-bounded-pod-probes}
+
+
+  Consultas lentas de Kubernetes, timeouts o IP de más pueden dejar direcciones sin probar en la ventana reservada. Revise las IP listadas por separado y espere la convergencia.
+
+
+  ```bash
+
+  kubectl get pods -l release=board -o wide
+
+  ```
+
+
+  ### Entradas de la comprobación solo green {#q115-green-selector-observer-input}
+
+
+  El observador de green puede detenerse antes de detectar una condición si falla el proceso o sus entradas. Revise herramientas y acceso al Service y Pods green.
+
+
+  ```bash
+
+  command -v python3; kubectl get service board -o name; kubectl get pods -l app=green
+
+  ```
+
+
+  ### Entradas de la comprobación del selector compartido {#q115-shared-selector-observer-input}
+
+
+  El observador compartido puede detenerse antes de señalar una condición si no dispone de herramientas o datos. Revise el acceso al Service board y sus EndpointSlices.
+
+
+  ```bash
+
+  command -v python3; kubectl get service board -o name; kubectl get endpointslices -l kubernetes.io/service-name=board
+
+  ```
+
+
+  ### Entradas de las comprobaciones directas y del Service {#q115-shared-http-observer-input}
+
+
+  El observador directo y del Service puede detenerse antes de señalar una dirección si falla el proceso o su entrada. Revise Python y las cargas blue, green y client actuales.
+
+
+  ```bash
+
+  command -v python3; kubectl get pods -l release=board -o wide; kubectl get deployment client -o name
+
+  ```
+
   '
-source_hash: 3b281a013ac3be8f5e4d6e23cfada44690f2b80904a42ee01047f9005723fb0f
+source_hash: 69d4a6822aaed37f494363e7cf3c65c8132c5f597d40d3b8edba05798d2dfc18

@@ -32,4 +32,285 @@ text: |
   cat gateway-target.json attachment-contract.json
   kubectl get gateway,httproute,service -o yaml
   ```
-source_hash: c756f4f2754a297a0ff53a3f4cbf314d8fe5e62add6dce243c3be174e1041f2b
+
+
+  ### Запрос CPU у worker {#q112-board-cpu-request}
+
+  Запрос CPU у worker мог отсутствовать или отличаться от 100m, меняя базу расчёта утилизации. Проверьте фактическое значение CPU у worker.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.containers[] | select(.name == "worker") | .resources.requests.cpu'
+  ```
+
+  ### Лимит CPU у worker {#q112-board-cpu-limit}
+
+  У worker мог отсутствовать лимит CPU либо быть другое значение. Проверьте действующий лимит и сравните с 200m.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.containers[] | select(.name == "worker") | .resources.limits.cpu'
+  ```
+
+  ### Минимум реплик {#q112-hpa-minimum-replicas}
+
+  HPA мог потерять нижнюю границу масштабирования. Проверьте minReplicas и сохраните одну реплику.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.spec.minReplicas}'
+  ```
+
+  ### Максимум реплик {#q112-hpa-maximum-replicas}
+
+  HPA может не масштабироваться до двух реплик либо превышать допустимый максимум. Проверьте maxReplicas и сохраните значение два.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.spec.maxReplicas}'
+  ```
+
+  ### Целевая утилизация CPU {#q112-hpa-cpu-target}
+
+  Подходящие CPU-метрики могли отсутствовать, использовать другой тип цели или давать другой эффективный порог. Проверьте, что у каждой подходящей цели тип Utilization и положительное значение. Наименьшее из этих значений должно быть ровно 50 процентов.
+
+  ```bash
+  kubectl get hpa board -o json | jq '.spec.metrics'
+  ```
+
+  ### Готовые реплики board {#q112-board-ready-replica-count}
+
+  HPA мог запросить больше мощности, пока один Pod board ещё не готов. Проверьте события Pod и дождитесь двух готовых реплик в статусе Deployment.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.status.readyReplicas}'; kubectl get pods -l app=board
+  ```
+
+  ### Текущее число реплик по HPA {#q112-hpa-current-replica-count}
+
+  Контроллер мог ещё не увидеть две реплики либо следить за другой нагрузкой. Сравните currentReplicas со связанным Deployment.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.status.currentReplicas}'
+  ```
+
+  ### Желаемое число реплик по HPA {#q112-hpa-desired-replica-count}
+
+  Контроллер может по-прежнему рекомендовать одну реплику из-за низкой нагрузки CPU или отсутствия метрики. Проверьте желаемое число после устойчивой нагрузки через предоставленный client.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.status.desiredReplicas}'
+  ```
+
+  ### Наблюдаемая утилизация CPU {#q112-hpa-observed-cpu-utilization}
+
+  Утилизация CPU могла отсутствовать или не превышать 50 процентов. Проверьте текущую метрику CPU ресурса или контейнера worker при устойчивой нагрузке через выданный обработчик.
+
+  ```bash
+  kubectl get hpa board -o json | jq '.status.currentMetrics'
+  ```
+
+  ### Условие активного масштабирования {#q112-hpa-scaling-active}
+
+  Автоскейлер мог не получить метрики или не найти цель масштабирования. Проверьте reason и message у ScalingActive и дождитесь True.
+
+  ```bash
+  kubectl get hpa board -o json | jq '.status.conditions[] | select(.type == "ScalingActive")'
+  ```
+
+  ### Наблюдаемые метрики worker {#q112-board-metrics-availability}
+
+  API метрик мог ещё не отдавать CPU в millicores для текущих Pod board. Проверьте живые метрики перед оценкой масштабирования.
+
+  ```bash
+  kubectl top pods -l app=board --no-headers
+  ```
+
+  ### Фактический ответ board {#q112-board-live-workload-response}
+
+  Масштабирование может быть верным, пока Service отдаёт старый ответ или не имеет доступного endpoint. Запросите board из client и сравните тело с north-112.
+
+  ```bash
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+  ```
+
+  ### Сохранённые идентификаторы нагрузок {#q112-preserved-load-deployments}
+
+  Выданные Deployment board или client могли пересоздать под прежним именем. Сравните оба UID с зафиксированными и правьте существующие объекты.
+
+  ```bash
+  kubectl get deployment board client -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+  ```
+
+  ### Сохранённый обработчик запросов {#q112-preserved-load-handler}
+
+  Мог измениться выданный образ или ConfigMap обработчика, либо текущий worker использует другие байты. Сверьте исходные образы, UID ConfigMap, хэш содержимого и файл обработчика в контейнере.
+
+  ```bash
+  kubectl get deployment board client -o json | jq '.items[] | {name: .metadata.name, images: [.spec.template.spec.containers[].image]}'; kubectl exec deployment/board -c worker -- sha256sum /tmp/site/cgi-bin/process
+  ```
+
+  ### Идентификатор и цель HPA {#q112-hpa-preserved-scale-target}
+
+  HPA могли пересоздать, либо он масштабирует другой объект. Сравните UID с исходным и проверьте, что scaleTargetRef указывает на apps/v1 Deployment board.
+
+  ```bash
+  kubectl get hpa board -o json | jq '{uid: .metadata.uid, target: .spec.scaleTargetRef}'
+  ```
+
+  ### Текущие обслуживающие worker {#q112-current-serving-workers}
+
+  У сохранённого Deployment board могло не быть двух текущих Pod с готовыми работающими worker на выданном образе. После масштабирования проверьте идентификатор, желаемые реплики и текущий worker в каждом Pod.
+
+  ```bash
+  kubectl get deployment board -o wide; kubectl get replicasets,pods -l app=board -o wide
+  ```
+
+  ### Счётчики выполнения обработчика {#q112-handler-completion-progress}
+
+  Выданный обработчик мог перестать завершать запросы при правильном числе реплик. Проверьте счётчик каждого текущего worker между наблюдениями. Счётчики не должны уменьшаться, а общий прирост должен быть положительным.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- sh -c 'test -f /tmp/work-completions && wc -l < /tmp/work-completions'
+  ```
+
+  ### Входы проверки мощности {#q112-autoscaling-input-observer}
+
+  Проверка входов может остановиться до определения ошибки ресурса или сохранённой реализации. Проверьте инструменты и доступ к выданным Deployment и входам обработчика.
+
+  ```bash
+  command -v python3; kubectl get deployment board client -o name
+  ```
+
+  ### Входы проверки нагрузки {#q112-autoscaling-demand-observer}
+
+  Проверка масштабирования может остановиться без конкретного условия при ошибке процесса или исходных данных. Проверьте инструменты и доступ к HPA и текущей нагрузке.
+
+  ```bash
+  command -v python3; kubectl get hpa board -o name; kubectl get pods -l app=board
+  ```
+
+  ### Приватный GatewayClass {#q113-gateway-private-class}
+
+  Gateway мог ссылаться на класс другого контроллера либо не читается исходная запись. Сравните gatewayClassName у station с выданным приватным классом.
+
+  ```bash
+  kubectl get gateway station -o jsonpath='{.spec.gatewayClassName}'
+  ```
+
+  ### Принятие текущего Gateway {#q113-gateway-current-accepted}
+
+  Gateway мог быть отклонён или показывать принятие прежнего поколения. Проверьте Accepted и observedGeneration у действующего Gateway.
+
+  ```bash
+  kubectl get gateway station -o json | jq '{generation: .metadata.generation, conditions: .status.conditions}'
+  ```
+
+  ### Ссылка на родителя в том же namespace {#q113-route-same-namespace-parent}
+
+  Route мог ссылаться на другого родителя или namespace. Проверьте parentRefs на Gateway station в том же namespace, что и route.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.spec.parentRefs'
+  ```
+
+  ### Разрешённые имена хостов {#q113-route-only-allowed-host}
+
+  Route мог пропустить north.station.internal или добавить другое имя. Сравните набор уникальных имён с единственным выданным хостом.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.spec.hostnames'
+  ```
+
+  ### Service активных backend {#q113-route-active-backend-service}
+
+  Активный backend мог ссылаться на другой Service или namespace, либо в правиле нет ссылки с положительным весом. Проверьте активные ссылки каждого правила на местный Service board.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.spec.rules[].backendRefs'
+  ```
+
+  ### Порт активных backend {#q113-route-active-backend-port}
+
+  Route может указывать верный Service, пока активные ссылки используют 8099. Проверьте все backend с положительным весом и укажите порт Service 8080.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.spec.rules[].backendRefs[] | select((.weight // 1) > 0) | {name, port}'
+  ```
+
+  ### Принятие на родителе {#q113-route-parent-acceptance}
+
+  Запрошенный listener мог отсутствовать или не принимать route. Найдите Accepted=True в записях родителей и прочитайте reason.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.status.parents[] | {parentRef, accepted: [.conditions[] | select(.type == "Accepted")]}'
+  ```
+
+  ### Разрешённые ссылки на родителе {#q113-route-parent-resolved-backends}
+
+  Родитель мог принять route, не разрешив backend Service или порт. Проверьте ResolvedRefs и исправьте ссылку, которую контроллер не нашёл.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.status.parents[] | {parentRef, resolved: [.conditions[] | select(.type == "ResolvedRefs")]}'
+  ```
+
+  ### Оба условия на одном родителе {#q113-route-same-parent-conditions}
+
+  Accepted и ResolvedRefs могут быть истинны в разных записях родителей. Проверьте оба значения на одной записи, прежде чем считать подключение завершённым.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.status.parents[] | {parentRef, conditions}'
+  ```
+
+  ### Сохранённые идентификаторы доставки {#q113-preserved-gateway-delivery-objects}
+
+  Замена могла изменить идентификатор Gateway, route, Service или Deployment, а текущий worker мог получить другой образ. Сверьте UID и образы с зафиксированными записями.
+
+  ```bash
+  kubectl get gateway station -o jsonpath='{.metadata.uid}'; kubectl get httproute board -o jsonpath='{.metadata.uid}'; kubectl get deployment board client -o wide
+  ```
+
+  ### Исходные listeners {#q113-preserved-gateway-listeners}
+
+  Правка Gateway для устаревшего route могла изменить выданный список listeners. Сравните весь текущий список с исходным и восстановите ссылку route на совместимый listener.
+
+  ```bash
+  kubectl get gateway station -o json | jq '.spec.listeners'
+  ```
+
+  ### Совместимый listener и контроллер {#q113-matching-controller-listener}
+
+  Статус родителя мог относиться к другому контроллеру или несовместимому listener. Сравните запрошенный и наблюдаемый parentRef, section и port с HTTP-listener station и выданным контроллером.
+
+  ```bash
+  kubectl get httproute board -o json | jq '{requested: .spec.parentRefs, observed: .status.parents}'; kubectl get gateway station -o json | jq '.spec.listeners'
+  ```
+
+  ### Условия для текущего поколения {#q113-current-route-generation}
+
+  Совместимый родитель мог сохранить старые Accepted или ResolvedRefs. Дождитесь обоих True в записи нужного контроллера для текущего поколения HTTPRoute.
+
+  ```bash
+  kubectl get httproute board -o json | jq '{generation: .metadata.generation, parents: .status.parents}'
+  ```
+
+  ### HTTP для разрешённого хоста {#q113-gateway-allowed-host-http}
+
+  Даже при статусе подключения может отсутствовать ответ либо работать другой backend. Запросите выданный URL Gateway из client с Host north.station.internal и сравните с north-113.
+
+  ```bash
+  url=$(jq -r .url /run/dq/facts/0/gateway-target.json); kubectl exec deployment/client -- wget -qO- -T 3 --header='Host: north.station.internal' "$url"
+  ```
+
+  ### HTTP для другого хоста {#q113-gateway-unmatched-host-http}
+
+  Слишком широкое правило могло обслуживать closed.station.internal. Отправьте другой Host через тот же Gateway и проверьте отказ запроса.
+
+  ```bash
+  url=$(jq -r .url /run/dq/facts/0/gateway-target.json); kubectl exec deployment/client -- wget -qO- -T 3 --header='Host: closed.station.internal' "$url"
+  ```
+
+  ### Входы проверки подключения {#q113-gateway-attachment-observer-input}
+
+  Проверка может остановиться до определения условия, если недоступны рабочий каталог, зафиксированные факты или инструменты. Проверьте инструменты и доступ к Gateway и route.
+
+  ```bash
+  command -v python3; kubectl get gateway station -o name; kubectl get httproute board -o name
+  ```
+source_hash: 5b6d030a5687f59600a80dba480aeae66abf2daa438d5bfdb8b2942db068bf24
