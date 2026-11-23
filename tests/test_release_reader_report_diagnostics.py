@@ -10,6 +10,87 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def prepare_091_bay(tmp_path, *, platform=True):
+    """Use the supplied relative workstation layout without changing HOME."""
+    (tmp_path / "repository").mkdir()
+    (tmp_path / "release-commit").write_text("a" * 40 + "\n")
+    if platform:
+        (tmp_path / "platform.env").write_text("export GIT_URL=http://source.invalid/repository\n")
+
+
+@pytest.mark.parametrize("code", [0, 1, 7, 127])
+def test_091_release_head_wrapper_retains_fetch_status(tmp_path, code):
+    prepare_091_bay(tmp_path)
+    result = run_check(tmp_path, 91, 0, {"git": f"""
+test "$1" = -C && test "$2" = repository || exit 98
+if [ "$3" = fetch ]; then
+  test "$4" = origin && test "$5" = main || exit 99
+  printf 'fetch\\n' >> git-calls
+  exit {code}
+fi
+test "$3" = rev-parse && test "$4" = origin/main || exit 99
+printf 'rev-parse\\n' >> git-calls
+printf '%s\\n' '{'a' * 40}'
+"""})
+    assert result.returncode == code
+    assert ("[DQ:provenance_head]" in result.stderr) == (code != 0)
+    assert (tmp_path / "git-calls").read_text().splitlines() == (
+        ["fetch"] if code else ["fetch", "rev-parse"]
+    )
+
+
+@pytest.mark.parametrize("index,marker", [(1, "provenance_source"), (2, "provenance_sync")])
+@pytest.mark.parametrize("code", [0, 1, 7, 127])
+def test_091_api_wrapper_retains_pipeline_failure(tmp_path, index, marker, code):
+    prepare_091_bay(tmp_path)
+    # These two drivers control pipeline statuses, not application JSON semantics;
+    # the native quest matrix exercises the actual jq predicates and Argo objects.
+    result = run_check(tmp_path, 91, index, {
+        "kubectl": f"printf '{{}}\\n'\nprintf 'raw API detail\\n' >&2\nexit {code}\n",
+        "jq": "cat >/dev/null\nexit 0\n",
+    })
+    assert result.returncode == code
+    assert "raw API detail" in result.stderr
+    assert (f"[DQ:{marker}]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("code", [0, 1, 7, 127])
+def test_091_rollout_wrapper_retains_status_and_stderr(tmp_path, code):
+    prepare_091_bay(tmp_path)
+    result = run_check(tmp_path, 91, 3, {
+        "kubectl": f"printf 'raw rollout detail\\n' >&2\nexit {code}\n",
+    })
+    assert result.returncode == code
+    assert "raw rollout detail" in result.stderr
+    assert ("[DQ:provenance_rollout]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("text,command_code,expected", [
+    ("north-91", 0, 0), ("retired", 0, 1), ("", 7, 1),
+])
+def test_091_http_wrapper_retains_the_original_value_comparison(tmp_path, text, command_code, expected):
+    prepare_091_bay(tmp_path)
+    result = run_check(tmp_path, 91, 4, {
+        "kubectl": f"printf '%s' '{text}'\nexit {command_code}\n",
+    })
+    assert result.returncode == expected
+    assert ("[DQ:provenance_http]" in result.stderr) == (expected != 0)
+
+
+@pytest.mark.parametrize("index,marker", [
+    (0, "provenance_head"), (1, "provenance_source"), (2, "provenance_sync"),
+])
+def test_091_missing_supplied_input_is_named_before_external_commands(tmp_path, index, marker):
+    prepare_091_bay(tmp_path, platform=False)
+    result = run_check(tmp_path, 91, index, {
+        name: "touch command-invoked\nexit 0\n" for name in ("git", "kubectl", "jq")
+    })
+    assert result.returncode == 1
+    assert "platform.env" in result.stderr
+    assert f"[DQ:{marker}]" in result.stderr
+    assert not (tmp_path / "command-invoked").exists()
+
+
 def run_080_platform_check(tmp_path, stage, index, platform=None, commands=None):
     """Map the actual workstation directory; keep HOME and the check body intact."""
     import shlex
