@@ -88,6 +88,32 @@ def diagnostic_errors(quest, values, guide_anchors):
                 yield {"key": key, "language": language, "error": "different_diagnostic_destination"}
 
 
+def hint_errors(hints, values, guide_anchors):
+    for hint in hints:
+        key = hint["text"]
+        guide = hint.get("guide")
+        if "section" in hint:
+            section = hint["section"]
+            if not isinstance(guide, str) or not isinstance(section, str) or "url" in hint:
+                yield {"key": key, "error": "invalid_hint_destination"}
+                continue
+            for language in values:
+                if guide_anchors.get(guide, {}).get(language, {}).get(section, 0) != 1:
+                    yield {"key": key, "language": language, "error": "unknown_hint_anchor",
+                           "guide": guide, "anchor": section}
+        elif "guide" not in hint and "url" not in hint:
+            for language, bundle in values.items():
+                if not bundle.get(key):
+                    continue
+                try:
+                    blocks = fenced_blocks(bundle[key])
+                except ValueError:
+                    blocks = []
+                if not any(3 <= sum(bool(line.strip()) for line in block.splitlines()[1:-1]) <= 5
+                           for block in blocks):
+                    yield {"key": key, "language": language, "error": "invalid_hint_snippet"}
+
+
 def audit(root=ROOT):
     root = Path(root)
     errors, missing, stale = [], {}, []
@@ -331,6 +357,8 @@ def audit(root=ROOT):
             english = values["en"]
             errors.extend({"quest": quest["id"], **error}
                           for error in diagnostic_errors(quest, values, guide_anchors))
+            errors.extend({"quest": quest["id"], **error}
+                          for error in hint_errors(quest["hints"], values, guide_anchors))
             for key in keys:
                 if not english.get(key):
                     errors.append(

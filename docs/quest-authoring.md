@@ -10,7 +10,9 @@ they illustrate the target and do not claim that every feature is already implem
 Give each hint a distinct purpose and target: (1) the idea, linked to the concept
 paragraph; (2) where to look (file, block, or name), linked to a concrete example;
 (3) how to verify, with a command and expected result, linked to the verification
-section. Per-hint anchors are the target; make the link land on the relevant text.
+section. In `quest.yaml`, set the hint's `guide` to the lesson ID and
+`section` to the stable anchor on a heading in the published lesson.
+Use that heading ID in all five languages.
 
 - **Good:** For 003, explain module inputs and outputs; next point to `main.tf` and
   `modules/notice`; finally suggest `tofu state list` and the expected
@@ -22,6 +24,7 @@ section. Per-hint anchors are the target; make the link land on the relevant tex
 
 A hint link should add a useful destination beyond the previous hint. If it cannot,
 put a short, relevant 3–5 line snippet inside the hint instead of a redundant link.
+Use a fenced code block in the localized hint text and omit the link fields.
 Do not point to an unrelated passage merely to make links distinct.
 
 - **Good:** For 003, include a short module-call snippet when no new guide passage

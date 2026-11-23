@@ -241,19 +241,22 @@ class Catalog:
             for stage in quest["stages"]
         ]
 
-        def guide_link(hint):
+        def guide_link(hint, *, anchor=False):
             if "url" in hint:
                 return {"url": hint["url"], "label": self.text(number, hint["label"])}
-            return {
-                "url": "guide/" + hint["guide"],
-                "label": self.guide(hint["guide"])["titles"],
-            }
+            if "guide" not in hint:
+                return {}
+            guide = self.guide(hint["guide"])
+            url = "guide/" + hint["guide"]
+            if anchor and "section" in hint:
+                url = f"guides#guide={guide['id']}&section={hint['section']}"
+            return {"url": url, "label": guide["titles"]}
 
         result["hints"] = (
             []
             if exam
             else [
-                dict(guide_link(h), text=self.text(number, h["text"]))
+                dict(guide_link(h, anchor=True), text=self.text(number, h["text"]))
                 for h in quest["hints"][:hints]
             ]
         )
@@ -274,6 +277,7 @@ class Catalog:
                 {
                     hint.get("guide", hint.get("url")): guide_link(hint)
                     for hint in quest["hints"]
+                    if "guide" in hint or "url" in hint
                 }.values()
             )
         return result

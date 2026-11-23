@@ -6,6 +6,7 @@ import yaml
 
 from devops_quests.catalog import ROOT, Catalog
 from devops_quests.i18n import Resources
+from scripts.validate_i18n import hint_errors
 
 
 def test_native_quest_structure_and_all_original_languages():
@@ -26,6 +27,43 @@ def test_native_quest_structure_and_all_original_languages():
                 isinstance(goal["text"], str) and goal["check"]
                 for goal in stage["objectives"]
             )
+
+
+def test_pilot_hint_destinations_and_legacy_debrief_links():
+    catalog = Catalog()
+    module = catalog.public(3, hints=3, debrief=True)
+    assert [hint.get("url") for hint in module["hints"]] == [
+        "guides#guide=terraform-7.1&section=module-interface",
+        None,
+        "guides#guide=terraform-7.1&section=notice-module-plan",
+    ]
+    assert module["hints"][1].keys() == {"text"}
+    assert [link["url"] for link in module["guides"]] == ["guide/terraform-7.1"]
+    drift = catalog.public(9, hints=3)["hints"]
+    assert [hint["url"] for hint in drift] == [
+        "guides#guide=terraform-3&section=configuration-state-drift",
+        "guides#guide=terraform-3&section=notice-state",
+        "guides#guide=terraform-3&section=notice-plan",
+    ]
+    assert catalog.public(9, hints=3, exam=True)["hints"] == []
+
+
+def test_hint_validation_requires_an_anchor_in_each_language_or_a_short_snippet():
+    hints = [
+        {"text": "first", "guide": "sample", "section": "concept"},
+        {"text": "second"},
+    ]
+    snippet = "```sh\nfoo\nbar\nbaz\n```"
+    values = {"en": {"first": "Concept", "second": snippet},
+              "ru": {"first": "Идея", "second": "Нет фрагмента"}}
+    anchors = {"sample": {"en": {"concept": 1}, "ru": {}}}
+    assert [(error["error"], error["language"]) for error in hint_errors(hints, values, anchors)] == [
+        ("unknown_hint_anchor", "ru"),
+        ("invalid_hint_snippet", "ru"),
+    ]
+    anchors["sample"]["ru"]["concept"] = 1
+    values["ru"]["second"] = snippet
+    assert not list(hint_errors(hints, values, anchors))
 
 
 def test_new_language_is_discovered_without_code_and_partial_text_falls_back(tmp_path):
