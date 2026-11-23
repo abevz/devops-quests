@@ -61,4 +61,205 @@ text: |
   ### Проверка обеих границ отказа {#reader-denial-boundaries}
 
   В квесте 037 чтение restricted и получение списка Secrets должны оставаться неуспешными для той же идентичности workload, которая читает route. Разрешения RBAC складываются: другой RoleBinding или ClusterRoleBinding может расширить доступ даже при узком route-reader. Если запрещённый запрос успешен, проверьте все привязки этой идентичности. Каждая текущая проверка сначала находит Pod и читает учётные данные; отказ на этом этапе отличается от неожиданного доступа. Используйте успешное чтение route как контроль, не считая два отрицательных запроса доказательством всех эффективных прав.
-source_hash: 0c45748b88da261dfbaa9d530586c4addbdf926bae12800d0e2a94e8b746f370
+
+
+  ### Входы проверки ограничений {#q109-security-observer-input}
+
+  Проверка ограничений может завершиться до указания условия при ошибке Python или входных данных. Проверьте доступ к Deployment и запуск инструментов.
+
+  ```bash
+  command -v python3; kubectl get deployment board -o name
+  ```
+
+  ### Сетевое пространство Pod {#q109-board-network-namespace}
+
+  При правке шаблона могла включиться сеть хоста. Проверьте hostNetwork и сохраните отдельное сетевое пространство Pod.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.template.spec.hostNetwork}'
+  ```
+
+  ### Пространство процессов Pod {#q109-board-process-namespace}
+
+  Шаблон Pod мог начать использовать пространство процессов хоста. Проверьте hostPID и оставьте его выключенным.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.template.spec.hostPID}'
+  ```
+
+  ### Пространство IPC Pod {#q109-board-ipc-namespace}
+
+  Шаблон Pod мог начать использовать IPC хоста. Проверьте hostIPC и сохраните отдельное пространство IPC.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.template.spec.hostIPC}'
+  ```
+
+  ### Источники томов board {#q109-board-volume-sources}
+
+  При правке шаблона могли добавить том hostPath. Проверьте источники томов и уберите зависимость от hostPath.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.volumes'
+  ```
+
+  ### Запуск без прав root {#q109-board-user-policy}
+
+  У контейнера могло исчезнуть действующее runAsNonRoot, появиться переопределение или UID 0. Проверьте настройки Pod, обычных и init-контейнеров. Явно заданные UID должны быть положительными.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | {pod: .securityContext, worker: [.containers[], .initContainers[]? | .securityContext]}'
+  ```
+
+  ### Действующий фильтр системных вызовов {#q109-board-syscall-filter}
+
+  Фильтр системных вызовов мог исчезнуть или быть переопределён. Проверьте, что обычные и init-контейнеры используют RuntimeDefault с учётом настроек Pod.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | {pod: .securityContext.seccompProfile, containers: [.containers[], .initContainers[]? | .securityContext.seccompProfile]}'
+  ```
+
+  ### Привилегированный режим {#q109-board-privileged-mode}
+
+  Обычному или init-контейнеру могли включить привилегированный режим. Проверьте securityContext каждого контейнера и уберите privileged: true.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.privileged]'
+  ```
+
+  ### Флаг повышения привилегий {#q109-board-privilege-escalation}
+
+  Контейнер может допускать повышение привилегий, если флаг отсутствует или включён. Задайте allowPrivilegeEscalation: false каждому обычному и init-контейнеру.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.allowPrivilegeEscalation]'
+  ```
+
+  ### Сброшенные capabilities {#q109-board-drop-capabilities}
+
+  Контейнер мог перестать сбрасывать стандартный набор capabilities. Проверьте ALL в списке drop каждого обычного и init-контейнера.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.capabilities.drop]'
+  ```
+
+  ### Добавленные capabilities {#q109-board-no-added-capabilities}
+
+  Шаблон мог снова добавить capabilities после сброса. Проверьте, что список add каждого обычного и init-контейнера пуст.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.capabilities.add]'
+  ```
+
+  ### Политика restricted в namespace {#q109-restricted-namespace}
+
+  У пространства имён могла отсутствовать метка restricted, либо чтение не сработало. Проверьте метку стенда и сохраните режим restricted при правке нагрузки.
+
+  ```bash
+  kubectl get namespace "$DQ_NAMESPACE" -o json | jq '.metadata.labels["pod-security.kubernetes.io/enforce"]'
+  ```
+
+  ### Число реплик board {#q109-board-replica-contract}
+
+  Deployment могли масштабировать во время ремонта, либо он отсутствует. Проверьте, что board по-прежнему запрашивает одну реплику.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.spec.replicas}'
+  ```
+
+  ### Готовая реплика board {#q109-board-ready-replica}
+
+  Шаблон Pod может существовать, пока admission или rollout мешают готовности. Проверьте события и подтвердите одну готовую реплику в статусе board.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.status.readyReplicas}'; kubectl get pods -l app=board
+  ```
+
+  ### Имя контейнера worker {#q109-board-worker-identity}
+
+  В нагрузке мог измениться worker, появиться лишний обычный контейнер или исчезнуть основная секция. Оставьте ровно один обычный контейнер worker.
+
+  ```bash
+  kubectl get deployment board -o json | jq '[.spec.template.spec.containers[].name]'
+  ```
+
+  ### Явно заданные UID {#q109-board-explicit-user-ids}
+
+  Явный runAsUser мог стать нулевым или некорректным. Проверьте целые положительные UID в настройках Pod, обычных и init-контейнеров.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | {pod: .securityContext.runAsUser, containers: [.containers[], .initContainers[]? | .securityContext.runAsUser]}'
+  ```
+
+  ### Объявленный корень только для чтения {#q109-board-declared-readonly-root}
+
+  Один из контейнеров мог по-прежнему разрешать запись в корень образа. Задайте readOnlyRootFilesystem: true обычным и init-контейнерам, а временные записи оставьте на отдельном томе.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.readOnlyRootFilesystem]'
+  ```
+
+  ### Переопределение seccomp контейнера {#q109-board-container-seccomp-override}
+
+  Переопределение seccomp у контейнера могло заменить RuntimeDefault. Проверьте обычные и init-контейнеры и сохраните наследуемый RuntimeDefault или явно укажите его.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | [.containers[], .initContainers[]? | .securityContext.seccompProfile]'
+  ```
+
+  ### Источник временного тома {#q109-board-temporary-volume-type}
+
+  Монтирование /tmp могло исчезнуть или указывать на том другого типа. Проследите имя тома от worker до объявленного источника emptyDir.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | {volumes, worker: [.containers[] | select(.name == "worker") | .volumeMounts]}'
+  ```
+
+  ### Временное монтирование с записью {#q109-board-writable-temporary-mount}
+
+  У worker /tmp мог быть смонтирован только для чтения либо указан несколько раз. Проверьте единственное доступное на запись монтирование из временного emptyDir.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.containers[] | select(.name == "worker") | [.volumeMounts[] | select(.mountPath == "/tmp")]'
+  ```
+
+  ### Прочие монтирования томов {#q109-board-other-mounts-readonly}
+
+  Дополнительное монтирование могло разрешить запись помимо выданного /tmp. Проверьте монтирования обычных и init-контейнеров, включая источники, доступные только на чтение.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec | {volumes, mounts: [.containers[], .initContainers[]? | .volumeMounts]}'
+  ```
+
+  ### Фактическое монтирование корня только для чтения {#q109-board-live-readonly-root}
+
+  В Deployment корень мог быть доступен только для чтения, пока запущенный worker использует старое монтирование. Проверьте параметры / в /proc/mounts и убедитесь, что после rollout есть ro.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- awk '$2 == "/" {print $4}' /proc/mounts
+  ```
+
+  ### Фактический UID worker {#q109-board-live-worker-uid}
+
+  Выбранный worker мог работать от root, либо exec завершился ошибкой. Прочитайте UID процесса и убедитесь, что он больше нуля.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- id -u
+  ```
+
+  ### Запись и чтение в /tmp {#q109-board-live-tmp-reads-writes}
+
+  Временный том мог быть доступен только на чтение или его права мешают worker. Проверьте запись и чтение в /tmp из работающего worker.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- sh -c 'p=$(mktemp /tmp/dq-check.XXXXXX) && trap "rm -f $p" EXIT && printf writable > "$p" && test "$(cat "$p")" = writable'
+  ```
+
+  ### Ответ board после правок безопасности {#q109-board-live-security-http}
+
+  Настройки безопасности могут быть верными, пока worker не может записать содержимое или у Service нет готового endpoint. Запросите board после rollout и сравните с north-109.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  ```
+source_hash: de3c7a2570583e66677d5f5c38c812866ef052c18a004f0e72945c8275dd5bb0

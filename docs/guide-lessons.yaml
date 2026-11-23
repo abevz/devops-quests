@@ -1846,6 +1846,192 @@ kubernetes-10:
     en: 'A Service name resolves to a virtual address. Its selector and ready EndpointSlices determine which pod addresses receive traffic. DNS success alone does not prove that the Service has a usable backend.
 
 
+      ### Original Service UID {#q106-service-original-uid}
+
+
+      Recreating a Service under the same name permanently changes its UID. Compare the live object with the frozen contract before changing its selector. `kubectl get service board-internal board-headless board-node -o custom-columns=NAME:.metadata.name,UID:.metadata.uid`.
+
+
+      ### Original Service type {#q106-service-original-type}
+
+
+      Changing a Service type can change how clients reach it. Compare the affected type with its original contract and adjust selectors without changing type. `kubectl get service board-internal board-headless board-node -o custom-columns=NAME:.metadata.name,TYPE:.spec.type`.
+
+
+      ### Original primary clusterIP {#q106-service-original-cluster-ip}
+
+
+      A replacement or type change may have altered the Service’s primary clusterIP. Compare the affected value with the frozen contract, including the literal None for the headless Service. `kubectl get service board-internal board-headless board-node -o custom-columns=NAME:.metadata.name,IP:.spec.clusterIP`.
+
+
+      ### Original address list {#q106-service-original-address-list}
+
+
+      A replacement or address-family change may have altered the Service address list. Compare the entire clusterIPs list with the frozen list in original order. `kubectl get service board-internal board-headless board-node -o json | jq ''.items[] | {name: .metadata.name, clusterIPs: .spec.clusterIPs}''`.
+
+
+      ### Original Service port contract {#q106-service-original-port-tuple}
+
+
+      A changed service port, protocol, target or NodePort can break the original port contract. Compare each tuple and verify that any named target resolves consistently on the current board Pods. `kubectl get service board-internal board-headless board-node -o json | jq ''.items[] | {name: .metadata.name, ports: .spec.ports}''`.
+
+
+      ### Service count {#q106-service-contract-count}
+
+
+      One of the three named Services may be missing, or the saved inventory may be incomplete or unreadable. Check board-internal, board-headless, board-node and the count in service-contracts.json. `kubectl get service board-internal board-headless board-node -o name; jq length /run/dq/facts/0/service-contracts.json`.
+
+
+      ### Internal Service type {#q106-internal-service-type}
+
+
+      The internal Service may have changed type. Inspect board-internal and preserve ClusterIP for in-cluster access. `kubectl get service board-internal -o jsonpath=''{.spec.type}''`.
+
+
+      ### Internal virtual address {#q106-internal-virtual-address}
+
+
+      The internal Service may lack a usable virtual address. Check that board-internal has a nonempty clusterIP other than the headless sentinel None. `kubectl get service board-internal -o jsonpath=''{.spec.clusterIP}''`.
+
+
+      ### Headless Service address {#q106-headless-service-address}
+
+
+      The headless Service may have acquired a virtual ClusterIP. Keep clusterIP at the literal None so its DNS can return endpoint addresses. `kubectl get service board-headless -o jsonpath=''{.spec.clusterIP}''`.
+
+
+      ### NodePort Service type {#q106-nodeport-service-type}
+
+
+      The node-facing Service may have lost its NodePort type. Inspect board-node before debugging the request through the node. `kubectl get service board-node -o jsonpath=''{.spec.type}''`.
+
+
+      ### Allocated HTTP NodePort {#q106-allocated-http-nodeport}
+
+
+      The named http port may be missing, duplicated or lack an allocated nodePort. Inspect board-node for one http entry with an integer nodePort of at least 30000. `kubectl get service board-node -o json | jq ''.spec.ports[] | select(.name == "http") | .nodePort''`.
+
+
+      ### Selectors for board {#q106-service-board-selectors}
+
+
+      A stale or overly broad Service selector may miss current board Pods or include an unrelated Pod. Compare the affected selector with real Pod labels and keep app=board. `kubectl get service board-internal board-headless board-node -o json | jq ''.items[] | {name: .metadata.name, selector: .spec.selector}''; kubectl get pods --show-labels`.
+
+
+      ### HTTP by Service name {#q106-service-name-http}
+
+
+      The Service name may resolve without an available board endpoint or may reach a Pod serving another response. From client, query the affected name on port 8080 and compare with north-106. `for name in board-internal board-headless board-node; do kubectl exec deployment/client -- wget -qO- -T 3 "http://$name:8080"; done`.
+
+
+      ### HTTP through the private NodePort {#q106-private-nodeport-http}
+
+
+      The internal Service path may work while the private node address or its HTTP NodePort fails. Check the allocated NodePort and request it via the supplied node address from client. `kubectl get service board-node -o jsonpath=''{.spec.ports[?(@.name=="http")].nodePort}''`.
+
+
+      ### Headless DNS result {#q106-headless-pod-dns}
+
+
+      The headless Service may select no ready board endpoint or DNS may return a different address. Compare the live A answer with the expected board Pod IP. `kubectl exec deployment/client -- nslookup -type=A "board-headless.$DQ_NAMESPACE.svc.cluster.local."`.
+
+
+      ### Inputs to the contract check {#q106-service-contract-observer-input}
+
+
+      The contract observer can stop before comparing fields if its process or inputs fail. Check the local tools and access to the Services and frozen records. `command -v python3; kubectl get services -o name`.
+
+
+      ### Inputs to the selector check {#q106-service-selector-observer-input}
+
+
+      The selector observer can stop before assigning the failure to a Service. Check local Python tooling and access to live Pods and Services. `command -v python3; kubectl get pods --show-labels; kubectl get services -o name`.
+
+
+      ### Private IngressClass {#q107-ingress-private-class}
+
+
+      The Ingress may use another controller class or the supplied class input may be unreadable. Compare ingressClassName with the provided private class before checking routes. `kubectl get ingress board -o jsonpath=''{.spec.ingressClassName}''`.
+
+
+      ### Station host rule {#q107-ingress-station-host}
+
+
+      The host rule may be absent or have a different name. Inspect the live Ingress for station.internal before testing its paths. `kubectl get ingress board -o json | jq ''[.spec.rules[].host]''`.
+
+
+      ### Ingress root path {#q107-ingress-root-path}
+
+
+      The host can match while its path list lacks the root path. Check for / under station.internal. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | [.http.paths[].path]''`.
+
+
+      ### Root path matching {#q107-ingress-prefix-matching}
+
+
+      The rule may declare / with Exact or another path type. Inspect the root path under station.internal for Prefix so the controller treats it as a path prefix. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | .http.paths[] | {path, pathType}''`.
+
+
+      ### Board backend port {#q107-ingress-board-service-port}
+
+
+      A path for station.internal may still point at port 8099 or another backend. Check that each path uses Service board on 8080, directly or through a unique TCP port name resolving to 8080. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | [.http.paths[].backend]''; kubectl get service board -o json | jq ''.spec.ports''`.
+
+
+      ### Matching Host request {#q107-ingress-live-request}
+
+
+      The Ingress may be configured while the controller has not reconciled it, or no usable board endpoint answers. Send the matching Host header to the supplied URL and compare the live body with north-107. `source components.env; kubectl exec deployment/client -- wget -qO- -T 3 --header=''Host: station.internal'' "$INGRESS_URL"`.
+
+
+      ### Unmatched Host request {#q107-ingress-unmatched-host}
+
+
+      A catch-all rule or default backend may still accept an unmatched host. Send the unrelated Host header through the same URL and verify that the request does not succeed. `source components.env; kubectl exec deployment/client -- wget -qO- -T 3 --header=''Host: wrong.station.internal'' "$INGRESS_URL"`.
+
+
+      ### Inputs to the ingress check {#q107-ingress-contract-observer-input}
+
+
+      The route observer may stop before naming a condition if its process or inputs fail. Verify Python and access to both the Ingress and Service. `command -v python3; kubectl get ingress board -o name; kubectl get service board -o name`.
+
+
+      ### Private IngressClass {#q110-ingress-private-class}
+
+
+      The Ingress may use another controller class or the supplied class input may be unreadable. Compare ingressClassName with the provided private class before checking routes. `kubectl get ingress board -o jsonpath=''{.spec.ingressClassName}''`.
+
+
+      ### Station HTTP response {#q110-ingress-live-request}
+
+
+      The Ingress may be configured while the controller has not reconciled it, or no usable board endpoint answers. Send the matching Host header to the station.internal:8000 and compare the live body with north-110. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header=''Host: station.internal'' http://station.internal:8000`.
+
+
+      ### Unmatched Host request {#q110-ingress-unmatched-host}
+
+
+      A catch-all rule or default backend may still accept an unmatched host. Send the unrelated Host header through the same URL and verify that the request does not succeed. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header=''Host: wrong.station.internal'' http://station.internal:8000`.
+
+
+      ### Effective station root rule {#q110-incident-station-root-rule}
+
+
+      The station.internal rule may be missing or have no usable root path. Check for / with Exact or Prefix. When both exist, inspect Exact first for the root request. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | .http.paths[] | {path, pathType}''`.
+
+
+      ### Port of the selected backend {#q110-incident-ingress-service-port}
+
+
+      The selected root route may still point at the nonexistent port 8099 or a different Service. Check that each selected path resolves exactly one TCP port on board by number or name. An unreadable Ingress, service or receipt also triggers this condition. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | [.http.paths[].backend]''; kubectl get service board -o json | jq ''.spec.ports''`.
+
+
+      ### Inputs to the Ingress observer {#q110-incident-ingress-observer-input}
+
+
+      The live Ingress observer may fail to start before comparing the selected route. Verify the workstation tools and access to the Ingress and board Service. `command -v python3; kubectl get ingress board -o name; kubectl get service board -o name`.
+
+
       ### Service selector and ready endpoints {#arrivals-ready-endpoint}
 
 
@@ -1864,7 +2050,7 @@ kubernetes-10:
       For quest 062, destination selection and permitted-source membership are separate relations. A policy can retain the intended boundary while a requesting workload no longer belongs to it. A current Pod label and a Deployment template have different lifetimes. Compare desired labels and current owned Pods without widening the original ingress boundary; permitted and denied requests are independent controls. Retained object identities and provided images keep the repair within the existing topology.
 
 
-      In quest 110, resolve `station.internal` to the private controller Service before testing HTTP. Then check the supplied Ingress class, host, Prefix path `/` and backend `board:8080`; the correct Host must return `north-110` and the wrong Host request must fail. DNS success does not prove routing, and a failed request alone does not identify its cause.
+      In quest 110, resolve `station.internal` to the private controller Service before testing HTTP. Then check the supplied Ingress class and host. For path `/`, the check uses Exact if present and Prefix otherwise. The selected rule must send traffic to `board:8080`. The correct Host must return `north-110`, and a request with the wrong Host must fail. DNS success does not prove routing, and a failed request alone does not identify its cause.
 
 
       In quest 106, ClusterIP, headless DNS and NodePort are different ways to reach the same selected Pods. Repair each Service selector to `app: board` without changing its recorded UID, type, IPs or ordered ports. Test all three Service names on port `8080` and the private node''s NodePort (at least `30000`); each must return `north-106`. Check the complete Pod IP in the headless DNS answer and allow reconciliation time.
@@ -1989,6 +2175,192 @@ kubernetes-10:
     ru: 'Имя Service разрешается в виртуальный адрес. Selector и готовые EndpointSlice определяют адреса подов для трафика. Успешный DNS сам по себе не доказывает наличие рабочего backend.
 
 
+      ### Исходный UID Service {#q106-service-original-uid}
+
+
+      При пересоздании Service под прежним именем исходный UID теряется. Сравните текущий объект с зафиксированным контрактом перед правкой селектора. `kubectl get service board-internal board-headless board-node -o custom-columns=NAME:.metadata.name,UID:.metadata.uid`.
+
+
+      ### Исходный тип Service {#q106-service-original-type}
+
+
+      Изменение типа Service может изменить доступ клиентов. Сравните тип указанного сервиса с исходным контрактом и исправьте селектор, сохранив тип. `kubectl get service board-internal board-headless board-node -o custom-columns=NAME:.metadata.name,TYPE:.spec.type`.
+
+
+      ### Исходный основной clusterIP {#q106-service-original-cluster-ip}
+
+
+      При пересоздании или смене типа мог измениться основной clusterIP. Сравните значение указанного Service с исходным контрактом, включая None для headless Service. `kubectl get service board-internal board-headless board-node -o custom-columns=NAME:.metadata.name,IP:.spec.clusterIP`.
+
+
+      ### Исходный список адресов {#q106-service-original-address-list}
+
+
+      При пересоздании или смене семейства адресов мог измениться список адресов. Сравните весь clusterIPs с исходным списком в том же порядке. `kubectl get service board-internal board-headless board-node -o json | jq ''.items[] | {name: .metadata.name, clusterIPs: .spec.clusterIPs}''`.
+
+
+      ### Исходные настройки портов Service {#q106-service-original-port-tuple}
+
+
+      Изменение порта, протокола, цели или NodePort могло нарушить исходный контракт. Сравните настройки каждого порта и проверьте, что именованная цель одинаково разрешается во всех текущих Pod board. `kubectl get service board-internal board-headless board-node -o json | jq ''.items[] | {name: .metadata.name, ports: .spec.ports}''`.
+
+
+      ### Число Service {#q106-service-contract-count}
+
+
+      Один из трёх заданных Service может отсутствовать, а сохранённый список может быть неполным или недоступным. Проверьте board-internal, board-headless, board-node и количество записей в service-contracts.json. `kubectl get service board-internal board-headless board-node -o name; jq length /run/dq/facts/0/service-contracts.json`.
+
+
+      ### Тип внутреннего Service {#q106-internal-service-type}
+
+
+      Тип внутреннего Service мог измениться. Проверьте board-internal и сохраните ClusterIP для доступа внутри кластера. `kubectl get service board-internal -o jsonpath=''{.spec.type}''`.
+
+
+      ### Внутренний виртуальный адрес {#q106-internal-virtual-address}
+
+
+      У внутреннего Service мог отсутствовать виртуальный адрес. Проверьте, что clusterIP у board-internal задан и отличается от None. `kubectl get service board-internal -o jsonpath=''{.spec.clusterIP}''`.
+
+
+      ### Адрес headless Service {#q106-headless-service-address}
+
+
+      Headless Service мог получить виртуальный ClusterIP. Сохраните clusterIP равным None, чтобы DNS мог возвращать адреса endpoints. `kubectl get service board-headless -o jsonpath=''{.spec.clusterIP}''`.
+
+
+      ### Тип Service для NodePort {#q106-nodeport-service-type}
+
+
+      Сервис доступа через ноду мог потерять тип NodePort. Проверьте board-node перед диагностикой запроса через ноду. `kubectl get service board-node -o jsonpath=''{.spec.type}''`.
+
+
+      ### Выделенный HTTP NodePort {#q106-allocated-http-nodeport}
+
+
+      Именованный порт http мог отсутствовать, дублироваться или не иметь выделенного nodePort. Проверьте у board-node единственную запись http с целым nodePort не меньше 30000. `kubectl get service board-node -o json | jq ''.spec.ports[] | select(.name == "http") | .nodePort''`.
+
+
+      ### Селекторы для board {#q106-service-board-selectors}
+
+
+      Устаревший или слишком широкий селектор может пропускать текущие Pod board или захватывать посторонний Pod. Сравните селектор с фактическими метками и сохраните app=board. `kubectl get service board-internal board-headless board-node -o json | jq ''.items[] | {name: .metadata.name, selector: .spec.selector}''; kubectl get pods --show-labels`.
+
+
+      ### HTTP по имени Service {#q106-service-name-http}
+
+
+      Имя Service может разрешаться без доступного endpoint board или вести к Pod с другим ответом. Из client запросите указанное имя на 8080 и сравните с north-106. `for name in board-internal board-headless board-node; do kubectl exec deployment/client -- wget -qO- -T 3 "http://$name:8080"; done`.
+
+
+      ### HTTP через приватный NodePort {#q106-private-nodeport-http}
+
+
+      Внутренний путь Service может работать, пока не работает адрес ноды или её HTTP NodePort. Проверьте выделенный NodePort и запросите его из client через выданный адрес ноды. `kubectl get service board-node -o jsonpath=''{.spec.ports[?(@.name=="http")].nodePort}''`.
+
+
+      ### Ответ DNS для headless Service {#q106-headless-pod-dns}
+
+
+      У headless Service могло не быть готового endpoint board, либо DNS показывает другой адрес. Сравните A-ответ с ожидаемым IP Pod board. `kubectl exec deployment/client -- nslookup -type=A "board-headless.$DQ_NAMESPACE.svc.cluster.local."`.
+
+
+      ### Входы проверки контракта {#q106-service-contract-observer-input}
+
+
+      Проверка контракта может прерваться до сравнения полей при ошибке процесса или входов. Проверьте инструменты и доступ к Service и исходным записям. `command -v python3; kubectl get services -o name`.
+
+
+      ### Входы проверки селекторов {#q106-service-selector-observer-input}
+
+
+      Проверка селекторов может остановиться до указания Service. Проверьте Python и доступ к текущим Pod и Service. `command -v python3; kubectl get pods --show-labels; kubectl get services -o name`.
+
+
+      ### Приватный IngressClass {#q107-ingress-private-class}
+
+
+      Ingress мог использовать класс другого контроллера, либо не читается выданный класс. Сравните ingressClassName с предоставленным приватным классом перед проверкой маршрутов. `kubectl get ingress board -o jsonpath=''{.spec.ingressClassName}''`.
+
+
+      ### Правило для хоста станции {#q107-ingress-station-host}
+
+
+      Правило хоста могло исчезнуть или содержать другое имя. Найдите station.internal в текущем Ingress перед проверкой путей. `kubectl get ingress board -o json | jq ''[.spec.rules[].host]''`.
+
+
+      ### Корневой путь Ingress {#q107-ingress-root-path}
+
+
+      Хост может совпадать, даже если в его списке нет корневого пути. Проверьте путь / в правиле station.internal. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | [.http.paths[].path]''`.
+
+
+      ### Сопоставление корневого пути {#q107-ingress-prefix-matching}
+
+
+      Правило могло объявить / с Exact или другим типом пути. Для / под station.internal проверьте Prefix. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | .http.paths[] | {path, pathType}''`.
+
+
+      ### Порт backend для board {#q107-ingress-board-service-port}
+
+
+      Путь для station.internal мог остаться на 8099 или ссылаться на другой backend. Проверьте, что каждый путь ведёт к Service board на 8080 напрямую или через однозначное имя TCP-порта. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | [.http.paths[].backend]''; kubectl get service board -o json | jq ''.spec.ports''`.
+
+
+      ### Запрос с подходящим Host {#q107-ingress-live-request}
+
+
+      Ingress мог быть настроен, пока контроллер ещё применяет изменения либо endpoint board недоступен. Отправьте подходящий заголовок Host на выданный URL и сравните ответ с north-107. `source components.env; kubectl exec deployment/client -- wget -qO- -T 3 --header=''Host: station.internal'' "$INGRESS_URL"`.
+
+
+      ### Запрос с неподходящим Host {#q107-ingress-unmatched-host}
+
+
+      Правило для всех хостов или backend по умолчанию может принимать неподходящий хост. Отправьте другой заголовок Host через тот же URL и проверьте, что запрос не проходит. `source components.env; kubectl exec deployment/client -- wget -qO- -T 3 --header=''Host: wrong.station.internal'' "$INGRESS_URL"`.
+
+
+      ### Входы проверки Ingress {#q107-ingress-contract-observer-input}
+
+
+      Проверка маршрута может остановиться до указания условия при ошибке процесса или входов. Проверьте Python и доступ к Ingress и Service. `command -v python3; kubectl get ingress board -o name; kubectl get service board -o name`.
+
+
+      ### Приватный IngressClass {#q110-ingress-private-class}
+
+
+      Ingress мог использовать класс другого контроллера, либо не читается выданный класс. Сравните ingressClassName с предоставленным приватным классом перед проверкой маршрутов. `kubectl get ingress board -o jsonpath=''{.spec.ingressClassName}''`.
+
+
+      ### HTTP-ответ станции {#q110-ingress-live-request}
+
+
+      Ingress мог быть настроен, пока контроллер ещё применяет изменения либо endpoint board недоступен. Отправьте подходящий заголовок Host на station.internal:8000 и сравните ответ с north-110. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header=''Host: station.internal'' http://station.internal:8000`.
+
+
+      ### Запрос с неподходящим Host {#q110-ingress-unmatched-host}
+
+
+      Правило для всех хостов или backend по умолчанию может принимать неподходящий хост. Отправьте другой заголовок Host через тот же URL и проверьте, что запрос не проходит. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header=''Host: wrong.station.internal'' http://station.internal:8000`.
+
+
+      ### Действующее корневое правило станции {#q110-incident-station-root-rule}
+
+
+      Правило station.internal могло отсутствовать или не иметь подходящего корневого пути. Проверьте / с Exact или Prefix. Если заданы оба типа, для корневого запроса сначала смотрите Exact. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | .http.paths[] | {path, pathType}''`.
+
+
+      ### Порт выбранного backend {#q110-incident-ingress-service-port}
+
+
+      Выбранный корневой маршрут мог остаться на отсутствующем порту 8099 или указывать на другой Service. Проверьте для каждого выбранного пути ровно один TCP-порт board по номеру или имени. Ошибка чтения Ingress, Service или исходной записи даёт тот же маркер. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | [.http.paths[].backend]''; kubectl get service board -o json | jq ''.spec.ports''`.
+
+
+      ### Входы проверки Ingress {#q110-incident-ingress-observer-input}
+
+
+      Проверка Ingress может прерваться до сравнения выбранного пути. Проверьте инструменты станции и доступ к Ingress и Service board. `command -v python3; kubectl get ingress board -o name; kubectl get service board -o name`.
+
+
       ### Селектор Service и готовые endpoints {#arrivals-ready-endpoint}
 
 
@@ -2007,7 +2379,7 @@ kubernetes-10:
       В задании 062 выбор целевых Pod и принадлежность разрешённых отправителей — отдельные связи. Политика может сохранять нужную границу, хотя запрашивающая нагрузка ей уже не соответствует. Метка текущего Pod и шаблон Deployment имеют разные сроки жизни. Сопоставьте желаемые метки и текущие принадлежащие нагрузке Pod, не расширяя исходную входящую границу; разрешённый и запрещённый запросы — независимые контрольные наблюдения. Сохранённые идентичности объектов и предоставленные образы удерживают исправление в исходной топологии.
 
 
-      В квесте 110 сначала разрешите `station.internal` в адрес частного Service контроллера, затем проверяйте HTTP. Проверьте заданный class Ingress, host, путь `/` типа Prefix и backend `board:8080`: правильный Host должен вернуть `north-110`, запрос с неправильным Host — завершиться ошибкой. Успех DNS не доказывает маршрутизацию, а одна ошибка запроса не определяет ее причину.
+      В квесте 110 сначала разрешите `station.internal` в адрес частного Service контроллера, затем проверяйте HTTP. Проверьте заданные класс Ingress и имя хоста. Для пути `/` проверка выбирает Exact, если такое правило есть, иначе Prefix. Выбранное правило должно направлять запросы на `board:8080`. С правильным Host должен прийти ответ `north-110`, а запрос с неправильным Host должен завершиться ошибкой. Успех DNS не доказывает маршрутизацию, а одна ошибка запроса не определяет ее причину.
 
 
       В квесте 106 ClusterIP, headless DNS и NodePort дают разные пути к одним выбранным Pod. Исправьте selector каждого Service на `app: board`, сохранив записанные UID, type, IP и порядок портов. Проверьте три имени Service на порту `8080` и NodePort частного узла (не менее `30000`): каждый должен вернуть `north-106`. Проверьте полный IP Pod в ответе headless DNS и дождитесь согласования.
@@ -2132,6 +2504,192 @@ kubernetes-10:
     pl: 'Nazwa Service jest przekształcana w adres wirtualny. Jego selector i gotowe EndpointSlice określają, które adresy podów odbierają ruch. Sam sukces DNS nie dowodzi, że Service ma użyteczny backend.
 
 
+  ### Pierwotny UID Service {#q106-service-original-uid}
+
+
+  Ponowne utworzenie Service pod tą samą nazwą trwale zmienia UID. Porównaj bieżący obiekt z zamrożonym kontraktem przed zmianą selektora. `kubectl get service board-internal board-headless board-node -o custom-columns=NAME:.metadata.name,UID:.metadata.uid`.
+
+
+  ### Pierwotny typ Service {#q106-service-original-type}
+
+
+  Zmiana typu Service może zmienić dostęp klientów. Porównaj typ wskazanego obiektu z kontraktem i popraw selektor bez zmiany typu. `kubectl get service board-internal board-headless board-node -o custom-columns=NAME:.metadata.name,TYPE:.spec.type`.
+
+
+  ### Pierwotny główny clusterIP {#q106-service-original-cluster-ip}
+
+
+  Odtworzenie lub zmiana typu mogły zmienić główny clusterIP. Porównaj wskazaną wartość z kontraktem, w tym None dla Service headless. `kubectl get service board-internal board-headless board-node -o custom-columns=NAME:.metadata.name,IP:.spec.clusterIP`.
+
+
+  ### Pierwotna lista adresów {#q106-service-original-address-list}
+
+
+  Odtworzenie lub zmiana rodziny adresów mogły zmienić listę. Porównaj całe clusterIPs z pierwotną listą w tej samej kolejności. `kubectl get service board-internal board-headless board-node -o json | jq ''.items[] | {name: .metadata.name, clusterIPs: .spec.clusterIPs}''`.
+
+
+  ### Pierwotny kontrakt portów Service {#q106-service-original-port-tuple}
+
+
+  Zmiana portu, protokołu, celu lub NodePort może naruszyć kontrakt. Porównaj ustawienia każdego portu i sprawdź spójne rozwiązanie nazwanych celów w bieżących podach board. `kubectl get service board-internal board-headless board-node -o json | jq ''.items[] | {name: .metadata.name, ports: .spec.ports}''`.
+
+
+  ### Liczba Service {#q106-service-contract-count}
+
+
+  Może brakować jednego z trzech wskazanych Service albo zapisany wykaz może być niepełny lub niedostępny. Sprawdź board-internal, board-headless, board-node i liczbę wpisów w service-contracts.json. `kubectl get service board-internal board-headless board-node -o name; jq length /run/dq/facts/0/service-contracts.json`.
+
+
+  ### Typ wewnętrznego Service {#q106-internal-service-type}
+
+
+  Wewnętrzny Service mógł zmienić typ. Sprawdź board-internal i zachowaj ClusterIP do dostępu w klastrze. `kubectl get service board-internal -o jsonpath=''{.spec.type}''`.
+
+
+  ### Wewnętrzny adres wirtualny {#q106-internal-virtual-address}
+
+
+  Wewnętrzny Service może nie mieć adresu wirtualnego. Sprawdź, czy clusterIP board-internal jest niepusty i różni się od None. `kubectl get service board-internal -o jsonpath=''{.spec.clusterIP}''`.
+
+
+  ### Adres Service headless {#q106-headless-service-address}
+
+
+  Service headless mógł otrzymać wirtualny ClusterIP. Zachowaj clusterIP równy None, aby DNS mógł zwracać adresy endpointów. `kubectl get service board-headless -o jsonpath=''{.spec.clusterIP}''`.
+
+
+  ### Typ Service NodePort {#q106-nodeport-service-type}
+
+
+  Service dostępny przez węzeł mógł stracić typ NodePort. Sprawdź board-node przed diagnozowaniem żądania przez węzeł. `kubectl get service board-node -o jsonpath=''{.spec.type}''`.
+
+
+  ### Przydzielony NodePort HTTP {#q106-allocated-http-nodeport}
+
+
+  Nazwany port http może nie istnieć, występować wielokrotnie albo nie mieć nodePort. Sprawdź jeden wpis http w board-node z całkowitym nodePort co najmniej 30000. `kubectl get service board-node -o json | jq ''.spec.ports[] | select(.name == "http") | .nodePort''`.
+
+
+  ### Selektory dla board {#q106-service-board-selectors}
+
+
+  Stary lub zbyt szeroki selektor może pomijać bieżące pody board albo obejmować obcy pod. Porównaj selektor z etykietami i zachowaj app=board. `kubectl get service board-internal board-headless board-node -o json | jq ''.items[] | {name: .metadata.name, selector: .spec.selector}''; kubectl get pods --show-labels`.
+
+
+  ### HTTP według nazwy Service {#q106-service-name-http}
+
+
+  Nazwa Service może się rozwiązywać bez dostępnego endpointu board albo trafiać do poda z inną odpowiedzią. Odpytaj wskazaną nazwę z client na 8080 i porównaj z north-106. `for name in board-internal board-headless board-node; do kubectl exec deployment/client -- wget -qO- -T 3 "http://$name:8080"; done`.
+
+
+  ### HTTP przez prywatny NodePort {#q106-private-nodeport-http}
+
+
+  Ścieżka wewnątrz klastra może działać, choć adres węzła lub HTTP NodePort nie działa. Sprawdź przydzielony NodePort i odpytaj go z client przez podany adres węzła. `kubectl get service board-node -o jsonpath=''{.spec.ports[?(@.name=="http")].nodePort}''`.
+
+
+  ### Wynik DNS dla Service headless {#q106-headless-pod-dns}
+
+
+  Service headless może nie wybierać gotowego endpointu board lub DNS może zwracać inny adres. Porównaj odpowiedź A z oczekiwanym IP poda board. `kubectl exec deployment/client -- nslookup -type=A "board-headless.$DQ_NAMESPACE.svc.cluster.local."`.
+
+
+  ### Dane kontroli kontraktu {#q106-service-contract-observer-input}
+
+
+  Kontrola kontraktu może przerwać działanie przed porównaniem pól przez błąd procesu lub wejścia. Sprawdź narzędzia i dostęp do Service oraz pierwotnego zapisu. `command -v python3; kubectl get services -o name`.
+
+
+  ### Dane kontroli selektorów {#q106-service-selector-observer-input}
+
+
+  Kontrola selektorów może zatrzymać się przed wskazaniem Service. Sprawdź narzędzia Python i dostęp do bieżących podów oraz Service. `command -v python3; kubectl get pods --show-labels; kubectl get services -o name`.
+
+
+  ### Prywatny IngressClass {#q107-ingress-private-class}
+
+
+  Ingress może używać klasy innego kontrolera albo dane klasy są nieczytelne. Porównaj ingressClassName z podaną prywatną klasą przed sprawdzeniem tras. `kubectl get ingress board -o jsonpath=''{.spec.ingressClassName}''`.
+
+
+  ### Reguła hosta stacji {#q107-ingress-station-host}
+
+
+  Reguła hosta może nie istnieć albo mieć inną nazwę. Sprawdź station.internal w aktywnym Ingress przed testem ścieżek. `kubectl get ingress board -o json | jq ''[.spec.rules[].host]''`.
+
+
+  ### Główna ścieżka Ingress {#q107-ingress-root-path}
+
+
+  Host może pasować, choć na liście brakuje ścieżki głównej. Sprawdź / pod station.internal. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | [.http.paths[].path]''`.
+
+
+  ### Dopasowanie ścieżki głównej {#q107-ingress-prefix-matching}
+
+
+  Reguła może definiować / z Exact lub innym typem ścieżki. Sprawdź Prefix dla / w station.internal. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | .http.paths[] | {path, pathType}''`.
+
+
+  ### Port backendu board {#q107-ingress-board-service-port}
+
+
+  Ścieżka station.internal może nadal kierować na 8099 lub inny backend. Sprawdź, czy każda ścieżka używa Service board na 8080, liczbowo albo przez jednoznaczną nazwę portu TCP. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | [.http.paths[].backend]''; kubectl get service board -o json | jq ''.spec.ports''`.
+
+
+  ### Żądanie z pasującym Host {#q107-ingress-live-request}
+
+
+  Ingress może być ustawiony, choć kontroler jeszcze go nie uzgodnił albo brak dostępnego endpointu board. Wyślij nagłówek Host na podany URL i porównaj treść z north-107. `source components.env; kubectl exec deployment/client -- wget -qO- -T 3 --header=''Host: station.internal'' "$INGRESS_URL"`.
+
+
+  ### Żądanie z obcym Host {#q107-ingress-unmatched-host}
+
+
+  Ogólna reguła lub domyślny backend może akceptować obcy host. Wyślij inny nagłówek Host pod ten sam URL i sprawdź, czy żądanie jest odrzucane. `source components.env; kubectl exec deployment/client -- wget -qO- -T 3 --header=''Host: wrong.station.internal'' "$INGRESS_URL"`.
+
+
+  ### Dane kontroli Ingress {#q107-ingress-contract-observer-input}
+
+
+  Kontrola trasy może zatrzymać się przed wskazaniem warunku przez błąd procesu lub danych. Sprawdź Pythona oraz dostęp do Ingress i Service. `command -v python3; kubectl get ingress board -o name; kubectl get service board -o name`.
+
+
+  ### Prywatny IngressClass {#q110-ingress-private-class}
+
+
+  Ingress może używać klasy innego kontrolera albo dane klasy są nieczytelne. Porównaj ingressClassName z podaną prywatną klasą przed sprawdzeniem tras. `kubectl get ingress board -o jsonpath=''{.spec.ingressClassName}''`.
+
+
+  ### Odpowiedź HTTP stacji {#q110-ingress-live-request}
+
+
+  Ingress może być ustawiony, choć kontroler jeszcze go nie uzgodnił albo brak dostępnego endpointu board. Wyślij nagłówek Host na station.internal:8000 i porównaj treść z north-110. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header=''Host: station.internal'' http://station.internal:8000`.
+
+
+  ### Żądanie z obcym Host {#q110-ingress-unmatched-host}
+
+
+  Ogólna reguła lub domyślny backend może akceptować obcy host. Wyślij inny nagłówek Host pod ten sam URL i sprawdź, czy żądanie jest odrzucane. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header=''Host: wrong.station.internal'' http://station.internal:8000`.
+
+
+  ### Skuteczna reguła główna stacji {#q110-incident-station-root-rule}
+
+
+  Reguły station.internal może brakować albo nie mieć właściwej ścieżki głównej. Sprawdź / z Exact lub Prefix. Gdy są oba, dla żądania głównego sprawdź najpierw Exact. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | .http.paths[] | {path, pathType}''`.
+
+
+  ### Port wybranego backendu {#q110-incident-ingress-service-port}
+
+
+  Wybrana trasa główna może nadal wskazywać nieistniejący port 8099 lub inny Service. Sprawdź, czy każda wybrana ścieżka rozwiązuje dokładnie jeden port TCP board po numerze lub nazwie. Nieczytelny Ingress, Service lub zapis też daje ten warunek. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | [.http.paths[].backend]''; kubectl get service board -o json | jq ''.spec.ports''`.
+
+
+  ### Dane kontroli Ingress {#q110-incident-ingress-observer-input}
+
+
+  Kontrola Ingress może przerwać działanie przed porównaniem wybranej trasy. Sprawdź narzędzia stanowiska i dostęp do Ingress i Service board. `command -v python3; kubectl get ingress board -o name; kubectl get service board -o name`.
+
+
   ### Selektor Service i gotowe punkty końcowe {#arrivals-ready-endpoint}
 
 
@@ -2150,7 +2708,7 @@ kubernetes-10:
   W zadaniu 062 wybór celów i przynależność dozwolonych źródeł to oddzielne relacje. Polityka może zachować zamierzoną granicę, mimo że żądające obciążenie już do niej nie należy. Etykiety bieżącego Poda i szablonu Deploymentu mają różne czasy życia. Porównaj żądane etykiety i bieżące należące do obciążenia Pody bez poszerzania pierwotnej granicy Ingress; dozwolone i zabronione żądania to niezależne kontrole. Zachowane tożsamości obiektów i dostarczone obrazy utrzymują naprawę w istniejącej topologii.
 
 
-  W zadaniu 110 najpierw rozwiąż `station.internal` na adres prywatnego Service kontrolera, a potem testuj HTTP. Sprawdź podaną klasę Ingress, host, ścieżkę `/` typu Prefix i backend `board:8080`: poprawny Host ma zwrócić `north-110`, a żądanie z błędnym Host ma się nie powieść. Sukces DNS nie dowodzi routingu, a sam błąd żądania nie określa jego przyczyny.
+  W zadaniu 110 najpierw rozwiąż `station.internal` na adres prywatnego Service kontrolera, a potem testuj HTTP. Sprawdź podaną klasę Ingress i nazwę hosta. Dla ścieżki `/` kontrola wybiera Exact, jeśli ta reguła istnieje, a w przeciwnym razie Prefix. Wybrana reguła ma kierować ruch do `board:8080`. Żądanie z poprawnym nagłówkiem Host ma zwrócić `north-110`, a żądanie z błędnym nagłówkiem Host ma się nie powieść. Sukces DNS nie dowodzi routingu, a sam błąd żądania nie określa jego przyczyny.
 
 
   W zadaniu 106 ClusterIP, headless DNS i NodePort to różne drogi do tych samych wybranych Podów. Popraw selector każdego Service na `app: board`, zachowując zapisane UID, type, IP i kolejność portów. Sprawdź trzy nazwy Service na porcie `8080` i NodePort prywatnego węzła (co najmniej `30000`): każdy ma zwrócić `north-106`. Sprawdź pełny IP Poda w odpowiedzi headless DNS i poczekaj na uzgodnienie stanu.
@@ -2273,6 +2831,192 @@ kubernetes-10:
     es: 'Un nombre Service se resuelve en una dirección virtual. Su selector y EndpointSlices listos determinan qué direcciones de pod reciben tráfico. El éxito de DNS por sí solo no prueba que el Service tenga un backend utilizable.
 
 
+  ### UID original del Service {#q106-service-original-uid}
+
+
+  Volver a crear un Service con el mismo nombre cambia su UID de forma irreversible. Compare el objeto activo con el contrato fijado antes de cambiar el selector. `kubectl get service board-internal board-headless board-node -o custom-columns=NAME:.metadata.name,UID:.metadata.uid`.
+
+
+  ### Tipo original del Service {#q106-service-original-type}
+
+
+  Cambiar el tipo de Service puede alterar el acceso. Compare el tipo afectado con su contrato y ajuste el selector conservando el tipo. `kubectl get service board-internal board-headless board-node -o custom-columns=NAME:.metadata.name,TYPE:.spec.type`.
+
+
+  ### clusterIP principal original {#q106-service-original-cluster-ip}
+
+
+  El reemplazo o cambio de tipo puede haber alterado clusterIP. Compare el valor indicado con el contrato, incluido None en el Service headless. `kubectl get service board-internal board-headless board-node -o custom-columns=NAME:.metadata.name,IP:.spec.clusterIP`.
+
+
+  ### Lista original de direcciones {#q106-service-original-address-list}
+
+
+  El reemplazo o un cambio de familia puede haber alterado la lista. Compare todo clusterIPs con la lista original y su orden. `kubectl get service board-internal board-headless board-node -o json | jq ''.items[] | {name: .metadata.name, clusterIPs: .spec.clusterIPs}''`.
+
+
+  ### Contrato original de puertos del Service {#q106-service-original-port-tuple}
+
+
+  Un cambio de puerto, protocolo, destino o NodePort puede romper el contrato. Compare cada entrada y compruebe que los destinos nombrados se resuelvan igual en los Pods board actuales. `kubectl get service board-internal board-headless board-node -o json | jq ''.items[] | {name: .metadata.name, ports: .spec.ports}''`.
+
+
+  ### Cantidad de Service {#q106-service-contract-count}
+
+
+  Puede faltar uno de los tres Service indicados o el inventario guardado puede estar incompleto o no poder leerse. Comprueba board-internal, board-headless, board-node y la cantidad de entradas en service-contracts.json. `kubectl get service board-internal board-headless board-node -o name; jq length /run/dq/facts/0/service-contracts.json`.
+
+
+  ### Tipo del Service interno {#q106-internal-service-type}
+
+
+  El Service interno puede haber cambiado de tipo. Revise board-internal y conserve ClusterIP para el acceso dentro del clúster. `kubectl get service board-internal -o jsonpath=''{.spec.type}''`.
+
+
+  ### Dirección virtual interna {#q106-internal-virtual-address}
+
+
+  El Service interno puede carecer de dirección virtual. Compruebe que clusterIP de board-internal esté definido y difiera de None. `kubectl get service board-internal -o jsonpath=''{.spec.clusterIP}''`.
+
+
+  ### Dirección del Service headless {#q106-headless-service-address}
+
+
+  El Service headless puede haber recibido un ClusterIP virtual. Mantenga clusterIP en el literal None para que DNS pueda devolver direcciones de endpoints. `kubectl get service board-headless -o jsonpath=''{.spec.clusterIP}''`.
+
+
+  ### Tipo del Service NodePort {#q106-nodeport-service-type}
+
+
+  El Service accesible desde el nodo puede haber perdido el tipo NodePort. Revise board-node antes de diagnosticar la petición al nodo. `kubectl get service board-node -o jsonpath=''{.spec.type}''`.
+
+
+  ### NodePort HTTP asignado {#q106-allocated-http-nodeport}
+
+
+  El puerto http puede faltar, estar duplicado o carecer de nodePort. Revise la única entrada http de board-node con un nodePort entero de al menos 30000. `kubectl get service board-node -o json | jq ''.spec.ports[] | select(.name == "http") | .nodePort''`.
+
+
+  ### Selectores para board {#q106-service-board-selectors}
+
+
+  Un selector antiguo o demasiado amplio puede omitir Pods board actuales o incluir un Pod ajeno. Compare el selector con las etiquetas reales y conserve app=board. `kubectl get service board-internal board-headless board-node -o json | jq ''.items[] | {name: .metadata.name, selector: .spec.selector}''; kubectl get pods --show-labels`.
+
+
+  ### HTTP por nombre de Service {#q106-service-name-http}
+
+
+  El nombre Service puede resolverse sin endpoint board disponible o llegar a un Pod con otro contenido. Consulte el nombre desde client en 8080 y compare con north-106. `for name in board-internal board-headless board-node; do kubectl exec deployment/client -- wget -qO- -T 3 "http://$name:8080"; done`.
+
+
+  ### HTTP por NodePort privado {#q106-private-nodeport-http}
+
+
+  La ruta interna puede funcionar aunque falle la dirección del nodo o su NodePort HTTP. Revise el NodePort asignado y consúltelo desde client por la dirección del nodo suministrada. `kubectl get service board-node -o jsonpath=''{.spec.ports[?(@.name=="http")].nodePort}''`.
+
+
+  ### Resultado DNS del Service headless {#q106-headless-pod-dns}
+
+
+  El Service headless puede carecer de endpoint board listo o DNS devolver otra dirección. Compare la respuesta A con la IP esperada del Pod board. `kubectl exec deployment/client -- nslookup -type=A "board-headless.$DQ_NAMESPACE.svc.cluster.local."`.
+
+
+  ### Entradas de la comprobación del contrato {#q106-service-contract-observer-input}
+
+
+  El observador puede detenerse antes de comparar campos si falla el proceso o la entrada. Revise las herramientas y el acceso a los Service y registros fijados. `command -v python3; kubectl get services -o name`.
+
+
+  ### Entradas de la comprobación de selectores {#q106-service-selector-observer-input}
+
+
+  El observador de selectores puede detenerse antes de señalar un Service. Revise Python y el acceso a Pods y Service activos. `command -v python3; kubectl get pods --show-labels; kubectl get services -o name`.
+
+
+  ### IngressClass privada {#q107-ingress-private-class}
+
+
+  Ingress puede usar la clase de otro controlador o no poder leer la clase suministrada. Compare ingressClassName con la clase privada antes de revisar las rutas. `kubectl get ingress board -o jsonpath=''{.spec.ingressClassName}''`.
+
+
+  ### Regla del host de estación {#q107-ingress-station-host}
+
+
+  La regla de host puede faltar o tener otro nombre. Busque station.internal en el Ingress activo antes de probar rutas. `kubectl get ingress board -o json | jq ''[.spec.rules[].host]''`.
+
+
+  ### Ruta raíz de Ingress {#q107-ingress-root-path}
+
+
+  El host puede coincidir aunque falte la ruta raíz. Compruebe / dentro de station.internal. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | [.http.paths[].path]''`.
+
+
+  ### Coincidencia de la ruta raíz {#q107-ingress-prefix-matching}
+
+
+  La regla puede declarar / con Exact u otro tipo. Compruebe que / bajo station.internal use Prefix. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | .http.paths[] | {path, pathType}''`.
+
+
+  ### Puerto del backend de board {#q107-ingress-board-service-port}
+
+
+  Una ruta de station.internal puede seguir en 8099 o apuntar a otro backend. Compruebe que cada ruta use Service board en 8080, directamente o por un puerto TCP nombrado que resuelva a 8080. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | [.http.paths[].backend]''; kubectl get service board -o json | jq ''.spec.ports''`.
+
+
+  ### Petición con Host coincidente {#q107-ingress-live-request}
+
+
+  Ingress puede estar configurado pero sin reconciliar, o no responder un endpoint de board. Envíe la cabecera Host al URL suministrado y compare el cuerpo con north-107. `source components.env; kubectl exec deployment/client -- wget -qO- -T 3 --header=''Host: station.internal'' "$INGRESS_URL"`.
+
+
+  ### Petición con Host distinto {#q107-ingress-unmatched-host}
+
+
+  Una regla general o backend por defecto puede aceptar un host sin coincidencia. Envíe la cabecera Host distinta al mismo URL y compruebe que la petición no tenga éxito. `source components.env; kubectl exec deployment/client -- wget -qO- -T 3 --header=''Host: wrong.station.internal'' "$INGRESS_URL"`.
+
+
+  ### Entradas de la comprobación de Ingress {#q107-ingress-contract-observer-input}
+
+
+  El observador puede detenerse antes de indicar una condición si falla el proceso o su entrada. Revise Python y el acceso a Ingress y Service. `command -v python3; kubectl get ingress board -o name; kubectl get service board -o name`.
+
+
+  ### IngressClass privada {#q110-ingress-private-class}
+
+
+  Ingress puede usar la clase de otro controlador o no poder leer la clase suministrada. Compare ingressClassName con la clase privada antes de revisar las rutas. `kubectl get ingress board -o jsonpath=''{.spec.ingressClassName}''`.
+
+
+  ### Respuesta HTTP de la estación {#q110-ingress-live-request}
+
+
+  Ingress puede estar configurado pero sin reconciliar, o no responder un endpoint de board. Envíe la cabecera Host al URL station.internal:8000 y compare el cuerpo con north-110. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header=''Host: station.internal'' http://station.internal:8000`.
+
+
+  ### Petición con Host distinto {#q110-ingress-unmatched-host}
+
+
+  Una regla general o backend por defecto puede aceptar un host sin coincidencia. Envíe la cabecera Host distinta al mismo URL y compruebe que la petición no tenga éxito. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header=''Host: wrong.station.internal'' http://station.internal:8000`.
+
+
+  ### Regla raíz efectiva de la estación {#q110-incident-station-root-rule}
+
+
+  La regla station.internal puede faltar o no tener una ruta raíz válida. Revise / con Exact o Prefix. Si existen ambas, inspeccione primero Exact para la petición raíz. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | .http.paths[] | {path, pathType}''`.
+
+
+  ### Puerto del backend elegido {#q110-incident-ingress-service-port}
+
+
+  La ruta raíz elegida puede seguir en el puerto inexistente 8099 o apuntar a otro Service. Compruebe que cada ruta elegida resuelva un solo puerto TCP de board por nombre o número. Un Ingress, Service o registro ilegible activa la misma condición. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | [.http.paths[].backend]''; kubectl get service board -o json | jq ''.spec.ports''`.
+
+
+  ### Entradas del observador de Ingress {#q110-incident-ingress-observer-input}
+
+
+  El observador Ingress puede detenerse antes de comparar la ruta elegida. Revise las herramientas y el acceso al Ingress y al Service board. `command -v python3; kubectl get ingress board -o name; kubectl get service board -o name`.
+
+
   ### Selector de Service y endpoints listos {#arrivals-ready-endpoint}
 
 
@@ -2291,7 +3035,7 @@ kubernetes-10:
   En el quest 062, seleccionar destinos y pertenecer a las fuentes permitidas son relaciones distintas. Una política puede conservar el límite previsto aunque una carga solicitante ya no pertenezca a él. Las etiquetas de un Pod actual y de una plantilla de Deployment tienen vidas diferentes. Compara etiquetas deseadas y Pods actuales sin ampliar la entrada original; peticiones permitidas y denegadas son controles independientes. Identidades conservadas e imágenes suministradas mantienen la reparación en la topología existente.
 
 
-  En el ejercicio 110, resuelve primero `station.internal` a la dirección del Service privado del controlador y después prueba HTTP. Comprueba la clase Ingress indicada, host, ruta `/` de tipo Prefix y backend `board:8080`: el Host correcto debe devolver `north-110` y la solicitud con Host incorrecto debe fallar. Un DNS correcto no demuestra el enrutamiento y un fallo aislado no identifica su causa.
+  En el ejercicio 110, resuelve primero `station.internal` a la dirección del Service privado del controlador y después prueba HTTP. Comprueba la clase Ingress y el nombre de host indicados. Para la ruta `/`, la comprobación elige Exact si existe esa regla y Prefix en caso contrario. La regla seleccionada debe dirigir el tráfico a `board:8080`. La solicitud con el encabezado Host correcto debe devolver `north-110` y la solicitud con un Host incorrecto debe fallar. Un DNS correcto no demuestra el enrutamiento y un fallo aislado no identifica su causa.
 
 
   En el ejercicio 106, ClusterIP, DNS headless y NodePort son caminos distintos hacia los mismos Pods seleccionados. Corrige el selector de cada Service a `app: board` sin cambiar su UID, type, IP ni puertos ordenados registrados. Prueba los tres nombres de Service en el puerto `8080` y el NodePort del nodo privado (al menos `30000`): cada uno debe devolver `north-106`. Comprueba la IP completa del Pod en la respuesta DNS headless y espera la reconciliación.
@@ -2414,6 +3158,192 @@ kubernetes-10:
     de: 'Ein Service-Name wird in eine virtuelle Adresse aufgelöst. Sein selector und die fertigen EndpointSlices bestimmen, welche Pod-Adressen Datenverkehr empfangen. Der Erfolg von DNS allein beweist nicht, dass der Service über einen brauchbaren backend verfügt.
 
 
+      ### Ursprüngliche Service-UID {#q106-service-original-uid}
+
+
+      Das Neuerstellen eines Services unter gleichem Namen ändert seine UID dauerhaft. Vergleichen Sie das aktive Objekt vor einer Selektoränderung mit dem festgehaltenen Vertrag. `kubectl get service board-internal board-headless board-node -o custom-columns=NAME:.metadata.name,UID:.metadata.uid`.
+
+
+      ### Ursprünglicher Service-Typ {#q106-service-original-type}
+
+
+      Ein anderer Service-Typ kann den Zugriff ändern. Vergleichen Sie den gemeldeten Typ mit dem Vertrag und korrigieren Sie den Selektor bei unverändertem Typ. `kubectl get service board-internal board-headless board-node -o custom-columns=NAME:.metadata.name,TYPE:.spec.type`.
+
+
+      ### Ursprüngliche primäre clusterIP {#q106-service-original-cluster-ip}
+
+
+      Ersatz oder Typwechsel können die primäre clusterIP geändert haben. Vergleichen Sie den gemeldeten Wert mit dem Vertrag, einschließlich None beim Headless-Service. `kubectl get service board-internal board-headless board-node -o custom-columns=NAME:.metadata.name,IP:.spec.clusterIP`.
+
+
+      ### Ursprüngliche Adressliste {#q106-service-original-address-list}
+
+
+      Ersatz oder Wechsel der Adressfamilie können die Adressliste geändert haben. Vergleichen Sie alle clusterIPs in der ursprünglichen Reihenfolge mit dem Vertrag. `kubectl get service board-internal board-headless board-node -o json | jq ''.items[] | {name: .metadata.name, clusterIPs: .spec.clusterIPs}''`.
+
+
+      ### Ursprünglicher Service-Port-Vertrag {#q106-service-original-port-tuple}
+
+
+      Ein anderer Port, ein Protokollwechsel, ein anderes Ziel oder NodePort kann den Vertrag verletzen. Vergleichen Sie jeden Eintrag und prüfen Sie die einheitliche Auflösung benannter Ziele in aktuellen board-Pods. `kubectl get service board-internal board-headless board-node -o json | jq ''.items[] | {name: .metadata.name, ports: .spec.ports}''`.
+
+
+      ### Anzahl der Services {#q106-service-contract-count}
+
+
+      Einer der drei genannten Services fehlt möglicherweise, oder die gespeicherte Liste ist unvollständig oder nicht lesbar. Prüfe board-internal, board-headless, board-node und die Anzahl der Einträge in service-contracts.json. `kubectl get service board-internal board-headless board-node -o name; jq length /run/dq/facts/0/service-contracts.json`.
+
+
+      ### Typ des internen Services {#q106-internal-service-type}
+
+
+      Der interne Service hat möglicherweise einen anderen Typ. Prüfen Sie board-internal und behalten Sie ClusterIP für den Zugriff im Cluster. `kubectl get service board-internal -o jsonpath=''{.spec.type}''`.
+
+
+      ### Interne virtuelle Adresse {#q106-internal-virtual-address}
+
+
+      Dem internen Service fehlt möglicherweise eine virtuelle Adresse. Prüfen Sie, ob clusterIP von board-internal gesetzt ist und von None abweicht. `kubectl get service board-internal -o jsonpath=''{.spec.clusterIP}''`.
+
+
+      ### Adresse des Headless-Services {#q106-headless-service-address}
+
+
+      Der Headless-Service hat möglicherweise eine virtuelle ClusterIP erhalten. Belassen Sie clusterIP auf dem Literal None, damit DNS Endpoint-Adressen liefern kann. `kubectl get service board-headless -o jsonpath=''{.spec.clusterIP}''`.
+
+
+      ### Typ des NodePort-Services {#q106-nodeport-service-type}
+
+
+      Der über den Knoten erreichbare Service hat möglicherweise den Typ NodePort verloren. Prüfen Sie board-node vor der Diagnose des Knotenzugriffs. `kubectl get service board-node -o jsonpath=''{.spec.type}''`.
+
+
+      ### Zugewiesener HTTP-NodePort {#q106-allocated-http-nodeport}
+
+
+      Der benannte http-Port fehlt möglicherweise, ist doppelt oder besitzt keinen zugewiesenen nodePort. Prüfen Sie den einzigen http-Eintrag von board-node mit einem ganzzahligen nodePort ab 30000. `kubectl get service board-node -o json | jq ''.spec.ports[] | select(.name == "http") | .nodePort''`.
+
+
+      ### Selektoren für board {#q106-service-board-selectors}
+
+
+      Ein veralteter oder zu breiter Selektor kann aktuelle board-Pods übersehen oder einen fremden Pod einschließen. Vergleichen Sie den Selektor mit den Pod-Labels und behalten Sie app=board. `kubectl get service board-internal board-headless board-node -o json | jq ''.items[] | {name: .metadata.name, selector: .spec.selector}''; kubectl get pods --show-labels`.
+
+
+      ### HTTP über den Service-Namen {#q106-service-name-http}
+
+
+      Der Service-Name wird möglicherweise ohne erreichbaren board-Endpoint aufgelöst oder erreicht einen Pod mit anderer Antwort. Fragen Sie den Namen aus client auf Port 8080 ab und vergleichen Sie mit north-106. `for name in board-internal board-headless board-node; do kubectl exec deployment/client -- wget -qO- -T 3 "http://$name:8080"; done`.
+
+
+      ### HTTP über den privaten NodePort {#q106-private-nodeport-http}
+
+
+      Der interne Pfad kann funktionieren, während Knotenadresse oder HTTP-NodePort ausfallen. Prüfen Sie den zugewiesenen NodePort und rufen Sie ihn aus client über die bereitgestellte Knotenadresse auf. `kubectl get service board-node -o jsonpath=''{.spec.ports[?(@.name=="http")].nodePort}''`.
+
+
+      ### DNS-Ergebnis des Headless-Services {#q106-headless-pod-dns}
+
+
+      Der Headless-Service hat möglicherweise keinen bereiten board-Endpoint oder DNS liefert eine andere Adresse. Vergleichen Sie die A-Antwort mit der erwarteten IP des board-Pods. `kubectl exec deployment/client -- nslookup -type=A "board-headless.$DQ_NAMESPACE.svc.cluster.local."`.
+
+
+      ### Eingaben für die Vertragsprüfung {#q106-service-contract-observer-input}
+
+
+      Die Vertragsprüfung kann vor dem Feldvergleich abbrechen, wenn Prozess oder Eingaben fehlschlagen. Prüfen Sie Werkzeuge sowie Zugriff auf Services und festgehaltene Belege. `command -v python3; kubectl get services -o name`.
+
+
+      ### Eingaben für die Selektorprüfung {#q106-service-selector-observer-input}
+
+
+      Die Selektorprüfung kann vor der Meldung eines Services abbrechen. Prüfen Sie Python und den Zugriff auf aktuelle Pods und Services. `command -v python3; kubectl get pods --show-labels; kubectl get services -o name`.
+
+
+      ### Private IngressClass {#q107-ingress-private-class}
+
+
+      Der Ingress verwendet möglicherweise die Klasse eines anderen Controllers oder die gelieferte Klasse ist nicht lesbar. Vergleichen Sie ingressClassName vor der Routenprüfung mit der privaten Klasse. `kubectl get ingress board -o jsonpath=''{.spec.ingressClassName}''`.
+
+
+      ### Host-Regel der Station {#q107-ingress-station-host}
+
+
+      Die Host-Regel fehlt möglicherweise oder trägt einen anderen Namen. Prüfen Sie den aktiven Ingress vor dem Pfadtest auf station.internal. `kubectl get ingress board -o json | jq ''[.spec.rules[].host]''`.
+
+
+      ### Ingress-Wurzelpfad {#q107-ingress-root-path}
+
+
+      Der Host kann passen, obwohl der Wurzelpfad fehlt. Prüfen Sie / unter station.internal. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | [.http.paths[].path]''`.
+
+
+      ### Auswahl des Wurzelpfads {#q107-ingress-prefix-matching}
+
+
+      Die Regel definiert / möglicherweise mit Exact oder einem anderen Pfadtyp. Prüfen Sie unter station.internal, ob der Wurzelpfad Prefix verwendet. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | .http.paths[] | {path, pathType}''`.
+
+
+      ### Backend-Port von board {#q107-ingress-board-service-port}
+
+
+      Ein Pfad für station.internal verweist möglicherweise noch auf 8099 oder ein anderes Backend. Prüfen Sie, ob jeder Pfad Service board auf 8080 nutzt, numerisch oder über einen eindeutigen TCP-Portnamen. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | [.http.paths[].backend]''; kubectl get service board -o json | jq ''.spec.ports''`.
+
+
+      ### Anfrage mit passendem Host {#q107-ingress-live-request}
+
+
+      Der Ingress ist möglicherweise konfiguriert, aber noch nicht abgeglichen, oder kein nutzbarer board-Endpoint antwortet. Senden Sie den passenden Host-Header an die bereitgestellte URL und vergleichen Sie mit north-107. `source components.env; kubectl exec deployment/client -- wget -qO- -T 3 --header=''Host: station.internal'' "$INGRESS_URL"`.
+
+
+      ### Anfrage mit fremdem Host {#q107-ingress-unmatched-host}
+
+
+      Eine Auffangregel oder das Standard-Backend akzeptiert möglicherweise einen fremden Host. Senden Sie den anderen Host-Header an dieselbe URL und prüfen Sie, dass die Anfrage scheitert. `source components.env; kubectl exec deployment/client -- wget -qO- -T 3 --header=''Host: wrong.station.internal'' "$INGRESS_URL"`.
+
+
+      ### Eingaben für die Ingress-Prüfung {#q107-ingress-contract-observer-input}
+
+
+      Die Routenprüfung kann vor der Meldung einer Bedingung abbrechen, wenn Prozess oder Eingaben fehlschlagen. Prüfen Sie Python und Zugriff auf Ingress und Service. `command -v python3; kubectl get ingress board -o name; kubectl get service board -o name`.
+
+
+      ### Private IngressClass {#q110-ingress-private-class}
+
+
+      Der Ingress verwendet möglicherweise die Klasse eines anderen Controllers oder die gelieferte Klasse ist nicht lesbar. Vergleichen Sie ingressClassName vor der Routenprüfung mit der privaten Klasse. `kubectl get ingress board -o jsonpath=''{.spec.ingressClassName}''`.
+
+
+      ### HTTP-Antwort der Station {#q110-ingress-live-request}
+
+
+      Der Ingress ist möglicherweise konfiguriert, aber noch nicht abgeglichen, oder kein nutzbarer board-Endpoint antwortet. Senden Sie den passenden Host-Header an die URL station.internal:8000 und vergleichen Sie mit north-110. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header=''Host: station.internal'' http://station.internal:8000`.
+
+
+      ### Anfrage mit fremdem Host {#q110-ingress-unmatched-host}
+
+
+      Eine Auffangregel oder das Standard-Backend akzeptiert möglicherweise einen fremden Host. Senden Sie den anderen Host-Header an dieselbe URL und prüfen Sie, dass die Anfrage scheitert. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header=''Host: wrong.station.internal'' http://station.internal:8000`.
+
+
+      ### Wirksame Wurzelregel der Station {#q110-incident-station-root-rule}
+
+
+      Die Regel station.internal fehlt möglicherweise oder hat keinen passenden Wurzelpfad. Prüfen Sie / mit Exact oder Prefix. Wenn beide vorliegen, prüfen Sie für die Wurzelanfrage zunächst Exact. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | .http.paths[] | {path, pathType}''`.
+
+
+      ### Port des gewählten Backends {#q110-incident-ingress-service-port}
+
+
+      Die ausgewählte Wurzelroute verweist möglicherweise noch auf Port 8099 oder einen anderen Service. Prüfen Sie für jeden ausgewählten Pfad eine eindeutige TCP-Portauflösung an board nach Name oder Nummer. Nicht lesbarer Ingress, Service oder Beleg führt zur gleichen Meldung. `kubectl get ingress board -o json | jq ''.spec.rules[] | select(.host == "station.internal") | [.http.paths[].backend]''; kubectl get service board -o json | jq ''.spec.ports''`.
+
+
+      ### Eingaben für die Ingress-Prüfung {#q110-incident-ingress-observer-input}
+
+
+      Die Ingress-Prüfung kann vor dem Vergleich der ausgewählten Route abbrechen. Prüfen Sie die Workstation-Werkzeuge und den Zugriff auf Ingress und Service board. `command -v python3; kubectl get ingress board -o name; kubectl get service board -o name`.
+
+
       ### Service-Selektor und bereite Endpunkte {#arrivals-ready-endpoint}
 
 
@@ -2432,7 +3362,7 @@ kubernetes-10:
       In Quest 062 sind Zielauswahl und Zugehörigkeit erlaubter Quellen getrennte Beziehungen. Eine Policy kann ihre beabsichtigte Grenze behalten, während ein anfragender Workload nicht mehr dazugehört. Labels eines aktuellen Pods und einer Deployment-Vorlage haben verschiedene Lebensdauern. Vergleiche gewünschte Labels und aktuelle zugehörige Pods, ohne die ursprüngliche Ingress-Grenze zu erweitern; erlaubte und abgewiesene Anfragen sind unabhängige Kontrollen. Erhaltene Objektidentitäten und bereitgestellte Images halten die Reparatur in der vorhandenen Topologie.
 
 
-      Löse in Aufgabe 110 zuerst `station.internal` zur Adresse des privaten Controller-Service auf und prüfe danach HTTP. Kontrolliere die vorgegebene Ingress-Klasse, Host, Prefix-Pfad `/` und Backend `board:8080`: Der richtige Host muss `north-110` liefern, die Anfrage mit falschem Host fehlschlagen. DNS-Erfolg beweist keine Weiterleitung, und ein einzelner Fehlschlag nennt seine Ursache nicht.
+      Löse in Aufgabe 110 zuerst `station.internal` zur Adresse des privaten Controller-Service auf und prüfe danach HTTP. Kontrolliere die vorgegebene Ingress-Klasse und den Hostnamen. Für den Pfad `/` wählt die Prüfung Exact, falls diese Regel vorhanden ist, andernfalls Prefix. Die gewählte Regel muss den Verkehr an `board:8080` weiterleiten. Die Anfrage mit korrektem Host-Header muss `north-110` liefern. Die Anfrage mit falschem Host-Header muss fehlschlagen. DNS-Erfolg beweist keine Weiterleitung, und ein einzelner Fehlschlag nennt seine Ursache nicht.
 
 
       In Aufgabe 106 sind ClusterIP, Headless-DNS und NodePort verschiedene Wege zu denselben ausgewählten Pods. Korrigiere den Selector jedes Service auf `app: board`, ohne die aufgezeichnete UID, den Typ, die IPs oder die Portreihenfolge zu ändern. Prüfe alle drei Service-Namen auf Port `8080` und den NodePort des privaten Knotens (mindestens `30000`): Jeder muss `north-106` liefern. Prüfe die vollständige Pod-IP in der Headless-DNS-Antwort und warte auf den Abgleich.
