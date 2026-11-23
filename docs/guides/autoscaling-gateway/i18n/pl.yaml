@@ -313,4 +313,173 @@ text: |
   ```bash
   command -v python3; kubectl get gateway station -o name; kubectl get httproute board -o name
   ```
-source_hash: 5b6d030a5687f59600a80dba480aeae66abf2daa438d5bfdb8b2942db068bf24
+
+
+  ### Żądanie CPU workera board {#q130-storm-board-worker-cpu-request}
+
+  Worker w board może nie mieć dodatniego żądania CPU lub żądanie może przekraczać limit. Porównaj wartości CPU kontenera worker.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.containers[] | select(.name=="worker") | .resources'
+  ```
+
+  ### Limit CPU workera board {#q130-storm-board-worker-cpu-limit}
+
+  Worker w board może nie mieć dodatniego limitu CPU albo mieć limit powyżej 200m. Sprawdź efektywny limit CPU.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.containers[] | select(.name=="worker") | .resources.limits.cpu'
+  ```
+
+  ### Cel CPU i odwołanie do skalowanego zasobu {#q130-storm-hpa-cpu-target}
+
+  HPA może wskazywać inne obciążenie lub używać innej metryki CPU. Sprawdź odwołanie do Deploymentu board z apps/v1 oraz jeden cel CPU Resource typu Utilization o wartości 50 procent.
+
+  ```bash
+  kubectl get hpa board -o json | jq '{target: .spec.scaleTargetRef, metrics: .spec.metrics}'
+  ```
+
+  ### Bieżące wykorzystanie CPU {#q130-storm-hpa-current-cpu}
+
+  HPA może nie zgłaszać bieżącej próbki wykorzystania CPU Resource powyżej 50 procent. Sprawdź bieżącą metrykę przy obciążeniu właściwej usługi.
+
+  ```bash
+  kubectl get hpa board -o json | jq '.status.currentMetrics'
+  ```
+
+  ### Klasa Gateway dla station {#q130-storm-gateway-class}
+
+  Gateway station może używać innej klasy lub jej zapis może być niedostępny. Porównaj gatewayClassName z dostarczonym gateway-target.json.
+
+  ```bash
+  jq -er .class /run/dq/facts/0/gateway-target.json; kubectl get gateway station -o jsonpath='{.spec.gatewayClassName}'
+  ```
+
+  ### Akceptacja Gateway {#q130-storm-gateway-accepted}
+
+  Gateway station może jeszcze nie zgłaszać Accepted=True. Sprawdź jego warunki oraz przyczynę podaną przez kontroler.
+
+  ```bash
+  kubectl get gateway station -o json | jq '.status.conditions'
+  ```
+
+  ### Efektywny backend trasy {#q130-storm-effective-http-route}
+
+  Podane żądanie może nie pasować do trasy albo wybrana reguła może kierować ruch o dodatniej wadze do innego backendu lub portu. Porównaj Host north.station.internal i podany URL z wybraną regułą oraz portem Service board.
+
+  ```bash
+  jq -er .url /run/dq/facts/0/gateway-target.json; kubectl get httproute board -o json | jq '.spec | {hostnames,rules}'; kubectl get service board -o json | jq '.spec.ports'
+  ```
+
+  ### Rozwiązane odwołania trasy {#q130-storm-route-reference-status}
+
+  HTTPRoute może być nieczytelny lub żaden wpis rodzica nie zgłasza ResolvedRefs=True. Sprawdź bieżące warunki rodziców i wskazane backendy.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.status.parents[]? | {parentRef, conditions}'
+  ```
+
+  ### Ruch przychodzący z podanego Gateway {#q130-storm-gateway-ingress-policy}
+
+  Polityka board-ingress może wybierać niewłaściwe Pody lub dopuszczać szersze źródło albo port. Sprawdź Ingress, oba selektory w jednym peer dla gateway i wyłącznie TCP 8080.
+
+  ```bash
+  kubectl get networkpolicy board-ingress -o yaml; jq -er .namespace /run/dq/facts/0/gateway-target.json
+  ```
+
+  ### Rzeczywista odpowiedź przez Gateway {#q130-storm-live-gateway-response}
+
+  Żądanie z poprawnym Host przez podany Gateway może się nie powieść lub zwrócić inną treść. Ponów je z client i porównaj odpowiedź z north-130.
+
+  ```bash
+  url=$(jq -er .url /run/dq/facts/0/gateway-target.json); kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header='Host: north.station.internal' "$url"
+  ```
+
+  ### Odmowa bezpośredniego dostępu do board {#q130-storm-live-direct-denial}
+
+  Client może nadal docierać bezpośrednio do board:8080. Ponów bezpośrednie żądanie i sprawdź polityki zezwalające na ruch od client do board.
+
+  ```bash
+  kubectl exec deployment/client -c worker -- wget -qO- -T 2 http://board:8080
+  ```
+
+  ### Odmowa dla innego Host {#q130-storm-live-wrong-host-denial}
+
+  Podanego URL może brakować lub Gateway może nadal obsługiwać closed.station.internal. Sprawdź URL i ponów żądanie z tym Hostem, oczekując niepowodzenia.
+
+  ```bash
+  url=$(jq -er .url /run/dq/facts/0/gateway-target.json); kubectl exec deployment/client -c worker -- wget -qO- -T 2 --header='Host: closed.station.internal' "$url"
+  ```
+
+  ### Minimalna liczba replik HPA {#q130-hpa-minimum-replicas}
+
+  HPA mógł stracić dolną granicę skalowania. Sprawdź minReplicas i zachowaj jedną replikę.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.spec.minReplicas}'
+  ```
+
+  ### Maksymalna liczba replik HPA {#q130-hpa-maximum-replicas}
+
+  HPA może nie osiągać dwóch replik lub przekraczać limit. Sprawdź maxReplicas i zachowaj wartość dwa.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.spec.maxReplicas}'
+  ```
+
+  ### Gotowe repliki board {#q130-board-ready-replica-count}
+
+  HPA może żądać większej pojemności, choć pod board nie jest gotowy. Sprawdź zdarzenia i poczekaj na dwie gotowe repliki w stanie Deploymentu.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.status.readyReplicas}'; kubectl get pods -l app=board
+  ```
+
+  ### Bieżąca liczba replik HPA {#q130-hpa-current-replica-count}
+
+  Kontroler może nie widzieć dwóch replik lub wskazywać inne obciążenie. Porównaj zgłaszaną liczbę z powiązanym Deploymentem.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.status.currentReplicas}'
+  ```
+
+  ### Żądana liczba replik HPA {#q130-hpa-desired-replica-count}
+
+  Kontroler może nadal zalecać jedną replikę z powodu niskiego odczytu CPU lub braku metryki. Porównaj jego stan z bieżącą metryką CPU.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.status.desiredReplicas}'
+  ```
+
+  ### Dane kontroli workera {#q130-storm-worker-observer-input}
+
+  Kontrola zasobów worker mogła się zatrzymać przed zgłoszeniem warunku. Sprawdź odczyt Deploymentu board i dostępność polecenia Python.
+
+  ```bash
+  kubectl get deployment board -o name; command -v python3
+  ```
+
+  ### Dane kontroli HPA {#q130-storm-hpa-observer-input}
+
+  Kontrola HPA mogła się zatrzymać przed zgłoszeniem warunku. Sprawdź odczyt HPA board i dostępność polecenia Python.
+
+  ```bash
+  kubectl get hpa board -o name; command -v python3
+  ```
+
+  ### Dane kontroli trasy {#q130-storm-route-observer-input}
+
+  Kontrola trasy mogła się zatrzymać przed zgłoszeniem warunku. Sprawdź dostarczone dane żądania i odczyt HTTPRoute oraz Service.
+
+  ```bash
+  test -s /run/dq/facts/0/gateway-target.json; kubectl get httproute board; kubectl get service board
+  ```
+
+  ### Dane kontroli polityki ingress {#q130-storm-policy-observer-input}
+
+  Kontrola polityki ingress mogła się zatrzymać przed zgłoszeniem warunku. Sprawdź zapisane dane Gateway oraz bieżące NetworkPolicy i Deployment.
+
+  ```bash
+  test -s /run/dq/facts/0/gateway-target.json; kubectl get networkpolicy board-ingress; kubectl get deployment board
+  ```
+source_hash: e5d99378056d10be66fca623b26c6d81994a7d9242000224727b7b03ee4e33f4

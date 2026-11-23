@@ -313,4 +313,173 @@ text: |
   ```bash
   command -v python3; kubectl get gateway station -o name; kubectl get httproute board -o name
   ```
-source_hash: 5b6d030a5687f59600a80dba480aeae66abf2daa438d5bfdb8b2942db068bf24
+
+
+  ### CPU-Request des board-Workers {#q130-storm-board-worker-cpu-request}
+
+  Dem worker in board fehlt möglicherweise ein positiver CPU-Request oder er überschreitet das Limit. Vergleiche die CPU-Werte im Container worker.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.containers[] | select(.name=="worker") | .resources'
+  ```
+
+  ### CPU-Limit des board-Workers {#q130-storm-board-worker-cpu-limit}
+
+  Dem worker in board fehlt möglicherweise ein positives CPU-Limit oder es liegt über 200m. Prüfe das wirksame CPU-Limit.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.containers[] | select(.name=="worker") | .resources.limits.cpu'
+  ```
+
+  ### CPU-Ziel und Skalierungsreferenz {#q130-storm-hpa-cpu-target}
+
+  Der HPA zielt möglicherweise auf einen anderen Workload oder nutzt eine andere CPU-Metrik. Prüfe den Verweis auf Deployment board aus apps/v1 und das einzelne CPU-Resource-Ziel vom Typ Utilization bei 50 Prozent.
+
+  ```bash
+  kubectl get hpa board -o json | jq '{target: .spec.scaleTargetRef, metrics: .spec.metrics}'
+  ```
+
+  ### Aktuelle CPU-Auslastung {#q130-storm-hpa-current-cpu}
+
+  Der HPA meldet möglicherweise keine aktuelle CPU-Resource-Auslastung über 50 Prozent. Prüfe die aktuelle Metrik unter Last am vorgesehenen Workload.
+
+  ```bash
+  kubectl get hpa board -o json | jq '.status.currentMetrics'
+  ```
+
+  ### Gateway-Klasse für station {#q130-storm-gateway-class}
+
+  Gateway station verwendet möglicherweise eine andere Klasse oder der Klasseneintrag ist nicht verfügbar. Vergleiche gatewayClassName mit der bereitgestellten gateway-target.json.
+
+  ```bash
+  jq -er .class /run/dq/facts/0/gateway-target.json; kubectl get gateway station -o jsonpath='{.spec.gatewayClassName}'
+  ```
+
+  ### Akzeptanz des Gateways {#q130-storm-gateway-accepted}
+
+  Gateway station meldet möglicherweise noch kein Accepted=True. Prüfe seine Bedingungen und den vom Controller gemeldeten Grund.
+
+  ```bash
+  kubectl get gateway station -o json | jq '.status.conditions'
+  ```
+
+  ### Wirksames Backend der Route {#q130-storm-effective-http-route}
+
+  Die vorgegebene Anfrage passt möglicherweise zu keiner Route oder eine wirksame Regel sendet Verkehr mit positivem Gewicht an ein anderes Backend oder einen anderen Port. Vergleiche Host north.station.internal und die bereitgestellte URL mit der gewählten Regel und dem Port des Service board.
+
+  ```bash
+  jq -er .url /run/dq/facts/0/gateway-target.json; kubectl get httproute board -o json | jq '.spec | {hostnames,rules}'; kubectl get service board -o json | jq '.spec.ports'
+  ```
+
+  ### Aufgelöste Referenzen der Route {#q130-storm-route-reference-status}
+
+  Die HTTPRoute ist möglicherweise nicht lesbar oder kein Elterneintrag meldet ResolvedRefs=True. Prüfe die aktuellen Elternbedingungen und die referenzierten Backends.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.status.parents[]? | {parentRef, conditions}'
+  ```
+
+  ### Eingang vom bereitgestellten Gateway {#q130-storm-gateway-ingress-policy}
+
+  Die Richtlinie board-ingress wählt möglicherweise falsche Pods oder lässt eine breitere Quelle oder einen anderen Port zu. Prüfe Ingress, beide Selektoren im selben gateway-Peer und ausschließlich TCP 8080.
+
+  ```bash
+  kubectl get networkpolicy board-ingress -o yaml; jq -er .namespace /run/dq/facts/0/gateway-target.json
+  ```
+
+  ### Tatsächliche Antwort über den Gateway {#q130-storm-live-gateway-response}
+
+  Die Anfrage mit richtigem Host über den bereitgestellten Gateway schlägt möglicherweise fehl oder liefert anderen Inhalt. Wiederhole sie aus client und vergleiche den Antworttext mit north-130.
+
+  ```bash
+  url=$(jq -er .url /run/dq/facts/0/gateway-target.json); kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header='Host: north.station.internal' "$url"
+  ```
+
+  ### Sperre des direkten Zugriffs auf board {#q130-storm-live-direct-denial}
+
+  Client erreicht board:8080 möglicherweise noch direkt. Wiederhole die direkte Anfrage und prüfe Richtlinien, die Verkehr von client zu board erlauben.
+
+  ```bash
+  kubectl exec deployment/client -c worker -- wget -qO- -T 2 http://board:8080
+  ```
+
+  ### Ablehnung für den anderen Host {#q130-storm-live-wrong-host-denial}
+
+  Die bereitgestellte URL fehlt möglicherweise oder der Gateway bedient weiterhin closed.station.internal. Prüfe die URL und wiederhole die Anfrage mit diesem Host, um den Fehlschlag zu bestätigen.
+
+  ```bash
+  url=$(jq -er .url /run/dq/facts/0/gateway-target.json); kubectl exec deployment/client -c worker -- wget -qO- -T 2 --header='Host: closed.station.internal' "$url"
+  ```
+
+  ### Minimale HPA-Replikate {#q130-hpa-minimum-replicas}
+
+  Die Untergrenze des HPA fehlt möglicherweise. Prüfen Sie minReplicas und belassen Sie den Wert bei eins.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.spec.minReplicas}'
+  ```
+
+  ### Maximale HPA-Replikate {#q130-hpa-maximum-replicas}
+
+  Der HPA erreicht möglicherweise keine zwei Repliken oder überschreitet die Obergrenze. Prüfen Sie maxReplicas und belassen Sie den Wert bei zwei.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.spec.maxReplicas}'
+  ```
+
+  ### Bereite board-Replikate {#q130-board-ready-replica-count}
+
+  Der HPA fordert möglicherweise mehr Kapazität an, während ein board-Pod noch nicht bereit ist. Prüfen Sie Ereignisse und warten Sie auf zwei bereite Repliken im Deployment-Status.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.status.readyReplicas}'; kubectl get pods -l app=board
+  ```
+
+  ### Aktuelle HPA-Replikate {#q130-hpa-current-replica-count}
+
+  Der Controller sieht möglicherweise noch keine zwei Repliken oder verweist auf eine andere Arbeitslast. Vergleichen Sie die gemeldete Anzahl mit dem verbundenen Deployment.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.status.currentReplicas}'
+  ```
+
+  ### Gewünschte HPA-Replikate {#q130-hpa-desired-replica-count}
+
+  Der Controller empfiehlt möglicherweise noch ein Replikat, weil die beobachtete CPU-Last niedrig ist oder die Metrik fehlt. Vergleiche seinen Status mit der aktuellen CPU-Metrik.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.status.desiredReplicas}'
+  ```
+
+  ### Eingaben zur Prüfung des Workers {#q130-storm-worker-observer-input}
+
+  Die Ressourcenprüfung des worker könnte vor Meldung einer Bedingung abgebrochen sein. Prüfe den Lesezugriff auf Deployment board und den lokalen Python-Befehl.
+
+  ```bash
+  kubectl get deployment board -o name; command -v python3
+  ```
+
+  ### Eingaben zur HPA-Prüfung {#q130-storm-hpa-observer-input}
+
+  Die HPA-Prüfung könnte vor Meldung einer Bedingung abgebrochen sein. Prüfe den Lesezugriff auf HPA board und den lokalen Python-Befehl.
+
+  ```bash
+  kubectl get hpa board -o name; command -v python3
+  ```
+
+  ### Eingaben zur Routenprüfung {#q130-storm-route-observer-input}
+
+  Die Routenprüfung könnte vor Meldung einer Bedingung abgebrochen sein. Prüfe die bereitgestellten Anfragedaten und den Lesezugriff auf HTTPRoute und Service.
+
+  ```bash
+  test -s /run/dq/facts/0/gateway-target.json; kubectl get httproute board; kubectl get service board
+  ```
+
+  ### Eingaben zur Prüfung der Eingangsrichtlinie {#q130-storm-policy-observer-input}
+
+  Die Prüfung der Eingangsrichtlinie könnte vor Meldung einer Bedingung abgebrochen sein. Prüfe die erfassten Gateway-Daten sowie aktuelle NetworkPolicy und Deployment.
+
+  ```bash
+  test -s /run/dq/facts/0/gateway-target.json; kubectl get networkpolicy board-ingress; kubectl get deployment board
+  ```
+source_hash: e5d99378056d10be66fca623b26c6d81994a7d9242000224727b7b03ee4e33f4

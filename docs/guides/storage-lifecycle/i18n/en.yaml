@@ -167,4 +167,229 @@ text: |
   ```bash
   kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
   ```
-source_hash: 5b83695ab3ec52da47e21e160e1a7768262cd0d76569834a3582db99ab365de1
+
+
+  ### Entries in the ledger archive {#q128-ledger-single-archive-entry}
+
+  The archive may be unreadable or contain the wrong entries. Verify that ledger.tar contains exactly one regular, non-sparse entry, ledger.txt.
+
+  ```bash
+  tar -tvf ledger.tar
+  ```
+
+  ### Hash of the archived ledger file {#q128-ledger-captured-file-hash}
+
+  The archived ledger.txt bytes may differ from the supplied original hash. Hash the extracted stream and compare it with original-ledger.sha256.
+
+  ```bash
+  set -o pipefail; entry=$(tar -tf ledger.tar); tar -xOf ledger.tar "$entry" | sha256sum; cat /run/dq/facts/0/original-ledger.sha256
+  ```
+
+  ### Inputs to the capture check {#q128-ledger-capture-observer}
+
+  The capture observer may have stopped before reporting a condition. Check the saved facts and that the archive can be read.
+
+  ```bash
+  test -s /run/dq/facts/0/original-ledger.sha256; test -s /run/dq/facts/0/checkpoint-identities.json; tar -tf ledger.tar
+  ```
+
+  ### Consistent checkpoint archive {#q128-checkpoint-coherent-recovery-point}
+
+  checkpoint.tar may contain unexpected entries or orders.tsv and summary.json from different generations. Check the regular entries, recorded marker, generation, routes and the sum of order units.
+
+  ```bash
+  tar -tvf checkpoint.tar; tar -tf checkpoint.tar | while IFS= read -r entry; do printf "%s\n" "$entry"; tar -xOf checkpoint.tar "$entry"; done
+  ```
+
+  ### Retained checkpoint objects {#q128-checkpoint-retained-objects}
+
+  A retained Deployment or PVC may be missing or recreated, or a worker image may have changed. Compare live identities and images with the saved checkpoint record.
+
+  ```bash
+  jq '{claims,deployments}' /run/dq/facts/0/checkpoint-identities.json; kubectl get deploy,pvc -o custom-columns=KIND:.kind,NAME:.metadata.name,UID:.metadata.uid,IMAGE:.spec.template.spec.containers[*].image
+  ```
+
+  ### UID of the retained ledger PVC {#q128-ledger-retained-pvc}
+
+  The ledger claim may be missing or have been recreated. Compare the live ledger PVC UID with original-pvc-uid.
+
+  ```bash
+  cat /run/dq/facts/0/original-pvc-uid; kubectl get pvc ledger -o jsonpath='{.metadata.uid}'
+  ```
+
+  ### Inputs to the retained archive check {#q128-ledger-retained-archive-observer}
+
+  The retained archive observer may have stopped before reporting a condition. Check that ledger.tar and the supplied checksum are readable during recovery.
+
+  ```bash
+  test -s /run/dq/facts/0/original-ledger.sha256; tar -tvf ledger.tar
+  ```
+
+  ### Hash of the restored ledger file {#q128-ledger-current-file-hash}
+
+  The restored /data/ledger.txt may be unreadable or contain different bytes. Compare the hash inside the ledger Pod with original-ledger.sha256.
+
+  ```bash
+  kubectl exec deployment/ledger -- sha256sum /data/ledger.txt; cat /run/dq/facts/0/original-ledger.sha256
+  ```
+
+  ### Hash of ledger file served by HTTP {#q128-ledger-served-file-hash}
+
+  The client may be unable to read the HTTP file or may receive different bytes. Compare the response for ledger.txt with original-ledger.sha256.
+
+  ```bash
+  set -o pipefail; cat /run/dq/facts/0/original-ledger.sha256; kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/ledger.txt | sha256sum
+  ```
+
+  ### Current checkpoint readers {#q128-checkpoint-current-readers}
+
+  A checkpoint workload or client may lack exactly one current ready Pod with the original image. Check live ownership, readiness and desired replicas.
+
+  ```bash
+  kubectl get deployment ledger summary client; kubectl get replicasets,pods -o wide
+  ```
+
+  ### Inactive writer during recovery {#q128-checkpoint-writer-quiet}
+
+  journal-writer may still have a desired replica or a current Pod. Verify that it remains at zero during recovery so it cannot overwrite restored files.
+
+  ```bash
+  kubectl get deployment journal-writer -o jsonpath='{.spec.replicas}'; kubectl get pods -l app=journal-writer -o name
+  ```
+
+  ### Claim mounts for the restored files {#q128-checkpoint-restored-claim-mounts}
+
+  A restored path may resolve to the wrong claim or be unavailable in the current Pod. Compare the covering mount in the template and live Pod with the claim required for each path.
+
+  ```bash
+  jq '.contract.stores[] | {deployment,claim,path}' /run/dq/facts/0/checkpoint-identities.json; kubectl get deployment ledger summary -o json | jq '.items[] | {name: .metadata.name, uid: .metadata.uid, spec: .spec.template.spec | {containers,volumes}}'; kubectl get replicaset,pod -o json | jq '.items[] | {kind,name: .metadata.name,uid: .metadata.uid,owners: .metadata.ownerReferences,containers: .spec.containers,volumes: .spec.volumes}'
+  ```
+
+  ### Bytes of the restored files {#q128-checkpoint-restored-file-bytes}
+
+  A restored file may contain bytes from a different recovery point. Compare the live hashes of orders.tsv and summary.json with those of the respective checkpoint.tar entries.
+
+  ```bash
+  set -o pipefail; tar -tf checkpoint.tar | while IFS= read -r entry; do printf '%s\n' "$entry"; tar -xOf checkpoint.tar "$entry" | sha256sum; done; kubectl exec deployment/ledger -c worker -- sha256sum /data/orders.tsv; kubectl exec deployment/summary -c worker -- sha256sum /data/summary.json
+  ```
+
+  ### Restored file content served by HTTP {#q128-checkpoint-served-file-bytes}
+
+  A serving workload may serve different bytes from the archive. Fetch orders.tsv and summary.json from the live client and compare each response hash with its checkpoint.tar entry.
+
+  ```bash
+  set -o pipefail; tar -tf checkpoint.tar | while IFS= read -r entry; do printf '%s\n' "$entry"; tar -xOf checkpoint.tar "$entry" | sha256sum; done; for url in http://ledger:8080/orders.tsv http://summary:8080/summary.json; do kubectl exec deployment/client -c worker -- wget -qO- -T 2 "$url" | sha256sum; done
+  ```
+
+  ### Inputs to the recovery check {#q128-checkpoint-restore-observer}
+
+  The recovery observer may have stopped before reporting a condition. Check the saved identities, current workloads and the readable recovery archive.
+
+  ```bash
+  test -s /run/dq/facts/0/checkpoint-identities.json; kubectl get deployments,replicasets,pods; tar -tf checkpoint.tar
+  ```
+
+  ### API read for the retired configuration {#q129-retired-config-query}
+
+  The API query for ConfigMap station may have failed. Retry the read in the exercise namespace and inspect the kubectl error.
+
+  ```bash
+  kubectl get configmap station --ignore-not-found -o name
+  ```
+
+  ### Absence of the retired configuration {#q129-retired-config-absence}
+
+  ConfigMap station may still exist, including while deletion is pending. Check its current lifecycle state in the exercise namespace.
+
+  ```bash
+  kubectl get configmap station --ignore-not-found -o name
+  ```
+
+  ### API read for the retiring Secret {#q129-retired-record-query}
+
+  The API query for Secret station-record may have failed. Retry the name-only read and inspect the kubectl error.
+
+  ```bash
+  kubectl get secret station-record --ignore-not-found -o name
+  ```
+
+  ### Absence of the retiring Secret {#q129-retired-record-absence}
+
+  Secret station-record may still exist. Check whether retirement is complete after the consumers have switched to the successor.
+
+  ```bash
+  kubectl get secret station-record --ignore-not-found -o name
+  ```
+
+  ### Retained consumer workloads {#q129-retirement-retained-workloads}
+
+  A consumer Deployment may have been replaced, scaled away from one replica or switched to another worker image. Compare dispatch and reporter with the saved identities.
+
+  ```bash
+  jq '.consumers' /run/dq/facts/0/retirement-identities.json; kubectl get deployments dispatch reporter -o custom-columns=NAME:.metadata.name,UID:.metadata.uid,REPLICAS:.spec.replicas,IMAGE:.spec.template.spec.containers[0].image
+  ```
+
+  ### Current consumer Pod {#q129-retirement-current-consumer-pod}
+
+  An observer may not find exactly one current ready Pod with the expected image for each consumer. Inspect the Deployment, active ReplicaSet and owned Pod.
+
+  ```bash
+  jq '.consumers' /run/dq/facts/0/retirement-identities.json; kubectl get deployment dispatch reporter -o custom-columns=NAME:.metadata.name,UID:.metadata.uid; kubectl get replicaset,pod -o json | jq '.items[] | {kind, name: .metadata.name, uid: .metadata.uid, owners: .metadata.ownerReferences, deleting: .metadata.deletionTimestamp, ready: [.status.conditions[]? | select(.type=="Ready")], images: [.spec.containers[]? | {name,image}]}'
+  ```
+
+  ### Independent successor Secret {#q129-retirement-independent-successor}
+
+  The read-only successor mount may disagree between the template and current Pod, or the Secret may have the wrong payload, UID or retired-parent relationship. Compare /config/value, successor metadata and the saved digest.
+
+  ```bash
+  jq '{retiredRecordUID,retiredParentUID,dataHash,fingerprint}' /run/dq/facts/0/retirement-identities.json; kubectl get deployments dispatch reporter -o json | jq '.items[] | {name: .metadata.name, spec: .spec.template.spec | {volumes,mounts: [.containers[].volumeMounts]}}'; kubectl get pods -o json | jq '.items[] | {name: .metadata.name, owner: .metadata.ownerReferences, volumes: .spec.volumes, mounts: [.spec.containers[].volumeMounts]}' ; printf 'Successor Secret from the active mount: '; IFS= read -r successor; kubectl get "secret/$successor" -o json | python3 -I -c 'import hashlib,json,sys; value=json.load(sys.stdin); meta=value["metadata"]; print(json.dumps({"uid":meta["uid"],"labels":meta.get("labels",{}),"owners":meta.get("ownerReferences",[]),"dataHash":hashlib.sha256(json.dumps(value["data"],sort_keys=True).encode()).hexdigest()}))'
+  ```
+
+  ### Bytes mounted from the successor {#q129-retirement-mounted-record-bytes}
+
+  The bytes mounted at /config/value may differ from the retiring record. Compare the digest inside each current worker with the original fingerprint.
+
+  ```bash
+  jq -er .fingerprint /run/dq/facts/0/retirement-identities.json; for name in dispatch reporter; do kubectl exec "deployment/$name" -c worker -- sha256sum /config/value; done
+  ```
+
+  ### Fingerprint served by the consumer {#q129-retirement-served-record-fingerprint}
+
+  The application may still serve an earlier or incorrect fingerprint. Query each current worker on loopback and compare the body with the saved fingerprint.
+
+  ```bash
+  jq -er .fingerprint /run/dq/facts/0/retirement-identities.json; for name in dispatch reporter; do kubectl exec "deployment/$name" -c worker -- wget -qO- -T 2 http://127.0.0.1:8080; done
+  ```
+
+  ### Inputs to the consumer retirement check {#q129-retirement-consumer-observer}
+
+  The retirement observer may have stopped before reporting a condition. Verify the provided facts and that current consumer resources are readable.
+
+  ```bash
+  test -s /run/dq/facts/0/retirement-identities.json; kubectl get deployments,replicasets,pods
+  ```
+
+  ### Identity of the retained control Secret {#q129-retirement-control-secret-identity}
+
+  Secret control may be missing or have a different UID. Compare the live UID with control_uid from the cleanup contract.
+
+  ```bash
+  kubectl get secret control -o jsonpath='{.metadata.uid}'; jq -er .control_uid /run/dq/facts/0/cleanup-contract.json
+  ```
+
+  ### Hash of the retained control data {#q129-retirement-control-secret-data-hash}
+
+  The control Secret data may have changed. Compare the hash of its sorted JSON data map with control_hash while keeping the values private.
+
+  ```bash
+  kubectl get secret control -o json | python3 -c 'import hashlib,json,sys; print(hashlib.sha256(json.dumps(json.load(sys.stdin)["data"],sort_keys=True).encode()).hexdigest())'; jq -er .control_hash /run/dq/facts/0/cleanup-contract.json
+  ```
+
+  ### Inputs to the control Secret check {#q129-retirement-control-secret-observer}
+
+  The control observer may have stopped before reporting a condition. Check the supplied cleanup contract and access to Secret control.
+
+  ```bash
+  kubectl get secret control -o name; test -s /run/dq/facts/0/cleanup-contract.json
+  ```
+source_hash: 222fada1e4a2bce4d7bb650a6ba99e1b32d799136dcb294f5026e9314d845237
