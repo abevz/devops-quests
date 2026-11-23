@@ -1846,6 +1846,294 @@ kubernetes-10:
     en: 'A Service name resolves to a virtual address. Its selector and ready EndpointSlices determine which pod addresses receive traffic. DNS success alone does not prove that the Service has a usable backend.
 
 
+      ### Recorded selector diagnosis {#q118-vip-selector-diagnosis}
+
+
+      The written diagnosis may be missing or name the proxy instead of the selector mismatch. Compare the Service selector with Pod labels and record the selector fault in diagnosis.json. `jq -r .fault diagnosis.json; kubectl get service board -o jsonpath=''{.spec.selector}''`.
+
+
+      ### Selector for current board Pods {#q118-vip-matching-board-selector}
+
+
+      The Service may still select retired labels or include an unrelated Pod. Compare app=board and any additional selector labels with the current board Pods. `kubectl get service board -o jsonpath=''{.spec.selector}''; kubectl get pods --show-labels`.
+
+
+      ### Ready endpoint of board {#q118-vip-ready-endpoint-observation}
+
+
+      After a selector correction the EndpointSlices may still have no ready address. Inspect the ready condition and wait for a ready endpoint. `kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[].endpoints[] | {addresses, conditions}''`.
+
+
+      ### Direct request to Pod IP {#q118-vip-direct-pod-request}
+
+
+      The selected board Pod may lack an address or its own HTTP listener may be unavailable. Query the Pod IP directly from client and compare with north-118 before testing the VIP. `ip=$(kubectl get pod -l app=board -o jsonpath=''{.items[0].status.podIP}''); kubectl exec deployment/client -- wget -qO- -T 3 "http://$ip:8080"`.
+
+
+      ### Request to the Service VIP {#q118-vip-service-live-request}
+
+
+      The Pod can answer directly while the board VIP has no usable backend or the wrong port mapping. Query the current ClusterIP from client and compare the response with north-118. `vip=$(kubectl get service board -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/client -- wget -qO- -T 3 "http://$vip:8080"`.
+
+
+      ### Captured proxy readiness {#q118-captured-proxy-readiness}
+
+
+      The frozen proxy observation may be absent or not show ready. Inspect the supplied observation separately from current Service reachability. `jq ''.ready'' /run/dq/facts/0/proxy-observation.json`.
+
+
+      ### Captured proxy mode {#q118-captured-proxy-mode}
+
+
+      The captured proxy mode may be missing or outside the expected set. Check whether the supplied observation says iptables, nftables or ipvs. `jq ''.mode'' /run/dq/facts/0/proxy-observation.json`.
+
+
+      ### Inputs to the VIP check {#q118-vip-observer-input}
+
+
+      The selector and VIP observer may stop before identifying a condition if its local process or its inputs fail. Check the tools and access to the Service, Pods and EndpointSlices. `command -v python3; kubectl get service board -o name; kubectl get endpointslices -l kubernetes.io/service-name=board`.
+
+
+      ### Preserved Service and workloads {#q118-preserved-vip-delivery-objects}
+
+
+      A replacement permanently changes the Service UID and may also change its VIP or a supplied workload identity or image. Compare the live board and client Deployments, current Pod images and Service with the frozen records. `jq ''{serviceUID,vip,deployments}'' /run/dq/facts/0/vip-identities.json; kubectl get service board -o json | jq ''{uid: .metadata.uid, vip: .spec.clusterIP}''; kubectl get deployment board client -o json | jq ''.items[] | {name: .metadata.name, uid: .metadata.uid, images: [.spec.template.spec.containers[] | {name,image}]}''; kubectl get replicaset,pod -o json | jq ''.items[] | {kind, name: .metadata.name, uid: .metadata.uid, owner: [.metadata.ownerReferences[]? | select(.controller == true) | {kind,name,uid}], images: [.spec.containers[]? | {name,image}]}''`.
+
+
+      ### Target port mapping {#q118-vip-endpoint-port-mapping}
+
+
+      The Service port can be present while its numeric or named target does not resolve to the supplied application port. Compare the live mapping, named ports on current Pods, and the matching TCP EndpointSlice port. `kubectl get service board -o json | jq ''.spec.ports''; kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[].ports''`.
+
+
+      ### Owner of the EndpointSlice {#q118-vip-original-service-endpoint-owner}
+
+
+      An active endpoint can appear in a slice labelled for board but controlled by a different Service. Compare its controller owner UID with the frozen original Service UID. `kubectl get service board -o jsonpath=''{.metadata.uid}''; kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[] | {name: .metadata.name, owners: .metadata.ownerReferences}''`.
+
+
+      ### Current ready target {#q118-vip-current-ready-target}
+
+
+      The EndpointSlice may retain a stale target, an address that does not belong to that Pod, or no active target. Compare each active targetRef and address with a current ready Pod owned by the board Deployment. `kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[].endpoints[] | {targetRef, addresses, conditions}''; kubectl get pods -l app=board -o wide`.
+
+
+      ### NetworkPolicy list {#q119-egress-policy-list}
+
+
+      The observer could not list NetworkPolicies. Check current namespace access and API availability before interpreting any policy results. `kubectl get networkpolicies -o name`.
+
+
+      ### Observed client labels {#q119-egress-client-label-input}
+
+
+      The client Pod inventory may be unavailable or empty. Verify there are Pods with app=client before checking whether the policy selects them. `kubectl get pods -l app=client --show-labels`.
+
+
+      ### Named client egress policy {#q119-client-egress-policy-object}
+
+
+      The intended client-egress rule may be missing or unreadable. Inspect the named NetworkPolicy in the client namespace. `kubectl get networkpolicy client-egress -o name`.
+
+
+      ### Selector for client only {#q119-egress-only-client-selector}
+
+
+      The podSelector may match the wrong application or narrow the intended scope. Inspect whether it is equivalent to app=client. `kubectl get networkpolicy client-egress -o json | jq ''.spec.podSelector''`.
+
+
+      ### Egress-only policy type {#q119-egress-only-policy-type}
+
+
+      The check may see a missing Egress type or an extra Ingress type. Verify that the policy declares only Egress. `kubectl get networkpolicy client-egress -o json | jq ''.spec.policyTypes''`.
+
+
+      ### Bounded egress targets and ports {#q119-bounded-egress-peer-and-port}
+
+
+      An egress rule may omit a destination or port, use an unrelated peer, or resolve a named port inconsistently. Check both DNS peer selectors and the local board peer with only individual allowed ports. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Unexpected allowed flow {#q119-egress-unexpected-flow}
+
+
+      A valid-looking rule may allow an additional protocol or port. Compare each destination/protocol/port tuple with the required DNS and board flows. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Additional egress allowances {#q119-additive-egress-policy}
+
+
+      Another egress policy selecting a client Pod may add a forbidden flow because allowances are additive. Inspect the named policy and compare its allowed flows with the required set. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, selector: .spec.podSelector, egress: .spec.egress}''`.
+
+
+      ### Other policy that cannot be evaluated {#q119-unreadable-additive-policy}
+
+
+      The selector or egress rules of another policy could not be safely interpreted. Inspect the indicated object for unsupported selectors or broad destinations before judging effective access. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, spec: .spec}''`.
+
+
+      ### Shape of the observed inputs {#q119-egress-observation-shape}
+
+
+      The observed document may lack policy items or Pod labels, or the input may be invalid JSON. Check that both API observations are readable before diagnosing the rule. `kubectl get networkpolicies -o json | jq ''.items | length''; kubectl get pods -l app=client --show-labels`.
+
+
+      ### UDP 53 to cluster DNS {#q119-client-egress-dns-udp}
+
+
+      The policy may omit UDP 53 to the supplied cluster DNS Pods. Check the peer combining kube-system and kube-dns with a matching UDP port. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### TCP 53 to cluster DNS {#q119-client-egress-dns-tcp}
+
+
+      UDP DNS may be allowed while TCP 53 is missing. Check that the same supplied DNS peer also has a TCP 53 allowance. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### TCP 8080 to board {#q119-client-egress-board-http}
+
+
+      DNS allowances do not provide the workload path. The policy may still lack TCP 8080 to the local board Pods. Inspect the app=board peer and its target port. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Live board DNS lookup {#q119-live-board-name-resolution}
+
+
+      Declared policy may still leave DNS unavailable from the running client. Query the fully qualified board name from client and check whether lookup succeeds. `kubectl exec deployment/client -c worker -- nslookup -type=A "board.$DQ_NAMESPACE.svc.cluster.local."`.
+
+
+      ### Live board HTTP from client {#q119-live-board-client-http}
+
+
+      DNS may work while client cannot reach board on 8080 or receives unexpected content. Query the Service from client and compare with north-119. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://board:8080`.
+
+
+      ### Control request to closed {#q119-closed-service-control-request}
+
+
+      The closed Service may be unavailable even from board. Check that the control request returns closed-119 before interpreting the client’s failed request as an egress effect. `address=$(kubectl get service closed -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/board -- wget -qO- -T 3 "http://$address:8080"`.
+
+
+      ### Denied request from client {#q119-closed-service-client-denial}
+
+
+      A broader or additive allowance may let client reach the closed Service. Check that this direct request fails while the board control still reaches closed. `address=$(kubectl get service closed -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/client -- wget -qO- -T 2 "http://$address:8080"`.
+
+
+      ### Inputs to the egress check {#q119-egress-policy-observer-input}
+
+
+      The policy observer can stop before assigning a condition if its local process or inputs fail. Check Python and the current policy and Pod observations. `command -v python3; kubectl get networkpolicy client-egress -o name; kubectl get pods -l app=client`.
+
+
+      ### NetworkPolicy list {#q120-egress-policy-list}
+
+
+      The observer could not list NetworkPolicies. Check current namespace access and API availability before interpreting any policy results. `kubectl get networkpolicies -o name`.
+
+
+      ### Observed client labels {#q120-egress-client-label-input}
+
+
+      The client Pod inventory may be unavailable or empty. Verify there are Pods with app=client before checking whether the policy selects them. `kubectl get pods -l app=client --show-labels`.
+
+
+      ### Named client egress policy {#q120-client-egress-policy-object}
+
+
+      The intended client-egress rule may be missing or unreadable. Inspect the named NetworkPolicy in the client namespace. `kubectl get networkpolicy client-egress -o name`.
+
+
+      ### Bounded egress targets and ports {#q120-bounded-egress-peer-and-port}
+
+
+      An egress rule may omit a destination or port, use an unrelated peer or fail to resolve a named shelf port. Check the DNS peers and individual allowed ports for shelf-0. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Unexpected allowed flow {#q120-egress-unexpected-flow}
+
+
+      A valid-looking rule may allow an additional protocol or port. Compare each destination/protocol/port tuple with the required DNS and shelf flows. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Additional egress allowances {#q120-additive-egress-policy}
+
+
+      Another egress policy selecting a client Pod may add a forbidden flow because allowances are additive. Inspect the named policy and compare its allowed flows with the required set. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, selector: .spec.podSelector, egress: .spec.egress}''`.
+
+
+      ### Other policy that cannot be evaluated {#q120-unreadable-additive-policy}
+
+
+      The selector or egress rules of another policy could not be safely interpreted. Inspect the indicated object for unsupported selectors or broad destinations before judging effective access. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, spec: .spec}''`.
+
+
+      ### UDP 53 to cluster DNS {#q120-client-egress-dns-udp}
+
+
+      The policy may omit UDP 53 to the supplied cluster DNS Pods. Check the peer combining kube-system and kube-dns with a matching UDP port. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### TCP 53 to cluster DNS {#q120-client-egress-dns-tcp}
+
+
+      UDP DNS may be allowed while TCP 53 is missing. Check that the same supplied DNS peer also has a TCP 53 allowance. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### TCP 8080 to shelf {#q120-client-egress-shelf-http}
+
+
+      DNS allowances do not provide the workload path. The policy may still lack TCP 8080 to the local shelf Pods. Inspect the app=shelf peer and its target port. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Inputs to the egress check {#q120-egress-policy-observer-input}
+
+
+      The policy observer can stop before assigning a condition if its local process or inputs fail. Check Python and the current policy and Pod observations. `command -v python3; kubectl get networkpolicy client-egress -o name; kubectl get pods -l app=client`.
+
+
+      ### Retained ledger claim {#q120-shelf-retained-ledger-pvc}
+
+
+      The ledger claim may be missing or have a different UID after recreation. Compare the live ledger-shelf-0 UID to the frozen receipt before repairing Service and policy settings. `cat /run/dq/facts/0/original-pvc-uid; kubectl get pvc ledger-shelf-0 -o jsonpath=''{.metadata.uid}''`.
+
+
+      ### Headless Service for the ordinal {#q120-shelf-headless-ordinal-source}
+
+
+      The shelf Service may have a virtual address or select the wrong Pod. Keep clusterIP at the literal None and compare app=shelf and any extra selector labels with the actual shelf-0 labels. `kubectl get service shelf -o json | jq ''{clusterIP: .spec.clusterIP, selector: .spec.selector}''; kubectl get pod shelf-0 --show-labels`.
+
+
+      ### Coverage of the client selector {#q120-client-policy-selector-coverage}
+
+
+      The policy may match unrelated Pods or miss some current client Pods. Check that its selector requires app=client and matches all observed client labels. `kubectl get networkpolicy client-egress -o json | jq ''.spec.podSelector''; kubectl get pods -l app=client --show-labels`.
+
+
+      ### Egress policy type {#q120-client-policy-egress-type}
+
+
+      The policy may declare only inbound rules or omit the Egress policy type. Check that the client-egress type list includes Egress. `kubectl get networkpolicy client-egress -o json | jq ''.spec.policyTypes''`.
+
+
+      ### Live ordinal DNS from client {#q120-live-shelf-ordinal-dns}
+
+
+      The headless Service may not publish shelf-0, or the running client may lack working DNS egress. Check the fully qualified ordinal A lookup from the client. `kubectl exec deployment/client -c worker -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."`.
+
+
+      ### Live ledger response {#q120-live-client-ledger-response}
+
+
+      Ordinal DNS may work while TCP 8080 remains blocked or the shelf endpoint serves an unexpected body. Request shelf-0.shelf:8080 from client and compare the response with ledger-120. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://shelf-0.shelf:8080`.
+
+
+      ### Inputs to the headless Service check {#q120-shelf-service-observer-input}
+
+
+      The headless Service observer may exit before naming a condition if its process cannot start. Check the workstation tools and access to the shelf objects. `command -v python3; kubectl get service shelf -o name; kubectl get pod shelf-0 -o name`.
+
+
       ### Original Service UID {#q106-service-original-uid}
 
 
@@ -2173,6 +2461,294 @@ kubernetes-10:
 
       '
     ru: 'Имя Service разрешается в виртуальный адрес. Selector и готовые EndpointSlice определяют адреса подов для трафика. Успешный DNS сам по себе не доказывает наличие рабочего backend.
+
+
+      ### Записанный диагноз селектора {#q118-vip-selector-diagnosis}
+
+
+      Запись диагноза могла отсутствовать или указывать на прокси вместо несоответствия селектора. Сравните селектор Service с метками Pod и запишите ошибку селектора в diagnosis.json. `jq -r .fault diagnosis.json; kubectl get service board -o jsonpath=''{.spec.selector}''`.
+
+
+      ### Селектор текущих Pod board {#q118-vip-matching-board-selector}
+
+
+      Service мог всё ещё выбирать старые метки или захватывать посторонний Pod. Сравните app=board и дополнительные метки с текущими Pod board. `kubectl get service board -o jsonpath=''{.spec.selector}''; kubectl get pods --show-labels`.
+
+
+      ### Готовый endpoint board {#q118-vip-ready-endpoint-observation}
+
+
+      После исправления селектора в EndpointSlice может ещё не быть готового адреса. Проверьте условие ready и дождитесь готового endpoint. `kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[].endpoints[] | {addresses, conditions}''`.
+
+
+      ### Прямой запрос к IP Pod {#q118-vip-direct-pod-request}
+
+
+      У выбранного Pod board мог отсутствовать адрес, либо HTTP-листенер недоступен. Запросите IP Pod напрямую из client и сравните с north-118 перед проверкой VIP. `ip=$(kubectl get pod -l app=board -o jsonpath=''{.items[0].status.podIP}''); kubectl exec deployment/client -- wget -qO- -T 3 "http://$ip:8080"`.
+
+
+      ### Запрос к VIP Service {#q118-vip-service-live-request}
+
+
+      Pod может отвечать напрямую, пока у VIP board нет подходящего backend или отображение портов неверно. Запросите текущий ClusterIP из client и сравните с north-118. `vip=$(kubectl get service board -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/client -- wget -qO- -T 3 "http://$vip:8080"`.
+
+
+      ### Зафиксированная готовность прокси {#q118-captured-proxy-readiness}
+
+
+      Зафиксированная запись прокси могла отсутствовать или не показывать ready. Проверьте выданное наблюдение отдельно от текущей доступности Service. `jq ''.ready'' /run/dq/facts/0/proxy-observation.json`.
+
+
+      ### Зафиксированный режим прокси {#q118-captured-proxy-mode}
+
+
+      Зафиксированный режим прокси мог отсутствовать или отличаться от ожидаемых. Проверьте iptables, nftables или ipvs в выданной записи. `jq ''.mode'' /run/dq/facts/0/proxy-observation.json`.
+
+
+      ### Входы проверки VIP {#q118-vip-observer-input}
+
+
+      Проверка селектора и VIP может остановиться до указания условия, если не запускается процесс или недоступны входы. Проверьте инструменты и доступ к Service, Pod и EndpointSlice. `command -v python3; kubectl get service board -o name; kubectl get endpointslices -l kubernetes.io/service-name=board`.
+
+
+      ### Сохранённые Service и нагрузки {#q118-preserved-vip-delivery-objects}
+
+
+      Замена необратимо меняет UID сервиса, а также может изменить VIP либо идентификатор или образ нагрузки. Сверьте текущие Deployment board и client, образы Pod и Service с зафиксированными записями. `jq ''{serviceUID,vip,deployments}'' /run/dq/facts/0/vip-identities.json; kubectl get service board -o json | jq ''{uid: .metadata.uid, vip: .spec.clusterIP}''; kubectl get deployment board client -o json | jq ''.items[] | {name: .metadata.name, uid: .metadata.uid, images: [.spec.template.spec.containers[] | {name,image}]}''; kubectl get replicaset,pod -o json | jq ''.items[] | {kind, name: .metadata.name, uid: .metadata.uid, owner: [.metadata.ownerReferences[]? | select(.controller == true) | {kind,name,uid}], images: [.spec.containers[]? | {name,image}]}''`.
+
+
+      ### Отображение целевого порта {#q118-vip-endpoint-port-mapping}
+
+
+      Порт Service может быть указан, но числовая или именованная цель не ведёт к порту приложения. Сравните отображение, именованные порты текущих Pod и соответствующий TCP-порт EndpointSlice. `kubectl get service board -o json | jq ''.spec.ports''; kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[].ports''`.
+
+
+      ### Владелец EndpointSlice {#q118-vip-original-service-endpoint-owner}
+
+
+      Активный endpoint может попасть в срез с меткой board, которым управляет другой Service. Сравните UID контроллера-владельца с исходным UID Service. `kubectl get service board -o jsonpath=''{.metadata.uid}''; kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[] | {name: .metadata.name, owners: .metadata.ownerReferences}''`.
+
+
+      ### Текущая готовая цель {#q118-vip-current-ready-target}
+
+
+      В EndpointSlice могла остаться устаревшая цель, адрес другого Pod либо ни одной активной цели. Сравните targetRef и адрес каждой активной цели с готовым текущим Pod Deployment board. `kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[].endpoints[] | {targetRef, addresses, conditions}''; kubectl get pods -l app=board -o wide`.
+
+
+      ### Список NetworkPolicy {#q119-egress-policy-list}
+
+
+      Проверка не смогла получить список NetworkPolicy. Проверьте доступ к текущему namespace и доступность API перед разбором правил. `kubectl get networkpolicies -o name`.
+
+
+      ### Наблюдаемые метки client {#q119-egress-client-label-input}
+
+
+      Список Pod client мог быть недоступен или пуст. Проверьте наличие Pod с app=client перед проверкой селектора политики. `kubectl get pods -l app=client --show-labels`.
+
+
+      ### Именованная политика egress {#q119-client-egress-policy-object}
+
+
+      Политика client-egress могла отсутствовать или не читаться. Проверьте именованную NetworkPolicy в namespace client. `kubectl get networkpolicy client-egress -o name`.
+
+
+      ### Селектор только для client {#q119-egress-only-client-selector}
+
+
+      PodSelector мог выбрать другую нагрузку или сузить нужную область. Проверьте, что он эквивалентен app=client. `kubectl get networkpolicy client-egress -o json | jq ''.spec.podSelector''`.
+
+
+      ### Тип политики только Egress {#q119-egress-only-policy-type}
+
+
+      Проверка могла обнаружить отсутствие Egress или лишний Ingress. Убедитесь, что в политике объявлен только Egress. `kubectl get networkpolicy client-egress -o json | jq ''.spec.policyTypes''`.
+
+
+      ### Ограниченные цели и порты egress {#q119-bounded-egress-peer-and-port}
+
+
+      У правила egress мог отсутствовать адресат или порт, могла быть чужая цель или неоднозначный именованный порт. Проверьте оба селектора DNS и локальную цель board с разрешёнными одиночными портами. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Лишний разрешённый поток {#q119-egress-unexpected-flow}
+
+
+      Внешне корректное правило могло разрешить лишний протокол или порт. Сравните каждую тройку цели, протокола и порта с нужными потоками DNS и board. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Дополнительные разрешения egress {#q119-additive-egress-policy}
+
+
+      Другая egress-политика для Pod client могла добавить запрещённый поток, поскольку разрешения объединяются. Проверьте указанную политику и сравните её потоки с допустимыми. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, selector: .spec.podSelector, egress: .spec.egress}''`.
+
+
+      ### Другая политика с неразбираемыми правилами {#q119-unreadable-additive-policy}
+
+
+      Селектор или egress другой политики не удалось надёжно разобрать. Проверьте указанный объект на неподдерживаемые селекторы или слишком широкие цели перед оценкой доступа. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, spec: .spec}''`.
+
+
+      ### Структура наблюдаемых входов {#q119-egress-observation-shape}
+
+
+      В наблюдаемых документах могли отсутствовать политики или метки Pod, либо JSON некорректен. Убедитесь, что оба ответа API читаются, перед разбором правила. `kubectl get networkpolicies -o json | jq ''.items | length''; kubectl get pods -l app=client --show-labels`.
+
+
+      ### UDP 53 к DNS кластера {#q119-client-egress-dns-udp}
+
+
+      Политика могла не разрешить UDP 53 к выданным Pod кластерного DNS. Проверьте общую цель kube-system и kube-dns с нужным портом UDP. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### TCP 53 к DNS кластера {#q119-client-egress-dns-tcp}
+
+
+      UDP для DNS мог быть разрешён, пока TCP 53 отсутствует. Проверьте разрешение TCP 53 для той же DNS-цели. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### TCP 8080 к board {#q119-client-egress-board-http}
+
+
+      Разрешения DNS не открывают путь к приложению. В политике может отсутствовать TCP 8080 к локальным Pod board. Проверьте цель app=board и её порт. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Фактический DNS-запрос для board {#q119-live-board-name-resolution}
+
+
+      Даже при объявленной политике DNS может быть недоступен из работающего client. Запросите полное имя board из client и проверьте успешность запроса. `kubectl exec deployment/client -c worker -- nslookup -type=A "board.$DQ_NAMESPACE.svc.cluster.local."`.
+
+
+      ### Фактический HTTP к board из client {#q119-live-board-client-http}
+
+
+      DNS может работать, пока client не достигает board на 8080 или получает другой ответ. Запросите Service из client и сравните с north-119. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://board:8080`.
+
+
+      ### Контрольный запрос к closed {#q119-closed-service-control-request}
+
+
+      Service closed мог быть недоступен даже из board. Проверьте closed-119 в контрольном запросе, прежде чем связывать ошибку запроса client с egress. `address=$(kubectl get service closed -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/board -- wget -qO- -T 3 "http://$address:8080"`.
+
+
+      ### Отклонённый запрос из client {#q119-closed-service-client-denial}
+
+
+      Более широкое или дополнительное разрешение могло открыть closed для client. Проверьте, что прямой запрос не проходит, а контрольный из board всё ещё достигает closed. `address=$(kubectl get service closed -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/client -- wget -qO- -T 2 "http://$address:8080"`.
+
+
+      ### Входы проверки egress {#q119-egress-policy-observer-input}
+
+
+      Проверка политики может остановиться до определения условия, если не запускается процесс или недоступны входы. Проверьте Python и текущие наблюдения политики и Pod. `command -v python3; kubectl get networkpolicy client-egress -o name; kubectl get pods -l app=client`.
+
+
+      ### Список NetworkPolicy {#q120-egress-policy-list}
+
+
+      Проверка не смогла получить список NetworkPolicy. Проверьте доступ к текущему namespace и доступность API перед разбором правил. `kubectl get networkpolicies -o name`.
+
+
+      ### Наблюдаемые метки client {#q120-egress-client-label-input}
+
+
+      Список Pod client мог быть недоступен или пуст. Проверьте наличие Pod с app=client перед проверкой селектора политики. `kubectl get pods -l app=client --show-labels`.
+
+
+      ### Именованная политика egress {#q120-client-egress-policy-object}
+
+
+      Политика client-egress могла отсутствовать или не читаться. Проверьте именованную NetworkPolicy в namespace client. `kubectl get networkpolicy client-egress -o name`.
+
+
+      ### Ограниченные цели и порты egress {#q120-bounded-egress-peer-and-port}
+
+
+      У правила egress мог отсутствовать адресат или порт, быть чужая цель либо не разрешаться именованный порт shelf. Проверьте DNS-цели и отдельные разрешённые порты для shelf-0. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Лишний разрешённый поток {#q120-egress-unexpected-flow}
+
+
+      Внешне корректное правило могло разрешить лишний протокол или порт. Сравните каждую тройку цели, протокола и порта с нужными потоками DNS и shelf. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Дополнительные разрешения egress {#q120-additive-egress-policy}
+
+
+      Другая egress-политика для Pod client могла добавить запрещённый поток, поскольку разрешения объединяются. Проверьте указанную политику и сравните её потоки с допустимыми. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, selector: .spec.podSelector, egress: .spec.egress}''`.
+
+
+      ### Другая политика с неразбираемыми правилами {#q120-unreadable-additive-policy}
+
+
+      Селектор или egress другой политики не удалось надёжно разобрать. Проверьте указанный объект на неподдерживаемые селекторы или слишком широкие цели перед оценкой доступа. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, spec: .spec}''`.
+
+
+      ### UDP 53 к DNS кластера {#q120-client-egress-dns-udp}
+
+
+      Политика могла не разрешить UDP 53 к выданным Pod кластерного DNS. Проверьте общую цель kube-system и kube-dns с нужным портом UDP. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### TCP 53 к DNS кластера {#q120-client-egress-dns-tcp}
+
+
+      UDP для DNS мог быть разрешён, пока TCP 53 отсутствует. Проверьте разрешение TCP 53 для той же DNS-цели. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### TCP 8080 к shelf {#q120-client-egress-shelf-http}
+
+
+      Разрешения DNS не открывают путь к приложению. В политике может отсутствовать TCP 8080 к локальным Pod shelf. Проверьте цель app=shelf и её порт. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Входы проверки egress {#q120-egress-policy-observer-input}
+
+
+      Проверка политики может остановиться до определения условия, если не запускается процесс или недоступны входы. Проверьте Python и текущие наблюдения политики и Pod. `command -v python3; kubectl get networkpolicy client-egress -o name; kubectl get pods -l app=client`.
+
+
+      ### Сохранённый клейм журнала {#q120-shelf-retained-ledger-pvc}
+
+
+      Клейм журнала мог отсутствовать или получить другой UID после пересоздания. Сравните текущий UID ledger-shelf-0 с исходной записью до правки Service и политики. `cat /run/dq/facts/0/original-pvc-uid; kubectl get pvc ledger-shelf-0 -o jsonpath=''{.metadata.uid}''`.
+
+
+      ### Headless Service для ordinal {#q120-shelf-headless-ordinal-source}
+
+
+      Service shelf мог получить виртуальный адрес или выбирать другой Pod. Сохраните clusterIP равным None и сравните app=shelf и дополнительные метки селектора с фактическими метками shelf-0. `kubectl get service shelf -o json | jq ''{clusterIP: .spec.clusterIP, selector: .spec.selector}''; kubectl get pod shelf-0 --show-labels`.
+
+
+      ### Охват селектора client {#q120-client-policy-selector-coverage}
+
+
+      Политика могла выбирать посторонние Pod или пропускать часть текущих Pod client. Проверьте, что селектор требует app=client и подходит всем наблюдаемым Pod client. `kubectl get networkpolicy client-egress -o json | jq ''.spec.podSelector''; kubectl get pods -l app=client --show-labels`.
+
+
+      ### Тип политики Egress {#q120-client-policy-egress-type}
+
+
+      Политика могла описывать только входящие правила или пропустить тип Egress. Проверьте, что список типов client-egress содержит Egress. `kubectl get networkpolicy client-egress -o json | jq ''.spec.policyTypes''`.
+
+
+      ### Фактический ordinal DNS из client {#q120-live-shelf-ordinal-dns}
+
+
+      Headless Service мог не публиковать shelf-0, либо у работающего client недоступен исходящий DNS. Проверьте A-запрос полного имени ordinal из client. `kubectl exec deployment/client -c worker -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."`.
+
+
+      ### Фактический ответ журнала {#q120-live-client-ledger-response}
+
+
+      Ordinal DNS может работать, пока TCP 8080 ограничен либо endpoint shelf отдаёт другой ответ. Запросите shelf-0.shelf:8080 из client и сравните с ledger-120. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://shelf-0.shelf:8080`.
+
+
+      ### Входы проверки headless Service {#q120-shelf-service-observer-input}
+
+
+      Проверка headless Service может завершиться до указания условия, если не запускается процесс. Проверьте инструменты станции и доступ к объектам shelf. `command -v python3; kubectl get service shelf -o name; kubectl get pod shelf-0 -o name`.
 
 
       ### Исходный UID Service {#q106-service-original-uid}
@@ -2504,6 +3080,294 @@ kubernetes-10:
     pl: 'Nazwa Service jest przekształcana w adres wirtualny. Jego selector i gotowe EndpointSlice określają, które adresy podów odbierają ruch. Sam sukces DNS nie dowodzi, że Service ma użyteczny backend.
 
 
+  ### Zapisana diagnoza selektora {#q118-vip-selector-diagnosis}
+
+
+  Diagnoza może nie istnieć lub wskazywać proxy zamiast niespójnego selektora. Porównaj selektor Service z etykietami podów i zapisz usterkę selektora w diagnosis.json. `jq -r .fault diagnosis.json; kubectl get service board -o jsonpath=''{.spec.selector}''`.
+
+
+  ### Selektor bieżących podów board {#q118-vip-matching-board-selector}
+
+
+  Service może nadal wybierać stare etykiety lub obcy pod. Porównaj app=board i dodatkowe etykiety z bieżącymi podami board. `kubectl get service board -o jsonpath=''{.spec.selector}''; kubectl get pods --show-labels`.
+
+
+  ### Gotowy endpoint board {#q118-vip-ready-endpoint-observation}
+
+
+  Po poprawce selektora EndpointSlice może jeszcze nie zawierać gotowego adresu. Sprawdź ready i poczekaj na gotowy endpoint. `kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[].endpoints[] | {addresses, conditions}''`.
+
+
+  ### Bezpośrednie żądanie do IP poda {#q118-vip-direct-pod-request}
+
+
+  Wybrany pod board może nie mieć adresu lub jego listener HTTP nie odpowiadać. Odpytaj IP poda bezpośrednio z client i porównaj z north-118 przed testem VIP. `ip=$(kubectl get pod -l app=board -o jsonpath=''{.items[0].status.podIP}''); kubectl exec deployment/client -- wget -qO- -T 3 "http://$ip:8080"`.
+
+
+  ### Żądanie do VIP Service {#q118-vip-service-live-request}
+
+
+  Pod może odpowiadać bezpośrednio, choć VIP board nie ma backendu lub ma złe mapowanie portu. Odpytaj bieżący ClusterIP z client i porównaj z north-118. `vip=$(kubectl get service board -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/client -- wget -qO- -T 3 "http://$vip:8080"`.
+
+
+  ### Zapisana gotowość proxy {#q118-captured-proxy-readiness}
+
+
+  Zamrożona obserwacja proxy może nie istnieć lub nie pokazywać ready. Sprawdź ją osobno od bieżącej dostępności Service. `jq ''.ready'' /run/dq/facts/0/proxy-observation.json`.
+
+
+  ### Zapisany tryb proxy {#q118-captured-proxy-mode}
+
+
+  Zapisany tryb proxy może nie istnieć lub nie należeć do zbioru. Sprawdź iptables, nftables lub ipvs w dostarczonej obserwacji. `jq ''.mode'' /run/dq/facts/0/proxy-observation.json`.
+
+
+  ### Dane kontroli VIP {#q118-vip-observer-input}
+
+
+  Kontrola selektora i VIP może zatrzymać się bez wskazania warunku, gdy proces lub dane zawodzą. Sprawdź narzędzia i dostęp do Service, podów i EndpointSlice. `command -v python3; kubectl get service board -o name; kubectl get endpointslices -l kubernetes.io/service-name=board`.
+
+
+  ### Zachowany Service i obciążenia {#q118-preserved-vip-delivery-objects}
+
+
+  Zastąpienie trwale zmienia UID Service i może również zmienić jego VIP albo tożsamość lub obraz obciążenia. Porównaj Deploymenty board i client, obrazy bieżących podów i Service z zamrożonym zapisem. `jq ''{serviceUID,vip,deployments}'' /run/dq/facts/0/vip-identities.json; kubectl get service board -o json | jq ''{uid: .metadata.uid, vip: .spec.clusterIP}''; kubectl get deployment board client -o json | jq ''.items[] | {name: .metadata.name, uid: .metadata.uid, images: [.spec.template.spec.containers[] | {name,image}]}''; kubectl get replicaset,pod -o json | jq ''.items[] | {kind, name: .metadata.name, uid: .metadata.uid, owner: [.metadata.ownerReferences[]? | select(.controller == true) | {kind,name,uid}], images: [.spec.containers[]? | {name,image}]}''`.
+
+
+  ### Mapowanie portu docelowego {#q118-vip-endpoint-port-mapping}
+
+
+  Port Service może istnieć, ale cel liczbowy lub nazwany nie prowadzi do portu aplikacji. Porównaj mapowanie, nazwane porty bieżących podów i odpowiedni port TCP EndpointSlice. `kubectl get service board -o json | jq ''.spec.ports''; kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[].ports''`.
+
+
+  ### Właściciel EndpointSlice {#q118-vip-original-service-endpoint-owner}
+
+
+  Aktywny endpoint może być w EndpointSlice oznaczonym board, lecz zarządzanym przez inny Service. Porównaj UID kontrolera z pierwotnym UID Service. `kubectl get service board -o jsonpath=''{.metadata.uid}''; kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[] | {name: .metadata.name, owners: .metadata.ownerReferences}''`.
+
+
+  ### Bieżący gotowy cel {#q118-vip-current-ready-target}
+
+
+  EndpointSlice może zachowywać stary cel, niepasujący adres albo żadnego aktywnego celu. Porównaj targetRef i adresy z bieżącym gotowym podem Deploymentu board. `kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[].endpoints[] | {targetRef, addresses, conditions}''; kubectl get pods -l app=board -o wide`.
+
+
+  ### Lista NetworkPolicy {#q119-egress-policy-list}
+
+
+  Kontrola nie mogła pobrać listy NetworkPolicy. Sprawdź dostęp do bieżącej przestrzeni nazw i API przed oceną reguł. `kubectl get networkpolicies -o name`.
+
+
+  ### Obserwowane etykiety client {#q119-egress-client-label-input}
+
+
+  Lista podów client może być niedostępna lub pusta. Potwierdź obecność podów app=client przed oceną selektora. `kubectl get pods -l app=client --show-labels`.
+
+
+  ### Nazwana polityka egress klienta {#q119-client-egress-policy-object}
+
+
+  Polityka client-egress może nie istnieć lub być nieczytelna. Sprawdź nazwaną NetworkPolicy w przestrzeni client. `kubectl get networkpolicy client-egress -o name`.
+
+
+  ### Selektor wyłącznie dla client {#q119-egress-only-client-selector}
+
+
+  PodSelector może wybierać inną aplikację lub zawężać zakres. Sprawdź równoważność z app=client. `kubectl get networkpolicy client-egress -o json | jq ''.spec.podSelector''`.
+
+
+  ### Typ polityki wyłącznie Egress {#q119-egress-only-policy-type}
+
+
+  Kontrola może widzieć brak Egress lub dodatkowy Ingress. Sprawdź, czy deklaracja zawiera wyłącznie Egress. `kubectl get networkpolicy client-egress -o json | jq ''.spec.policyTypes''`.
+
+
+  ### Ograniczone cele i porty egress {#q119-bounded-egress-peer-and-port}
+
+
+  Reguła egress może nie mieć celu lub portu, wskazywać obcy cel albo niejednoznaczny port nazwany. Sprawdź oba selektory DNS i lokalny cel board z pojedynczymi dozwolonymi portami. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### Nieoczekiwany dozwolony przepływ {#q119-egress-unexpected-flow}
+
+
+  Pozornie poprawna reguła może pozwalać na dodatkowy protokół lub port. Porównaj każdą trójkę cel/protokół/port z wymaganym DNS i board. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### Dodatkowe zezwolenia egress {#q119-additive-egress-policy}
+
+
+  Inna polityka egress wybierająca pod client może dodawać zakazany przepływ, bo zezwolenia się sumują. Sprawdź wskazaną politykę i jej przepływy względem dozwolonych. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, selector: .spec.podSelector, egress: .spec.egress}''`.
+
+
+  ### Inna polityka niemożliwa do oceny {#q119-unreadable-additive-policy}
+
+
+  Nie udało się bezpiecznie zinterpretować selektora lub egress innej polityki. Sprawdź wskazany obiekt pod kątem nieobsługiwanych selektorów lub szerokich celów. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, spec: .spec}''`.
+
+
+  ### Struktura obserwowanych danych {#q119-egress-observation-shape}
+
+
+  W dokumentach może brakować polityk lub etykiet podów, albo JSON jest nieprawidłowy. Sprawdź czytelność obu odpowiedzi API przed analizą reguły. `kubectl get networkpolicies -o json | jq ''.items | length''; kubectl get pods -l app=client --show-labels`.
+
+
+  ### UDP 53 do DNS klastra {#q119-client-egress-dns-udp}
+
+
+  Polityka może pomijać UDP 53 do podów DNS klastra. Sprawdź połączenie kube-system i kube-dns z właściwym portem UDP. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### TCP 53 do DNS klastra {#q119-client-egress-dns-tcp}
+
+
+  UDP dla DNS może być dozwolone mimo braku TCP 53. Sprawdź zezwolenie TCP 53 dla tego samego celu DNS. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### TCP 8080 do board {#q119-client-egress-board-http}
+
+
+  Zezwolenia DNS nie tworzą dostępu do aplikacji. Polityka może nie mieć TCP 8080 do lokalnych podów board. Sprawdź cel app=board i jego port. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### Rzeczywisty odczyt DNS board {#q119-live-board-name-resolution}
+
+
+  Mimo deklaracji polityki DNS może być niedostępny z działającego client. Odpytaj pełną nazwę board z client i sprawdź powodzenie. `kubectl exec deployment/client -c worker -- nslookup -type=A "board.$DQ_NAMESPACE.svc.cluster.local."`.
+
+
+  ### Rzeczywisty HTTP board z client {#q119-live-board-client-http}
+
+
+  DNS może działać, choć client nie dociera do board na 8080 lub dostaje obcą treść. Odpytaj Service z client i porównaj z north-119. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://board:8080`.
+
+
+  ### Żądanie kontrolne do closed {#q119-closed-service-control-request}
+
+
+  Service closed może być niedostępny nawet z board. Potwierdź closed-119 w żądaniu kontrolnym przed powiązaniem błędu z client z egress. `address=$(kubectl get service closed -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/board -- wget -qO- -T 3 "http://$address:8080"`.
+
+
+  ### Odrzucone żądanie z client {#q119-closed-service-client-denial}
+
+
+  Szersze lub dodatkowe zezwolenie może umożliwiać client dostęp do closed. Sprawdź, czy żądanie bezpośrednie zawodzi, a kontrolne z board nadal dociera do closed. `address=$(kubectl get service closed -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/client -- wget -qO- -T 2 "http://$address:8080"`.
+
+
+  ### Dane kontroli egress {#q119-egress-policy-observer-input}
+
+
+  Kontrola polityki może przerwać działanie przed wskazaniem warunku, gdy proces lub wejścia zawodzą. Sprawdź Pythona i bieżące dane polityki i podów. `command -v python3; kubectl get networkpolicy client-egress -o name; kubectl get pods -l app=client`.
+
+
+  ### Lista NetworkPolicy {#q120-egress-policy-list}
+
+
+  Kontrola nie mogła pobrać listy NetworkPolicy. Sprawdź dostęp do bieżącej przestrzeni nazw i API przed oceną reguł. `kubectl get networkpolicies -o name`.
+
+
+  ### Obserwowane etykiety client {#q120-egress-client-label-input}
+
+
+  Lista podów client może być niedostępna lub pusta. Potwierdź obecność podów app=client przed oceną selektora. `kubectl get pods -l app=client --show-labels`.
+
+
+  ### Nazwana polityka egress klienta {#q120-client-egress-policy-object}
+
+
+  Polityka client-egress może nie istnieć lub być nieczytelna. Sprawdź nazwaną NetworkPolicy w przestrzeni client. `kubectl get networkpolicy client-egress -o name`.
+
+
+  ### Ograniczone cele i porty egress {#q120-bounded-egress-peer-and-port}
+
+
+  Reguła egress może nie mieć celu lub portu, wskazywać obcy cel albo nie rozwiązywać portu nazwanego shelf. Sprawdź cele DNS i pojedyncze dozwolone porty dla shelf-0. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### Nieoczekiwany dozwolony przepływ {#q120-egress-unexpected-flow}
+
+
+  Pozornie poprawna reguła może pozwalać na dodatkowy protokół lub port. Porównaj każdą trójkę cel/protokół/port z wymaganym DNS i shelf. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### Dodatkowe zezwolenia egress {#q120-additive-egress-policy}
+
+
+  Inna polityka egress wybierająca pod client może dodawać zakazany przepływ, bo zezwolenia się sumują. Sprawdź wskazaną politykę i jej przepływy względem dozwolonych. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, selector: .spec.podSelector, egress: .spec.egress}''`.
+
+
+  ### Inna polityka niemożliwa do oceny {#q120-unreadable-additive-policy}
+
+
+  Nie udało się bezpiecznie zinterpretować selektora lub egress innej polityki. Sprawdź wskazany obiekt pod kątem nieobsługiwanych selektorów lub szerokich celów. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, spec: .spec}''`.
+
+
+  ### UDP 53 do DNS klastra {#q120-client-egress-dns-udp}
+
+
+  Polityka może pomijać UDP 53 do podów DNS klastra. Sprawdź połączenie kube-system i kube-dns z właściwym portem UDP. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### TCP 53 do DNS klastra {#q120-client-egress-dns-tcp}
+
+
+  UDP dla DNS może być dozwolone mimo braku TCP 53. Sprawdź zezwolenie TCP 53 dla tego samego celu DNS. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### TCP 8080 do shelf {#q120-client-egress-shelf-http}
+
+
+  Zezwolenia DNS nie tworzą dostępu do aplikacji. Polityka może nie mieć TCP 8080 do lokalnych podów shelf. Sprawdź cel app=shelf i jego port. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### Dane kontroli egress {#q120-egress-policy-observer-input}
+
+
+  Kontrola polityki może przerwać działanie przed wskazaniem warunku, gdy proces lub wejścia zawodzą. Sprawdź Pythona i bieżące dane polityki i podów. `command -v python3; kubectl get networkpolicy client-egress -o name; kubectl get pods -l app=client`.
+
+
+  ### Zachowany PVC dziennika {#q120-shelf-retained-ledger-pvc}
+
+
+  PVC dziennika może nie istnieć lub mieć inny UID po odtworzeniu. Porównaj aktualny UID ledger-shelf-0 z zamrożonym zapisem przed naprawą Service i polityki. `cat /run/dq/facts/0/original-pvc-uid; kubectl get pvc ledger-shelf-0 -o jsonpath=''{.metadata.uid}''`.
+
+
+  ### Service headless dla nazwy porządkowej {#q120-shelf-headless-ordinal-source}
+
+
+  Service shelf może mieć adres wirtualny lub wybierać zły pod. Zachowaj clusterIP równe None i porównaj app=shelf i dodatkowe etykiety z rzeczywistymi etykietami shelf-0. `kubectl get service shelf -o json | jq ''{clusterIP: .spec.clusterIP, selector: .spec.selector}''; kubectl get pod shelf-0 --show-labels`.
+
+
+  ### Zakres selektora client {#q120-client-policy-selector-coverage}
+
+
+  Polityka może wybierać obce pody lub pomijać część bieżących podów client. Sprawdź, czy selektor wymaga app=client i pasuje do wszystkich obserwowanych podów client. `kubectl get networkpolicy client-egress -o json | jq ''.spec.podSelector''; kubectl get pods -l app=client --show-labels`.
+
+
+  ### Typ polityki Egress {#q120-client-policy-egress-type}
+
+
+  Polityka może deklarować tylko ruch przychodzący lub pomijać Egress. Sprawdź, czy typy client-egress obejmują Egress. `kubectl get networkpolicy client-egress -o json | jq ''.spec.policyTypes''`.
+
+
+  ### Żywy DNS porządkowy z client {#q120-live-shelf-ordinal-dns}
+
+
+  Service headless może nie publikować shelf-0 lub działający client może nie mieć dostępu do DNS. Sprawdź zapytanie A o pełną nazwę porządkową z client. `kubectl exec deployment/client -c worker -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."`.
+
+
+  ### Rzeczywista odpowiedź dziennika {#q120-live-client-ledger-response}
+
+
+  DNS porządkowy może działać mimo zablokowanego TCP 8080 lub innej treści z endpointu shelf. Odpytaj shelf-0.shelf:8080 z client i porównaj z ledger-120. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://shelf-0.shelf:8080`.
+
+
+  ### Dane kontroli Service headless {#q120-shelf-service-observer-input}
+
+
+  Kontrola Service headless może zakończyć się przed wskazaniem warunku, gdy proces nie startuje. Sprawdź narzędzia i dostęp do obiektów shelf. `command -v python3; kubectl get service shelf -o name; kubectl get pod shelf-0 -o name`.
+
+
   ### Pierwotny UID Service {#q106-service-original-uid}
 
 
@@ -2831,6 +3695,294 @@ kubernetes-10:
     es: 'Un nombre Service se resuelve en una dirección virtual. Su selector y EndpointSlices listos determinan qué direcciones de pod reciben tráfico. El éxito de DNS por sí solo no prueba que el Service tenga un backend utilizable.
 
 
+  ### Diagnóstico escrito del selector {#q118-vip-selector-diagnosis}
+
+
+  El diagnóstico puede faltar o señalar al proxy en vez de la discrepancia del selector. Compare el selector del Service con las etiquetas y registre el fallo en diagnosis.json. `jq -r .fault diagnosis.json; kubectl get service board -o jsonpath=''{.spec.selector}''`.
+
+
+  ### Selector de los Pods board actuales {#q118-vip-matching-board-selector}
+
+
+  El Service puede seguir con etiquetas antiguas o incluir un Pod ajeno. Compare app=board y etiquetas adicionales con los Pods board actuales. `kubectl get service board -o jsonpath=''{.spec.selector}''; kubectl get pods --show-labels`.
+
+
+  ### Endpoint listo de board {#q118-vip-ready-endpoint-observation}
+
+
+  Tras corregir el selector, las EndpointSlices pueden seguir sin dirección lista. Revise ready y espere un endpoint listo. `kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[].endpoints[] | {addresses, conditions}''`.
+
+
+  ### Petición directa a la IP del Pod {#q118-vip-direct-pod-request}
+
+
+  El Pod board elegido puede carecer de dirección, o su listener HTTP puede estar inaccesible. Consulte la IP directa desde client y compare con north-118 antes de probar el VIP. `ip=$(kubectl get pod -l app=board -o jsonpath=''{.items[0].status.podIP}''); kubectl exec deployment/client -- wget -qO- -T 3 "http://$ip:8080"`.
+
+
+  ### Petición al VIP del Service {#q118-vip-service-live-request}
+
+
+  El Pod puede responder directamente aunque el VIP de board carezca de backend o mapee mal el puerto. Consulte el ClusterIP activo desde client y compare con north-118. `vip=$(kubectl get service board -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/client -- wget -qO- -T 3 "http://$vip:8080"`.
+
+
+  ### Disponibilidad observada del proxy {#q118-captured-proxy-readiness}
+
+
+  La observación fijada del proxy puede faltar o no indicar ready. Revísela por separado de la accesibilidad actual del Service. `jq ''.ready'' /run/dq/facts/0/proxy-observation.json`.
+
+
+  ### Modo observado del proxy {#q118-captured-proxy-mode}
+
+
+  El modo capturado puede faltar o estar fuera del conjunto esperado. Compruebe si indica iptables, nftables o ipvs. `jq ''.mode'' /run/dq/facts/0/proxy-observation.json`.
+
+
+  ### Entradas de la comprobación del VIP {#q118-vip-observer-input}
+
+
+  El observador del selector y VIP puede detenerse antes de señalar una condición si falla el proceso o la entrada. Revise herramientas y acceso al Service, Pods y EndpointSlices. `command -v python3; kubectl get service board -o name; kubectl get endpointslices -l kubernetes.io/service-name=board`.
+
+
+  ### Service y cargas conservados {#q118-preserved-vip-delivery-objects}
+
+
+  Un reemplazo cambia de forma irreversible el UID del Service y puede alterar su VIP o la identidad o imagen de una carga suministrada. Compare los Deployment board y client, imágenes de Pods actuales y Service con los registros fijados. `jq ''{serviceUID,vip,deployments}'' /run/dq/facts/0/vip-identities.json; kubectl get service board -o json | jq ''{uid: .metadata.uid, vip: .spec.clusterIP}''; kubectl get deployment board client -o json | jq ''.items[] | {name: .metadata.name, uid: .metadata.uid, images: [.spec.template.spec.containers[] | {name,image}]}''; kubectl get replicaset,pod -o json | jq ''.items[] | {kind, name: .metadata.name, uid: .metadata.uid, owner: [.metadata.ownerReferences[]? | select(.controller == true) | {kind,name,uid}], images: [.spec.containers[]? | {name,image}]}''`.
+
+
+  ### Asignación del puerto de destino {#q118-vip-endpoint-port-mapping}
+
+
+  El puerto del Service puede existir aunque su destino numérico o nombrado no resuelva al puerto de la aplicación. Compare el mapeo, los puertos nombrados y el TCP de EndpointSlice correspondiente. `kubectl get service board -o json | jq ''.spec.ports''; kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[].ports''`.
+
+
+  ### Propietario del EndpointSlice {#q118-vip-original-service-endpoint-owner}
+
+
+  Puede haber un endpoint activo en una slice etiquetada board pero controlada por otro Service. Compare el UID del controlador con el UID original fijado del Service. `kubectl get service board -o jsonpath=''{.metadata.uid}''; kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[] | {name: .metadata.name, owners: .metadata.ownerReferences}''`.
+
+
+  ### Destino actual listo {#q118-vip-current-ready-target}
+
+
+  La EndpointSlice puede conservar un destino antiguo, una dirección ajena al Pod o ningún destino activo. Compare cada targetRef y dirección con un Pod actual listo bajo control del Deployment board. `kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[].endpoints[] | {targetRef, addresses, conditions}''; kubectl get pods -l app=board -o wide`.
+
+
+  ### Lista de NetworkPolicy {#q119-egress-policy-list}
+
+
+  La comprobación no pudo listar las NetworkPolicy. Revise el acceso al namespace y al API antes de interpretar las políticas. `kubectl get networkpolicies -o name`.
+
+
+  ### Etiquetas observadas de client {#q119-egress-client-label-input}
+
+
+  El inventario de Pods client puede faltar o estar vacío. Compruebe la presencia de Pods app=client antes de evaluar el selector. `kubectl get pods -l app=client --show-labels`.
+
+
+  ### Política egress nombrada {#q119-client-egress-policy-object}
+
+
+  La política client-egress puede faltar o no ser legible. Revise la NetworkPolicy por nombre en el namespace de client. `kubectl get networkpolicy client-egress -o name`.
+
+
+  ### Selector solo para client {#q119-egress-only-client-selector}
+
+
+  PodSelector puede elegir otra aplicación o estrechar el alcance. Compruebe que sea equivalente a app=client. `kubectl get networkpolicy client-egress -o json | jq ''.spec.podSelector''`.
+
+
+  ### Tipo de política solo Egress {#q119-egress-only-policy-type}
+
+
+  La comprobación puede detectar ausencia de Egress o presencia adicional de Ingress. Compruebe que la política declare solo Egress. `kubectl get networkpolicy client-egress -o json | jq ''.spec.policyTypes''`.
+
+
+  ### Destinos y puertos egress acotados {#q119-bounded-egress-peer-and-port}
+
+
+  Una regla egress puede omitir destino o puerto, usar otro par o resolver un puerto de forma inconsistente. Revise ambos selectores DNS y el destino local board con puertos individuales permitidos. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### Flujo permitido no previsto {#q119-egress-unexpected-flow}
+
+
+  Una regla válida en apariencia puede permitir un protocolo o puerto adicional. Compare cada tupla de destino, protocolo y puerto con los flujos requeridos de DNS y board. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### Permisos egress adicionales {#q119-additive-egress-policy}
+
+
+  Otra política egress que seleccione un Pod client puede agregar un flujo prohibido porque los permisos se acumulan. Revise la política indicada y compare sus flujos con el conjunto exigido. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, selector: .spec.podSelector, egress: .spec.egress}''`.
+
+
+  ### Otra política que no se puede evaluar {#q119-unreadable-additive-policy}
+
+
+  No se pudo interpretar de forma segura el selector o egress de otra política. Revise el objeto indicado en busca de selectores incompatibles o destinos amplios antes de evaluar el acceso. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, spec: .spec}''`.
+
+
+  ### Formato de las entradas observadas {#q119-egress-observation-shape}
+
+
+  Los documentos pueden carecer de políticas o etiquetas de Pods, o el JSON ser inválido. Revise que ambas observaciones del API sean legibles antes de analizar la regla. `kubectl get networkpolicies -o json | jq ''.items | length''; kubectl get pods -l app=client --show-labels`.
+
+
+  ### UDP 53 al DNS del clúster {#q119-client-egress-dns-udp}
+
+
+  La política puede omitir UDP 53 hacia los Pods DNS del clúster. Revise el par con kube-system y kube-dns y el puerto UDP correspondiente. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### TCP 53 al DNS del clúster {#q119-client-egress-dns-tcp}
+
+
+  DNS por UDP puede estar permitido mientras falta TCP 53. Compruebe el permiso TCP 53 para el mismo par DNS. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### TCP 8080 a board {#q119-client-egress-board-http}
+
+
+  Los permisos DNS no habilitan el acceso a la carga. La política puede carecer de TCP 8080 hacia Pods board locales. Revise el par app=board y su puerto. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### Consulta DNS activa de board {#q119-live-board-name-resolution}
+
+
+  La política declarada puede dejar DNS inaccesible desde client. Consulte el nombre completo de board desde client y compruebe que funcione. `kubectl exec deployment/client -c worker -- nslookup -type=A "board.$DQ_NAMESPACE.svc.cluster.local."`.
+
+
+  ### HTTP activo de board desde client {#q119-live-board-client-http}
+
+
+  DNS puede funcionar aunque client no acceda a board en 8080 o reciba otra respuesta. Consulte el Service desde client y compare con north-119. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://board:8080`.
+
+
+  ### Petición de control a closed {#q119-closed-service-control-request}
+
+
+  El Service closed puede estar inaccesible incluso desde board. Compruebe closed-119 en la consulta de control antes de atribuir a egress el fallo de client. `address=$(kubectl get service closed -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/board -- wget -qO- -T 3 "http://$address:8080"`.
+
+
+  ### Petición denegada desde client {#q119-closed-service-client-denial}
+
+
+  Un permiso amplio o adicional puede permitir a client alcanzar closed. Compruebe que la petición directa falle y que el control desde board siga llegando a closed. `address=$(kubectl get service closed -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/client -- wget -qO- -T 2 "http://$address:8080"`.
+
+
+  ### Entradas de la comprobación egress {#q119-egress-policy-observer-input}
+
+
+  El observador puede detenerse antes de señalar una condición si falla el proceso o la entrada. Revise Python y las observaciones actuales de la política y los Pods. `command -v python3; kubectl get networkpolicy client-egress -o name; kubectl get pods -l app=client`.
+
+
+  ### Lista de NetworkPolicy {#q120-egress-policy-list}
+
+
+  La comprobación no pudo listar las NetworkPolicy. Revise el acceso al namespace y al API antes de interpretar las políticas. `kubectl get networkpolicies -o name`.
+
+
+  ### Etiquetas observadas de client {#q120-egress-client-label-input}
+
+
+  El inventario de Pods client puede faltar o estar vacío. Compruebe la presencia de Pods app=client antes de evaluar el selector. `kubectl get pods -l app=client --show-labels`.
+
+
+  ### Política egress nombrada {#q120-client-egress-policy-object}
+
+
+  La política client-egress puede faltar o no ser legible. Revise la NetworkPolicy por nombre en el namespace de client. `kubectl get networkpolicy client-egress -o name`.
+
+
+  ### Destinos y puertos egress acotados {#q120-bounded-egress-peer-and-port}
+
+
+  Una regla egress puede omitir destino o puerto, usar un par ajeno o no resolver un puerto nombrado de shelf. Revise los pares DNS y los puertos individuales permitidos para shelf-0. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### Flujo permitido no previsto {#q120-egress-unexpected-flow}
+
+
+  Una regla válida en apariencia puede permitir un protocolo o puerto adicional. Compare cada tupla de destino, protocolo y puerto con los flujos requeridos de DNS y shelf. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### Permisos egress adicionales {#q120-additive-egress-policy}
+
+
+  Otra política egress que seleccione un Pod client puede agregar un flujo prohibido porque los permisos se acumulan. Revise la política indicada y compare sus flujos con el conjunto exigido. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, selector: .spec.podSelector, egress: .spec.egress}''`.
+
+
+  ### Otra política que no se puede evaluar {#q120-unreadable-additive-policy}
+
+
+  No se pudo interpretar de forma segura el selector o egress de otra política. Revise el objeto indicado en busca de selectores incompatibles o destinos amplios antes de evaluar el acceso. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, spec: .spec}''`.
+
+
+  ### UDP 53 al DNS del clúster {#q120-client-egress-dns-udp}
+
+
+  La política puede omitir UDP 53 hacia los Pods DNS del clúster. Revise el par con kube-system y kube-dns y el puerto UDP correspondiente. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### TCP 53 al DNS del clúster {#q120-client-egress-dns-tcp}
+
+
+  DNS por UDP puede estar permitido mientras falta TCP 53. Compruebe el permiso TCP 53 para el mismo par DNS. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### TCP 8080 a shelf {#q120-client-egress-shelf-http}
+
+
+  Los permisos DNS no habilitan el acceso a la carga. La política puede carecer de TCP 8080 hacia Pods shelf locales. Revise el par app=shelf y su puerto. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+  ### Entradas de la comprobación egress {#q120-egress-policy-observer-input}
+
+
+  El observador puede detenerse antes de señalar una condición si falla el proceso o la entrada. Revise Python y las observaciones actuales de la política y los Pods. `command -v python3; kubectl get networkpolicy client-egress -o name; kubectl get pods -l app=client`.
+
+
+  ### PVC del registro conservado {#q120-shelf-retained-ledger-pvc}
+
+
+  El PVC del registro puede faltar o tener otro UID tras ser recreado. Compare el UID activo de ledger-shelf-0 con el registro fijado antes de corregir Service y política. `cat /run/dq/facts/0/original-pvc-uid; kubectl get pvc ledger-shelf-0 -o jsonpath=''{.metadata.uid}''`.
+
+
+  ### Service headless para el ordinal {#q120-shelf-headless-ordinal-source}
+
+
+  El Service shelf puede tener una dirección virtual o seleccionar otro Pod. Mantenga clusterIP en None y compare app=shelf y sus etiquetas adicionales con las etiquetas reales de shelf-0. `kubectl get service shelf -o json | jq ''{clusterIP: .spec.clusterIP, selector: .spec.selector}''; kubectl get pod shelf-0 --show-labels`.
+
+
+  ### Alcance del selector client {#q120-client-policy-selector-coverage}
+
+
+  La política puede seleccionar Pods ajenos u omitir algunos Pods client actuales. Compruebe que el selector exija app=client y coincida con todos los Pods client observados. `kubectl get networkpolicy client-egress -o json | jq ''.spec.podSelector''; kubectl get pods -l app=client --show-labels`.
+
+
+  ### Tipo de política Egress {#q120-client-policy-egress-type}
+
+
+  La política puede declarar solo entrada u omitir el tipo Egress. Compruebe que los tipos de client-egress incluyan Egress. `kubectl get networkpolicy client-egress -o json | jq ''.spec.policyTypes''`.
+
+
+  ### DNS ordinal activo desde client {#q120-live-shelf-ordinal-dns}
+
+
+  El Service headless puede no publicar shelf-0, o el client activo puede carecer de salida DNS. Compruebe la consulta A por el nombre ordinal completo desde client. `kubectl exec deployment/client -c worker -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."`.
+
+
+  ### Respuesta activa del registro {#q120-live-client-ledger-response}
+
+
+  El DNS ordinal puede funcionar aunque TCP 8080 siga bloqueado o el endpoint shelf sirva otro contenido. Consulte shelf-0.shelf:8080 desde client y compare con ledger-120. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://shelf-0.shelf:8080`.
+
+
+  ### Entradas de la comprobación de Service headless {#q120-shelf-service-observer-input}
+
+
+  La comprobación del Service headless puede terminar antes de señalar una condición si no inicia el proceso. Revise las herramientas y el acceso a objetos shelf. `command -v python3; kubectl get service shelf -o name; kubectl get pod shelf-0 -o name`.
+
+
   ### UID original del Service {#q106-service-original-uid}
 
 
@@ -3156,6 +4308,294 @@ kubernetes-10:
 
   Lea los archivos antes de cambiarlos. Repita el experimento completo con `bash cleanup.sh`, luego `bash run.sh && bash check.sh`. La limpieza elimina sólo los objetos con nombre del ejemplo; sus otros directorios permanecen.'
     de: 'Ein Service-Name wird in eine virtuelle Adresse aufgelöst. Sein selector und die fertigen EndpointSlices bestimmen, welche Pod-Adressen Datenverkehr empfangen. Der Erfolg von DNS allein beweist nicht, dass der Service über einen brauchbaren backend verfügt.
+
+
+      ### Erfasste Selektordiagnose {#q118-vip-selector-diagnosis}
+
+
+      Die Diagnose fehlt möglicherweise oder nennt den Proxy statt der Selektorabweichung. Vergleichen Sie den Service-Selektor mit Pod-Labels und erfassen Sie den Selektorfehler in diagnosis.json. `jq -r .fault diagnosis.json; kubectl get service board -o jsonpath=''{.spec.selector}''`.
+
+
+      ### Selektor für aktuelle board-Pods {#q118-vip-matching-board-selector}
+
+
+      Der Service wählt möglicherweise noch alte Labels oder einen fremden Pod. Vergleichen Sie app=board und zusätzliche Labels mit den aktuellen board-Pods. `kubectl get service board -o jsonpath=''{.spec.selector}''; kubectl get pods --show-labels`.
+
+
+      ### Bereiter board-Endpoint {#q118-vip-ready-endpoint-observation}
+
+
+      Nach Korrektur des Selektors haben die EndpointSlices möglicherweise noch keine bereite Adresse. Prüfen Sie ready und warten Sie auf einen bereiten Endpoint. `kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[].endpoints[] | {addresses, conditions}''`.
+
+
+      ### Direkte Anfrage an die Pod-IP {#q118-vip-direct-pod-request}
+
+
+      Dem ausgewählten board-Pod fehlt möglicherweise eine Adresse oder sein HTTP-Listener ist nicht erreichbar. Fragen Sie die Pod-IP direkt aus client ab und vergleichen Sie vor dem VIP-Test mit north-118. `ip=$(kubectl get pod -l app=board -o jsonpath=''{.items[0].status.podIP}''); kubectl exec deployment/client -- wget -qO- -T 3 "http://$ip:8080"`.
+
+
+      ### Anfrage an die Service-VIP {#q118-vip-service-live-request}
+
+
+      Der Pod kann direkt antworten, obwohl dem board-VIP ein nutzbares Backend fehlt oder die Portzuordnung falsch ist. Fragen Sie die aktive ClusterIP aus client ab und vergleichen Sie mit north-118. `vip=$(kubectl get service board -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/client -- wget -qO- -T 3 "http://$vip:8080"`.
+
+
+      ### Erfasste Proxy-Bereitschaft {#q118-captured-proxy-readiness}
+
+
+      Die festgehaltene Proxy-Beobachtung fehlt möglicherweise oder meldet kein ready. Prüfen Sie sie getrennt von der aktuellen Service-Erreichbarkeit. `jq ''.ready'' /run/dq/facts/0/proxy-observation.json`.
+
+
+      ### Erfasster Proxy-Modus {#q118-captured-proxy-mode}
+
+
+      Der erfasste Proxy-Modus fehlt möglicherweise oder liegt außerhalb der erwarteten Menge. Prüfen Sie iptables, nftables oder ipvs im gelieferten Beleg. `jq ''.mode'' /run/dq/facts/0/proxy-observation.json`.
+
+
+      ### Eingaben für die VIP-Prüfung {#q118-vip-observer-input}
+
+
+      Die Selektor- und VIP-Prüfung kann vor einer Meldung abbrechen, wenn Prozess oder Eingaben fehlschlagen. Prüfen Sie Tools und Zugriff auf Service, Pods und EndpointSlices. `command -v python3; kubectl get service board -o name; kubectl get endpointslices -l kubernetes.io/service-name=board`.
+
+
+      ### Erhaltener Service und Arbeitslasten {#q118-preserved-vip-delivery-objects}
+
+
+      Ein Ersatz ändert die Service-UID dauerhaft und kann auch den VIP oder die Identität bzw. das Image einer gelieferten Arbeitslast verändern. Vergleichen Sie Deployments board und client, aktuelle Pod-Images und Service mit den festgehaltenen Belegen. `jq ''{serviceUID,vip,deployments}'' /run/dq/facts/0/vip-identities.json; kubectl get service board -o json | jq ''{uid: .metadata.uid, vip: .spec.clusterIP}''; kubectl get deployment board client -o json | jq ''.items[] | {name: .metadata.name, uid: .metadata.uid, images: [.spec.template.spec.containers[] | {name,image}]}''; kubectl get replicaset,pod -o json | jq ''.items[] | {kind, name: .metadata.name, uid: .metadata.uid, owner: [.metadata.ownerReferences[]? | select(.controller == true) | {kind,name,uid}], images: [.spec.containers[]? | {name,image}]}''`.
+
+
+      ### Zuordnung des Zielports {#q118-vip-endpoint-port-mapping}
+
+
+      Der Service-Port kann existieren, obwohl sein numerisches oder benanntes Ziel nicht zum Anwendungsport führt. Vergleichen Sie Zuordnung, benannte Ports aktueller Pods und den passenden TCP-Port in EndpointSlices. `kubectl get service board -o json | jq ''.spec.ports''; kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[].ports''`.
+
+
+      ### Owner des EndpointSlice {#q118-vip-original-service-endpoint-owner}
+
+
+      Ein aktiver Endpoint kann in einer board-Slice liegen, die ein anderer Service steuert. Vergleichen Sie die Controller-UID mit der ursprünglichen festgehaltenen Service-UID. `kubectl get service board -o jsonpath=''{.metadata.uid}''; kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[] | {name: .metadata.name, owners: .metadata.ownerReferences}''`.
+
+
+      ### Aktuelles bereites Ziel {#q118-vip-current-ready-target}
+
+
+      Die EndpointSlice enthält möglicherweise ein altes Ziel, eine fremde Adresse oder kein aktives Ziel. Vergleichen Sie jede aktive targetRef und Adresse mit einem aktuellen bereiten Pod des Deployments board. `kubectl get endpointslices -l kubernetes.io/service-name=board -o json | jq ''.items[].endpoints[] | {targetRef, addresses, conditions}''; kubectl get pods -l app=board -o wide`.
+
+
+      ### NetworkPolicy-Liste {#q119-egress-policy-list}
+
+
+      Die Prüfung konnte NetworkPolicies nicht auflisten. Prüfen Sie Namespace-Zugriff und API-Verfügbarkeit vor der Auswertung der Richtlinien. `kubectl get networkpolicies -o name`.
+
+
+      ### Beobachtete client-Labels {#q119-egress-client-label-input}
+
+
+      Das Inventar der client-Pods fehlt möglicherweise oder ist leer. Prüfen Sie Pods mit app=client vor der Auswertung des Selektors. `kubectl get pods -l app=client --show-labels`.
+
+
+      ### Benannte client-Egress-Richtlinie {#q119-client-egress-policy-object}
+
+
+      Die Richtlinie client-egress fehlt möglicherweise oder ist nicht lesbar. Prüfen Sie die benannte NetworkPolicy im Namespace von client. `kubectl get networkpolicy client-egress -o name`.
+
+
+      ### Selektor nur für client {#q119-egress-only-client-selector}
+
+
+      Der podSelector wählt möglicherweise eine andere Anwendung oder schränkt die Auswahl ein. Prüfen Sie die Gleichwertigkeit zu app=client. `kubectl get networkpolicy client-egress -o json | jq ''.spec.podSelector''`.
+
+
+      ### Richtlinientyp nur Egress {#q119-egress-only-policy-type}
+
+
+      Die Prüfung sieht möglicherweise kein Egress oder ein zusätzliches Ingress. Prüfen Sie, dass die Richtlinie ausschließlich Egress deklariert. `kubectl get networkpolicy client-egress -o json | jq ''.spec.policyTypes''`.
+
+
+      ### Begrenzte Egress-Ziele und Ports {#q119-bounded-egress-peer-and-port}
+
+
+      Einer Egress-Regel fehlt möglicherweise Ziel oder Port, sie nutzt einen fremden Peer oder einen uneindeutigen benannten Port. Prüfen Sie beide DNS-Selektoren und das lokale Ziel board mit einzelnen erlaubten Ports. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Unerwarteter erlaubter Fluss {#q119-egress-unexpected-flow}
+
+
+      Eine scheinbar gültige Regel erlaubt möglicherweise ein zusätzliches Protokoll oder einen Port. Vergleichen Sie jedes Ziel-/Protokoll-/Port-Tupel mit den geforderten DNS- und board-Flüssen. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Zusätzliche Egress-Freigaben {#q119-additive-egress-policy}
+
+
+      Eine weitere Egress-Richtlinie für einen client-Pod erlaubt möglicherweise einen unerwünschten Fluss, weil Freigaben additiv sind. Vergleichen Sie die gemeldete Richtlinie mit den vorgesehenen Flüssen. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, selector: .spec.podSelector, egress: .spec.egress}''`.
+
+
+      ### Andere nicht auswertbare Richtlinie {#q119-unreadable-additive-policy}
+
+
+      Selektor oder Egress-Regeln einer anderen Richtlinie ließen sich nicht sicher auswerten. Prüfen Sie das gemeldete Objekt auf nicht unterstützte Selektoren oder zu breite Ziele. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, spec: .spec}''`.
+
+
+      ### Struktur der beobachteten Eingaben {#q119-egress-observation-shape}
+
+
+      In den Dokumenten fehlen möglicherweise Richtlinien oder Pod-Labels, oder JSON ist ungültig. Prüfen Sie beide API-Antworten vor der Regelanalyse auf Lesbarkeit. `kubectl get networkpolicies -o json | jq ''.items | length''; kubectl get pods -l app=client --show-labels`.
+
+
+      ### UDP 53 zum Cluster-DNS {#q119-client-egress-dns-udp}
+
+
+      Die Richtlinie lässt möglicherweise UDP 53 zu den DNS-Pods des Clusters aus. Prüfen Sie den Peer aus kube-system und kube-dns mit passendem UDP-Port. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### TCP 53 zum Cluster-DNS {#q119-client-egress-dns-tcp}
+
+
+      UDP für DNS ist möglicherweise erlaubt, während TCP 53 fehlt. Prüfen Sie TCP 53 zum selben bereitgestellten DNS-Peer. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### TCP 8080 zu board {#q119-client-egress-board-http}
+
+
+      DNS-Freigaben öffnen den Anwendungspfad nicht. Möglicherweise fehlt TCP 8080 zu den lokalen board-Pods. Prüfen Sie den Peer app=board und seinen Port. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Aktive DNS-Anfrage für board {#q119-live-board-name-resolution}
+
+
+      Die deklarierte Richtlinie kann DNS aus dem laufenden client weiterhin blockieren. Fragen Sie den vollständigen board-Namen aus client ab und prüfen Sie den Erfolg. `kubectl exec deployment/client -c worker -- nslookup -type=A "board.$DQ_NAMESPACE.svc.cluster.local."`.
+
+
+      ### Aktiver HTTP-Aufruf von board aus client {#q119-live-board-client-http}
+
+
+      DNS kann funktionieren, obwohl client board auf 8080 nicht erreicht oder eine andere Antwort erhält. Rufen Sie den Service aus client auf und vergleichen Sie mit north-119. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://board:8080`.
+
+
+      ### Kontrollanfrage an closed {#q119-closed-service-control-request}
+
+
+      Der Service closed ist möglicherweise auch aus board nicht erreichbar. Prüfen Sie closed-119 in der Kontrollanfrage, bevor Sie den Fehler aus client dem Egress zuschreiben. `address=$(kubectl get service closed -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/board -- wget -qO- -T 3 "http://$address:8080"`.
+
+
+      ### Abgelehnte Anfrage aus client {#q119-closed-service-client-denial}
+
+
+      Eine breitere oder zusätzliche Freigabe ermöglicht client möglicherweise den Zugriff auf closed. Prüfen Sie, dass die direkte Anfrage scheitert und die Kontrolle aus board closed weiter erreicht. `address=$(kubectl get service closed -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/client -- wget -qO- -T 2 "http://$address:8080"`.
+
+
+      ### Eingaben für die Egress-Prüfung {#q119-egress-policy-observer-input}
+
+
+      Die Richtlinienprüfung kann vor der Meldung einer Bedingung abbrechen, wenn Prozess oder Eingaben fehlschlagen. Prüfen Sie Python und aktuelle Richtlinien- und Pod-Beobachtungen. `command -v python3; kubectl get networkpolicy client-egress -o name; kubectl get pods -l app=client`.
+
+
+      ### NetworkPolicy-Liste {#q120-egress-policy-list}
+
+
+      Die Prüfung konnte NetworkPolicies nicht auflisten. Prüfen Sie Namespace-Zugriff und API-Verfügbarkeit vor der Auswertung der Richtlinien. `kubectl get networkpolicies -o name`.
+
+
+      ### Beobachtete client-Labels {#q120-egress-client-label-input}
+
+
+      Das Inventar der client-Pods fehlt möglicherweise oder ist leer. Prüfen Sie Pods mit app=client vor der Auswertung des Selektors. `kubectl get pods -l app=client --show-labels`.
+
+
+      ### Benannte client-Egress-Richtlinie {#q120-client-egress-policy-object}
+
+
+      Die Richtlinie client-egress fehlt möglicherweise oder ist nicht lesbar. Prüfen Sie die benannte NetworkPolicy im Namespace von client. `kubectl get networkpolicy client-egress -o name`.
+
+
+      ### Begrenzte Egress-Ziele und Ports {#q120-bounded-egress-peer-and-port}
+
+
+      Einer Egress-Regel fehlt möglicherweise Ziel oder Port, sie nutzt einen fremden Peer oder löst einen benannten shelf-Port nicht auf. Prüfen Sie DNS-Peers und einzelne erlaubte Ports für shelf-0. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Unerwarteter erlaubter Fluss {#q120-egress-unexpected-flow}
+
+
+      Eine scheinbar gültige Regel erlaubt möglicherweise ein zusätzliches Protokoll oder einen Port. Vergleichen Sie jedes Ziel-/Protokoll-/Port-Tupel mit den geforderten DNS- und shelf-Flüssen. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Zusätzliche Egress-Freigaben {#q120-additive-egress-policy}
+
+
+      Eine weitere Egress-Richtlinie für einen client-Pod erlaubt möglicherweise einen unerwünschten Fluss, weil Freigaben additiv sind. Vergleichen Sie die gemeldete Richtlinie mit den vorgesehenen Flüssen. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, selector: .spec.podSelector, egress: .spec.egress}''`.
+
+
+      ### Andere nicht auswertbare Richtlinie {#q120-unreadable-additive-policy}
+
+
+      Selektor oder Egress-Regeln einer anderen Richtlinie ließen sich nicht sicher auswerten. Prüfen Sie das gemeldete Objekt auf nicht unterstützte Selektoren oder zu breite Ziele. `kubectl get networkpolicies -o json | jq ''.items[] | {name: .metadata.name, spec: .spec}''`.
+
+
+      ### UDP 53 zum Cluster-DNS {#q120-client-egress-dns-udp}
+
+
+      Die Richtlinie lässt möglicherweise UDP 53 zu den DNS-Pods des Clusters aus. Prüfen Sie den Peer aus kube-system und kube-dns mit passendem UDP-Port. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### TCP 53 zum Cluster-DNS {#q120-client-egress-dns-tcp}
+
+
+      UDP für DNS ist möglicherweise erlaubt, während TCP 53 fehlt. Prüfen Sie TCP 53 zum selben bereitgestellten DNS-Peer. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### TCP 8080 zu shelf {#q120-client-egress-shelf-http}
+
+
+      DNS-Freigaben öffnen den Anwendungspfad nicht. Möglicherweise fehlt TCP 8080 zu den lokalen shelf-Pods. Prüfen Sie den Peer app=shelf und seinen Port. `kubectl get networkpolicy client-egress -o json | jq ''.spec.egress''`.
+
+
+      ### Eingaben für die Egress-Prüfung {#q120-egress-policy-observer-input}
+
+
+      Die Richtlinienprüfung kann vor der Meldung einer Bedingung abbrechen, wenn Prozess oder Eingaben fehlschlagen. Prüfen Sie Python und aktuelle Richtlinien- und Pod-Beobachtungen. `command -v python3; kubectl get networkpolicy client-egress -o name; kubectl get pods -l app=client`.
+
+
+      ### Erhaltener Ledger-PVC {#q120-shelf-retained-ledger-pvc}
+
+
+      Der Ledger-PVC fehlt möglicherweise oder hat nach Neuerstellung eine andere UID. Vergleichen Sie die UID von ledger-shelf-0 vor der Korrektur von Service und Richtlinie mit dem Beleg. `cat /run/dq/facts/0/original-pvc-uid; kubectl get pvc ledger-shelf-0 -o jsonpath=''{.metadata.uid}''`.
+
+
+      ### Headless-Service für das Ordinal {#q120-shelf-headless-ordinal-source}
+
+
+      Der Service shelf hat möglicherweise eine virtuelle Adresse oder wählt einen anderen Pod. Belassen Sie clusterIP bei None und vergleichen Sie app=shelf und Zusatzlabels mit den tatsächlichen Labels von shelf-0. `kubectl get service shelf -o json | jq ''{clusterIP: .spec.clusterIP, selector: .spec.selector}''; kubectl get pod shelf-0 --show-labels`.
+
+
+      ### Abdeckung des client-Selektors {#q120-client-policy-selector-coverage}
+
+
+      Die Richtlinie wählt möglicherweise fremde Pods aus oder übersieht aktuelle client-Pods. Prüfen Sie, ob der Selektor app=client verlangt und alle beobachteten client-Pods erfasst. `kubectl get networkpolicy client-egress -o json | jq ''.spec.podSelector''; kubectl get pods -l app=client --show-labels`.
+
+
+      ### Richtlinientyp Egress {#q120-client-policy-egress-type}
+
+
+      Die Richtlinie deklariert möglicherweise nur eingehende Regeln oder lässt Egress aus. Prüfen Sie, ob die Typenliste von client-egress Egress enthält. `kubectl get networkpolicy client-egress -o json | jq ''.spec.policyTypes''`.
+
+
+      ### Aktive ordinale DNS-Anfrage aus client {#q120-live-shelf-ordinal-dns}
+
+
+      Der Headless-Service veröffentlicht möglicherweise shelf-0 nicht, oder client hat keinen funktionierenden DNS-Egress. Prüfen Sie die A-Anfrage für den vollqualifizierten ordinalen Namen aus client. `kubectl exec deployment/client -c worker -- nslookup -type=A "shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."`.
+
+
+      ### Aktive Ledger-Antwort {#q120-live-client-ledger-response}
+
+
+      Ordinaler DNS kann funktionieren, obwohl TCP 8080 blockiert bleibt oder der shelf-Endpoint anders antwortet. Rufen Sie shelf-0.shelf:8080 aus client auf und vergleichen Sie mit ledger-120. `kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://shelf-0.shelf:8080`.
+
+
+      ### Eingaben für die Headless-Service-Prüfung {#q120-shelf-service-observer-input}
+
+
+      Die Headless-Service-Prüfung kann vor der Meldung einer Bedingung abbrechen, wenn der Prozess nicht startet. Prüfen Sie Tools und Zugriff auf die shelf-Objekte. `command -v python3; kubectl get service shelf -o name; kubectl get pod shelf-0 -o name`.
 
 
       ### Ursprüngliche Service-UID {#q106-service-original-uid}

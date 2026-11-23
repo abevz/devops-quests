@@ -25,4 +25,192 @@ text: |
   cat /run/dq/observations/static-pod.json
   kubectl get pod "static-board-$DQ_NODE_NAME" -o yaml
   ```
-source_hash: 8d7aca7c3b189d178642f00f3ed875ae467d1ea3269a7d132918490c2a37c983
+
+
+  ### Ссылки владельца на StationBoard {#q116-station-controller-ownership}
+
+  Указанный объект могли создать вне контроллера StationBoard, либо ссылка содержит прежний UID владельца. Сравните ownerReference контроллера с текущим StationBoard station в выданной группе API.
+
+  ```bash
+  kubectl get stationboard station -o jsonpath='{.metadata.uid}'; kubectl get deployment/board configmap/board-route service/board -o json | jq '.items[] | {name: .metadata.name, owners: .metadata.ownerReferences}'
+  ```
+
+  ### Метка созданного Deployment {#q116-station-controller-label}
+
+  У созданного Deployment могла отсутствовать метка контроллера, либо объект не читается. Проверьте у board метку devops-quests.controller=station-board.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.metadata.labels["devops-quests.controller"]'
+  ```
+
+  ### Исходные идентификаторы объектов {#q116-station-retained-object-identities}
+
+  Объект из зафиксированного отчёта о согласовании могли пересоздать, навсегда изменив UID. Сравните каждый текущий UID с исходным перед правкой существующих объектов.
+
+  ```bash
+  jq '.identities' /run/dq/facts/0/reconciliation-identities.json
+  kubectl get stationboard/station configmap/board-route deployment/client service/client-view -o custom-columns=KIND:.kind,NAME:.metadata.name,UID:.metadata.uid
+  ```
+
+  ### Исходный образ нагрузки {#q116-station-retained-workload-image}
+
+  Шаблон источника или потребителя либо текущий worker потребителя мог получить другой образ. Сравните образы именованных контейнеров с зафиксированным образом или его неизменяемым digest.
+
+  ```bash
+  jq -r '.image' /run/dq/facts/0/reconciliation-identities.json
+  kubectl get deployment board client -o json | jq '.items[] | {name: .metadata.name, uid: .metadata.uid, images: [.spec.template.spec.containers[] | {name,image}]}'
+  kubectl get replicaset,pod -o json | jq '.items[] | {kind, name: .metadata.name, uid: .metadata.uid, owner: [.metadata.ownerReferences[]? | select(.controller == true) | {kind,name,uid}], images: [.spec.containers[]? | {name,image}]}'
+  ```
+
+  ### Желаемый маршрут station {#q116-station-desired-route}
+
+  Исходный ресурс мог сохранять старый маршрут, пока менялись производные объекты. Задайте нужный маршрут у StationBoard station и дождитесь согласования.
+
+  ```bash
+  kubectl get stationboard station -o jsonpath='{.spec.route}'
+  ```
+
+  ### Наблюдаемое поколение ресурса {#q116-station-current-generation}
+
+  Контроллер мог показывать прежнее поколение пользовательского ресурса. После правки маршрута сравните observedGeneration с текущей generation.
+
+  ```bash
+  kubectl get stationboard station -o json | jq '{generation: .metadata.generation, observed: .status.observedGeneration}'
+  ```
+
+  ### Готовность StationBoard {#q116-station-controller-readiness}
+
+  Контроллер мог увидеть текущее поколение, но ещё не сообщить ready. Проверьте статус StationBoard и дождитесь стабилизации производной нагрузки.
+
+  ```bash
+  kubectl get stationboard station -o json | jq '.status'
+  ```
+
+  ### Готовая производная реплика {#q116-station-generated-worker-ready}
+
+  У созданного Deployment board могла ещё не появиться готовая реплика. Проверьте события Pod и дождитесь ровно одной готовой реплики.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.status.readyReplicas}'; kubectl get pods -l app=board
+  ```
+
+  ### Точное содержимое маршрута {#q116-station-generated-route-bytes}
+
+  Контроллер мог опубликовать старое или неполное содержимое. Проверьте index.html в board-route на north-116 с ровно одним переводом строки в конце.
+
+  ```bash
+  kubectl get configmap board-route -o json | jq -e '.data["index.html"] == "north-116\n"'
+  ```
+
+  ### Фактический ответ источника {#q116-station-source-http-response}
+
+  Сгенерированный ConfigMap и статус могут быть верными, пока board отдаёт старые данные или недоступен. Запросите исходный Service из client и сравните с north-116.
+
+  ```bash
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+  ```
+
+  ### Готовность обновления потребителя {#q116-station-consumer-rollout}
+
+  Rollout client мог не завершиться, либо его текущие Pod ещё не готовы. Проверьте статус обновления, одну желаемую и готовую реплику и готовность текущих Pod.
+
+  ```bash
+  kubectl rollout status deployment/client --timeout=3s; kubectl get deployment client -o json | jq '{desired: .spec.replicas, ready: .status.readyReplicas}'
+  ```
+
+  ### Интерфейс Service потребителя {#q116-station-consumer-publication-interface}
+
+  У Service потребителя мог измениться тип, селектор или порт. Проверьте ClusterIP у client-view, соответствие селектора меткам шаблона client и один подходящий TCP-порт 8080.
+
+  ```bash
+  kubectl get service client-view -o json | jq '.spec | {type, selector, ports}'; kubectl get deployment client -o json | jq '.spec.template.metadata.labels'
+  ```
+
+  ### Опубликованный ответ потребителя {#q116-station-consumer-live-publication}
+
+  Источник board мог обновиться, а отдельный client всё ещё хранит старый ответ или не публикует его. Запросите client-view и проверьте точное тело north-116 с завершающим переводом строки.
+
+  ```bash
+  kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://client-view:8080/
+  ```
+
+  ### Входы проверки идентификаторов {#q116-station-identity-observer-input}
+
+  Проверка идентификаторов может прерваться до указания условия при ошибке инструментов или замороженных входов. Проверьте доступ к ресурсу, производным объектам и сохранённым нагрузкам.
+
+  ```bash
+  command -v python3; kubectl get stationboard station -o name; kubectl get deployment board client -o name
+  ```
+
+  ### Входы проверки доставки {#q116-station-delivery-observer-input}
+
+  Проверка доставки может прерваться до определения источника сбоя, если не запускается процесс или недоступны входы. Проверьте инструменты и доступ к client и client-view.
+
+  ```bash
+  command -v python3; kubectl get deployment client -o name; kubectl get service client-view -o name
+  ```
+
+  ### Подтверждённое наблюдение статического Pod {#q117-verified-static-observation}
+
+  Среда могла ещё не подтвердить статический Pod под управлением kubelet. Проверьте локальный манифест и запись наблюдения после применения файла. API Pod с тем же именем не подтверждает статическое владение.
+
+  ```bash
+  jq '{verified, source, node, mirrorUID, configHash}' /run/dq/observations/static-pod.json
+  ```
+
+  ### Манифест как источник {#q117-static-manifest-file-source}
+
+  Наблюдаемая нагрузка могла прийти из API, а не из статического манифеста. Проверьте источник в записи наблюдения и подтвердите значение file.
+
+  ```bash
+  jq -r .source /run/dq/observations/static-pod.json
+  ```
+
+  ### Наблюдаемая нода стенда {#q117-static-source-bay-node}
+
+  Запись наблюдения могла относиться к другой ноде либо отсутствовать. Сравните записанную ноду с выданной нодой стенда перед проверкой mirror Pod.
+
+  ```bash
+  printf '%s\n' "$DQ_NODE_NAME"; jq -r .node /run/dq/observations/static-pod.json
+  ```
+
+  ### Наблюдаемый UID mirror Pod {#q117-mirror-pod-observed-uid}
+
+  API-объект с именем mirror Pod либо задержка kubelet могли оставить другой UID. Сравните UID Pod с текущим подтверждённым mirrorUID.
+
+  ```bash
+  jq -r .mirrorUID /run/dq/observations/static-pod.json; kubectl get pod "static-board-$DQ_NODE_NAME" -o jsonpath='{.metadata.uid}'
+  ```
+
+  ### Наблюдаемый хэш конфигурации mirror Pod {#q117-mirror-pod-config-hash}
+
+  После правки манифеста у mirror Pod могли остаться старые аннотации либо их нет. Сравните config.mirror с configHash из наблюдения.
+
+  ```bash
+  jq -r .configHash /run/dq/observations/static-pod.json; kubectl get pod "static-board-$DQ_NODE_NAME" -o json | jq '.metadata.annotations["kubernetes.io/config.mirror"]'
+  ```
+
+  ### Нода mirror Pod {#q117-mirror-pod-node-placement}
+
+  API Pod с тем же именем могли разместить в другом месте. Сравните фактический nodeName mirror Pod с выданной нодой стенда.
+
+  ```bash
+  printf '%s\n' "$DQ_NODE_NAME"; kubectl get pod "static-board-$DQ_NODE_NAME" -o jsonpath='{.spec.nodeName}'
+  ```
+
+  ### Готовность контейнера в mirror Pod {#q117-mirror-pod-container-readiness}
+
+  Mirror Pod может появиться до готовности контейнеров. Проверьте фактические статусы и дождитесь готового контейнера у текущего Pod из файла.
+
+  ```bash
+  kubectl get pod "static-board-$DQ_NODE_NAME" -o json | jq '.status.containerStatuses'
+  ```
+
+  ### HTTP-ответ Service {#q117-static-board-service-response}
+
+  Статический worker мог слушать 8099, либо Service не ведёт к готовому статическому Pod. Запросите board из client и сравните ответ с north-117.
+
+  ```bash
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+  ```
+source_hash: 951a83675f39e6baf0ea420228283dd1680938fc73c4f7c02b100c4c175e05c2
