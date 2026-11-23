@@ -21,14 +21,14 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 86))
+@pytest.mark.parametrize("quest", range(1, 89))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
         for goal in stage["objectives"]:
             check = goal["check"]
             emitted = set(MARKER.findall(check))
-            for _, body in re.findall(r"<<'(DQ_PROPERTY|DQ_RELEASE_BUNDLE|DQ_RELEASE)'\n(.*?)\n\1(?:\n|$)", check, re.S):
+            for _, body in re.findall(r"<<'(DQ_PROPERTY|DQ_RELEASE_BUNDLE|DQ_RELEASE|DQ_MEMORY_BUDGET|DQ_MEMORY_DATA)'\n(.*?)\n\1(?:\n|$)", check, re.S):
                 # Source-declared marker arguments; phase reachability is audited
                 # against the actual producer/failover checks, not locale keys.
                 for node in ast.walk(ast.parse(body)):
@@ -67,6 +67,85 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                                 and isinstance(call.args[position], ast.Constant)
                                 and isinstance(call.args[position].value, str)):
                             emitted.add(call.args[position].value)
+            for body in re.findall(r"<<'DQ_PUBLICATION'\n(.*?)\nDQ_PUBLICATION(?:\n|$)", check, re.S):
+                tree = ast.parse(body)
+                dynamic = [
+                    call.args[0] for call in ast.walk(tree)
+                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                    and call.func.id == "reject" and call.args
+                    and isinstance(call.args[0], ast.BinOp)
+                    and isinstance(call.args[0].op, ast.Add)
+                    and isinstance(call.args[0].left, ast.Constant)
+                    and isinstance(call.args[0].left.value, str)
+                ]
+                if dynamic:
+                    loops = [
+                        node for node in ast.walk(tree)
+                        if isinstance(node, ast.For) and isinstance(node.target, ast.Tuple)
+                        and isinstance(node.target.elts[0], ast.Name)
+                        and node.target.elts[0].id == "active_index"
+                        and isinstance(node.iter, ast.Call)
+                        and isinstance(node.iter.func, ast.Name)
+                        and node.iter.func.id == "enumerate"
+                    ]
+                    loop, = loops
+                    hosts, start = loop.iter.args
+                    assert isinstance(hosts, ast.Tuple) and isinstance(start, ast.Constant)
+                    indices = range(start.value, start.value + len(hosts.elts))
+                    for value in dynamic:
+                        prefix = value.left.value
+                        if prefix.endswith("_"):
+                            emitted.update(prefix + str(index) for index in indices)
+                        else:
+                            # Before the first host, observation errors have no
+                            # suffix; after entering a host they include its index.
+                            assert prefix == "application_observation"
+                            assert isinstance(value.right, ast.IfExp)
+                            assert isinstance(value.right.orelse, ast.Constant)
+                            assert value.right.orelse.value == ""
+                            emitted.add(prefix)
+                            emitted.update(prefix + "_" + str(index) for index in indices)
+            for _, body in re.findall(
+                r"<<'(DQ_MEMORY_BUDGET|DQ_MEMORY_DATA)'\n(.*?)\n\1(?:\n|$)", check, re.S
+            ):
+                tree = ast.parse(body)
+                positions = {"require": 1, "command": 1, "document": 1, "get": 2}
+                used = set()
+                for call in ast.walk(tree):
+                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name):
+                        position = positions.get(call.func.id)
+                        if position is not None and len(call.args) > position:
+                            value = call.args[position]
+                            if isinstance(value, ast.Name):
+                                used.add(value.id)
+                prefixes = {
+                    node.value.left.value for node in ast.walk(tree)
+                    if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id in used
+                            for target in node.targets)
+                    and isinstance(node.value, ast.BinOp) and isinstance(node.value.op, ast.Add)
+                    and isinstance(node.value.left, ast.Constant)
+                    and isinstance(node.value.right, ast.Name) and node.value.right.id == "name"
+                }
+                if prefixes:
+                    setup = (Path(__file__).resolve().parents[1]
+                             / f"quests/{quest:03}/setup-0.sh").read_text()
+                    seed, = re.findall(
+                        r"<<'DQ_STARTUP_SEED'\n(.*?)\nDQ_STARTUP_SEED(?:\n|$)", setup, re.S
+                    )
+                    contract, = [
+                        node.value for node in ast.walk(ast.parse(seed))
+                        if isinstance(node, ast.Assign)
+                        and any(isinstance(target, ast.Name) and target.id == "contract"
+                                for target in node.targets)
+                    ]
+                    roles, = [
+                        value for key, value in zip(contract.keys, contract.values, strict=True)
+                        if isinstance(key, ast.Constant) and key.value == "roles"
+                    ]
+                    names = {role["deployment"] for role in ast.literal_eval(roles)}
+                    assert names and all(isinstance(name, str) for name in names)
+                    emitted.update(prefix + name for prefix in prefixes for name in names)
             if "[DQ:field_${field,,}]" in check:
                 # Quest 072 declares each field assignment at the actual probe.
                 # Case arms describe values, not additional emitted fields.
