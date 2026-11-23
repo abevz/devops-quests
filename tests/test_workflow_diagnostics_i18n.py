@@ -34,10 +34,11 @@ def test_missing_resources_report_localized_conditions(
         binary.chmod(0o755)
     source = (ROOT / f"quests/{number:03}/check-{stage}.sh").read_text()
     checks = [goal["check"] for goal in catalog.quests[number]["stages"][stage]["objectives"]]
+    prelude = "set -euo pipefail\ncd ~/quest\n"
     if len(checks) == 1:
-        assert source == checks[0]
+        assert source == prelude + checks[0].removeprefix(prelude).rstrip("\n") + "\n"
     else:
-        expected = "set -euo pipefail\ncd ~/quest\nfailed=0\nset +e\n"
+        expected = prelude + "failed=0\nset +e\n"
         for check in checks:
             expected += "(\nset -e\n" + check + "\n)\n[ $? -eq 0 ] || failed=1\n"
         expected += 'exit "$failed"\n'
@@ -71,6 +72,41 @@ def test_missing_resources_report_localized_conditions(
             "de",
             "ru",
         }
+
+
+@pytest.mark.parametrize(
+    ("number", "stage", "objective", "marker"),
+    [
+        (99, 0, 0, "incident_head"),
+        (99, 0, 1, "incident_source"),
+        (99, 0, 2, "incident_sync"),
+        (99, 0, 6, "incident_token"),
+        (99, 0, 7, "incident_revoked"),
+        (100, 0, 0, "probe_0_0"),
+        (100, 1, 0, "probe_1_0"),
+        (100, 1, 2, "probe_1_2"),
+        (100, 1, 4, "probe_1_4"),
+        (100, 1, 5, "probe_1_5"),
+        (100, 1, 7, "probe_1_7"),
+    ],
+)
+def test_recovery_platform_failure_retains_status_and_reports_one_marker(
+    tmp_path, catalog, number, stage, objective, marker
+):
+    quest = tmp_path / "quest"
+    quest.mkdir()
+    (quest / "platform.env").write_text("echo 'platform input failure' >&2\nreturn 42\n")
+    goal = catalog.quests[number]["stages"][stage]["objectives"][objective]
+    result = subprocess.run(
+        ["bash", "-c", "set -euo pipefail\ncd ~/quest\n" + goal["check"]],
+        env={**os.environ, "HOME": str(tmp_path), "TMPDIR": str(tmp_path)},
+        capture_output=True, text=True, timeout=10,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 42, output
+    assert "platform input failure" in output
+    assert re.findall(r"\[DQ:([a-z0-9_]+)\]", output) == [marker]
+    assert list(tmp_path.iterdir()) == [quest]
 
 
 @pytest.mark.parametrize(

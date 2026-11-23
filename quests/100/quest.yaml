@@ -7,28 +7,59 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: |
-        set -euo pipefail
-        cd ~/quest
-        source platform.env
-        failed=0
-        app=$(kubectl get application board -o json 2>/dev/null || true)
-        rev=$(cat /run/dq/facts/0/baseline-commit 2>/dev/null || true)
-        check() { local label=$1 expression=$2; if ! jq -e --arg rev "$rev" --arg url "$GIT_URL" "$expression" <<<"$app" >/dev/null 2>&1; then printf '%s\n' "application/board $label: ✗"; failed=1; fi; }
-        check 'repoURL = GIT_URL [DQ:repo]' '.spec.source.repoURL==$url'
-        check 'path = manifests [DQ:path]' '(.spec.source.path | (startswith("/")|not) and ([splits("/") | select(.!="" and .!=".")]==["manifests"]))'
-        check 'targetRevision = main [DQ:target]' '.spec.source.targetRevision=="main"'
-        check 'selfHeal = true [DQ:selfheal]' '.spec.syncPolicy.automated.selfHeal==true'
-        check 'prune = true [DQ:prune]' '.spec.syncPolicy.automated.prune==true'
-        check 'sync status = Synced [DQ:synced]' '.status.sync.status=="Synced"'
-        if ! test -n "$rev"; then printf '%s\n' 'baseline-commit exists: ✗ [DQ:baseline]'; failed=1; fi
-        check 'sync revision = baseline-commit [DQ:baseline_revision]' '.status.sync.revision==$rev'
-        exit "$failed"
+    check: |-
+      dq_fallback_output=$(mktemp) || {
+        dq_fallback_status=$?
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_0_0]' >&2
+        exit "$dq_fallback_status"
+      }
+      trap 'rm -f "$dq_fallback_output"' EXIT
+      set +e
+      (
+      set -e
+      set -euo pipefail
+      cd ~/quest
+      source platform.env
+      failed=0
+      app=$(kubectl get application board -o json 2>/dev/null || true)
+      rev=$(cat /run/dq/facts/0/baseline-commit 2>/dev/null || true)
+      check() { local label=$1 expression=$2; if ! jq -e --arg rev "$rev" --arg url "$GIT_URL" "$expression" <<<"$app" >/dev/null 2>&1; then printf '%s\n' "application/board $label: ✗"; failed=1; fi; }
+      check 'repoURL = GIT_URL [DQ:repo]' '.spec.source.repoURL==$url'
+      check 'path = manifests [DQ:path]' '(.spec.source.path | (startswith("/")|not) and ([splits("/") | select(.!="" and .!=".")]==["manifests"]))'
+      check 'targetRevision = main [DQ:target]' '.spec.source.targetRevision=="main"'
+      check 'selfHeal = true [DQ:selfheal]' '.spec.syncPolicy.automated.selfHeal==true'
+      check 'prune = true [DQ:prune]' '.spec.syncPolicy.automated.prune==true'
+      check 'sync status = Synced [DQ:synced]' '.status.sync.status=="Synced"'
+      if ! test -n "$rev"; then printf '%s\n' 'baseline-commit exists: ✗ [DQ:baseline]'; failed=1; fi
+      check 'sync revision = baseline-commit [DQ:baseline_revision]' '.status.sync.revision==$rev'
+      exit "$failed"
+
+      ) >"$dq_fallback_output" 2>&1
+      dq_fallback_status=$?
+      set -e
+      cat "$dq_fallback_output"
+      if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(baseline|baseline_revision|path|prune|repo|selfheal|synced|target)\]' "$dq_fallback_output"; then
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_0_0]'
+      fi
+      rm -f "$dq_fallback_output"
+      trap - EXIT
+      if [ "$dq_fallback_status" -ne 0 ]; then
+        exit "$dq_fallback_status"
+      fi
 - brief: stages.1.brief
   objectives:
   - text: stages.1.objectives.0.text
     keep: true
     check: |-
+      dq_fallback_output=$(mktemp) || {
+        dq_fallback_status=$?
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_0]' >&2
+        exit "$dq_fallback_status"
+      }
+      trap 'rm -f "$dq_fallback_output"' EXIT
+      set +e
+      (
+      set -e
       set -euo pipefail
       cd ~/quest
       source platform.env
@@ -37,6 +68,18 @@ stages:
       rev=$(cat release-commit 2>/dev/null || true)
       if ! test -n "$rev" || ! test "$(git -C repository rev-parse origin/main 2>/dev/null)" = "$rev"; then printf '%s\n' 'origin/main = release-commit: ✗ [DQ:origin]'; failed=1; fi
       exit "$failed"
+      ) >"$dq_fallback_output" 2>&1
+      dq_fallback_status=$?
+      set -e
+      cat "$dq_fallback_output"
+      if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(fetch|origin)\]' "$dq_fallback_output"; then
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_0]'
+      fi
+      rm -f "$dq_fallback_output"
+      trap - EXIT
+      if [ "$dq_fallback_status" -ne 0 ]; then
+        exit "$dq_fallback_status"
+      fi
   - text: stages.1.objectives.1.text
     keep: true
     check: |-
@@ -92,6 +135,15 @@ stages:
       test "$dq_probe_status" -eq 0
   - text: stages.1.objectives.2.text
     check: |-
+      dq_fallback_output=$(mktemp) || {
+        dq_fallback_status=$?
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_2]' >&2
+        exit "$dq_fallback_status"
+      }
+      trap 'rm -f "$dq_fallback_output"' EXIT
+      set +e
+      (
+      set -e
       set -euo pipefail
       cd ~/quest
       source platform.env
@@ -108,6 +160,18 @@ stages:
       check_app 'health status = Healthy [DQ:health]' '.status.health.status=="Healthy"'
       check_app 'sync revision = release-commit [DQ:release_revision]' '.status.sync.revision==$rev'
       exit "$failed"
+      ) >"$dq_fallback_output" 2>&1
+      dq_fallback_status=$?
+      set -e
+      cat "$dq_fallback_output"
+      if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(health|path|prune|release_revision|repo|selfheal|synced|target)\]' "$dq_fallback_output"; then
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_2]'
+      fi
+      rm -f "$dq_fallback_output"
+      trap - EXIT
+      if [ "$dq_fallback_status" -ne 0 ]; then
+        exit "$dq_fallback_status"
+      fi
   - text: stages.1.objectives.3.text
     keep: true
     check: |-
@@ -173,14 +237,44 @@ stages:
       test "$dq_probe_status" -eq 0
   - text: stages.1.objectives.4.text
     check: |-
+      dq_fallback_output=$(mktemp) || {
+        dq_fallback_status=$?
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_4]' >&2
+        exit "$dq_fallback_status"
+      }
+      trap 'rm -f "$dq_fallback_output"' EXIT
+      set +e
+      (
+      set -e
       set -euo pipefail
       cd ~/quest
       source platform.env
       failed=0
       if ! test "$(kubectl get secret route-secret -o json 2>/dev/null | jq -er .data.value 2>/dev/null | base64 -d 2>/dev/null)" = north-secret; then printf '%s\n' 'secret/route-secret value = north-secret: ✗ [DQ:secret]'; failed=1; fi
       exit "$failed"
+      ) >"$dq_fallback_output" 2>&1
+      dq_fallback_status=$?
+      set -e
+      cat "$dq_fallback_output"
+      if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(secret)\]' "$dq_fallback_output"; then
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_4]'
+      fi
+      rm -f "$dq_fallback_output"
+      trap - EXIT
+      if [ "$dq_fallback_status" -ne 0 ]; then
+        exit "$dq_fallback_status"
+      fi
   - text: stages.1.objectives.5.text
     check: |-
+      dq_fallback_output=$(mktemp) || {
+        dq_fallback_status=$?
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_5]' >&2
+        exit "$dq_fallback_status"
+      }
+      trap 'rm -f "$dq_fallback_output"' EXIT
+      set +e
+      (
+      set -e
       set -euo pipefail
       cd ~/quest
       source platform.env
@@ -192,6 +286,18 @@ stages:
       if ! curl -fsS --max-time 3 -H @"$header" "$VAULT_ADDR/v1/secret/data/dispatch" 2>/dev/null | jq -e '.data.data.value=="north-secret"' >/dev/null 2>&1; then printf '%s\n' 'Vault reader dispatch value = north-secret: ✗ [DQ:reader]'; failed=1; fi
       if ! test "$(curl -sS --max-time 3 -o /dev/null -w '%{http_code}' -H @"$header" "$VAULT_ADDR/v1/secret/data/other" 2>/dev/null)" = 403; then printf '%s\n' 'Vault reader other path HTTP 403: ✗ [DQ:denied]'; failed=1; fi
       exit "$failed"
+      ) >"$dq_fallback_output" 2>&1
+      dq_fallback_status=$?
+      set -e
+      cat "$dq_fallback_output"
+      if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(denied|reader)\]' "$dq_fallback_output"; then
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_5]'
+      fi
+      rm -f "$dq_fallback_output"
+      trap - EXIT
+      if [ "$dq_fallback_status" -ne 0 ]; then
+        exit "$dq_fallback_status"
+      fi
   - text: stages.1.objectives.6.text
     check: |-
       dq_probe_output=$(mktemp)
@@ -256,12 +362,33 @@ stages:
       test "$dq_probe_status" -eq 0
   - text: stages.1.objectives.7.text
     check: |-
+      dq_fallback_output=$(mktemp) || {
+        dq_fallback_status=$?
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_7]' >&2
+        exit "$dq_fallback_status"
+      }
+      trap 'rm -f "$dq_fallback_output"' EXIT
+      set +e
+      (
+      set -e
       set -euo pipefail
       cd ~/quest
       source platform.env
       failed=0
       if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = north-100; then printf '%s\n' 'board:8080 = north-100: ✗ [DQ:http]'; failed=1; fi
       exit "$failed"
+      ) >"$dq_fallback_output" 2>&1
+      dq_fallback_status=$?
+      set -e
+      cat "$dq_fallback_output"
+      if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(http)\]' "$dq_fallback_output"; then
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_7]'
+      fi
+      rm -f "$dq_fallback_output"
+      trap - EXIT
+      if [ "$dq_fallback_status" -ne 0 ]; then
+        exit "$dq_fallback_status"
+      fi
 hints:
 - text: hints.0.text
   guide: gitops-delivery
