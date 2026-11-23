@@ -21,7 +21,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 116))
+@pytest.mark.parametrize("quest", range(1, 121))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -509,6 +509,42 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                             and any(isinstance(name, ast.Name) and name.id == "marker" for name in node.target.elts)):
                         index = [name.id for name in node.target.elts].index("marker")
                         emitted.update(values[index] for values in ast.literal_eval(node.iter) if values[index])
+            if "[DQ:owner_$marker]" in check:
+                resources, = re.findall(r"^for resource in ([a-z/ -]+); do$", check, re.M)
+                emitted.update("owner_" + name.replace("/", "_").replace("-", "_")
+                               for name in resources.split())
+            for _, body in re.findall(
+                r"<<'(DQ_RECONCILIATION_DELIVERY|DQ_RECONCILIATION_IDENTITY|DQ_VIP_ENDPOINTS)'\n(.*?)\n\1(?:\n|$)",
+                check, re.S,
+            ):
+                for call in ast.walk(ast.parse(body)):
+                    if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+                        continue
+                    index = {"require": 1, "command": 1, "get": 2}.get(call.func.id)
+                    if index is not None and len(call.args) > index and isinstance(call.args[index], ast.Constant):
+                        emitted.add(ast.literal_eval(call.args[index]))
+            for delimiter, body in re.findall(
+                r"<<'(DQ_POLICY|DQ_BOSS)'\n(.*?)\n\1(?:\n|$)", check, re.S,
+            ):
+                if "expected-actual" not in body and "expected - actual" not in body:
+                    continue
+                tree = ast.parse(body)
+                for call in ast.walk(tree):
+                    if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                            and call.func.id == "issue" and isinstance(call.args[0], ast.Constant)):
+                        emitted.add(ast.literal_eval(call.args[0]))
+                expected, = (node.value for node in ast.walk(tree)
+                             if isinstance(node, ast.Assign) and isinstance(node.value, ast.Set)
+                             and any(isinstance(target, ast.Name) and target.id == "expected"
+                                     for target in node.targets))
+                for entry in expected.elts:
+                    destination, protocol, port = entry.elts
+                    if isinstance(destination, ast.Name):
+                        assert delimiter == "DQ_POLICY" and destination.id == "target"
+                        name, = re.findall(r'/dev/fd/4 "([a-z]+)" /dev/fd/5', check)
+                    else:
+                        name = ast.literal_eval(destination)
+                    emitted.add(f"missing_{name}_{ast.literal_eval(protocol).lower()}_{ast.literal_eval(port)}")
             assert emitted, (quest, goal["text"])
             markers.update(emitted)
     explanations = catalog.public(quest)["diagnostics"]
