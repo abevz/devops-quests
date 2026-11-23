@@ -10,6 +10,91 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def run_080_platform_check(tmp_path, stage, index, platform=None, commands=None):
+    """Map the actual workstation directory; keep HOME and the check body intact."""
+    import shlex
+
+    bay = tmp_path / "quest"
+    bay.mkdir()
+    if platform is not None:
+        (bay / "platform.env").write_text(platform)
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    for name, body in (commands or {}).items():
+        program = binary / name
+        program.write_text("#!/bin/bash\n" + body)
+        program.chmod(0o755)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    check = objective(80, index, stage=stage)
+    assert check.count("cd ~/quest\n") == 1
+    check = check.replace("cd ~/quest\n", "cd " + shlex.quote(str(bay)) + "\n")
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", check],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{binary}:{os.environ['PATH']}",
+             "TMPDIR": str(scratch), "DQ_NAMESPACE": "dq-0123456789abcdef01234567"},
+        capture_output=True, text=True, timeout=10,
+    )
+    assert list(scratch.iterdir()) == []
+    return result
+
+
+@pytest.mark.parametrize("stage,index", [(0, 0), (1, 0), (1, 1), (1, 4), (1, 6), (1, 7)])
+def test_080_missing_provided_platform_input_is_named(tmp_path, stage, index):
+    result = run_080_platform_check(tmp_path, stage, index)
+    assert result.returncode == 1
+    assert "platform.env" in result.stdout + result.stderr
+    assert f"[DQ:probe_{stage}_{index}]" in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("stage,index,known", [
+    (0, 0, "repo"), (1, 0, "health"), (1, 1, "fetch"),
+    (1, 4, "rollout"), (1, 6, "registry"), (1, 7, "http"),
+])
+@pytest.mark.parametrize("kind", ["known", "foreign", "opaque"])
+def test_080_fallback_preserves_status_streams_and_known_detail(tmp_path, stage, index, known, kind):
+    text = {"known": f"[DQ:{known}]", "foreign": "[DQ:unrelated_probe]", "opaque": "opaque failure"}[kind]
+    result = run_080_platform_check(
+        tmp_path, stage, index,
+        f"printf '%s\\n' '{text}'\nprintf '%s\\n' 'raw stderr retained' >&2\nexit 23\n",
+    )
+    assert result.returncode == 23
+    assert text in result.stdout
+    assert "raw stderr retained" in result.stdout + result.stderr
+    assert (f"[DQ:probe_{stage}_{index}]" in result.stdout + result.stderr) == (kind != "known")
+
+
+@pytest.mark.parametrize("failure", ["none", "registry", "credential"])
+def test_080_private_config_and_capture_are_cleaned_on_every_exit(tmp_path, failure):
+    platform = "REGISTRY=registry.example\nREGISTRY_USER=reader\n"
+    if failure != "credential":
+        platform += "REGISTRY_PASSWORD=controlled-test-input\n"
+    result = run_080_platform_check(tmp_path, 1, 6, platform, {
+        "jq": "printf '%s\\n' 'registry.example/parcel@sha256:abcdef'\n",
+        "curl": """
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --config ]; then
+    shift
+    test -s "$1" && test "$(stat -c %a "$1")" = 600 || exit 92
+    printf '%s\\n' "$1" > config-observed
+  fi
+  shift
+done
+"""
+        + ("exit 7\n" if failure == "registry" else "exit 0\n"),
+    })
+    text = result.stdout + result.stderr
+    assert result.returncode == (0 if failure == "none" else 1)
+    assert ("[DQ:registry]" in text) == (failure == "registry")
+    assert ("[DQ:probe_1_6]" in text) == (failure == "credential")
+    assert "controlled-test-input" not in text
+    observed = tmp_path / "quest/config-observed"
+    assert observed.exists() == (failure != "credential")
+    if observed.exists():
+        assert not Path(observed.read_text().strip()).exists()
+
+
 def objective(number, index, stage=0):
     quest = yaml.safe_load((ROOT / f"quests/{number:03}/quest.yaml").read_text())
     return quest["stages"][stage]["objectives"][index]["check"]

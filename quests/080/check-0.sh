@@ -4,6 +4,15 @@ failed=0
 set +e
 (
 set -e
+dq_fallback_output=$(mktemp) || {
+  dq_fallback_status=$?
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_0_0]' >&2
+  exit "$dq_fallback_status"
+}
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
+(
+set -e
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -20,6 +29,18 @@ if ! test -n "$revision"; then printf '%s\n' 'expected Git revision exists: ✗ 
 check_app 'sync revision = expected revision [DQ:revision]' '.status.sync.revision==$revision'
 check_app 'selfHeal = true [DQ:selfheal]' '.spec.syncPolicy.automated.selfHeal==true'
 exit "$failed"
+) >"$dq_fallback_output" 2>&1
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(path|repo|revision|revision_exists|selfheal|synced|target)\]' "$dq_fallback_output"; then
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_0_0]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (

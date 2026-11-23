@@ -4,6 +4,15 @@ failed=0
 set +e
 (
 set -e
+dq_fallback_output=$(mktemp) || {
+  dq_fallback_status=$?
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_0]' >&2
+  exit "$dq_fallback_status"
+}
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
+(
+set -e
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -22,8 +31,29 @@ check_app 'selfHeal = true [DQ:selfheal]' '.spec.syncPolicy.automated.selfHeal==
 check_app 'health = Healthy [DQ:health]' '.status.health.status=="Healthy"'
 check_app 'prune = true [DQ:prune]' '.spec.syncPolicy.automated.prune==true'
 exit "$failed"
+) >"$dq_fallback_output" 2>&1
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(health|path|prune|repo|revision|revision_exists|selfheal|synced|target)\]' "$dq_fallback_output"; then
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_0]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
+(
+set -e
+dq_fallback_output=$(mktemp) || {
+  dq_fallback_status=$?
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_1]' >&2
+  exit "$dq_fallback_status"
+}
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
 (
 set -e
 set -euo pipefail
@@ -38,6 +68,18 @@ baseline=$(cat /run/dq/facts/0/baseline-commit 2>/dev/null || true)
 if ! test -n "$revision" || ! test -n "$baseline" || test "$revision" = "$baseline"; then printf '%s\n' 'release-commit differs from baseline-commit: ✗ [DQ:changed]'; failed=1; fi
 if ! test -n "$baseline" || ! git -C repository merge-base --is-ancestor "$baseline" origin/main >/dev/null 2>&1; then printf '%s\n' 'baseline-commit is ancestor of origin/main: ✗ [DQ:ancestor]'; failed=1; fi
 exit "$failed"
+) >"$dq_fallback_output" 2>&1
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(ancestor|changed|fetch|origin)\]' "$dq_fallback_output"; then
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_1]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -157,6 +199,15 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_fallback_output=$(mktemp) || {
+  dq_fallback_status=$?
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_4]' >&2
+  exit "$dq_fallback_status"
+}
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
+(
+set -e
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -164,6 +215,18 @@ check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<
 source platform.env
 if ! kubectl rollout status deployment/board --timeout=3s >/dev/null 2>&1; then printf '%s\n' 'deployment/board rollout complete: ✗ [DQ:rollout]'; failed=1; fi
 exit "$failed"
+) >"$dq_fallback_output" 2>&1
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(rollout)\]' "$dq_fallback_output"; then
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_4]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -229,6 +292,15 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_fallback_output=$(mktemp) || {
+  dq_fallback_status=$?
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_6]' >&2
+  exit "$dq_fallback_status"
+}
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
+(
+set -e
 set -euo pipefail
 cd ~/quest
 failed=0
@@ -243,8 +315,29 @@ trap 'rm -f "$config"' EXIT
 printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD" > "$config"
 if ! test -n "$image" || ! curl -fsS --max-time 4 --config "$config" --cacert registry-ca.crt -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' "https://$REGISTRY/v2/parcel/manifests/$digest" >/dev/null 2>&1; then printf '%s\n' 'authenticated registry serves frozen digest: ✗ [DQ:registry]'; failed=1; fi
 exit "$failed"
+) >"$dq_fallback_output" 2>&1
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(registry|release_image)\]' "$dq_fallback_output"; then
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_6]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
+(
+set -e
+dq_fallback_output=$(mktemp) || {
+  dq_fallback_status=$?
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_7]' >&2
+  exit "$dq_fallback_status"
+}
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
 (
 set -e
 set -euo pipefail
@@ -254,6 +347,18 @@ check() { local label=$1 expression=$2 document=$3; if ! jq -e "$expression" <<<
 source platform.env
 if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = north-80; then printf '%s\n' 'board:8080 = north-80: ✗ [DQ:http]'; failed=1; fi
 exit "$failed"
+) >"$dq_fallback_output" 2>&1
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(http)\]' "$dq_fallback_output"; then
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_7]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
