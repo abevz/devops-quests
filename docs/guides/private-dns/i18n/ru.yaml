@@ -16,5 +16,110 @@ text: '# Восстановление приватного DNS
 
   В квесте 110 клиент должен использовать частный DNS Service и разрешать `station.internal` в адрес Service контроллера из `expected-dns-address`. Исправьте частный Corefile, перезапустите выданный DNS Deployment и дождитесь распространения, затем отдельно проверьте маршрутизацию ingress.
 
+
+
+  ### Corefile, который читает резолвер {#q105-resolver-corefile-command}
+
+
+  CoreDNS мог запускаться с обычной конфигурацией или другим Corefile. Проверьте команду и аргументы контейнера worker, чтобы он читал /etc/station/Corefile.
+
+
+  ```bash
+
+  kubectl get deployment station-dns -o json | jq ''.spec.template.spec.containers[] | select(.name == "worker") | {command, args}''
+
+  ```
+
+
+  ### Порты Service резолвера {#q105-resolver-service-ports}
+
+
+  В Service мог отсутствовать один из протоколов DNS или быть указан другой порт назначения. Проверьте TCP и UDP на 53 с числовым или именованным портом назначения 1053.
+
+
+  ```bash
+
+  kubectl get service station-dns -o json | jq ''.spec.ports''
+
+  ```
+
+
+  ### Прямой ответ настроенного резолвера {#q105-configured-resolver-answer}
+
+
+  Выданный Corefile мог всё ещё направлять north.station.internal на loopback, либо работающий resolver мог не прочитать изменённый файл. Запросите station-dns напрямую и сравните ответ с выданным адресом board.
+
+
+  ```bash
+
+  server=$(kubectl get service station-dns -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/client -c worker -- nslookup north.station.internal "$server"
+
+  ```
+
+
+  ### Политика DNS у client {#q105-client-dns-policy}
+
+
+  Шаблон client мог вернуться к DNS-политике кластера. Проверьте dnsPolicy и сохраните None для выданной настройки nameserver.
+
+
+  ```bash
+
+  kubectl get deployment client -o jsonpath=''{.spec.template.spec.dnsPolicy}''
+
+  ```
+
+
+  ### Адрес DNS-сервера у client {#q105-client-nameserver-address}
+
+
+  В client мог остаться старый адрес или дополнительные резолверы. Сравните nameservers с текущим ClusterIP station-dns и оставьте только этот адрес.
+
+
+  ```bash
+
+  kubectl get deployment client -o jsonpath=''{.spec.template.spec.dnsConfig.nameservers}''; kubectl get service station-dns -o jsonpath=''{.spec.clusterIP}''
+
+  ```
+
+
+  ### Ответ DNS на явный запрос из client {#q105-client-explicit-dns-answer}
+
+
+  Даже при верной конфигурации client может получить неверный ответ или не получить его от явно указанного резолвера. Проверьте адрес north.station.internal из Pod client.
+
+
+  ```bash
+
+  server=$(kubectl get service station-dns -o jsonpath=''{.spec.clusterIP}''); kubectl exec deployment/client -- nslookup north.station.internal "$server"
+
+  ```
+
+
+  ### HTTP-запрос по имени {#q105-client-hostname-http}
+
+
+  DNS-ответ может быть верным, пока Service или endpoint за ним не готовы либо отдают другое содержимое. Запросите имя из client и сравните ответ с north-105.
+
+
+  ```bash
+
+  kubectl exec deployment/client -- wget -qO- -T 3 http://north.station.internal:8080
+
+  ```
+
+
+  ### Входы проверки резолвера {#q105-resolver-observer-input}
+
+
+  Проверка резолвера может завершиться до указания условия при ошибке инструментов или входов. Сначала проверьте инструменты и доступ к объектам резолвера.
+
+
+  ```bash
+
+  command -v python3; kubectl get deployment station-dns -o name; kubectl get service station-dns -o name
+
+  ```
+
   '
-source_hash: d41fe8f8d19e050c8b1b8b7c70a4b7535c5ba430b0e2047b057c1f803d0bcd72
+source_hash: d73a557c35cebf11f88cd7713ef78a6e588e1b671881ec6da8b00bff49879fbb
