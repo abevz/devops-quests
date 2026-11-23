@@ -55,37 +55,107 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 kubectl get deployment board -o json | jq -e '.spec.replicas==2 and .status.readyReplicas==2' >/dev/null
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The two ready replicas could not be verified: ✗ [DQ:pdb_replicas]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 kubectl get pdb board-budget -o json | jq -e '.status.currentHealthy==2 and .status.desiredHealthy==1 and .status.disruptionsAllowed==1' >/dev/null
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The available maintenance budget could not be verified: ✗ [DQ:pdb_status]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 test "$(kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080)" = north-77
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The client Service response could not be verified: ✗ [DQ:pdb_http]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 jq -e --slurpfile original /run/dq/facts/0/original-pod-uids.json --arg ns "$DQ_NAMESPACE" '.apiVersion=="policy/v1" and .kind=="Eviction" and .metadata.namespace==$ns and (.deleteOptions.preconditions.uid as $u | $original[0]|index($u)!=null)' eviction.json >/dev/null
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The original Pod eviction request could not be verified: ✗ [DQ:eviction_request]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 kubectl get pods -l app=board -o json | jq -e --slurpfile original /run/dq/facts/0/original-pod-uids.json --arg uid "$(jq -er .deleteOptions.preconditions.uid eviction.json)" '([.items[].metadata.uid]|index($uid))==null and ([.items[].metadata.uid as $u|select($original[0]|index($u)!=null)]|length)==1' >/dev/null
 )
-[ $? -eq 0 ] || failed=1
-(
+code=$?
 set -e
-jq -e --arg uid "$(jq -er .deleteOptions.preconditions.uid eviction.json)" 'index($uid)!=null' /run/dq/observations/evictions.json >/dev/null
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The requested replacement and original survivor could not be verified: ✗ [DQ:eviction_replacement]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
+jq -e --arg uid "$(jq -er .deleteOptions.preconditions.uid eviction.json)" 'index($uid)!=null' /run/dq/observations/evictions.json >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The protected API eviction observation could not be verified: ✗ [DQ:eviction_observed]' >&2
+  exit "$code"
+fi
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
+(
+set -e
 test "$(kubectl auth can-i patch pods --subresource=status)" = no
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The limited Pod status authority could not be verified: ✗ [DQ:pod_status_denied]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
