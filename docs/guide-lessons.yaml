@@ -3239,6 +3239,108 @@ kubernetes-20:
       The target PVC spool is not Bound, or the policy observer stopped without a named marker; its supplied unknown storage class can leave it Pending, while missing frozen facts, malformed JSON or probe startup failures also prevent observation.  `kubectl get pvc spool reserve -o yaml; kubectl describe pvc spool`.
 
 
+      ### Keep the existing Job {#batch-preserve-original-job}
+
+
+      Recreating importer changes its frozen UID; repair the existing Job, and inspect API access if the original object cannot be read. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `kubectl get job importer -o jsonpath="{.metadata.uid}"`.
+
+
+      ### Retain the original worker command {#batch-retain-failing-worker-command}
+
+
+      Replacing the supplied failing command with success hides the validation failure; retain the original worker command from the live Job and frozen facts. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `kubectl get job importer -o json | jq ''.spec.template.spec.containers[] | select(.name=="worker") | .command''`.
+
+
+      ### Leave a failed execution visible {#batch-never-restart-policy}
+
+
+      A Pod restart policy other than Never can retry inside a Pod instead of leaving the expected failed execution; retain the supplied policy. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `kubectl get job importer -o jsonpath="{.spec.template.spec.restartPolicy}"`.
+
+
+      ### One parallel execution {#batch-single-parallel-execution}
+
+
+      Parallelism may have been increased while editing retry limits; keep importer parallelism at one and check API output if the field cannot be observed. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `kubectl get job importer -o jsonpath="{.spec.parallelism}"`.
+
+
+      ### Bound the current retries {#batch-bound-current-job-retries}
+
+
+      The supplied Job retries up to 100 times; reduce backoffLimit to one on the existing Job so the failed validation becomes bounded. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `kubectl get job importer -o jsonpath="{.spec.backoffLimit}"`.
+
+
+      ### Bound the current deadline {#batch-bound-current-job-deadline}
+
+
+      The supplied activeDeadlineSeconds is 300; set the existing Job deadline to the required 30 seconds rather than deleting its execution. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `kubectl get job importer -o jsonpath="{.spec.activeDeadlineSeconds}"`.
+
+
+      ### Observe the current Job {#batch-current-job-api-observation}
+
+
+      The current Job may be missing or its API request, JSON parsing or timeout may fail; inspect importer availability before the original-workload comparison. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `kubectl get job importer --request-timeout=3s`.
+
+
+      ### Original workload and identity {#batch-original-image-command-and-identity}
+
+
+      The current Job may have been replaced or its original image, worker command or Never policy changed; compare it with the frozen batch identities. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `kubectl get job importer -o json | jq ''{uid:.metadata.uid,spec:.spec}''`.
+
+
+      ### Active schedule without overlap {#batch-active-cron-schedule-and-concurrency}
+
+
+      The recurring CronJob may be absent, suspended, use another schedule or allow overlap; compare its live policy with batch-contract.json. API/timeout errors reading it use this marker too. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `kubectl get cronjob validation-cycle -o json | jq .spec`.
+
+
+      ### A bounded recurring template {#batch-bounded-recurring-job-template}
+
+
+      The CronJob template may retain the original broad retry/deadline values or change the workload; propagate all four exact execution bounds and the original image, command and Never policy. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `kubectl get cronjob validation-cycle -o json | jq .spec.jobTemplate.spec`.
+
+
+      ### An actual failed attempt {#batch-observe-current-failed-attempt}
+
+
+      The failing command may not have run yet or its failure was hidden; retain the original Job and inspect its failed attempt count and events. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `kubectl get job importer -o json | jq .status.failed`.
+
+
+      ### Terminal Job failure {#batch-terminal-current-job-failure}
+
+
+      The Job may still be retrying under old limits or has not reached terminal failure; verify its bounded policy and wait for Failed=True. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `kubectl get job importer -o json | jq .status.conditions`.
+
+
+      ### Failed Pod of the original Job {#batch-original-job-owned-failed-pod}
+
+
+      A label alone does not prove the failed Pod belongs to the original Job; inspect controller owner UID, Failed phase and worker termination with exit code one. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `kubectl get pods -l job-name=importer -o json | jq ''.items[] | {owners:.metadata.ownerReferences,status:.status}''`.
+
+
+      ### An actual scheduled child Job {#batch-observed-cron-owned-failed-job}
+
+
+      A valid template alone leaves no execution evidence; wait for an actual CronJob-owned bounded child Job that has failed. API/timeouts reading Jobs also use this marker. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `kubectl get jobs -o json | jq ''.items[] | {name:.metadata.name,owners:.metadata.ownerReferences,status:.status}''`.
+
+
+      ### Follow the controller ownership chain {#batch-child-owner-chain-and-real-exit}
+
+
+      The recurring execution may lack a failed Pod with the original workload and exit code one; trace CronJob to child Job to Pod by controller UIDs. API/timeouts reading Pods also use this marker. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `kubectl get pods -o json | jq ''.items[] | {name:.metadata.name,owners:.metadata.ownerReferences,status:.status}''`.
+
+
+      ### Start the policy observer {#batch-policy-startup-fallback}
+
+
+      The earlier 8s legacy check can time out before emitting a marker, for example on a stalled kubectl request; helper startup or frozen-fact errors also leave this fallback. API/timeouts inside the Python observer use the requested object marker. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `python3 -I -c "import dq_check"; jq .contract /run/dq/facts/0/batch-identities.json`.
+
+
+      ### Start the execution observer {#batch-evidence-startup-fallback}
+
+
+      The earlier 8s legacy check can time out before emitting a marker, for example on a stalled kubectl request; helper startup or frozen-fact errors also leave this fallback. API/timeouts inside the Python observer use the requested object marker. The original Job starts with backoffLimit=100 and activeDeadlineSeconds=300; the recurring CronJob is initially absent. A bounded failed validation is the intended result. Setup removes job.yaml, so inspect the live objects and supplied batch-contract.json instead of a missing manifest. `python3 -I -c "import dq_check"; jq .contract /run/dq/facts/0/batch-identities.json`.
+
+
       ## Try it
 
 
@@ -3304,6 +3406,108 @@ kubernetes-20:
 
 
       Целевой PVC spool не Bound либо проверка политики остановилась без именованного маркера: выданный неизвестный StorageClass оставляет его Pending; отсутствующие сохранённые данные, некорректный JSON или сбой запуска также мешают наблюдению.  `kubectl get pvc spool reserve -o yaml; kubectl describe pvc spool`.
+
+
+      ### Существующий Job {#batch-preserve-original-job}
+
+
+      Пересоздание importer меняет зафиксированный UID; исправляйте существующий Job и проверьте API, если исходный объект не читается. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `kubectl get job importer -o jsonpath="{.metadata.uid}"`.
+
+
+      ### Исходная команда worker {#batch-retain-failing-worker-command}
+
+
+      Замена выданной падающей команды успешной скрывает отказ валидации; сохраните исходную команду worker из живого Job и зафиксированных facts. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `kubectl get job importer -o json | jq ''.spec.template.spec.containers[] | select(.name=="worker") | .command''`.
+
+
+      ### Наблюдаемый отказ выполнения {#batch-never-restart-policy}
+
+
+      Restart policy, отличная от Never, повторяет запуск внутри Pod вместо ожидаемого завершённого отказа; сохраните выданную политику. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `kubectl get job importer -o jsonpath="{.spec.template.spec.restartPolicy}"`.
+
+
+      ### Одно параллельное выполнение {#batch-single-parallel-execution}
+
+
+      При изменении лимитов могли увеличить parallelism; оставьте у importer единицу и проверьте API, если поле не наблюдается. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `kubectl get job importer -o jsonpath="{.spec.parallelism}"`.
+
+
+      ### Лимит текущих повторов {#batch-bound-current-job-retries}
+
+
+      Выданный Job допускает 100 повторов; уменьшите backoffLimit до единицы у существующего Job, ограничив отказ валидации. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `kubectl get job importer -o jsonpath="{.spec.backoffLimit}"`.
+
+
+      ### Срок текущего выполнения {#batch-bound-current-job-deadline}
+
+
+      Выданный activeDeadlineSeconds равен 300; задайте существующему Job требуемые 30 секунд вместо удаления выполнения. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `kubectl get job importer -o jsonpath="{.spec.activeDeadlineSeconds}"`.
+
+
+      ### Наблюдение текущего Job {#batch-current-job-api-observation}
+
+
+      Текущий Job может отсутствовать либо запрос API, разбор JSON или таймаут мешают чтению; проверьте importer до сравнения исходной нагрузки. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `kubectl get job importer --request-timeout=3s`.
+
+
+      ### Исходная нагрузка и идентичность {#batch-original-image-command-and-identity}
+
+
+      Текущий Job могли заменить либо изменить исходный image, команду worker или Never; сравните с зафиксированными batch-identities. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `kubectl get job importer -o json | jq ''{uid:.metadata.uid,spec:.spec}''`.
+
+
+      ### Активное расписание без наложений {#batch-active-cron-schedule-and-concurrency}
+
+
+      Повторяющийся CronJob может отсутствовать, быть suspended, иметь другое расписание или допускать наложение; сравните с batch-contract.json. Ошибки API/таймаута чтения также дают этот маркер. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `kubectl get cronjob validation-cycle -o json | jq .spec`.
+
+
+      ### Ограниченный повторяющийся шаблон {#batch-bounded-recurring-job-template}
+
+
+      Шаблон CronJob может сохранять широкие retry/deadline либо менять нагрузку; перенесите четыре точных ограничения и исходные image, команду и Never. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `kubectl get cronjob validation-cycle -o json | jq .spec.jobTemplate.spec`.
+
+
+      ### Реальная неудачная попытка {#batch-observe-current-failed-attempt}
+
+
+      Падающая команда могла ещё не выполниться либо отказ скрыли; сохраните исходный Job и проверьте счётчик failed и events. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `kubectl get job importer -o json | jq .status.failed`.
+
+
+      ### Завершение Job отказом {#batch-terminal-current-job-failure}
+
+
+      Job может продолжать повторы со старыми лимитами либо ещё не завершиться отказом; проверьте ограничения и дождитесь Failed=True. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `kubectl get job importer -o json | jq .status.conditions`.
+
+
+      ### Упавший Pod исходного Job {#batch-original-job-owned-failed-pod}
+
+
+      Одна метка не доказывает принадлежность упавшего Pod исходному Job; проверьте controller owner UID, фазу Failed и exit code один у worker. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `kubectl get pods -l job-name=importer -o json | jq ''.items[] | {owners:.metadata.ownerReferences,status:.status}''`.
+
+
+      ### Реальный Job по расписанию {#batch-observed-cron-owned-failed-job}
+
+
+      Верный шаблон не доказывает выполнение; дождитесь реального ограниченного дочернего Job от CronJob, завершившегося отказом. Ошибки API/таймаутов чтения Jobs также дают этот маркер. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `kubectl get jobs -o json | jq ''.items[] | {name:.metadata.name,owners:.metadata.ownerReferences,status:.status}''`.
+
+
+      ### Цепочка владельцев controller {#batch-child-owner-chain-and-real-exit}
+
+
+      У повторяющегося выполнения может не быть Failed Pod с исходной нагрузкой и exit code один; проследите CronJob→Job→Pod по controller UID. Ошибки API/таймаутов чтения Pods также дают этот маркер. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `kubectl get pods -o json | jq ''.items[] | {name:.metadata.name,owners:.metadata.ownerReferences,status:.status}''`.
+
+
+      ### Запуск наблюдения политики {#batch-policy-startup-fallback}
+
+
+      Ранняя shell-проверка с лимитом 8s может завершиться по таймауту без маркера, например при зависшем kubectl; ошибки запуска helper или зафиксированных facts также дают fallback. Ошибки API/таймауты внутри Python-наблюдателя дают маркер запрошенного объекта. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `python3 -I -c "import dq_check"; jq .contract /run/dq/facts/0/batch-identities.json`.
+
+
+      ### Запуск наблюдения выполнения {#batch-evidence-startup-fallback}
+
+
+      Ранняя shell-проверка с лимитом 8s может завершиться по таймауту без маркера, например при зависшем kubectl; ошибки запуска helper или зафиксированных facts также дают fallback. Ошибки API/таймауты внутри Python-наблюдателя дают маркер запрошенного объекта. Исходный Job задаёт backoffLimit=100 и activeDeadlineSeconds=300; повторяющийся CronJob отсутствует. Требуемый результат — ограниченная неудачная валидация. Setup удаляет job.yaml: изучайте живые объекты и выданный batch-contract.json. `python3 -I -c "import dq_check"; jq .contract /run/dq/facts/0/batch-identities.json`.
 
 
       ## Попробуйте
@@ -3373,6 +3577,108 @@ kubernetes-20:
       Docelowy PVC spool nie jest Bound lub obserwator polityki zakończył się bez markera; nieznana klasa pamięci może pozostawić go Pending, a brak chronionych danych, błędny JSON lub błąd startu także blokuje obserwację.  `kubectl get pvc spool reserve -o yaml; kubectl describe pvc spool`.
 
 
+      ### Istniejący Job {#batch-preserve-original-job}
+
+
+      Odtworzenie importer zmienia zamrożony UID; popraw istniejący Job i sprawdź API, jeśli pierwotnego obiektu nie można odczytać. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `kubectl get job importer -o jsonpath="{.metadata.uid}"`.
+
+
+      ### Pierwotne polecenie worker {#batch-retain-failing-worker-command}
+
+
+      Zastąpienie dostarczonego błędnego polecenia sukcesem ukrywa błąd walidacji; zachowaj pierwotne polecenie worker z żywego Job i zamrożonych facts. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `kubectl get job importer -o json | jq ''.spec.template.spec.containers[] | select(.name=="worker") | .command''`.
+
+
+      ### Widoczna awaria wykonania {#batch-never-restart-policy}
+
+
+      Restart policy inna niż Never może ponawiać proces w Pod zamiast pozostawić oczekiwaną awarię wykonania; zachowaj dostarczoną politykę. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `kubectl get job importer -o jsonpath="{.spec.template.spec.restartPolicy}"`.
+
+
+      ### Jedno równoległe wykonanie {#batch-single-parallel-execution}
+
+
+      Przy zmianie limitów mógł wzrosnąć parallelism; zachowaj jeden dla importer i sprawdź API, jeśli pola nie można odczytać. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `kubectl get job importer -o jsonpath="{.spec.parallelism}"`.
+
+
+      ### Limit bieżących powtórzeń {#batch-bound-current-job-retries}
+
+
+      Dostarczony Job dopuszcza 100 powtórzeń; zmniejsz backoffLimit do jednego w istniejącym Job, ograniczając błędną walidację. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `kubectl get job importer -o jsonpath="{.spec.backoffLimit}"`.
+
+
+      ### Termin bieżącego wykonania {#batch-bound-current-job-deadline}
+
+
+      Dostarczone activeDeadlineSeconds wynosi 300; ustaw wymagane 30 sekund dla istniejącego Job zamiast usuwać wykonanie. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `kubectl get job importer -o jsonpath="{.spec.activeDeadlineSeconds}"`.
+
+
+      ### Obserwacja bieżącego Job {#batch-current-job-api-observation}
+
+
+      Bieżący Job może nie istnieć albo żądanie API, JSON lub limit czasu blokuje odczyt; sprawdź importer przed porównaniem pierwotnej aplikacji. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `kubectl get job importer --request-timeout=3s`.
+
+
+      ### Pierwotna aplikacja i tożsamość {#batch-original-image-command-and-identity}
+
+
+      Bieżący Job mógł zostać zastąpiony lub zmieniono image, polecenie worker albo Never; porównaj z zamrożonym batch-identities. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `kubectl get job importer -o json | jq ''{uid:.metadata.uid,spec:.spec}''`.
+
+
+      ### Aktywny harmonogram bez nakładania {#batch-active-cron-schedule-and-concurrency}
+
+
+      Cykliczny CronJob może nie istnieć, być suspended, mieć inny harmonogram lub dopuszczać nakładanie; porównaj z batch-contract.json. Błędy API/limitu czasu też dają ten marker. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `kubectl get cronjob validation-cycle -o json | jq .spec`.
+
+
+      ### Ograniczony szablon cykliczny {#batch-bounded-recurring-job-template}
+
+
+      Szablon CronJob może zachowywać szerokie retry/deadline lub zmieniać aplikację; przenieś cztery dokładne limity oraz pierwotne image, polecenie i Never. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `kubectl get cronjob validation-cycle -o json | jq .spec.jobTemplate.spec`.
+
+
+      ### Rzeczywista nieudana próba {#batch-observe-current-failed-attempt}
+
+
+      Błędne polecenie mogło jeszcze nie wykonać się lub ukryto awarię; zachowaj pierwotny Job i sprawdź licznik failed oraz events. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `kubectl get job importer -o json | jq .status.failed`.
+
+
+      ### Końcowa awaria Job {#batch-terminal-current-job-failure}
+
+
+      Job może nadal ponawiać według starych limitów lub nie osiągnął końcowej awarii; sprawdź ograniczenia i poczekaj na Failed=True. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `kubectl get job importer -o json | jq .status.conditions`.
+
+
+      ### Nieudany Pod pierwotnego Job {#batch-original-job-owned-failed-pod}
+
+
+      Sama etykieta nie dowodzi przynależności błędnego Pod do pierwotnego Job; sprawdź controller owner UID, fazę Failed i exit code jeden dla worker. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `kubectl get pods -l job-name=importer -o json | jq ''.items[] | {owners:.metadata.ownerReferences,status:.status}''`.
+
+
+      ### Rzeczywisty Job z harmonogramu {#batch-observed-cron-owned-failed-job}
+
+
+      Poprawny szablon nie dowodzi wykonania; poczekaj na rzeczywisty ograniczony Job należący do CronJob, zakończony awarią. Błędy API/limitów czasu przy Jobs też dają ten marker. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `kubectl get jobs -o json | jq ''.items[] | {name:.metadata.name,owners:.metadata.ownerReferences,status:.status}''`.
+
+
+      ### Łańcuch właścicieli controller {#batch-child-owner-chain-and-real-exit}
+
+
+      Cykliczne wykonanie może nie mieć Failed Pod z pierwotną aplikacją i exit code jeden; prześledź CronJob→Job→Pod po controller UID. Błędy API/limitów czasu przy Pods też dają ten marker. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `kubectl get pods -o json | jq ''.items[] | {name:.metadata.name,owners:.metadata.ownerReferences,status:.status}''`.
+
+
+      ### Start obserwacji polityki {#batch-policy-startup-fallback}
+
+
+      Wcześniejsza kontrola shell z limitem 8s może przekroczyć czas bez markera, np. przy zablokowanym kubectl; błędy startu helper lub zamrożonych facts też dają fallback. Błędy API/limity czasu wewnątrz obserwatora Python dają marker żądanego obiektu. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `python3 -I -c "import dq_check"; jq .contract /run/dq/facts/0/batch-identities.json`.
+
+
+      ### Start obserwacji wykonania {#batch-evidence-startup-fallback}
+
+
+      Wcześniejsza kontrola shell z limitem 8s może przekroczyć czas bez markera, np. przy zablokowanym kubectl; błędy startu helper lub zamrożonych facts też dają fallback. Błędy API/limity czasu wewnątrz obserwatora Python dają marker żądanego obiektu. Pierwotny Job ma backoffLimit=100 i activeDeadlineSeconds=300; cykliczny CronJob początkowo nie istnieje. Celem jest ograniczona nieudana walidacja. Setup usuwa job.yaml: sprawdzaj żywe obiekty i dostarczony batch-contract.json. `python3 -I -c "import dq_check"; jq .contract /run/dq/facts/0/batch-identities.json`.
+
+
       ## Wypróbuj
 
 
@@ -3439,6 +3745,108 @@ kubernetes-20:
       El PVC destino spool no está Bound o la prueba de política terminó sin marcador; la clase de almacenamiento desconocida puede dejarlo Pending, y datos protegidos ausentes, JSON inválido o fallos de inicio también impiden observar.  `kubectl get pvc spool reserve -o yaml; kubectl describe pvc spool`.
 
 
+      ### Job existente {#batch-preserve-original-job}
+
+
+      Recrear importer cambia UID fijado; repare Job existente y revise API si no puede leerse el objeto original. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `kubectl get job importer -o jsonpath="{.metadata.uid}"`.
+
+
+      ### Comando worker original {#batch-retain-failing-worker-command}
+
+
+      Sustituir comando fallido por éxito oculta fallo de validación; conserve comando worker original del Job vivo y facts fijados. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `kubectl get job importer -o json | jq ''.spec.template.spec.containers[] | select(.name=="worker") | .command''`.
+
+
+      ### Fallo de ejecución visible {#batch-never-restart-policy}
+
+
+      Una restart policy distinta de Never puede reintentar dentro del Pod en vez de dejar ejecución fallida; conserve política suministrada. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `kubectl get job importer -o jsonpath="{.spec.template.spec.restartPolicy}"`.
+
+
+      ### Una ejecución paralela {#batch-single-parallel-execution}
+
+
+      Parallelism puede aumentar al editar límites; mantenga uno en importer y revise API si no se observa el campo. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `kubectl get job importer -o jsonpath="{.spec.parallelism}"`.
+
+
+      ### Limitar reintentos actuales {#batch-bound-current-job-retries}
+
+
+      Job suministrado permite 100 reintentos; reduzca backoffLimit a uno en Job existente para limitar validación fallida. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `kubectl get job importer -o jsonpath="{.spec.backoffLimit}"`.
+
+
+      ### Limitar plazo actual {#batch-bound-current-job-deadline}
+
+
+      El activeDeadlineSeconds suministrado es 300; ajuste Job existente a 30 segundos requeridos en vez de borrar ejecución. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `kubectl get job importer -o jsonpath="{.spec.activeDeadlineSeconds}"`.
+
+
+      ### Observar Job actual {#batch-current-job-api-observation}
+
+
+      Job actual puede faltar o fallar petición API, JSON o tiempo; revise importer antes de comparar carga original. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `kubectl get job importer --request-timeout=3s`.
+
+
+      ### Carga e identidad originales {#batch-original-image-command-and-identity}
+
+
+      Job actual puede reemplazarse o cambiar image, comando worker o Never; compare con batch-identities fijados. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `kubectl get job importer -o json | jq ''{uid:.metadata.uid,spec:.spec}''`.
+
+
+      ### Horario activo sin solapamiento {#batch-active-cron-schedule-and-concurrency}
+
+
+      CronJob recurrente puede faltar, estar suspended, usar otro horario o permitir solapamiento; compare con batch-contract.json. Errores API/tiempo al leerlo también usan este marcador. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `kubectl get cronjob validation-cycle -o json | jq .spec`.
+
+
+      ### Plantilla recurrente limitada {#batch-bounded-recurring-job-template}
+
+
+      La plantilla CronJob puede conservar retry/deadline amplios o cambiar carga; propague cuatro límites exactos e image, comando y Never originales. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `kubectl get cronjob validation-cycle -o json | jq .spec.jobTemplate.spec`.
+
+
+      ### Intento fallido real {#batch-observe-current-failed-attempt}
+
+
+      El comando fallido puede no ejecutarse aún o su fallo ocultarse; conserve Job original y revise contador failed y events. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `kubectl get job importer -o json | jq .status.failed`.
+
+
+      ### Fallo final de Job {#batch-terminal-current-job-failure}
+
+
+      Job puede seguir reintentando con límites antiguos o no alcanzar fallo final; revise límites y espere Failed=True. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `kubectl get job importer -o json | jq .status.conditions`.
+
+
+      ### Pod fallido del Job original {#batch-original-job-owned-failed-pod}
+
+
+      Una etiqueta sola no prueba pertenencia del Pod fallido al Job original; revise controller owner UID, fase Failed y exit code uno de worker. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `kubectl get pods -l job-name=importer -o json | jq ''.items[] | {owners:.metadata.ownerReferences,status:.status}''`.
+
+
+      ### Job programado real {#batch-observed-cron-owned-failed-job}
+
+
+      Una plantilla válida no prueba ejecución; espere Job hijo real, limitado y fallido, propiedad de CronJob. Errores API/tiempo al leer Jobs también usan este marcador. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `kubectl get jobs -o json | jq ''.items[] | {name:.metadata.name,owners:.metadata.ownerReferences,status:.status}''`.
+
+
+      ### Cadena de propietarios controller {#batch-child-owner-chain-and-real-exit}
+
+
+      La ejecución recurrente puede carecer de Failed Pod con carga original y exit code uno; siga CronJob→Job→Pod por controller UID. Errores API/tiempo al leer Pods también usan este marcador. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `kubectl get pods -o json | jq ''.items[] | {name:.metadata.name,owners:.metadata.ownerReferences,status:.status}''`.
+
+
+      ### Iniciar observación de política {#batch-policy-startup-fallback}
+
+
+      La comprobación shell anterior de 8s puede agotar tiempo sin marcador, por ejemplo con kubectl bloqueado; errores de inicio del helper o facts fijados también dan fallback. API/tiempos dentro del observador Python usan marcador del objeto solicitado. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `python3 -I -c "import dq_check"; jq .contract /run/dq/facts/0/batch-identities.json`.
+
+
+      ### Iniciar observación de ejecución {#batch-evidence-startup-fallback}
+
+
+      La comprobación shell anterior de 8s puede agotar tiempo sin marcador, por ejemplo con kubectl bloqueado; errores de inicio del helper o facts fijados también dan fallback. API/tiempos dentro del observador Python usan marcador del objeto solicitado. Job original usa backoffLimit=100 y activeDeadlineSeconds=300; CronJob recurrente inicialmente ausente. El resultado esperado es validación fallida limitada. Setup elimina job.yaml: observe objetos vivos y batch-contract.json suministrado. `python3 -I -c "import dq_check"; jq .contract /run/dq/facts/0/batch-identities.json`.
+
+
       ## Pruébalo
 
 
@@ -3503,6 +3911,108 @@ kubernetes-20:
 
 
       Die Ziel-PVC spool ist nicht Bound oder die Richtlinienbeobachtung endete ohne benannten Marker; die gelieferte unbekannte Speicherklasse kann sie Pending lassen, während fehlende geschützte Belege, fehlerhaftes JSON oder Startfehler ebenfalls die Beobachtung verhindern.  `kubectl get pvc spool reserve -o yaml; kubectl describe pvc spool`.
+
+
+      ### Vorhandenen Job erhalten {#batch-preserve-original-job}
+
+
+      Neuanlegen von importer ändert die eingefrorene UID; korrigieren Sie den vorhandenen Job und prüfen Sie API-Zugriff bei unlesbarem Original. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `kubectl get job importer -o jsonpath="{.metadata.uid}"`.
+
+
+      ### Ursprünglichen worker Befehl erhalten {#batch-retain-failing-worker-command}
+
+
+      Ersetzen des gelieferten fehlschlagenden Befehls durch Erfolg verbirgt den Validierungsfehler; erhalten Sie den ursprünglichen worker Befehl aus Live-Job und eingefrorenen Facts. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `kubectl get job importer -o json | jq ''.spec.template.spec.containers[] | select(.name=="worker") | .command''`.
+
+
+      ### Fehlgeschlagene Ausführung sichtbar lassen {#batch-never-restart-policy}
+
+
+      Eine Restart-Policy außer Never kann innerhalb des Pods wiederholen, statt die erwartete fehlgeschlagene Ausführung zu hinterlassen; erhalten Sie die gelieferte Policy. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `kubectl get job importer -o jsonpath="{.spec.template.spec.restartPolicy}"`.
+
+
+      ### Eine parallele Ausführung {#batch-single-parallel-execution}
+
+
+      Parallelism wurde beim Ändern der Grenzen möglicherweise erhöht; erhalten Sie eins für importer und prüfen Sie API-Ausgabe bei fehlender Feldbeobachtung. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `kubectl get job importer -o jsonpath="{.spec.parallelism}"`.
+
+
+      ### Aktuelle Wiederholungen begrenzen {#batch-bound-current-job-retries}
+
+
+      Der gelieferte Job erlaubt 100 Wiederholungen; reduzieren Sie backoffLimit beim bestehenden Job auf eins, um die fehlschlagende Validierung zu begrenzen. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `kubectl get job importer -o jsonpath="{.spec.backoffLimit}"`.
+
+
+      ### Aktuelle Frist begrenzen {#batch-bound-current-job-deadline}
+
+
+      Geliefertes activeDeadlineSeconds ist 300; setzen Sie die Frist des vorhandenen Jobs auf erforderliche 30 Sekunden, statt die Ausführung zu löschen. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `kubectl get job importer -o jsonpath="{.spec.activeDeadlineSeconds}"`.
+
+
+      ### Aktuellen Job beobachten {#batch-current-job-api-observation}
+
+
+      Der aktuelle Job fehlt möglicherweise oder API-Anfrage, JSON-Verarbeitung oder Zeitlimit scheitern; prüfen Sie importer vor dem Vergleich der ursprünglichen Workload. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `kubectl get job importer --request-timeout=3s`.
+
+
+      ### Ursprüngliche Workload und Identität {#batch-original-image-command-and-identity}
+
+
+      Der aktuelle Job wurde möglicherweise ersetzt oder ursprüngliches image, worker Befehl oder Never geändert; vergleichen Sie mit eingefrorenen batch-identities. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `kubectl get job importer -o json | jq ''{uid:.metadata.uid,spec:.spec}''`.
+
+
+      ### Aktiver Zeitplan ohne Überlappung {#batch-active-cron-schedule-and-concurrency}
+
+
+      Der wiederkehrende CronJob fehlt möglicherweise, ist suspended, nutzt anderen Zeitplan oder erlaubt Überlappung; vergleichen Sie mit batch-contract.json. API-/Zeitfehler beim Lesen ergeben ebenfalls diesen Marker. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `kubectl get cronjob validation-cycle -o json | jq .spec`.
+
+
+      ### Begrenztes wiederkehrendes Template {#batch-bounded-recurring-job-template}
+
+
+      Das CronJob-Template behält möglicherweise breite retry/deadline Werte oder ändert die Workload; übernehmen Sie alle vier exakten Grenzen sowie ursprüngliches image, Befehl und Never. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `kubectl get cronjob validation-cycle -o json | jq .spec.jobTemplate.spec`.
+
+
+      ### Tatsächlicher fehlgeschlagener Versuch {#batch-observe-current-failed-attempt}
+
+
+      Der fehlschlagende Befehl lief möglicherweise noch nicht oder sein Fehler wurde verborgen; erhalten Sie den ursprünglichen Job und prüfen Sie failed Zähler und Events. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `kubectl get job importer -o json | jq .status.failed`.
+
+
+      ### Endgültiger Job-Fehler {#batch-terminal-current-job-failure}
+
+
+      Der Job wiederholt möglicherweise noch mit alten Grenzen oder ist noch nicht endgültig fehlgeschlagen; prüfen Sie die Grenzen und warten Sie auf Failed=True. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `kubectl get job importer -o json | jq .status.conditions`.
+
+
+      ### Fehlgeschlagener Pod des ursprünglichen Jobs {#batch-original-job-owned-failed-pod}
+
+
+      Ein Label allein beweist keine Zugehörigkeit des fehlgeschlagenen Pods zum ursprünglichen Job; prüfen Sie Controller-Owner-UID, Failed Phase und worker Beendigung mit Exitcode eins. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `kubectl get pods -l job-name=importer -o json | jq ''.items[] | {owners:.metadata.ownerReferences,status:.status}''`.
+
+
+      ### Tatsächlicher geplanter Kind-Job {#batch-observed-cron-owned-failed-job}
+
+
+      Ein gültiges Template allein belegt keine Ausführung; warten Sie auf einen tatsächlichen begrenzten, fehlgeschlagenen Kind-Job des CronJobs. API-/Zeitfehler beim Lesen von Jobs ergeben ebenfalls diesen Marker. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `kubectl get jobs -o json | jq ''.items[] | {name:.metadata.name,owners:.metadata.ownerReferences,status:.status}''`.
+
+
+      ### Controller-Eigentümerkette verfolgen {#batch-child-owner-chain-and-real-exit}
+
+
+      Der wiederkehrenden Ausführung fehlt möglicherweise ein Failed Pod mit ursprünglicher Workload und Exitcode eins; verfolgen Sie CronJob→Job→Pod über Controller-UIDs. API-/Zeitfehler beim Lesen von Pods ergeben ebenfalls diesen Marker. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `kubectl get pods -o json | jq ''.items[] | {name:.metadata.name,owners:.metadata.ownerReferences,status:.status}''`.
+
+
+      ### Policy-Beobachtung starten {#batch-policy-startup-fallback}
+
+
+      Die frühere Shell-Prüfung mit 8s Limit kann etwa bei blockiertem kubectl ohne Marker auslaufen; Helper-Start oder eingefrorene Facts können ebenfalls diesen Fallback verursachen. API-/Zeitfehler innerhalb des Python-Observers ergeben den Marker des angefragten Objekts. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `python3 -I -c "import dq_check"; jq .contract /run/dq/facts/0/batch-identities.json`.
+
+
+      ### Ausführungsbeobachtung starten {#batch-evidence-startup-fallback}
+
+
+      Die frühere Shell-Prüfung mit 8s Limit kann etwa bei blockiertem kubectl ohne Marker auslaufen; Helper-Start oder eingefrorene Facts können ebenfalls diesen Fallback verursachen. API-/Zeitfehler innerhalb des Python-Observers ergeben den Marker des angefragten Objekts. Der ursprüngliche Job startet mit backoffLimit=100 und activeDeadlineSeconds=300; der wiederkehrende CronJob fehlt zunächst. Ziel ist eine begrenzte fehlschlagende Validierung. Setup entfernt job.yaml; prüfen Sie Live-Objekte und geliefertes batch-contract.json. `python3 -I -c "import dq_check"; jq .contract /run/dq/facts/0/batch-identities.json`.
 
 
       ## Probieren Sie es aus
@@ -8875,6 +9385,84 @@ terraform-3:
       In quest 030, tofu plan -input=false -detailed-exitcode -no-color must exit 0. Exit 2 means proposed changes remain; review them and apply the intended release configuration. Exit 1 means planning failed: read the visible error for configuration, provider or state problems. Matching file bytes alone do not prove a clean plan.
 
 
+      ### Original north output {#recovery-original-north-output}
+
+
+      The output may be absent or refer to a recreated north file; retain the original provider ID from the frozen receipt. The older checkpoint contains guardian but lacks the later progress operation. The newer partial state retains progress but has lost the guardian binding. Recover only that binding, and keep the pre-recovery backup and pre-apply plan. `tofu output -raw north_id`.
+
+
+      ### Retain the existing file {#recovery-existing-north-content}
+
+
+      The existing north.txt may have been edited or become unreadable; compare its content with the retained configuration before changing state. The older checkpoint contains guardian but lacks the later progress operation. The newer partial state retains progress but has lost the guardian binding. Recover only that binding, and keep the pre-recovery backup and pre-apply plan. `test "$(cat north.txt)" = north-71`.
+
+
+      ### Create the missing file {#recovery-missing-south-content}
+
+
+      The supplied configuration adds south.txt without applying it; a missing or different file can remain until the recovery plan creates the declared route. The older checkpoint contains guardian but lacks the later progress operation. The newer partial state retains progress but has lost the guardian binding. Recover only that binding, and keep the pre-recovery backup and pre-apply plan. `test "$(cat south.txt)" = south-71`.
+
+
+      ### Restore one binding and retain newer progress {#recovery-merge-old-binding-with-new-progress}
+
+
+      A blind retry can recreate guardian, while restoring the whole old checkpoint discards progress; restore only the missing binding and retain both frozen operation IDs. Failed or invalid tofu show output also reaches this diagnostic. The older checkpoint contains guardian but lacks the later progress operation. The newer partial state retains progress but has lost the guardian binding. Recover only that binding, and keep the pre-recovery backup and pre-apply plan. `tofu state list; jq .bindings /run/dq/facts/0/state-identities.json`.
+
+
+      ### Both managed route targets {#recovery-two-managed-route-targets}
+
+
+      The remaining state entries may target different files or duplicate a route; require exactly one managed local_file for each north.txt and south.txt after retaining both companions. The older checkpoint contains guardian but lacks the later progress operation. The newer partial state retains progress but has lost the guardian binding. Recover only that binding, and keep the pre-recovery backup and pre-apply plan. `tofu show -json | jq ''.values.root_module.resources[] | {address,type,filename:.values.filename}''`.
+
+
+      ### No replacement of operation companions {#recovery-plan-preserves-companion-identities}
+
+
+      A missing/stale recovery-plan.json or a plan that replaces an operation companion cannot preserve completed work; export the recovery plan after restoring the binding and keep both companions no-op with their original IDs. The older checkpoint contains guardian but lacks the later progress operation. The newer partial state retains progress but has lost the guardian binding. Recover only that binding, and keep the pre-recovery backup and pre-apply plan. `jq -r ''.resource_changes[] | [.address,(.change.actions|join(","))] | @tsv'' recovery-plan.json`.
+
+
+      ### Inventory of the saved recovery plan {#recovery-plan-route-inventory}
+
+
+      An unrelated route entry would violate the saved-plan inventory; the recovery artifact describes the two routes alongside the two retained operation companions. The older checkpoint contains guardian but lacks the later progress operation. The newer partial state retains progress but has lost the guardian binding. Recover only that binding, and keep the pre-recovery backup and pre-apply plan. `jq ''.resource_changes | length'' recovery-plan.json`.
+
+
+      ### Keep the original route unchanged {#recovery-plan-existing-route-no-op}
+
+
+      The saved plan may replace or modify north.txt, or use a different original ID; keep its existing route entry no-op with the frozen provider identity. The older checkpoint contains guardian but lacks the later progress operation. The newer partial state retains progress but has lost the guardian binding. Recover only that binding, and keep the pre-recovery backup and pre-apply plan. `jq ''.resource_changes[] | select(.type=="local_file") | {address,change}'' recovery-plan.json`.
+
+
+      ### Retain the plan before applying {#recovery-plan-only-missing-route-create}
+
+
+      The artifact may have been exported after apply, leaving south.txt no-op, or may omit the missing route; retain the pre-apply plan that creates south.txt. The older checkpoint contains guardian but lacks the later progress operation. The newer partial state retains progress but has lost the guardian binding. Recover only that binding, and keep the pre-recovery backup and pre-apply plan. `jq ''.resource_changes[] | select(.type=="local_file") | {address,change}'' recovery-plan.json`.
+
+
+      ### Trusted checkpoint and newer partial backup {#recovery-trusted-checkpoint-and-partial-backup}
+
+
+      Overwriting the trusted checkpoint or backing up state after recovery loses the required evidence; retain checkpoint bytes and the newer partial state with its original lineage, serial and completed-object IDs. The older checkpoint contains guardian but lacks the later progress operation. The newer partial state retains progress but has lost the guardian binding. Recover only that binding, and keep the pre-recovery backup and pre-apply plan. `sha256sum recovery-checkpoint.tfstate; jq ''{lineage,serial}'' before-recovery.tfstate`.
+
+
+      ### A converged final plan {#recovery-final-converged-plan}
+
+
+      Unapplied configuration, file drift or a planning error can leave the final detailed plan nonzero; inspect its proposed changes after applying the retained recovery plan. The older checkpoint contains guardian but lacks the later progress operation. The newer partial state retains progress but has lost the guardian binding. Recover only that binding, and keep the pre-recovery backup and pre-apply plan. `tofu plan -input=false -detailed-exitcode -no-color`.
+
+
+      ### Starting the state observer {#recovery-state-helper-startup}
+
+
+      The state observer may fail before inspecting bindings, for example if tofu cannot start or helper imports fail; ordinary nonzero/invalid tofu JSON instead reaches recovery_bindings. The older checkpoint contains guardian but lacks the later progress operation. The newer partial state retains progress but has lost the guardian binding. Recover only that binding, and keep the pre-recovery backup and pre-apply plan. `command -v tofu; python3 -I -c "import dq_check"`.
+
+
+      ### Starting the plan observer {#recovery-plan-helper-startup}
+
+
+      The plan observer may fail before producing a specific marker, for example during imports or unexpected artifact traversal; ordinary missing/invalid recovery-plan.json reaches recovery_binding_plan. The older checkpoint contains guardian but lacks the later progress operation. The newer partial state retains progress but has lost the guardian binding. Recover only that binding, and keep the pre-recovery backup and pre-apply plan. `python3 -I -c "import dq_check"; test -s recovery-plan.json`.
+
+
       ## Try it
 
 
@@ -8977,6 +9565,84 @@ terraform-3:
 
 
       В квесте 030 tofu plan -input=false -detailed-exitcode -no-color должен завершиться с кодом 0. Код 2 означает оставшиеся изменения: изучите их и примените нужную конфигурацию релиза. Код 1 означает ошибку планирования: прочитайте сообщение о конфигурации, провайдере или state. Совпадение содержимого файла не доказывает отсутствие изменений в плане.
+
+
+      ### Исходный output north {#recovery-original-north-output}
+
+
+      Output может отсутствовать или ссылаться на пересозданный north-файл; сохраните исходный provider ID из зафиксированной записи. Старый checkpoint содержит guardian, но не новую операцию progress. Новая частичная state сохраняет progress, но потеряла привязку guardian. Восстановите только её, сохранив backup до восстановления и план до apply. `tofu output -raw north_id`.
+
+
+      ### Сохранение существующего файла {#recovery-existing-north-content}
+
+
+      Существующий north.txt мог измениться или стать недоступным; сравните содержимое с выданной конфигурацией до изменения state. Старый checkpoint содержит guardian, но не новую операцию progress. Новая частичная state сохраняет progress, но потеряла привязку guardian. Восстановите только её, сохранив backup до восстановления и план до apply. `test "$(cat north.txt)" = north-71`.
+
+
+      ### Создание отсутствующего файла {#recovery-missing-south-content}
+
+
+      Выданная конфигурация добавляет south.txt без apply; файл может отсутствовать или отличаться, пока план восстановления не создаст объявленный маршрут. Старый checkpoint содержит guardian, но не новую операцию progress. Новая частичная state сохраняет progress, но потеряла привязку guardian. Восстановите только её, сохранив backup до восстановления и план до apply. `test "$(cat south.txt)" = south-71`.
+
+
+      ### Одна привязка и новые операции {#recovery-merge-old-binding-with-new-progress}
+
+
+      Повторный apply может пересоздать guardian, а откат всего checkpoint теряет progress; восстановите только отсутствующую привязку, сохраняя оба ID операций. Ошибка tofu show или неверный JSON также дают эту диагностику. Старый checkpoint содержит guardian, но не новую операцию progress. Новая частичная state сохраняет progress, но потеряла привязку guardian. Восстановите только её, сохранив backup до восстановления и план до apply. `tofu state list; jq .bindings /run/dq/facts/0/state-identities.json`.
+
+
+      ### Оба управляемых файла маршрута {#recovery-two-managed-route-targets}
+
+
+      Оставшиеся записи state могут указывать на другие файлы или дублировать маршрут; после сохранения двух companions нужен ровно один managed local_file для north.txt и south.txt. Старый checkpoint содержит guardian, но не новую операцию progress. Новая частичная state сохраняет progress, но потеряла привязку guardian. Восстановите только её, сохранив backup до восстановления и план до apply. `tofu show -json | jq ''.values.root_module.resources[] | {address,type,filename:.values.filename}''`.
+
+
+      ### Без замены companions операций {#recovery-plan-preserves-companion-identities}
+
+
+      Отсутствующий/старый recovery-plan.json либо замена companion в плане не сохраняют завершённую работу; экспортируйте план после восстановления привязки, оставляя оба companions no-op с исходными ID. Старый checkpoint содержит guardian, но не новую операцию progress. Новая частичная state сохраняет progress, но потеряла привязку guardian. Восстановите только её, сохранив backup до восстановления и план до apply. `jq -r ''.resource_changes[] | [.address,(.change.actions|join(","))] | @tsv'' recovery-plan.json`.
+
+
+      ### Состав сохранённого плана {#recovery-plan-route-inventory}
+
+
+      Лишняя запись маршрута нарушает состав сохранённого плана; артефакт описывает два маршрута вместе с двумя сохранёнными companions операций. Старый checkpoint содержит guardian, но не новую операцию progress. Новая частичная state сохраняет progress, но потеряла привязку guardian. Восстановите только её, сохранив backup до восстановления и план до apply. `jq ''.resource_changes | length'' recovery-plan.json`.
+
+
+      ### Исходный маршрут без изменений {#recovery-plan-existing-route-no-op}
+
+
+      Сохранённый план может заменять/менять north.txt либо использовать другой исходный ID; оставьте запись существующего маршрута no-op с зафиксированной идентичностью. Старый checkpoint содержит guardian, но не новую операцию progress. Новая частичная state сохраняет progress, но потеряла привязку guardian. Восстановите только её, сохранив backup до восстановления и план до apply. `jq ''.resource_changes[] | select(.type=="local_file") | {address,change}'' recovery-plan.json`.
+
+
+      ### План до применения {#recovery-plan-only-missing-route-create}
+
+
+      Артефакт могли экспортировать после apply, когда south.txt уже no-op, либо пропустить маршрут; сохраните план до apply, создающий south.txt. Старый checkpoint содержит guardian, но не новую операцию progress. Новая частичная state сохраняет progress, но потеряла привязку guardian. Восстановите только её, сохранив backup до восстановления и план до apply. `jq ''.resource_changes[] | select(.type=="local_file") | {address,change}'' recovery-plan.json`.
+
+
+      ### Checkpoint и новая частичная копия {#recovery-trusted-checkpoint-and-partial-backup}
+
+
+      Изменение доверенного checkpoint либо backup после восстановления теряет нужные данные; сохраните байты checkpoint и новую частичную state с исходными lineage, serial и ID завершённых объектов. Старый checkpoint содержит guardian, но не новую операцию progress. Новая частичная state сохраняет progress, но потеряла привязку guardian. Восстановите только её, сохранив backup до восстановления и план до apply. `sha256sum recovery-checkpoint.tfstate; jq ''{lineage,serial}'' before-recovery.tfstate`.
+
+
+      ### Финальный план без изменений {#recovery-final-converged-plan}
+
+
+      Неприменённая конфигурация, drift файлов или ошибка plan дают ненулевой финальный код; изучите изменения после применения сохранённого плана восстановления. Старый checkpoint содержит guardian, но не новую операцию progress. Новая частичная state сохраняет progress, но потеряла привязку guardian. Восстановите только её, сохранив backup до восстановления и план до apply. `tofu plan -input=false -detailed-exitcode -no-color`.
+
+
+      ### Запуск наблюдения state {#recovery-state-helper-startup}
+
+
+      Наблюдение state может завершиться до проверки привязок, например при невозможности запуска tofu или импорта helper; обычный ненулевой код/неверный JSON tofu дают recovery_bindings. Старый checkpoint содержит guardian, но не новую операцию progress. Новая частичная state сохраняет progress, но потеряла привязку guardian. Восстановите только её, сохранив backup до восстановления и план до apply. `command -v tofu; python3 -I -c "import dq_check"`.
+
+
+      ### Запуск наблюдения плана {#recovery-plan-helper-startup}
+
+
+      Наблюдение плана может завершиться до конкретного маркера на импортах или неожиданной структуре артефакта; обычный отсутствующий/неверный recovery-plan.json даёт recovery_binding_plan. Старый checkpoint содержит guardian, но не новую операцию progress. Новая частичная state сохраняет progress, но потеряла привязку guardian. Восстановите только её, сохранив backup до восстановления и план до apply. `python3 -I -c "import dq_check"; test -s recovery-plan.json`.
 
 
       ## Попробуйте
@@ -9083,6 +9749,84 @@ terraform-3:
       W zadaniu 030 tofu plan -input=false -detailed-exitcode -no-color musi zakończyć się kodem 0. Kod 2 oznacza proponowane zmiany: przejrzyj je i zastosuj właściwą konfigurację wydania. Kod 1 oznacza błąd planowania: odczytaj komunikat dotyczący konfiguracji, dostawcy lub stanu. Zgodna treść pliku nie dowodzi braku zmian w planie.
 
 
+      ### Pierwotny output north {#recovery-original-north-output}
+
+
+      Output może nie istnieć lub wskazywać odtworzony plik north; zachowaj pierwotny provider ID z zamrożonego zapisu. Stary checkpoint zawiera guardian, ale nie późniejszą operację progress. Nowszy częściowy state zachowuje progress, lecz stracił powiązanie guardian. Przywróć tylko to powiązanie i zachowaj backup sprzed odtwarzania oraz plan sprzed apply. `tofu output -raw north_id`.
+
+
+      ### Zachowanie istniejącego pliku {#recovery-existing-north-content}
+
+
+      Istniejący north.txt mógł się zmienić lub stać nieczytelny; porównaj treść z dostarczoną konfiguracją przed zmianą state. Stary checkpoint zawiera guardian, ale nie późniejszą operację progress. Nowszy częściowy state zachowuje progress, lecz stracił powiązanie guardian. Przywróć tylko to powiązanie i zachowaj backup sprzed odtwarzania oraz plan sprzed apply. `test "$(cat north.txt)" = north-71`.
+
+
+      ### Utworzenie brakującego pliku {#recovery-missing-south-content}
+
+
+      Dostarczona konfiguracja dodaje south.txt bez apply; pliku może brakować lub mieć inną treść, dopóki plan odtwarzania nie utworzy trasy. Stary checkpoint zawiera guardian, ale nie późniejszą operację progress. Nowszy częściowy state zachowuje progress, lecz stracił powiązanie guardian. Przywróć tylko to powiązanie i zachowaj backup sprzed odtwarzania oraz plan sprzed apply. `test "$(cat south.txt)" = south-71`.
+
+
+      ### Jedno powiązanie i nowszy postęp {#recovery-merge-old-binding-with-new-progress}
+
+
+      Ponowny apply może odtworzyć guardian, a cały stary checkpoint usuwa progress; przywróć tylko brakujące powiązanie i oba zamrożone ID operacji. Błąd tofu show lub błędny JSON też daje tę diagnostykę. Stary checkpoint zawiera guardian, ale nie późniejszą operację progress. Nowszy częściowy state zachowuje progress, lecz stracił powiązanie guardian. Przywróć tylko to powiązanie i zachowaj backup sprzed odtwarzania oraz plan sprzed apply. `tofu state list; jq .bindings /run/dq/facts/0/state-identities.json`.
+
+
+      ### Oba zarządzane pliki tras {#recovery-two-managed-route-targets}
+
+
+      Pozostałe wpisy state mogą wskazywać inne pliki lub powielać trasę; po zachowaniu dwóch companions potrzebny jest jeden managed local_file dla north.txt i south.txt. Stary checkpoint zawiera guardian, ale nie późniejszą operację progress. Nowszy częściowy state zachowuje progress, lecz stracił powiązanie guardian. Przywróć tylko to powiązanie i zachowaj backup sprzed odtwarzania oraz plan sprzed apply. `tofu show -json | jq ''.values.root_module.resources[] | {address,type,filename:.values.filename}''`.
+
+
+      ### Bez zastępowania companions operacji {#recovery-plan-preserves-companion-identities}
+
+
+      Brakujący/stary recovery-plan.json lub plan zastępujący companion nie zachowuje wykonanej pracy; eksportuj plan po przywróceniu powiązania, pozostawiając oba companions no-op z pierwotnymi ID. Stary checkpoint zawiera guardian, ale nie późniejszą operację progress. Nowszy częściowy state zachowuje progress, lecz stracił powiązanie guardian. Przywróć tylko to powiązanie i zachowaj backup sprzed odtwarzania oraz plan sprzed apply. `jq -r ''.resource_changes[] | [.address,(.change.actions|join(","))] | @tsv'' recovery-plan.json`.
+
+
+      ### Inwentarz zapisanego planu {#recovery-plan-route-inventory}
+
+
+      Dodatkowy wpis trasy narusza inwentarz zapisanego planu; artefakt opisuje dwie trasy i dwa zachowane companions operacji. Stary checkpoint zawiera guardian, ale nie późniejszą operację progress. Nowszy częściowy state zachowuje progress, lecz stracił powiązanie guardian. Przywróć tylko to powiązanie i zachowaj backup sprzed odtwarzania oraz plan sprzed apply. `jq ''.resource_changes | length'' recovery-plan.json`.
+
+
+      ### Pierwotna trasa bez zmian {#recovery-plan-existing-route-no-op}
+
+
+      Zapisany plan może zastępować/zmieniać north.txt lub używać innego ID; zachowaj istniejącą trasę no-op z zamrożoną tożsamością providera. Stary checkpoint zawiera guardian, ale nie późniejszą operację progress. Nowszy częściowy state zachowuje progress, lecz stracił powiązanie guardian. Przywróć tylko to powiązanie i zachowaj backup sprzed odtwarzania oraz plan sprzed apply. `jq ''.resource_changes[] | select(.type=="local_file") | {address,change}'' recovery-plan.json`.
+
+
+      ### Plan sprzed zastosowania {#recovery-plan-only-missing-route-create}
+
+
+      Artefakt mógł zostać wyeksportowany po apply, gdy south.txt jest no-op, lub pomijać trasę; zachowaj plan sprzed apply tworzący south.txt. Stary checkpoint zawiera guardian, ale nie późniejszą operację progress. Nowszy częściowy state zachowuje progress, lecz stracił powiązanie guardian. Przywróć tylko to powiązanie i zachowaj backup sprzed odtwarzania oraz plan sprzed apply. `jq ''.resource_changes[] | select(.type=="local_file") | {address,change}'' recovery-plan.json`.
+
+
+      ### Checkpoint i nowsza kopia częściowa {#recovery-trusted-checkpoint-and-partial-backup}
+
+
+      Nadpisanie zaufanego checkpoint lub backup po odtworzeniu traci wymagane dane; zachowaj bajty checkpoint i nowszy częściowy state z pierwotnym lineage, serial i ID obiektów. Stary checkpoint zawiera guardian, ale nie późniejszą operację progress. Nowszy częściowy state zachowuje progress, lecz stracił powiązanie guardian. Przywróć tylko to powiązanie i zachowaj backup sprzed odtwarzania oraz plan sprzed apply. `sha256sum recovery-checkpoint.tfstate; jq ''{lineage,serial}'' before-recovery.tfstate`.
+
+
+      ### Końcowy plan bez zmian {#recovery-final-converged-plan}
+
+
+      Niezastosowana konfiguracja, drift plików lub błąd plan może dać niezerowy kod końcowy; sprawdź proponowane zmiany po zastosowaniu zachowanego planu odtwarzania. Stary checkpoint zawiera guardian, ale nie późniejszą operację progress. Nowszy częściowy state zachowuje progress, lecz stracił powiązanie guardian. Przywróć tylko to powiązanie i zachowaj backup sprzed odtwarzania oraz plan sprzed apply. `tofu plan -input=false -detailed-exitcode -no-color`.
+
+
+      ### Uruchomienie obserwacji state {#recovery-state-helper-startup}
+
+
+      Obserwacja state może zawieść przed sprawdzeniem powiązań, np. przy braku startu tofu lub importów helper; zwykły niezerowy kod/błędny JSON tofu daje recovery_bindings. Stary checkpoint zawiera guardian, ale nie późniejszą operację progress. Nowszy częściowy state zachowuje progress, lecz stracił powiązanie guardian. Przywróć tylko to powiązanie i zachowaj backup sprzed odtwarzania oraz plan sprzed apply. `command -v tofu; python3 -I -c "import dq_check"`.
+
+
+      ### Uruchomienie obserwacji planu {#recovery-plan-helper-startup}
+
+
+      Observer planu może zawieść przed konkretnym markerem przy importach lub nieoczekiwanej strukturze artefaktu; brakujący/błędny recovery-plan.json daje recovery_binding_plan. Stary checkpoint zawiera guardian, ale nie późniejszą operację progress. Nowszy częściowy state zachowuje progress, lecz stracił powiązanie guardian. Przywróć tylko to powiązanie i zachowaj backup sprzed odtwarzania oraz plan sprzed apply. `python3 -I -c "import dq_check"; test -s recovery-plan.json`.
+
+
       ## Wypróbuj
 
 
@@ -9185,6 +9929,84 @@ terraform-3:
       En el reto 030, tofu plan -input=false -detailed-exitcode -no-color debe salir con 0. El código 2 indica cambios pendientes: revísalos y aplica la configuración prevista. El código 1 indica un fallo de planificación: lee el error de configuración, proveedor o estado. El contenido correcto del archivo no demuestra un plan sin cambios.
 
 
+      ### Output north original {#recovery-original-north-output}
+
+
+      Output puede faltar o referirse a archivo north recreado; conserve provider ID original del registro fijado. El checkpoint antiguo contiene guardian pero no operación progress reciente. El state parcial conserva progress pero pierde vínculo guardian. Recupere solo ese vínculo y conserve copia previa a recuperación y plan anterior a apply. `tofu output -raw north_id`.
+
+
+      ### Conservar archivo existente {#recovery-existing-north-content}
+
+
+      El north.txt existente puede haberse editado o ser ilegible; compare contenido con configuración suministrada antes de cambiar state. El checkpoint antiguo contiene guardian pero no operación progress reciente. El state parcial conserva progress pero pierde vínculo guardian. Recupere solo ese vínculo y conserve copia previa a recuperación y plan anterior a apply. `test "$(cat north.txt)" = north-71`.
+
+
+      ### Crear archivo ausente {#recovery-missing-south-content}
+
+
+      La configuración añade south.txt sin apply; puede faltar o diferir hasta que el plan de recuperación cree la ruta declarada. El checkpoint antiguo contiene guardian pero no operación progress reciente. El state parcial conserva progress pero pierde vínculo guardian. Recupere solo ese vínculo y conserve copia previa a recuperación y plan anterior a apply. `test "$(cat south.txt)" = south-71`.
+
+
+      ### Un vínculo y progreso reciente {#recovery-merge-old-binding-with-new-progress}
+
+
+      Repetir apply puede recrear guardian y restaurar checkpoint completo pierde progress; restaure solo vínculo ausente conservando ambos ID de operaciones. Fallo tofu show o JSON inválido también usa este diagnóstico. El checkpoint antiguo contiene guardian pero no operación progress reciente. El state parcial conserva progress pero pierde vínculo guardian. Recupere solo ese vínculo y conserve copia previa a recuperación y plan anterior a apply. `tofu state list; jq .bindings /run/dq/facts/0/state-identities.json`.
+
+
+      ### Ambos archivos de ruta gestionados {#recovery-two-managed-route-targets}
+
+
+      Las entradas restantes pueden apuntar a otros archivos o duplicar ruta; tras conservar dos companions exija un managed local_file por north.txt y south.txt. El checkpoint antiguo contiene guardian pero no operación progress reciente. El state parcial conserva progress pero pierde vínculo guardian. Recupere solo ese vínculo y conserve copia previa a recuperación y plan anterior a apply. `tofu show -json | jq ''.values.root_module.resources[] | {address,type,filename:.values.filename}''`.
+
+
+      ### Sin reemplazar companions de operaciones {#recovery-plan-preserves-companion-identities}
+
+
+      Un recovery-plan.json ausente/antiguo o plan que reemplaza companion no conserva trabajo; exporte plan tras restaurar vínculo y mantenga ambos companions no-op con ID originales. El checkpoint antiguo contiene guardian pero no operación progress reciente. El state parcial conserva progress pero pierde vínculo guardian. Recupere solo ese vínculo y conserve copia previa a recuperación y plan anterior a apply. `jq -r ''.resource_changes[] | [.address,(.change.actions|join(","))] | @tsv'' recovery-plan.json`.
+
+
+      ### Inventario del plan guardado {#recovery-plan-route-inventory}
+
+
+      Una entrada de ruta adicional incumple inventario del plan guardado; el artefacto describe dos rutas y dos companions de operaciones conservados. El checkpoint antiguo contiene guardian pero no operación progress reciente. El state parcial conserva progress pero pierde vínculo guardian. Recupere solo ese vínculo y conserve copia previa a recuperación y plan anterior a apply. `jq ''.resource_changes | length'' recovery-plan.json`.
+
+
+      ### Ruta original sin cambios {#recovery-plan-existing-route-no-op}
+
+
+      El plan guardado puede reemplazar/modificar north.txt o usar otro ID; mantenga entrada existente no-op con identidad provider fijada. El checkpoint antiguo contiene guardian pero no operación progress reciente. El state parcial conserva progress pero pierde vínculo guardian. Recupere solo ese vínculo y conserve copia previa a recuperación y plan anterior a apply. `jq ''.resource_changes[] | select(.type=="local_file") | {address,change}'' recovery-plan.json`.
+
+
+      ### Plan anterior a aplicar {#recovery-plan-only-missing-route-create}
+
+
+      El artefacto puede exportarse después de apply, dejando south.txt no-op, u omitir ruta; conserve plan previo a apply que crea south.txt. El checkpoint antiguo contiene guardian pero no operación progress reciente. El state parcial conserva progress pero pierde vínculo guardian. Recupere solo ese vínculo y conserve copia previa a recuperación y plan anterior a apply. `jq ''.resource_changes[] | select(.type=="local_file") | {address,change}'' recovery-plan.json`.
+
+
+      ### Checkpoint y copia parcial reciente {#recovery-trusted-checkpoint-and-partial-backup}
+
+
+      Sobrescribir checkpoint confiable o copiar state después de recuperación pierde evidencia; conserve bytes checkpoint y state parcial reciente con lineage, serial e ID originales. El checkpoint antiguo contiene guardian pero no operación progress reciente. El state parcial conserva progress pero pierde vínculo guardian. Recupere solo ese vínculo y conserve copia previa a recuperación y plan anterior a apply. `sha256sum recovery-checkpoint.tfstate; jq ''{lineage,serial}'' before-recovery.tfstate`.
+
+
+      ### Plan final sin cambios {#recovery-final-converged-plan}
+
+
+      Configuración sin aplicar, drift o error plan dejan código final distinto de cero; revise cambios propuestos tras aplicar plan de recuperación conservado. El checkpoint antiguo contiene guardian pero no operación progress reciente. El state parcial conserva progress pero pierde vínculo guardian. Recupere solo ese vínculo y conserve copia previa a recuperación y plan anterior a apply. `tofu plan -input=false -detailed-exitcode -no-color`.
+
+
+      ### Iniciar observación state {#recovery-state-helper-startup}
+
+
+      El observer state puede fallar antes de vínculos, por ejemplo al iniciar tofu o importar helper; código no cero/JSON inválido ordinario usa recovery_bindings. El checkpoint antiguo contiene guardian pero no operación progress reciente. El state parcial conserva progress pero pierde vínculo guardian. Recupere solo ese vínculo y conserve copia previa a recuperación y plan anterior a apply. `command -v tofu; python3 -I -c "import dq_check"`.
+
+
+      ### Iniciar observación del plan {#recovery-plan-helper-startup}
+
+
+      El observer plan puede fallar sin marcador específico por imports o estructura inesperada; recovery-plan.json ausente/inválido ordinario usa recovery_binding_plan. El checkpoint antiguo contiene guardian pero no operación progress reciente. El state parcial conserva progress pero pierde vínculo guardian. Recupere solo ese vínculo y conserve copia previa a recuperación y plan anterior a apply. `python3 -I -c "import dq_check"; test -s recovery-plan.json`.
+
+
       ## Pruébalo
 
 
@@ -9285,6 +10107,84 @@ terraform-3:
 
 
       In Quest 030 muss tofu plan -input=false -detailed-exitcode -no-color mit 0 enden. Code 2 bedeutet geplante Änderungen: prüfe sie und wende die gewünschte Release-Konfiguration an. Code 1 bedeutet einen Planungsfehler: lies die Meldung zu Konfiguration, Provider oder State. Richtiger Dateiinhalt allein beweist keinen Plan ohne Änderungen.
+
+
+      ### Ursprünglicher north Output {#recovery-original-north-output}
+
+
+      Der Output fehlt möglicherweise oder verweist auf eine neu angelegte north Datei; erhalten Sie die ursprüngliche Provider-ID aus dem eingefrorenen Nachweis. Der ältere Checkpoint enthält guardian, aber nicht die spätere progress Operation. Der neuere Teil-State erhält progress, hat aber die guardian Bindung verloren. Stellen Sie nur diese Bindung wieder her und erhalten Sie Backup vor Wiederherstellung und Plan vor apply. `tofu output -raw north_id`.
+
+
+      ### Vorhandene Datei erhalten {#recovery-existing-north-content}
+
+
+      Das vorhandene north.txt wurde möglicherweise geändert oder ist unlesbar; vergleichen Sie den Inhalt vor State-Änderungen mit der gelieferten Konfiguration. Der ältere Checkpoint enthält guardian, aber nicht die spätere progress Operation. Der neuere Teil-State erhält progress, hat aber die guardian Bindung verloren. Stellen Sie nur diese Bindung wieder her und erhalten Sie Backup vor Wiederherstellung und Plan vor apply. `test "$(cat north.txt)" = north-71`.
+
+
+      ### Fehlende Datei anlegen {#recovery-missing-south-content}
+
+
+      Die gelieferte Konfiguration ergänzt south.txt ohne apply; die Datei fehlt oder weicht ab, bis der Wiederherstellungsplan die deklarierte Route anlegt. Der ältere Checkpoint enthält guardian, aber nicht die spätere progress Operation. Der neuere Teil-State erhält progress, hat aber die guardian Bindung verloren. Stellen Sie nur diese Bindung wieder her und erhalten Sie Backup vor Wiederherstellung und Plan vor apply. `test "$(cat south.txt)" = south-71`.
+
+
+      ### Eine Bindung und neueren Fortschritt erhalten {#recovery-merge-old-binding-with-new-progress}
+
+
+      Ein erneutes apply kann guardian neu anlegen, der gesamte alte Checkpoint verwirft progress; stellen Sie nur die fehlende Bindung unter Erhalt beider Operations-IDs wieder her. Fehlgeschlagenes tofu show oder ungültiges JSON ergibt ebenfalls diese Diagnose. Der ältere Checkpoint enthält guardian, aber nicht die spätere progress Operation. Der neuere Teil-State erhält progress, hat aber die guardian Bindung verloren. Stellen Sie nur diese Bindung wieder her und erhalten Sie Backup vor Wiederherstellung und Plan vor apply. `tofu state list; jq .bindings /run/dq/facts/0/state-identities.json`.
+
+
+      ### Beide verwalteten Routendateien {#recovery-two-managed-route-targets}
+
+
+      Die übrigen State-Einträge zeigen möglicherweise auf andere Dateien oder doppelte Routen; nach Erhalt beider Companions ist je ein managed local_file für north.txt und south.txt erforderlich. Der ältere Checkpoint enthält guardian, aber nicht die spätere progress Operation. Der neuere Teil-State erhält progress, hat aber die guardian Bindung verloren. Stellen Sie nur diese Bindung wieder her und erhalten Sie Backup vor Wiederherstellung und Plan vor apply. `tofu show -json | jq ''.values.root_module.resources[] | {address,type,filename:.values.filename}''`.
+
+
+      ### Operations-Companions nicht ersetzen {#recovery-plan-preserves-companion-identities}
+
+
+      Fehlendes/veraltetes recovery-plan.json oder ein Plan mit ersetztem Companion erhält abgeschlossene Arbeit nicht; exportieren Sie nach Bindungswiederherstellung und halten Sie beide Companions mit ursprünglichen IDs auf no-op. Der ältere Checkpoint enthält guardian, aber nicht die spätere progress Operation. Der neuere Teil-State erhält progress, hat aber die guardian Bindung verloren. Stellen Sie nur diese Bindung wieder her und erhalten Sie Backup vor Wiederherstellung und Plan vor apply. `jq -r ''.resource_changes[] | [.address,(.change.actions|join(","))] | @tsv'' recovery-plan.json`.
+
+
+      ### Inventar des gespeicherten Plans {#recovery-plan-route-inventory}
+
+
+      Ein zusätzlicher Routeneintrag verletzt das Inventar des gespeicherten Plans; das Artefakt beschreibt zwei Routen und zwei erhaltene Operations-Companions. Der ältere Checkpoint enthält guardian, aber nicht die spätere progress Operation. Der neuere Teil-State erhält progress, hat aber die guardian Bindung verloren. Stellen Sie nur diese Bindung wieder her und erhalten Sie Backup vor Wiederherstellung und Plan vor apply. `jq ''.resource_changes | length'' recovery-plan.json`.
+
+
+      ### Ursprüngliche Route unverändert erhalten {#recovery-plan-existing-route-no-op}
+
+
+      Der gespeicherte Plan ersetzt/ändert möglicherweise north.txt oder verwendet eine andere ID; erhalten Sie den bestehenden Routeneintrag als no-op mit eingefrorener Provider-Identität. Der ältere Checkpoint enthält guardian, aber nicht die spätere progress Operation. Der neuere Teil-State erhält progress, hat aber die guardian Bindung verloren. Stellen Sie nur diese Bindung wieder her und erhalten Sie Backup vor Wiederherstellung und Plan vor apply. `jq ''.resource_changes[] | select(.type=="local_file") | {address,change}'' recovery-plan.json`.
+
+
+      ### Plan vor Anwendung erhalten {#recovery-plan-only-missing-route-create}
+
+
+      Das Artefakt wurde möglicherweise nach apply exportiert, sodass south.txt no-op ist, oder die Route fehlt; erhalten Sie den vor apply gespeicherten Plan zum Anlegen von south.txt. Der ältere Checkpoint enthält guardian, aber nicht die spätere progress Operation. Der neuere Teil-State erhält progress, hat aber die guardian Bindung verloren. Stellen Sie nur diese Bindung wieder her und erhalten Sie Backup vor Wiederherstellung und Plan vor apply. `jq ''.resource_changes[] | select(.type=="local_file") | {address,change}'' recovery-plan.json`.
+
+
+      ### Checkpoint und neueres Teil-Backup {#recovery-trusted-checkpoint-and-partial-backup}
+
+
+      Überschreiben des vertrauenswürdigen Checkpoints oder ein Backup nach Wiederherstellung verliert Nachweise; erhalten Sie Checkpoint-Bytes und den neueren Teil-State mit ursprünglicher lineage, serial und Objekt-IDs. Der ältere Checkpoint enthält guardian, aber nicht die spätere progress Operation. Der neuere Teil-State erhält progress, hat aber die guardian Bindung verloren. Stellen Sie nur diese Bindung wieder her und erhalten Sie Backup vor Wiederherstellung und Plan vor apply. `sha256sum recovery-checkpoint.tfstate; jq ''{lineage,serial}'' before-recovery.tfstate`.
+
+
+      ### Abschlussplan ohne Änderungen {#recovery-final-converged-plan}
+
+
+      Nicht angewandte Konfiguration, Datei-Drift oder Planfehler lassen den Abschlussplan ungleich null enden; prüfen Sie vorgeschlagene Änderungen nach Anwendung des erhaltenen Wiederherstellungsplans. Der ältere Checkpoint enthält guardian, aber nicht die spätere progress Operation. Der neuere Teil-State erhält progress, hat aber die guardian Bindung verloren. Stellen Sie nur diese Bindung wieder her und erhalten Sie Backup vor Wiederherstellung und Plan vor apply. `tofu plan -input=false -detailed-exitcode -no-color`.
+
+
+      ### State-Beobachtung starten {#recovery-state-helper-startup}
+
+
+      Der State-Observer kann vor Bindungsprüfung scheitern, etwa beim Start von tofu oder Helper-Imports; normaler Fehlercode/ungültiges tofu JSON ergibt recovery_bindings. Der ältere Checkpoint enthält guardian, aber nicht die spätere progress Operation. Der neuere Teil-State erhält progress, hat aber die guardian Bindung verloren. Stellen Sie nur diese Bindung wieder her und erhalten Sie Backup vor Wiederherstellung und Plan vor apply. `command -v tofu; python3 -I -c "import dq_check"`.
+
+
+      ### Plan-Beobachtung starten {#recovery-plan-helper-startup}
+
+
+      Der Plan-Observer kann vor einem spezifischen Marker bei Imports oder unerwarteter Artefaktstruktur scheitern; normal fehlendes/ungültiges recovery-plan.json ergibt recovery_binding_plan. Der ältere Checkpoint enthält guardian, aber nicht die spätere progress Operation. Der neuere Teil-State erhält progress, hat aber die guardian Bindung verloren. Stellen Sie nur diese Bindung wieder her und erhalten Sie Backup vor Wiederherstellung und Plan vor apply. `python3 -I -c "import dq_check"; test -s recovery-plan.json`.
 
 
       ## Probieren Sie es aus

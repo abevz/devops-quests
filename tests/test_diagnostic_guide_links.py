@@ -21,7 +21,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 71))
+@pytest.mark.parametrize("quest", range(1, 74))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -48,6 +48,10 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                 ("DQ_HANDOVER", "reject", 0),
                 ("DQ_GIT_ACCESS", "reject", 0),
                 ("DQ_PUBLICATION", "reject", 0),
+                ("DQ_BATCH_POLICY", "require", 1),
+                ("DQ_BATCH_POLICY", "get", 2),
+                ("DQ_BATCH_EVIDENCE", "require", 1),
+                ("DQ_BATCH_EVIDENCE", "get", 2),
                 ("DQ_ISOLATION_MEMBERSHIP", "require", 1),
                 ("DQ_PROFILE_SCOPE", "require", 1),
                 ("DQ_ROLE_CAPABILITY", "require", 1),
@@ -63,6 +67,12 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                                 and isinstance(call.args[position], ast.Constant)
                                 and isinstance(call.args[position].value, str)):
                             emitted.add(call.args[position].value)
+            if "[DQ:field_${field,,}]" in check:
+                # Quest 072 declares each field assignment at the actual probe.
+                # Case arms describe values, not additional emitted fields.
+                fields = re.findall(r"^field=([A-Za-z]+)$", check, re.M)
+                assert fields
+                emitted.update("field_" + field.lower() for field in fields)
             for body in re.findall(
                 r"<<'DQ_STORAGE_(?:POLICY|DATA)'\n(.*?)\nDQ_STORAGE_(?:POLICY|DATA)(?:\n|$)",
                 check, re.S,
