@@ -32,4 +32,285 @@ text: |
   cat gateway-target.json attachment-contract.json
   kubectl get gateway,httproute,service -o yaml
   ```
-source_hash: c756f4f2754a297a0ff53a3f4cbf314d8fe5e62add6dce243c3be174e1041f2b
+
+
+  ### Solicitud CPU del worker {#q112-board-cpu-request}
+
+  La solicitud CPU del worker puede faltar o diferir de 100m y cambiar el denominador de utilización. Revise la cantidad efectiva de CPU del contenedor worker.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.containers[] | select(.name == "worker") | .resources.requests.cpu'
+  ```
+
+  ### Límite CPU del worker {#q112-board-cpu-limit}
+
+  El worker puede tener un límite CPU ausente o distinto. Revise el límite efectivo y compárelo con 200m.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.containers[] | select(.name == "worker") | .resources.limits.cpu'
+  ```
+
+  ### Mínimo de réplicas {#q112-hpa-minimum-replicas}
+
+  El HPA puede haber perdido su límite inferior. Revise minReplicas y manténgalo en uno.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.spec.minReplicas}'
+  ```
+
+  ### Máximo de réplicas {#q112-hpa-maximum-replicas}
+
+  El HPA puede no escalar a dos réplicas o superar el límite previsto. Revise maxReplicas y manténgalo en dos.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.spec.maxReplicas}'
+  ```
+
+  ### Objetivo de utilización CPU {#q112-hpa-cpu-target}
+
+  Las métricas CPU aplicables pueden faltar, usar otro tipo u otro umbral. Compruebe que cada objetivo aplicable use el tipo Utilization con un valor positivo. El menor de esos valores debe ser exactamente del 50 por ciento.
+
+  ```bash
+  kubectl get hpa board -o json | jq '.spec.metrics'
+  ```
+
+  ### Réplicas listas de board {#q112-board-ready-replica-count}
+
+  El HPA puede pedir más capacidad mientras un Pod board aún no está listo. Revise eventos y espere dos réplicas listas en el estado del Deployment.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.status.readyReplicas}'; kubectl get pods -l app=board
+  ```
+
+  ### Cantidad actual de réplicas según HPA {#q112-hpa-current-replica-count}
+
+  El controlador puede no ver dos réplicas aún o apuntar a otra carga. Compare la cantidad actual con el Deployment vinculado.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.status.currentReplicas}'
+  ```
+
+  ### Cantidad deseada de réplicas según HPA {#q112-hpa-desired-replica-count}
+
+  El controlador puede seguir recomendando una réplica por demanda baja de CPU o falta de métrica. Revise la cantidad deseada después de mantener la carga mediante client.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.status.desiredReplicas}'
+  ```
+
+  ### Utilización CPU observada {#q112-hpa-observed-cpu-utilization}
+
+  La utilización CPU puede faltar o no superar 50 por ciento. Revise la métrica CPU de recurso o del contenedor worker tras mantener carga en el manejador suministrado.
+
+  ```bash
+  kubectl get hpa board -o json | jq '.status.currentMetrics'
+  ```
+
+  ### Condición de escalado activo {#q112-hpa-scaling-active}
+
+  El escalador puede carecer de métricas utilizables o no encontrar el objetivo. Revise el motivo y mensaje de ScalingActive y confirme True.
+
+  ```bash
+  kubectl get hpa board -o json | jq '.status.conditions[] | select(.type == "ScalingActive")'
+  ```
+
+  ### Métricas observadas del worker {#q112-board-metrics-availability}
+
+  La API de métricas puede no devolver millicores para los Pods board actuales. Revise las métricas activas antes de interpretar el escalado.
+
+  ```bash
+  kubectl top pods -l app=board --no-headers
+  ```
+
+  ### Respuesta activa de board {#q112-board-live-workload-response}
+
+  El escalado puede estar correcto mientras Service devuelve una respuesta anterior o carece de endpoint. Consulte board desde client y compare el cuerpo con north-112.
+
+  ```bash
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+  ```
+
+  ### Identidades conservadas de las cargas {#q112-preserved-load-deployments}
+
+  El Deployment board o client puede haberse recreado con el nombre original. Compare los UID activos con los fijados y repare los objetos existentes.
+
+  ```bash
+  kubectl get deployment board client -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+  ```
+
+  ### Manejador de peticiones conservado {#q112-preserved-load-handler}
+
+  La imagen o el ConfigMap del manejador pueden haber cambiado, o un worker actual ejecutar otros bytes. Compare las imágenes originales, UID del ConfigMap, hash de contenido y archivo del manejador.
+
+  ```bash
+  kubectl get deployment board client -o json | jq '.items[] | {name: .metadata.name, images: [.spec.template.spec.containers[].image]}'; kubectl exec deployment/board -c worker -- sha256sum /tmp/site/cgi-bin/process
+  ```
+
+  ### Identidad y objetivo del HPA {#q112-hpa-preserved-scale-target}
+
+  El HPA puede haberse recreado o escalar el objeto equivocado. Compare su UID con el original y compruebe que scaleTargetRef apunte a apps/v1 Deployment board.
+
+  ```bash
+  kubectl get hpa board -o json | jq '{uid: .metadata.uid, target: .spec.scaleTargetRef}'
+  ```
+
+  ### Workers activos que atienden peticiones {#q112-current-serving-workers}
+
+  El Deployment board conservado puede carecer de dos Pods actuales con el worker listo y en ejecución en la imagen suministrada. Revise identidad, réplicas deseadas y el worker de cada Pod tras escalar.
+
+  ```bash
+  kubectl get deployment board -o wide; kubectl get replicasets,pods -l app=board -o wide
+  ```
+
+  ### Contadores de finalización del manejador {#q112-handler-completion-progress}
+
+  El manejador puede dejar de completar peticiones pese a cantidades correctas. Revise el contador de cada worker actual entre observaciones. Los contadores no deben disminuir y el avance agregado debe ser positivo.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- sh -c 'test -f /tmp/work-completions && wc -l < /tmp/work-completions'
+  ```
+
+  ### Entradas de la comprobación de capacidad {#q112-autoscaling-input-observer}
+
+  El observador puede detenerse antes de clasificar el fallo de recurso o implementación. Revise las herramientas y el acceso a los Deployments y al manejador suministrados.
+
+  ```bash
+  command -v python3; kubectl get deployment board client -o name
+  ```
+
+  ### Entradas de la comprobación de carga {#q112-autoscaling-demand-observer}
+
+  El observador puede detenerse antes de señalar una condición si falla el proceso o los datos fijados. Revise las herramientas y el acceso al HPA y a la carga actual.
+
+  ```bash
+  command -v python3; kubectl get hpa board -o name; kubectl get pods -l app=board
+  ```
+
+  ### GatewayClass privada {#q113-gateway-private-class}
+
+  Gateway puede referenciar otra clase o no poder leer el registro fijado. Compare gatewayClassName de station con la clase privada suministrada.
+
+  ```bash
+  kubectl get gateway station -o jsonpath='{.spec.gatewayClassName}'
+  ```
+
+  ### Aceptación del Gateway activo {#q113-gateway-current-accepted}
+
+  Gateway puede estar rechazado o mostrar aceptación de una generación anterior. Revise Accepted y observedGeneration en el Gateway activo.
+
+  ```bash
+  kubectl get gateway station -o json | jq '{generation: .metadata.generation, conditions: .status.conditions}'
+  ```
+
+  ### Referencia al padre en el mismo namespace {#q113-route-same-namespace-parent}
+
+  La ruta puede apuntar a otro padre o namespace. Revise parentRefs para el Gateway station en el mismo namespace de la ruta.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.spec.parentRefs'
+  ```
+
+  ### Nombres de host permitidos {#q113-route-only-allowed-host}
+
+  La ruta puede omitir north.station.internal o exponer otro nombre. Compare el conjunto de nombres distintos con el único host suministrado.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.spec.hostnames'
+  ```
+
+  ### Service de los backends activos {#q113-route-active-backend-service}
+
+  Un backend activo puede apuntar a otro Service o namespace, o una regla carecer de referencia de peso positivo. Revise las referencias activas de cada regla al Service board local.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.spec.rules[].backendRefs'
+  ```
+
+  ### Puerto de los backends activos {#q113-route-active-backend-port}
+
+  La ruta puede nombrar el Service correcto mientras sus referencias activas siguen en 8099. Revise cada backend de peso positivo y use el puerto 8080 del Service.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.spec.rules[].backendRefs[] | select((.weight // 1) > 0) | {name, port}'
+  ```
+
+  ### Aceptación en el padre {#q113-route-parent-acceptance}
+
+  El listener solicitado puede faltar o rechazar la ruta. Busque Accepted=True en las entradas padre y lea el motivo.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.status.parents[] | {parentRef, accepted: [.conditions[] | select(.type == "Accepted")]}'
+  ```
+
+  ### Referencias resueltas en el padre {#q113-route-parent-resolved-backends}
+
+  Un padre puede aceptar la ruta sin resolver el Service o puerto backend. Revise ResolvedRefs y corrija la referencia pendiente.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.status.parents[] | {parentRef, resolved: [.conditions[] | select(.type == "ResolvedRefs")]}'
+  ```
+
+  ### Ambas condiciones en un padre {#q113-route-same-parent-conditions}
+
+  Accepted y ResolvedRefs pueden ser verdaderos en entradas diferentes. Compruebe ambos a la vez en una sola entrada antes de dar por completo el enlace.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.status.parents[] | {parentRef, conditions}'
+  ```
+
+  ### Identidades de entrega conservadas {#q113-preserved-gateway-delivery-objects}
+
+  Un reemplazo puede alterar el Gateway, la ruta, el Service o el Deployment, o un worker activo usar otra imagen. Compare los UID e imágenes con los registros fijados.
+
+  ```bash
+  kubectl get gateway station -o jsonpath='{.metadata.uid}'; kubectl get httproute board -o jsonpath='{.metadata.uid}'; kubectl get deployment board client -o wide
+  ```
+
+  ### Listeners originales {#q113-preserved-gateway-listeners}
+
+  Editar Gateway para una ruta antigua puede cambiar la lista de listeners. Compare la lista activa completa con la original y restaure la referencia de la ruta a un listener compatible.
+
+  ```bash
+  kubectl get gateway station -o json | jq '.spec.listeners'
+  ```
+
+  ### Listener y controlador compatibles {#q113-matching-controller-listener}
+
+  El estado padre puede venir de otro controlador o señalar un listener incompatible. Compare padre solicitado y observado, sección y puerto con el listener HTTP de station y el controlador suministrado.
+
+  ```bash
+  kubectl get httproute board -o json | jq '{requested: .spec.parentRefs, observed: .status.parents}'; kubectl get gateway station -o json | jq '.spec.listeners'
+  ```
+
+  ### Condiciones de la generación actual {#q113-current-route-generation}
+
+  El padre compatible puede seguir mostrando Accepted o ResolvedRefs obsoletos. Espere ambos True en la entrada del controlador correspondiente a la generación actual de HTTPRoute.
+
+  ```bash
+  kubectl get httproute board -o json | jq '{generation: .metadata.generation, parents: .status.parents}'
+  ```
+
+  ### HTTP para el host permitido {#q113-gateway-allowed-host-http}
+
+  El enlace puede figurar activo sin responder o con otro backend. Consulte desde client la URL del Gateway con Host north.station.internal y compare con north-113.
+
+  ```bash
+  url=$(jq -r .url /run/dq/facts/0/gateway-target.json); kubectl exec deployment/client -- wget -qO- -T 3 --header='Host: north.station.internal' "$url"
+  ```
+
+  ### HTTP para el host sin coincidencia {#q113-gateway-unmatched-host-http}
+
+  Una regla demasiado amplia puede servir closed.station.internal. Envíe el otro Host por el mismo Gateway y confirme que la petición falle.
+
+  ```bash
+  url=$(jq -r .url /run/dq/facts/0/gateway-target.json); kubectl exec deployment/client -- wget -qO- -T 3 --header='Host: closed.station.internal' "$url"
+  ```
+
+  ### Entradas de la comprobación de enlace {#q113-gateway-attachment-observer-input}
+
+  El observador puede detenerse antes de señalar la condición si no lee el directorio, los datos fijados o las herramientas. Revise herramientas y acceso a Gateway y ruta.
+
+  ```bash
+  command -v python3; kubectl get gateway station -o name; kubectl get httproute board -o name
+  ```
+source_hash: 5b6d030a5687f59600a80dba480aeae66abf2daa438d5bfdb8b2942db068bf24

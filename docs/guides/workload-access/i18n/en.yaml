@@ -262,4 +262,77 @@ text: |
   ```bash
   kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
   ```
-source_hash: de3c7a2570583e66677d5f5c38c812866ef052c18a004f0e72945c8275dd5bb0
+
+
+  ### Automatic credential mounting {#q114-reader-disable-default-token}
+
+  The Pod or its ServiceAccount may still enable automatic credential mounting. Check the Pod override and, when it is unset, the associated ServiceAccount flag.
+
+  ```bash
+  kubectl get deployment reader -o json | jq '.spec.template.spec | {serviceAccountName, automountServiceAccountToken}'; kubectl get serviceaccount reader -o jsonpath='{.automountServiceAccountToken}'
+  ```
+
+  ### Explicit token projection {#q114-reader-explicit-token-projection}
+
+  The worker may mount the wrong projection, use a subpath or request a token for the wrong audience or duration. Follow its /credential mount to a single token source at path token for https://kubernetes.default.svc.cluster.local with 600 seconds.
+
+  ```bash
+  kubectl get deployment reader -o json | jq '.spec.template.spec | {volumes, mounts: [.containers[] | select(.name == "worker") | .volumeMounts]}'
+  ```
+
+  ### Exact reader permissions {#q114-reader-exact-role}
+
+  The reader Role may still grant broad permissions or be missing. Inspect every rule and keep only get on the named ConfigMap route in the core API group.
+
+  ```bash
+  kubectl get role reader -o json | jq '.rules'
+  ```
+
+  ### Authorized read of route {#q114-reader-named-api-authorization}
+
+  The projected credential may be missing, invalid for the API audience, or lack authorization for route. Use the actual mounted token privately and check that GET configmaps/route returns HTTP 200.
+
+  ```bash
+  api=$(cat /run/dq/facts/0/api-endpoint); token=$(kubectl exec deployment/reader -c worker -- cat /credential/token); printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --config - --cacert /run/dq/facts/0/api-ca.pem -sS -o /dev/null -w '%{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route"
+  ```
+
+  ### Route value from the API {#q114-reader-route-response-data}
+
+  A successful request may return stale route data, or an earlier failure may leave no valid JSON. Check the authenticated response’s data.route for north-114 without printing the token.
+
+  ```bash
+  api=$(cat /run/dq/facts/0/api-endpoint); token=$(kubectl exec deployment/reader -c worker -- cat /credential/token); printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --config - --cacert /run/dq/facts/0/api-ca.pem -fsS "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route" | jq -e '.data.route == "north-114"'
+  ```
+
+  ### Denied ConfigMap listing {#q114-reader-configmap-list-denial}
+
+  A broad ConfigMap permission may allow collection requests. Check that the projected credential yields HTTP 403 for GET configmaps, separately from the named route request.
+
+  ```bash
+  api=$(cat /run/dq/facts/0/api-endpoint); token=$(kubectl exec deployment/reader -c worker -- cat /credential/token); printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --config - --cacert /run/dq/facts/0/api-ca.pem -sS -o /dev/null -w '%{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps"
+  ```
+
+  ### Denied Secret listing {#q114-reader-secret-list-denial}
+
+  A Role or binding may grant access to the Secrets collection. Check that the authenticated GET secrets request returns HTTP 403. Failed authentication or a timeout does not establish authorization denial.
+
+  ```bash
+  api=$(cat /run/dq/facts/0/api-endpoint); token=$(kubectl exec deployment/reader -c worker -- cat /credential/token); printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --config - --cacert /run/dq/facts/0/api-ca.pem -sS -o /dev/null -w '%{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/secrets"
+  ```
+
+  ### Denied read of another ConfigMap {#q114-reader-unrelated-configmap-denial}
+
+  A permission may allow reads of other named ConfigMaps. Check for HTTP 403 on configmaps/offlimits while keeping the route object readable.
+
+  ```bash
+  api=$(cat /run/dq/facts/0/api-endpoint); token=$(kubectl exec deployment/reader -c worker -- cat /credential/token); printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --config - --cacert /run/dq/facts/0/api-ca.pem -sS -o /dev/null -w '%{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/offlimits"
+  ```
+
+  ### Inputs to the credential check {#q114-reader-projection-observer-input}
+
+  The credential configuration observer may stop before naming a failed field if it cannot start or read its supplied inputs. Check the reader Deployment, ServiceAccount and local tools.
+
+  ```bash
+  command -v python3; kubectl get deployment reader -o name; kubectl get serviceaccount reader -o name
+  ```
+source_hash: b5f7b2154e61c70a27b253e449456c2096249e91607182389f2ae483acea699e

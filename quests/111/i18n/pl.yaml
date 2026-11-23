@@ -44,16 +44,6 @@ questions.0.prompt: Co przetrwa wymianę StatefulSet Pod?
 questions.1.points.0: Tylko jeśli magazyn backend zapewnia wymaganą trwałość.
 questions.1.points.1: Sam wolumin lokalny nie jest kopią zapasową poza hostem.
 questions.1.prompt: Czy PVC chroni przed utratą dysku węzła?
-diagnostics.uid_statefulset: statefulset/shelf UID musi być równe original-statefulset-uid.
-diagnostics.uid_pvc: pvc/ledger-shelf-0 UID musi być równe original-pvc-uid.
-diagnostics.uid_pod: pod/shelf-0 UID musi różnić się od original-pod-uid.
-diagnostics.service_name: statefulset/shelf serviceName musi być równe shelf.
-diagnostics.ready: statefulset/shelf readyReplicas musi być równe 1.
-diagnostics.mount: Kontener worker w shelf musi montować ledger pod /data z dostarczonym dostępem do zapisu.
-diagnostics.clusterip: service/shelf clusterIP musi być równe None.
-diagnostics.selector: Service shelf musi wybierać całą dostarczoną aplikację shelf i żadną inną.
-diagnostics.http: shelf-0.shelf:8080 musi być równe ledger-111.
-diagnostics.dns: nslookup shelf-0.shelf musi się powieść.
 stages.0.objectives.0.text: Istniejący StatefulSet i claim danych zachowują tożsamość; zastępczy Pod używa pierwotnego
   Service i tylko istniejącego wolumenu danych w `/data` kontenera aplikacji.
 stages.0.objectives.1.text: StatefulSet `shelf` ma jedną gotową replikę.
@@ -63,14 +53,20 @@ stages.0.objectives.3.text: W Podzie `shelf-0` nazwa DNS `shelf-0.shelf` jest ro
   zwraca `ledger-111`. Zbuduj Deployment odbiorcy opisany w kontrakcie, z jednym gotowym Podem i podanym obrazem.
   Z jego kontenera aplikacji działają ordinal DNS i pierwotny interfejs źródła; lokalny HTTP zwraca zadeklarowaną
   odpowiedź źródła. Odbiorca nie montuje pierwotnego claim danych.
-diagnostics.probe_0_2: 'Bieżące dane nie pozwalają potwierdzić tego celu: Service zapewnia stabilne wykrywanie według
-  numeru porządkowego tylko dla dostarczonego obciążenia shelf, bez wirtualnego IP.'
-diagnostics.discovery_consumer: Niezależny odbiorca potrzebuje jednego bieżącego własnego gotowego Poda z podanym
-  obrazem.
-diagnostics.discovery_network: Odbiorca sieciowy nie może montować pierwotnego claim danych, także przez init lub
-  inny kontener.
-diagnostics.discovery_dns: Odkrywanie A ordinal musi działać z odbiorcy w bieżącym namespace; sprawdź governing
-  Service i sufiks resolvera.
-diagnostics.discovery_source: Zachowane źródło ordinal musi zwracać odbiorcy zadeklarowaną odpowiedź.
-diagnostics.discovery_publication: Lokalna publikacja HTTP odbiorcy musi odpowiadać źródłu; sama gotowość nie wystarcza.
-diagnostics.probe_0_3: Bieżące dane nie potwierdzają tego warunku; sprawdź stan obiektów i kontrakt.
+diagnostics.uid_statefulset: StatefulSet mógł zostać odtworzony pod pierwotną nazwą, co trwale zmienia UID. Porównaj bieżący UID z zamrożonym przed zmianą szablonu kontrolera. [Przyczyna i kontrola](guides#guide=storage-lifecycle&section=q111-shelf-retained-controller)
+diagnostics.uid_pvc: PVC dziennika mógł zostać odtworzony lub być nieczytelny. Porównaj UID ledger-shelf-0 z pierwotnym zapisem i zachowaj PVC podczas naprawy. [Przyczyna i kontrola](guides#guide=storage-lifecycle&section=q111-shelf-retained-ledger-claim)
+diagnostics.uid_pod: Pod porządkowy może nadal mieć pierwotny UID mimo zmiany szablonu. Poczekaj na zastąpienie shelf-0 przy zachowaniu jego nazwy i stałego PVC. [Przyczyna i kontrola](guides#guide=storage-lifecycle&section=q111-shelf-ordinal-replacement)
+diagnostics.service_name: StatefulSet może wskazywać inny Service zarządzający. Sprawdź, czy serviceName to shelf, aby właściwa nazwa porządkowa DNS mogła się rozwiązać. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=q111-shelf-governing-service)
+diagnostics.mount: Kontener worker może używać innego montowania, podścieżki lub trybu tylko do odczytu. Sprawdź jedyne pełne zapisywalne montowanie ledger w /data w kontenerze worker. [Przyczyna i kontrola](guides#guide=storage-lifecycle&section=q111-shelf-ledger-mount)
+diagnostics.ready: Nowy pod może czekać, nie zamontować PVC lub nie przechodzić gotowości. Sprawdź shelf-0 i poczekaj na jedną gotową replikę StatefulSetu. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=q111-shelf-ready-replica)
+diagnostics.clusterip: Service mógł otrzymać wirtualny clusterIP. Zachowaj None w shelf, aby DNS headless mógł zwracać adresy podów. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=q111-shelf-headless-service)
+diagnostics.selector: Selektor może pomijać aktualny pod shelf lub obejmować inne pody. Sprawdź app=shelf i dodatkowe etykiety względem rzeczywistych podów shelf. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=q111-shelf-endpoint-selector)
+diagnostics.http: Nazwa porządkowa może prowadzić do serwera na porcie 8099 lub z innym katalogiem. Odpytaj port 8080 i porównaj treść dziennika z ledger-111. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=q111-shelf-ordinal-ledger-response)
+diagnostics.dns: Zapytanie DNS dla nazwy porządkowej może zawieść, gdy Service headless nie publikuje endpointu poda. Sprawdź pełną nazwę z shelf-0. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=q111-shelf-ordinal-dns-from-source)
+diagnostics.probe_0_2: Kontrola selektora może przerwać działanie przed rozpoznaniem pola, gdy proces lub wejścia zawodzą. Sprawdź Python i dostęp do Service oraz podów. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=q111-shelf-selector-observer-input)
+diagnostics.discovery_consumer: Deployment inspector może nie istnieć, mieć inny obraz lub nie mieć dokładnie jednego aktualnego poda z gotowym działającym kontenerem worker. Sprawdź wdrożenie, pod i dostarczoną tożsamość obrazu. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=q111-inspector-current-workload)
+diagnostics.discovery_network: Inspector może montować źródłowe PVC zamiast pobierać odpowiedź przez sieć. Sprawdź montowania zwykłych i init-kontenerów i usuń użycie źródłowego PVC. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=q111-inspector-without-ledger-mount)
+diagnostics.discovery_dns: Nazwa porządkowa może działać w podzie źródłowym, ale zawodzić w inspector. Uruchom zapytanie A z konsumenta i sprawdź, czy działa. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=q111-inspector-ordinal-dns)
+diagnostics.discovery_source: DNS może działać, choć inspector nie pobiera ledger-111 ze źródła HTTP o nazwie porządkowej. Wykonaj żądanie z inspector i porównaj treść. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=q111-inspector-source-http)
+diagnostics.discovery_publication: Konsument może docierać do producenta, ale nie publikować odpowiedzi lokalnie albo zachowywać starą treść. Odpytaj loopback w inspector pod kątem ledger-111. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=q111-inspector-local-publication)
+diagnostics.probe_0_3: Kontrola nazwy porządkowej może przerwać działanie bez wskazania warunku, gdy proces, zapis kontraktu lub limit czasu zawodzi. Sprawdź narzędzia i dane, potem powtórz obserwacje osobno. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=q111-ordinal-observer-input)

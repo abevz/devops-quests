@@ -21,7 +21,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 111))
+@pytest.mark.parametrize("quest", range(1, 116))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -487,6 +487,28 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                                for field in ast.literal_eval(field_loop.iter))
             if "[DQ:$id]" in check:
                 emitted.update(re.findall(r"^check ([a-z0-9_]+) ", check, re.M))
+            if "[DQ:uid_$name]" in check:
+                names, = re.findall(r"^for name in ([a-z ]+); do$", check, re.M)
+                emitted.update("uid_" + name for name in names.split())
+            if "[DQ:denied_${path//\\//_}]" in check:
+                paths, = re.findall(r"^for path in ([a-z/ ]+); do$", check, re.M)
+                emitted.update("denied_" + path.replace("/", "_") for path in paths.split())
+            for _, body in re.findall(
+                r"<<'(DQ_DISCOVERY_CONSUMER|DQ_LOAD_INPUTS|DQ_LOAD_DEMAND|DQ_ATTACHMENT_CURRENT)'\n(.*?)\n\1(?:\n|$)",
+                check, re.S,
+            ):
+                for call in ast.walk(ast.parse(body)):
+                    if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+                        continue
+                    index = {"require": 1, "command": 1, "get": 2}.get(call.func.id)
+                    if index is not None and len(call.args) > index and isinstance(call.args[index], ast.Constant):
+                        emitted.add(ast.literal_eval(call.args[index]))
+            for body in re.findall(r"<<'DQ_QUANTITY'\n(.*?)\nDQ_QUANTITY(?:\n|$)", check, re.S):
+                for node in ast.walk(ast.parse(body)):
+                    if (isinstance(node, ast.For) and isinstance(node.target, ast.Tuple)
+                            and any(isinstance(name, ast.Name) and name.id == "marker" for name in node.target.elts)):
+                        index = [name.id for name in node.target.elts].index("marker")
+                        emitted.update(values[index] for values in ast.literal_eval(node.iter) if values[index])
             assert emitted, (quest, goal["text"])
             markers.update(emitted)
     explanations = catalog.public(quest)["diagnostics"]

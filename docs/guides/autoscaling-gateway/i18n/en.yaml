@@ -32,4 +32,285 @@ text: |
   cat gateway-target.json attachment-contract.json
   kubectl get gateway,httproute,service -o yaml
   ```
-source_hash: c756f4f2754a297a0ff53a3f4cbf314d8fe5e62add6dce243c3be174e1041f2b
+
+
+  ### Worker CPU request {#q112-board-cpu-request}
+
+  The worker CPU request may be missing or differ from 100m, changing the denominator for utilization. Inspect the effective CPU quantity on the named worker.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.containers[] | select(.name == "worker") | .resources.requests.cpu'
+  ```
+
+  ### Worker CPU limit {#q112-board-cpu-limit}
+
+  The worker may have an absent or different CPU limit. Inspect its effective limit and compare it with 200m.
+
+  ```bash
+  kubectl get deployment board -o json | jq '.spec.template.spec.containers[] | select(.name == "worker") | .resources.limits.cpu'
+  ```
+
+  ### Minimum replicas {#q112-hpa-minimum-replicas}
+
+  The HPA may have lost its lower scaling bound. Check the actual minReplicas and keep it at one.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.spec.minReplicas}'
+  ```
+
+  ### Maximum replicas {#q112-hpa-maximum-replicas}
+
+  The HPA may be unable to scale to two replicas or may exceed the intended ceiling. Check maxReplicas and keep it at two.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.spec.maxReplicas}'
+  ```
+
+  ### CPU utilization target {#q112-hpa-cpu-target}
+
+  The matching CPU metrics may be missing, use a different target type or set a lower or higher effective utilization. Check that every applicable CPU target uses positive Utilization and the smallest is 50 percent.
+
+  ```bash
+  kubectl get hpa board -o json | jq '.spec.metrics'
+  ```
+
+  ### Ready replicas of board {#q112-board-ready-replica-count}
+
+  The HPA may request more capacity while a board Pod is still unready. Inspect Pod events and wait for the Deployment status to show two ready replicas.
+
+  ```bash
+  kubectl get deployment board -o jsonpath='{.status.readyReplicas}'; kubectl get pods -l app=board
+  ```
+
+  ### Autoscaler’s current replica count {#q112-hpa-current-replica-count}
+
+  The controller may not yet observe two replicas or may target the wrong workload. Compare its reported current count with the linked Deployment.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.status.currentReplicas}'
+  ```
+
+  ### Autoscaler’s desired replica count {#q112-hpa-desired-replica-count}
+
+  The controller may still recommend one replica because real CPU demand is low or its metric is unavailable. Check the HPA’s desired count after sustaining load through the supplied client.
+
+  ```bash
+  kubectl get hpa board -o jsonpath='{.status.desiredReplicas}'
+  ```
+
+  ### Observed CPU utilization {#q112-hpa-observed-cpu-utilization}
+
+  CPU utilization may be absent or at most 50 percent. Inspect the current resource CPU metric or matching worker container metric after sending sustained work through the supplied handler.
+
+  ```bash
+  kubectl get hpa board -o json | jq '.status.currentMetrics'
+  ```
+
+  ### Active scaling condition {#q112-hpa-scaling-active}
+
+  The autoscaler may lack usable metrics or be unable to resolve the target. Inspect the reason and message on ScalingActive and confirm it becomes True.
+
+  ```bash
+  kubectl get hpa board -o json | jq '.status.conditions[] | select(.type == "ScalingActive")'
+  ```
+
+  ### Observed worker metrics {#q112-board-metrics-availability}
+
+  The metrics API may not yet return millicore observations for the current board Pods. Check the live metrics before interpreting the scaling response.
+
+  ```bash
+  kubectl top pods -l app=board --no-headers
+  ```
+
+  ### Live board response {#q112-board-live-workload-response}
+
+  Scaling status can be correct while the Service returns a stale response or has no reachable endpoint. Request board from client and compare the body with north-112.
+
+  ```bash
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+  ```
+
+  ### Preserved workload identities {#q112-preserved-load-deployments}
+
+  The supplied board or client Deployment may have been recreated under its original name. Compare both live UIDs with the frozen identities and repair those objects in place.
+
+  ```bash
+  kubectl get deployment board client -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+  ```
+
+  ### Preserved request handler {#q112-preserved-load-handler}
+
+  The supplied workload image or the handler ConfigMap may have changed, or a current worker may run different handler bytes. Compare the original images, ConfigMap UID and content hash with the mounted handler.
+
+  ```bash
+  kubectl get deployment board client -o json | jq '.items[] | {name: .metadata.name, images: [.spec.template.spec.containers[].image]}'; kubectl exec deployment/board -c worker -- sha256sum /tmp/site/cgi-bin/process
+  ```
+
+  ### Autoscaler identity and target {#q112-hpa-preserved-scale-target}
+
+  The HPA may have been recreated or may scale the wrong object. Compare its UID with the original and check that scaleTargetRef points to apps/v1 Deployment board.
+
+  ```bash
+  kubectl get hpa board -o json | jq '{uid: .metadata.uid, target: .spec.scaleTargetRef}'
+  ```
+
+  ### Current serving workers {#q112-current-serving-workers}
+
+  The retained board Deployment may lack two current owned Pods with ready running workers using its supplied image. Check deployment identity, desired replicas and the current workers after scaling.
+
+  ```bash
+  kubectl get deployment board -o wide; kubectl get replicasets,pods -l app=board -o wide
+  ```
+
+  ### Handler completion counters {#q112-handler-completion-progress}
+
+  The supplied handler may no longer finish requests even if replica counts look correct. Check each current worker’s completion counter across observations and look for nondecreasing counts with real aggregate progress.
+
+  ```bash
+  kubectl exec deployment/board -c worker -- sh -c 'test -f /tmp/work-completions && wc -l < /tmp/work-completions'
+  ```
+
+  ### Inputs to the capacity check {#q112-autoscaling-input-observer}
+
+  The input observer may stop before it can classify a resource or preserved implementation failure. Check the workstation tools and access to the supplied Deployments and handler inputs.
+
+  ```bash
+  command -v python3; kubectl get deployment board client -o name
+  ```
+
+  ### Inputs to the demand check {#q112-autoscaling-demand-observer}
+
+  The scaling observer may stop before naming a condition if the local process or frozen inputs fail. Check tooling and access to the HPA and current workload before retrying.
+
+  ```bash
+  command -v python3; kubectl get hpa board -o name; kubectl get pods -l app=board
+  ```
+
+  ### Private GatewayClass {#q113-gateway-private-class}
+
+  The Gateway may reference another controller class or the frozen target may be unreadable. Compare gatewayClassName on station with the supplied private class.
+
+  ```bash
+  kubectl get gateway station -o jsonpath='{.spec.gatewayClassName}'
+  ```
+
+  ### Current Gateway acceptance {#q113-gateway-current-accepted}
+
+  The Gateway may be rejected or report acceptance for an earlier generation. Inspect Accepted and observedGeneration on the current Gateway.
+
+  ```bash
+  kubectl get gateway station -o json | jq '{generation: .metadata.generation, conditions: .status.conditions}'
+  ```
+
+  ### Local parent reference {#q113-route-same-namespace-parent}
+
+  The route may reference the wrong parent or a parent in another namespace. Inspect parentRefs for the station Gateway in the route’s own namespace.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.spec.parentRefs'
+  ```
+
+  ### Allowed hostnames {#q113-route-only-allowed-host}
+
+  The route may omit north.station.internal or expose an additional hostname. Compare the distinct hostname set with the single supplied host.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.spec.hostnames'
+  ```
+
+  ### Service of active backends {#q113-route-active-backend-service}
+
+  An active backend may point at a different Service or another namespace, or a rule may lack a positive-weight reference. Check each rule’s active references for the local board Service.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.spec.rules[].backendRefs'
+  ```
+
+  ### Port of active backends {#q113-route-active-backend-port}
+
+  The route can name the right Service while active references still use port 8099. Inspect every positive-weight backend and use Service port 8080.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.spec.rules[].backendRefs[] | select((.weight // 1) > 0) | {name, port}'
+  ```
+
+  ### Acceptance on the parent {#q113-route-parent-acceptance}
+
+  The requested listener may not exist or may reject the route. Inspect the parent entries for a reported Accepted=True and read the condition reason.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.status.parents[] | {parentRef, accepted: [.conditions[] | select(.type == "Accepted")]}'
+  ```
+
+  ### Resolved parent references {#q113-route-parent-resolved-backends}
+
+  A parent may accept the route without resolving its backend Service or port. Inspect ResolvedRefs and correct the unresolved reference.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.status.parents[] | {parentRef, resolved: [.conditions[] | select(.type == "ResolvedRefs")]}'
+  ```
+
+  ### Both conditions on one parent {#q113-route-same-parent-conditions}
+
+  Accepted and ResolvedRefs may be true on different parent entries. Check that both are true together on one parent before treating the reported attachment as complete.
+
+  ```bash
+  kubectl get httproute board -o json | jq '.status.parents[] | {parentRef, conditions}'
+  ```
+
+  ### Retained delivery identities {#q113-preserved-gateway-delivery-objects}
+
+  A replacement may change the Gateway, route, Service or Deployment identity, and a live worker may diverge from its supplied image. Compare current UIDs and images with the frozen attachment records.
+
+  ```bash
+  kubectl get gateway station -o jsonpath='{.metadata.uid}'; kubectl get httproute board -o jsonpath='{.metadata.uid}'; kubectl get deployment board client -o wide
+  ```
+
+  ### Original listeners {#q113-preserved-gateway-listeners}
+
+  Editing the Gateway to make a stale route attach can change the supplied listener list. Compare the whole live list with the captured original and restore the route’s reference to a compatible listener.
+
+  ```bash
+  kubectl get gateway station -o json | jq '.spec.listeners'
+  ```
+
+  ### Compatible listener and controller {#q113-matching-controller-listener}
+
+  A parent status may come from another controller or reference an incompatible listener. Compare the requested and observed parent keys, section and port against the station HTTP listener and its supplied controller.
+
+  ```bash
+  kubectl get httproute board -o json | jq '{requested: .spec.parentRefs, observed: .status.parents}'; kubectl get gateway station -o json | jq '.spec.listeners'
+  ```
+
+  ### Conditions at the current generation {#q113-current-route-generation}
+
+  The compatible parent may still report stale Accepted or ResolvedRefs conditions. Wait for both to be True on the matching controller entry at the current HTTPRoute generation.
+
+  ```bash
+  kubectl get httproute board -o json | jq '{generation: .metadata.generation, parents: .status.parents}'
+  ```
+
+  ### HTTP for the allowed host {#q113-gateway-allowed-host-http}
+
+  A reported attachment may still send no response or use the wrong backend. Query the supplied Gateway URL with Host north.station.internal from client and compare with north-113.
+
+  ```bash
+  url=$(jq -r .url /run/dq/facts/0/gateway-target.json); kubectl exec deployment/client -- wget -qO- -T 3 --header='Host: north.station.internal' "$url"
+  ```
+
+  ### HTTP for the unmatched host {#q113-gateway-unmatched-host-http}
+
+  An overly broad host rule may still serve closed.station.internal. Send the different Host header through the same Gateway and confirm that the request fails.
+
+  ```bash
+  url=$(jq -r .url /run/dq/facts/0/gateway-target.json); kubectl exec deployment/client -- wget -qO- -T 3 --header='Host: closed.station.internal' "$url"
+  ```
+
+  ### Inputs to the attachment check {#q113-gateway-attachment-observer-input}
+
+  An observer can stop before identifying an attachment condition when the workspace, frozen facts or local tools cannot be read. Verify the tools and access to the relevant Gateway and route.
+
+  ```bash
+  command -v python3; kubectl get gateway station -o name; kubectl get httproute board -o name
+  ```
+source_hash: 5b6d030a5687f59600a80dba480aeae66abf2daa438d5bfdb8b2942db068bf24

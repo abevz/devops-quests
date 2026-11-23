@@ -262,4 +262,77 @@ text: |
   ```bash
   kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
   ```
-source_hash: de3c7a2570583e66677d5f5c38c812866ef052c18a004f0e72945c8275dd5bb0
+
+
+  ### Automatyczne montowanie danych dostępu {#q114-reader-disable-default-token}
+
+  Pod lub jego ServiceAccount może nadal włączać automatyczne montowanie danych. Sprawdź flagę poda, a gdy jest pominięta, powiązany ServiceAccount.
+
+  ```bash
+  kubectl get deployment reader -o json | jq '.spec.template.spec | {serviceAccountName, automountServiceAccountToken}'; kubectl get serviceaccount reader -o jsonpath='{.automountServiceAccountToken}'
+  ```
+
+  ### Jawna projekcja tokenu {#q114-reader-explicit-token-projection}
+
+  Kontener worker może montować inną projekcję, używać podścieżki lub żądać tokenu z innym odbiorcą albo okresem. Prześledź /credential do jednego źródła tokenu o path token dla https://kubernetes.default.svc.cluster.local i 600 sekund.
+
+  ```bash
+  kubectl get deployment reader -o json | jq '.spec.template.spec | {volumes, mounts: [.containers[] | select(.name == "worker") | .volumeMounts]}'
+  ```
+
+  ### Dokładne uprawnienia reader {#q114-reader-exact-role}
+
+  Role reader może nadal dawać szerokie uprawnienia lub nie istnieć. Sprawdź każdą regułę i zostaw tylko get na nazwany ConfigMap route w podstawowej grupie API.
+
+  ```bash
+  kubectl get role reader -o json | jq '.rules'
+  ```
+
+  ### Autoryzowany odczyt route {#q114-reader-named-api-authorization}
+
+  Projektowany token może nie istnieć, mieć niewłaściwego odbiorcę lub nie mieć zgody na route. Użyj rzeczywistego tokenu bez wypisywania i potwierdź HTTP 200 dla GET configmaps/route.
+
+  ```bash
+  api=$(cat /run/dq/facts/0/api-endpoint); token=$(kubectl exec deployment/reader -c worker -- cat /credential/token); printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --config - --cacert /run/dq/facts/0/api-ca.pem -sS -o /dev/null -w '%{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route"
+  ```
+
+  ### Wartość route z API {#q114-reader-route-response-data}
+
+  Udane żądanie może zwracać starą trasę, a wcześniejszy błąd pozostawić brak poprawnego JSON. Sprawdź data.route pod kątem north-114 bez wypisywania tokenu.
+
+  ```bash
+  api=$(cat /run/dq/facts/0/api-endpoint); token=$(kubectl exec deployment/reader -c worker -- cat /credential/token); printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --config - --cacert /run/dq/facts/0/api-ca.pem -fsS "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/route" | jq -e '.data.route == "north-114"'
+  ```
+
+  ### Odmowa listowania ConfigMap {#q114-reader-configmap-list-denial}
+
+  Szerokie uprawnienie ConfigMap może pozwalać na listowanie. Sprawdź HTTP 403 dla GET configmaps z projektowanym tokenem, osobno od żądania nazwanego route.
+
+  ```bash
+  api=$(cat /run/dq/facts/0/api-endpoint); token=$(kubectl exec deployment/reader -c worker -- cat /credential/token); printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --config - --cacert /run/dq/facts/0/api-ca.pem -sS -o /dev/null -w '%{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps"
+  ```
+
+  ### Odmowa listowania Secretów {#q114-reader-secret-list-denial}
+
+  Role lub powiązanie może pozwalać na listę Secretów. Sprawdź HTTP 403 dla uwierzytelnionego GET secrets. Błąd uwierzytelnienia lub timeout nie potwierdza odmowy autoryzacji.
+
+  ```bash
+  api=$(cat /run/dq/facts/0/api-endpoint); token=$(kubectl exec deployment/reader -c worker -- cat /credential/token); printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --config - --cacert /run/dq/facts/0/api-ca.pem -sS -o /dev/null -w '%{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/secrets"
+  ```
+
+  ### Odmowa odczytu innej ConfigMap {#q114-reader-unrelated-configmap-denial}
+
+  Reguła może pozwalać czytać inne nazwane ConfigMapy. Sprawdź HTTP 403 dla configmaps/offlimits, zachowując odczyt route.
+
+  ```bash
+  api=$(cat /run/dq/facts/0/api-endpoint); token=$(kubectl exec deployment/reader -c worker -- cat /credential/token); printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --config - --cacert /run/dq/facts/0/api-ca.pem -sS -o /dev/null -w '%{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/offlimits"
+  ```
+
+  ### Dane kontroli uprawnień {#q114-reader-projection-observer-input}
+
+  Kontrola konfiguracji tokenu może zatrzymać się przed wskazaniem pola przez problem z procesem lub wejściami. Sprawdź Deployment reader, ServiceAccount i narzędzia.
+
+  ```bash
+  command -v python3; kubectl get deployment reader -o name; kubectl get serviceaccount reader -o name
+  ```
+source_hash: b5f7b2154e61c70a27b253e449456c2096249e91607182389f2ae483acea699e

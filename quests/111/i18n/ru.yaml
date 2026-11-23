@@ -44,16 +44,6 @@ questions.0.prompt: Что сохраняется при замене Pod Statef
 questions.1.points.0: Только если backend хранения обеспечивает нужную надёжность.
 questions.1.points.1: Локальный том сам по себе не является копией вне хоста.
 questions.1.prompt: Защищает ли PVC от потери диска узла?
-diagnostics.uid_statefulset: statefulset/shelf UID должен совпадать с original-statefulset-uid.
-diagnostics.uid_pvc: pvc/ledger-shelf-0 UID должен совпадать с original-pvc-uid.
-diagnostics.uid_pod: pod/shelf-0 UID должен отличаться от original-pod-uid.
-diagnostics.service_name: statefulset/shelf serviceName должен совпадать с shelf.
-diagnostics.ready: statefulset/shelf readyReplicas должен совпадать с 1.
-diagnostics.mount: Контейнер worker в shelf должен монтировать ledger в /data с исходным доступом для записи.
-diagnostics.clusterip: service/shelf clusterIP должен совпадать с None.
-diagnostics.selector: Service shelf должен выбирать всю исходную нагрузку shelf и никакую другую.
-diagnostics.http: shelf-0.shelf:8080 должен совпадать с ledger-111.
-diagnostics.dns: nslookup shelf-0.shelf должен выполняться успешно.
 stages.0.objectives.0.text: Существующие StatefulSet и claim данных сохраняют идентичность; новый Pod использует
   исходный управляющий Service и только существующий том данных в `/data` своего контейнера приложения.
 stages.0.objectives.1.text: StatefulSet `shelf` имеет одну готовую реплику.
@@ -63,15 +53,20 @@ stages.0.objectives.3.text: В Pod `shelf-0` порядковое DNS-имя `sh
   возвращает `ledger-111`. Создайте описанный в контракте Deployment потребителя с одним готовым Pod и заданным
   образом. Из контейнера приложения работают ordinal DNS и интерфейс исходного источника; локальный HTTP-интерфейс
   возвращает объявленный ответ источника. Потребитель не монтирует исходный data claim.
-diagnostics.probe_0_2: 'Текущие данные не позволили проверить эту цель: Управляющий Service обеспечивает стабильное
-  обнаружение по ordinal только для предоставленной нагрузки shelf, без виртуального IP.'
-diagnostics.discovery_consumer: Независимому потребителю нужен один текущий готовый Pod с правильным владельцем
-  и заданным образом.
-diagnostics.discovery_network: Сетевой потребитель не должен монтировать исходный data claim, в том числе через
-  init или другой контейнер.
-diagnostics.discovery_dns: Ordinal A discovery должен работать из потребителя в текущем namespace; изучите governing
-  Service и суффикс resolver.
-diagnostics.discovery_source: Сохранённый ordinal-источник должен возвращать объявленный ответ при запросе из потребителя.
-diagnostics.discovery_publication: Локальная HTTP-публикация потребителя должна совпадать с ответом источника; одной
-  готовности недостаточно.
-diagnostics.probe_0_3: Текущие входы не подтверждают это условие; изучите состояние живых объектов и заданный контракт.
+diagnostics.uid_statefulset: StatefulSet могли пересоздать под исходным именем, навсегда изменив UID. Сравните его с зафиксированным исходным UID перед правкой шаблона контроллера. [Причина и проверка](guides#guide=storage-lifecycle&section=q111-shelf-retained-controller)
+diagnostics.uid_pvc: Клейм журнала могли пересоздать, либо он недоступен для чтения. Сравните UID ledger-shelf-0 с исходной записью и сохраните существующий клейм при восстановлении. [Причина и проверка](guides#guide=storage-lifecycle&section=q111-shelf-retained-ledger-claim)
+diagnostics.uid_pod: У Pod с ordinal мог остаться исходный UID даже после правки шаблона. Дождитесь замены shelf-0 контроллером с сохранением имени и постоянного клейма. [Причина и проверка](guides#guide=storage-lifecycle&section=q111-shelf-ordinal-replacement)
+diagnostics.service_name: StatefulSet мог ссылаться на другой управляющий Service. Проверьте, что serviceName остаётся shelf, чтобы разрешалось ожидаемое DNS-имя ordinal. [Причина и проверка](guides#guide=kubernetes-20&section=q111-shelf-governing-service)
+diagnostics.mount: У worker могло измениться монтирование, появиться subPath либо режим только для чтения. Проверьте у worker единственное полное монтирование ledger на /data с записью. [Причина и проверка](guides#guide=storage-lifecycle&section=q111-shelf-ledger-mount)
+diagnostics.ready: Новый Pod мог ожидать размещения, не смонтировать клейм или не пройти readiness. Проверьте shelf-0 и дождитесь одной готовой реплики StatefulSet. [Причина и проверка](guides#guide=kubernetes-20&section=q111-shelf-ready-replica)
+diagnostics.clusterip: Service мог получить виртуальный clusterIP. Сохраните None в shelf, чтобы headless DNS мог возвращать адреса Pod. [Причина и проверка](guides#guide=kubernetes-20&section=q111-shelf-headless-service)
+diagnostics.selector: Селектор мог исключить текущий Pod shelf или захватить посторонние Pod. Сравните app=shelf и дополнительные метки селектора с фактическими Pod shelf. [Причина и проверка](guides#guide=kubernetes-20&section=q111-shelf-endpoint-selector)
+diagnostics.http: По ordinal-имени мог отвечать сервер на порту 8099 или с другим каталогом. Запросите порт 8080 и сравните фактический ответ журнала с ledger-111. [Причина и проверка](guides#guide=kubernetes-20&section=q111-shelf-ordinal-ledger-response)
+diagnostics.dns: DNS-запрос ordinal может не пройти, если headless Service не публикует endpoint Pod. Проверьте полное имя из shelf-0. [Причина и проверка](guides#guide=kubernetes-20&section=q111-shelf-ordinal-dns-from-source)
+diagnostics.probe_0_2: Проверка селектора может прерваться до определения поля при ошибке процесса или входов. Проверьте Python и доступ к Service и Pod. [Причина и проверка](guides#guide=kubernetes-20&section=q111-shelf-selector-observer-input)
+diagnostics.discovery_consumer: Deployment inspector мог отсутствовать, использовать другой образ или не иметь ровно одного текущего Pod с готовым работающим worker. Проверьте действующий Deployment, его Pod и выданный идентификатор образа. [Причина и проверка](guides#guide=kubernetes-20&section=q111-inspector-current-workload)
+diagnostics.discovery_network: Inspector мог смонтировать исходный клейм вместо чтения по сети. Проверьте монтирования обычных и init-контейнеров и уберите использование исходного клейма. [Причина и проверка](guides#guide=kubernetes-20&section=q111-inspector-without-ledger-mount)
+diagnostics.discovery_dns: Ordinal-имя может разрешаться в исходном Pod, но не в inspector. Выполните A-запрос из потребителя и проверьте успешное завершение. [Причина и проверка](guides#guide=kubernetes-20&section=q111-inspector-ordinal-dns)
+diagnostics.discovery_source: DNS может работать, пока inspector не получает ledger-111 от ordinal HTTP-источника. Выполните запрос из inspector и сравните полученный ответ. [Причина и проверка](guides#guide=kubernetes-20&section=q111-inspector-source-http)
+diagnostics.discovery_publication: Потребитель мог получать ответ источника, но не публиковать его локально или отдавать старое содержимое. Запросите loopback внутри inspector и проверьте ledger-111. [Причина и проверка](guides#guide=kubernetes-20&section=q111-inspector-local-publication)
+diagnostics.probe_0_3: Проверка ordinal может остановиться без конкретного условия при ошибке процесса, недоступном контракте или исчерпании бюджета. Проверьте инструменты и входы и повторите отдельные наблюдения. [Причина и проверка](guides#guide=kubernetes-20&section=q111-ordinal-observer-input)
