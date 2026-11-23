@@ -7,22 +7,89 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: "set -euo pipefail\ncd ~/quest\nsource platform.env\nif ! curl -fsS \"$VAULT_ADDR/v1/sys/init\" 2>/dev/null\
-      \ | jq -e '.initialized == true' >/dev/null 2>&1; then\n  printf '%s\\n' 'sys/init initialized = true: ✗ [DQ:init]'\n\
-      \  exit 1\nfi\n"
+    check: |-
+      dq_fallback_output=$(mktemp) || {
+        dq_fallback_status=$?
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_0_0]' >&2
+        exit "$dq_fallback_status"
+      }
+      trap 'rm -f "$dq_fallback_output"' EXIT
+      set +e
+      (
+      set -e
+      set -euo pipefail
+      cd ~/quest
+      source platform.env
+      if ! curl -fsS "$VAULT_ADDR/v1/sys/init" 2>/dev/null | jq -e '.initialized == true' >/dev/null 2>&1; then
+        printf '%s\n' 'sys/init initialized = true: ✗ [DQ:init]'
+        exit 1
+      fi
+
+      ) >"$dq_fallback_output" 2>&1
+      dq_fallback_status=$?
+      set -e
+      cat "$dq_fallback_output"
+      if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(init)\]' "$dq_fallback_output"; then
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_0_0]'
+      fi
+      rm -f "$dq_fallback_output"
+      trap - EXIT
+      if [ "$dq_fallback_status" -ne 0 ]; then
+        exit "$dq_fallback_status"
+      fi
 - brief: stages.1.brief
   objectives:
   - text: stages.1.objectives.0.text
-    check: "source platform.env\nstatus=$(curl -fsS \"$VAULT_ADDR/v1/sys/seal-status\" 2>/dev/null || true)\nfailed=0\n\
-      if ! jq -e '.initialized == true' <<<\"$status\" >/dev/null 2>&1; then\n  printf '%s\\n' 'sys/seal-status\
-      \ initialized = true: ✗ [DQ:initialized]'\n  failed=1\nfi\n\nif ! jq -e '.sealed == false' <<<\"$status\"\
-      \ >/dev/null 2>&1; then\n  printf '%s\\n' 'sys/seal-status sealed = false: ✗ [DQ:sealed]'\n  failed=1\nfi\n\
-      \nif ! test -s /run/dq/facts/0/original-cluster-id || ! jq -e --arg id \"$(cat /run/dq/facts/0/original-cluster-id\
-      \ 2>/dev/null)\" '.cluster_id == $id' <<<\"$status\" >/dev/null 2>&1; then\n  printf '%s\\n' 'cluster_id =\
-      \ /run/dq/facts/0/original-cluster-id: ✗ [DQ:cluster]'\n  failed=1\nfi\n\nif ! jq -e '.t == 2' <<<\"$status\"\
-      \ >/dev/null 2>&1; then\n  printf '%s\\n' 'sys/seal-status t = 2: ✗ [DQ:threshold]'\n  failed=1\nfi\n\nif\
-      \ ! jq -e '.n == 3' <<<\"$status\" >/dev/null 2>&1; then\n  printf '%s\\n' 'sys/seal-status n = 3: ✗ [DQ:shares]'\n\
-      \  failed=1\nfi\nexit \"$failed\""
+    check: |-
+      dq_fallback_output=$(mktemp) || {
+        dq_fallback_status=$?
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_0]' >&2
+        exit "$dq_fallback_status"
+      }
+      trap 'rm -f "$dq_fallback_output"' EXIT
+      set +e
+      (
+      set -e
+      source platform.env
+      status=$(curl -fsS "$VAULT_ADDR/v1/sys/seal-status" 2>/dev/null || true)
+      failed=0
+      if ! jq -e '.initialized == true' <<<"$status" >/dev/null 2>&1; then
+        printf '%s\n' 'sys/seal-status initialized = true: ✗ [DQ:initialized]'
+        failed=1
+      fi
+
+      if ! jq -e '.sealed == false' <<<"$status" >/dev/null 2>&1; then
+        printf '%s\n' 'sys/seal-status sealed = false: ✗ [DQ:sealed]'
+        failed=1
+      fi
+
+      if ! test -s /run/dq/facts/0/original-cluster-id || ! jq -e --arg id "$(cat /run/dq/facts/0/original-cluster-id 2>/dev/null)" '.cluster_id == $id' <<<"$status" >/dev/null 2>&1; then
+        printf '%s\n' 'cluster_id = /run/dq/facts/0/original-cluster-id: ✗ [DQ:cluster]'
+        failed=1
+      fi
+
+      if ! jq -e '.t == 2' <<<"$status" >/dev/null 2>&1; then
+        printf '%s\n' 'sys/seal-status t = 2: ✗ [DQ:threshold]'
+        failed=1
+      fi
+
+      if ! jq -e '.n == 3' <<<"$status" >/dev/null 2>&1; then
+        printf '%s\n' 'sys/seal-status n = 3: ✗ [DQ:shares]'
+        failed=1
+      fi
+      exit "$failed"
+      ) >"$dq_fallback_output" 2>&1
+      dq_fallback_status=$?
+      set -e
+      cat "$dq_fallback_output"
+      if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(cluster|initialized|sealed|shares|threshold)\]' "$dq_fallback_output"; then
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_0]'
+      fi
+      rm -f "$dq_fallback_output"
+      trap - EXIT
+      if [ "$dq_fallback_status" -ne 0 ]; then
+        exit "$dq_fallback_status"
+      fi
   - text: stages.1.objectives.1.text
     check: "dq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\ndq_failed=0\n\
       set +e\n(\nset -euo pipefail\ntimeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY'\nsource platform.env\n\
@@ -59,12 +126,40 @@ stages:
       \ '%s\\n' 'Current inputs could not verify this objective: ✗ [DQ:probe_1_1]'\nfi\nrm -f \"$dq_probe_output\"\
       \ntrap - EXIT\ntest \"$dq_probe_status\" -eq 0\n"
   - text: stages.1.objectives.2.text
-    check: "source platform.env\numask 077\nheaders=$(mktemp -d)\ntrap 'rm -f \"$headers/reader\" \"$headers/manager\"\
-      ; rmdir \"$headers\"' EXIT\nprintf 'X-Vault-Token: %s\\n' \"$VAULT_READER_TOKEN\" > \"$headers/reader\"\n\
-      printf 'X-Vault-Token: %s\\n' \"$VAULT_MANAGER_TOKEN\" > \"$headers/manager\"\nfailed=0\nif ! test \"$(curl\
-      \ -sS -o /dev/null -w '%{http_code}' -H @\"$headers/manager\" \"$VAULT_ADDR/v1/secret/data/dispatch\" 2>/dev/null)\"\
-      \ = 403; then\n  printf '%s\\n' 'manager secret/data/dispatch HTTP = 403: ✗ [DQ:manager]'\n  failed=1\nfi\n\
-      exit \"$failed\""
+    check: |-
+      dq_fallback_output=$(mktemp) || {
+        dq_fallback_status=$?
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_2]' >&2
+        exit "$dq_fallback_status"
+      }
+      trap 'rm -f "$dq_fallback_output"' EXIT
+      set +e
+      (
+      set -e
+      source platform.env
+      umask 077
+      headers=$(mktemp -d)
+      trap 'rm -f "$headers/reader" "$headers/manager"; rmdir "$headers"' EXIT
+      printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN" > "$headers/reader"
+      printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN" > "$headers/manager"
+      failed=0
+      if ! test "$(curl -sS -o /dev/null -w '%{http_code}' -H @"$headers/manager" "$VAULT_ADDR/v1/secret/data/dispatch" 2>/dev/null)" = 403; then
+        printf '%s\n' 'manager secret/data/dispatch HTTP = 403: ✗ [DQ:manager]'
+        failed=1
+      fi
+      exit "$failed"
+      ) >"$dq_fallback_output" 2>&1
+      dq_fallback_status=$?
+      set -e
+      cat "$dq_fallback_output"
+      if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(manager)\]' "$dq_fallback_output"; then
+        printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_2]'
+      fi
+      rm -f "$dq_fallback_output"
+      trap - EXIT
+      if [ "$dq_fallback_status" -ne 0 ]; then
+        exit "$dq_fallback_status"
+      fi
   - text: stages.1.objectives.3.text
     keep: true
     check: "failed=0\nif ! test \"$(stat -c %a unseal-shares.json 2>/dev/null)\" = 600; then\n  printf '%s\\n' 'unseal-shares.json\

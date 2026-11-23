@@ -91,7 +91,7 @@ def test_091_missing_supplied_input_is_named_before_external_commands(tmp_path, 
     assert not (tmp_path / "command-invoked").exists()
 
 
-def run_080_platform_check(tmp_path, stage, index, platform=None, commands=None):
+def run_080_platform_check(tmp_path, stage, index, platform=None, commands=None, *, number=80):
     """Map the actual workstation directory; keep HOME and the check body intact."""
     import shlex
 
@@ -107,12 +107,12 @@ def run_080_platform_check(tmp_path, stage, index, platform=None, commands=None)
         program.chmod(0o755)
     scratch = tmp_path / "scratch"
     scratch.mkdir()
-    check = objective(80, index, stage=stage)
-    assert check.count("cd ~/quest\n") == 1
+    check = objective(number, index, stage=stage)
+    assert check.count("cd ~/quest\n") == (1 if number == 80 or stage == 0 else 0)
     check = check.replace("cd ~/quest\n", "cd " + shlex.quote(str(bay)) + "\n")
     result = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", check],
-        cwd=tmp_path,
+        cwd=bay,
         env={**os.environ, "PATH": f"{binary}:{os.environ['PATH']}",
              "TMPDIR": str(scratch), "DQ_NAMESPACE": "dq-0123456789abcdef01234567"},
         capture_output=True, text=True, timeout=10,
@@ -773,3 +773,91 @@ exit 7
         assert result.stdout.count("opaque remote startup output") == 3 * len(fields)
     if mode == "foreign":
         assert markers.count("unrelated_remote_message") == 3 * len(fields)
+
+
+@pytest.mark.parametrize("stage,index", [(0, 0), (1, 0), (1, 2)])
+def test_093_missing_supplied_platform_input_is_named(tmp_path, stage, index):
+    result = run_080_platform_check(tmp_path, stage, index, number=93)
+    assert result.returncode == 1
+    assert "platform.env" in result.stdout + result.stderr
+    assert f"[DQ:probe_{stage}_{index}]" in result.stdout
+
+
+@pytest.mark.parametrize("stage,index,known", [(0, 0, "init"), (1, 0, "sealed"), (1, 2, "manager")])
+@pytest.mark.parametrize("kind", ["known", "foreign", "opaque"])
+def test_093_fallback_retains_status_and_existing_output(tmp_path, stage, index, known, kind):
+    text = {"known": f"[DQ:{known}]", "foreign": "[DQ:unrelated_probe]", "opaque": "opaque failure"}[kind]
+    result = run_080_platform_check(
+        tmp_path, stage, index,
+        f"printf '%s\\n' '{text}'\nprintf '%s\\n' 'raw stderr retained' >&2\nexit 23\n",
+        number=93,
+    )
+    assert result.returncode == 23
+    assert text in result.stdout
+    assert "raw stderr retained" in result.stdout + result.stderr
+    assert (f"[DQ:probe_{stage}_{index}]" in result.stdout) == (kind != "known")
+
+
+@pytest.mark.parametrize("code", ["403", "500"])
+def test_093_manager_header_and_capture_cleanup(tmp_path, code):
+    result = run_080_platform_check(
+        tmp_path, 1, 2,
+        "VAULT_ADDR=http://provided.invalid\nVAULT_READER_TOKEN=controlled-reader\n"
+        "VAULT_MANAGER_TOKEN=controlled-manager\n",
+        {"curl": '''
+while [ "$#" -gt 0 ]; do
+ if [ "$1" = -H ]; then
+  shift
+  header=${1#@}
+  test -f "$header" && test "$(stat -c %a "$header")" = 600 || exit 92
+  printf '%s\\n' "$header" > header-observed
+ fi
+ shift
+done
+printf %s ''' + code + "\n"},
+        number=93,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == (0 if code == "403" else 1)
+    assert ("[DQ:manager]" in output) == (code != "403")
+    assert "[DQ:probe_1_2]" not in output
+    assert "controlled-reader" not in output and "controlled-manager" not in output
+    header = tmp_path / "quest/header-observed"
+    assert header.exists()
+    assert not Path(header.read_text().strip()).exists()
+
+
+@pytest.mark.parametrize("index,marker", [(1, "performance_replicas"), (4, "performance_ready")])
+@pytest.mark.parametrize("api_status,json_status,expected", [(7, 0, 7), (0, 4, 4), (0, 0, 0)])
+def test_094_replica_wrappers_retain_original_pipeline_status(
+    tmp_path, index, marker, api_status, json_status, expected,
+):
+    result = run_check(tmp_path, 94, index, {
+        "kubectl": f"printf '%s\\n' 'raw API stderr' >&2\nexit {api_status}\n",
+        "jq": f"cat >/dev/null\nexit {json_status}\n",
+    })
+    assert result.returncode == expected
+    assert "raw API stderr" in result.stderr
+    assert (f"[DQ:{marker}]" in result.stderr) == (expected != 0)
+
+
+@pytest.mark.parametrize("text,command_code,expected", [("north-94", 0, 0), ("other", 0, 1), ("", 7, 1)])
+def test_094_http_wrapper_retains_value_comparison(tmp_path, text, command_code, expected):
+    result = run_check(tmp_path, 94, 6, {
+        "kubectl": f"printf %s '{text}'\nprintf '%s\\n' 'raw HTTP stderr' >&2\nexit {command_code}\n",
+    })
+    assert result.returncode == expected
+    assert "raw HTTP stderr" in result.stderr
+    assert ("[DQ:performance_http]" in result.stderr) == (expected != 0)
+
+
+@pytest.mark.parametrize("baseline,expected", [("10", 0), ("9", 1), ("unreadable", 2)])
+def test_094_baseline_wrapper_retains_original_numeric_test(tmp_path, baseline, expected):
+    original = objective(94, 0)
+    frozen = tmp_path / "initial-throttled"
+    frozen.write_text(baseline)
+    # Only map the readonly frozen-fact path; HOME and the predicate remain intact.
+    check = original.replace("/run/dq/facts/0/initial-throttled", str(frozen))
+    result = subprocess.run(["bash", "-euo", "pipefail", "-c", check], capture_output=True, text=True)
+    assert result.returncode == expected
+    assert ("[DQ:performance_baseline]" in result.stderr) == (expected != 0)

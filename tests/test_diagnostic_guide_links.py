@@ -21,7 +21,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 92))
+@pytest.mark.parametrize("quest", range(1, 95))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -44,6 +44,51 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                             value.value for value in node.args.defaults
                             if isinstance(value, ast.Constant) and isinstance(value.value, str)
                         )
+            for body in re.findall(r"<<'DQ_PERFORMANCE'\n(.*?)\nDQ_PERFORMANCE(?:\n|$)", check, re.S):
+                tree = ast.parse(body)
+                positions = {"require": 1, "command": 1, "document": 1, "get": 2}
+                prefixes = set()
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                        position = positions.get(node.func.id)
+                        if position is not None and len(node.args) > position:
+                            value = node.args[position]
+                            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                                emitted.add(value.value)
+                    if isinstance(node, ast.FunctionDef) and node.name == "get":
+                        emitted.update(value.value for value in node.args.defaults
+                                       if isinstance(value, ast.Constant) and isinstance(value.value, str))
+                    if (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add)
+                            and isinstance(node.left, ast.Constant)
+                            and node.left.value in {"performance_consumer_", "performance_progress_"}):
+                        suffix = node.right
+                        assert isinstance(suffix, ast.Call) and isinstance(suffix.func, ast.Attribute)
+                        assert suffix.func.attr == "replace"
+                        assert [ast.literal_eval(value) for value in suffix.args] == ["-", "_"]
+                        subject = suffix.func.value
+                        assert (isinstance(subject, ast.Name) and subject.id == "name") or (
+                            isinstance(subject, ast.Subscript) and isinstance(subject.value, ast.Name)
+                            and subject.value.id == "consumer" and ast.literal_eval(subject.slice) == "deployment"
+                        )
+                        prefixes.add(node.left.value)
+                if prefixes:
+                    setup = (Path("quests") / f"{quest:03}" / "setup-0.sh").read_text()
+                    setup_body, = re.findall(r"<<'DQ_DEMAND'\n(.*?)\nDQ_DEMAND(?:\n|$)", setup, re.S)
+                    contract, = [node.value for node in ast.walk(ast.parse(setup_body))
+                                 if isinstance(node, ast.Assign) and any(
+                                     isinstance(target, ast.Name) and target.id == "contract"
+                                     for target in node.targets)]
+                    consumers, = [value for key, value in zip(contract.keys, contract.values, strict=True)
+                                  if isinstance(key, ast.Constant) and key.value == "consumers"]
+                    assert isinstance(consumers, ast.ListComp) and len(consumers.generators) == 1
+                    generator, = consumers.generators
+                    assert isinstance(generator.target, ast.Name) and generator.target.id == "name"
+                    deployment, = [value for key, value in zip(consumers.elt.keys, consumers.elt.values, strict=True)
+                                   if isinstance(key, ast.Constant) and key.value == "deployment"]
+                    assert isinstance(deployment, ast.Name) and deployment.id == "name"
+                    names = ast.literal_eval(generator.iter)
+                    assert names and all(isinstance(name, str) for name in names)
+                    emitted.update(prefix + name.replace("-", "_") for prefix in prefixes for name in names)
             for delimiter, function, position in (
                 ("DQ_HANDOVER", "reject", 0),
                 ("DQ_GIT_ACCESS", "reject", 0),
