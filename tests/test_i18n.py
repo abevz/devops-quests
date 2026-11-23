@@ -75,7 +75,7 @@ async def test_preferences_are_per_user_authenticated_and_csrf_protected(tmp_pat
         assert (await client.get("/api/locales")).status == 200
         diagnostic_asset = await client.get("/assets/diagnostics.mjs")
         assert diagnostic_asset.status == 200
-        assert "diagnosticMessages" in await diagnostic_asset.text()
+        assert "conditionKeys" in await diagnostic_asset.text()
         assert (
             await client.post(
                 "/api/preferences", json={"primary": "ru", "translation": "en"}
@@ -235,6 +235,17 @@ def test_validator_audits_third_language_metadata_lessons_and_exact_code(tmp_pat
     )
     item = json.loads((ROOT / "docs/guide-excerpts.json").read_text())["kubernetes-4"]
     (root / "docs/guide-excerpts.json").write_text(json.dumps({"kubernetes-4": item}))
+    shutil.copytree(
+        ROOT / "docs/guides/kubernetes-20", root / "docs/guides/kubernetes-20"
+    )
+    index_file = root / "docs/guide-excerpts.json"
+    index = json.loads(index_file.read_text())
+    index["kubernetes-20"] = json.loads(
+        (ROOT / "docs/guide-excerpts.json").read_text()
+    )["kubernetes-20"]
+    index_file.write_text(json.dumps(index))
+    shutil.copyfile(root / "docs/guides/kubernetes-20/i18n/en.yaml",
+                    root / "docs/guides/kubernetes-20/i18n/zz.yaml")
     language = root / "locales/zz"
     language.mkdir()
     for source in (root / "locales/en").glob("*.json"):
@@ -248,6 +259,13 @@ def test_validator_audits_third_language_metadata_lessons_and_exact_code(tmp_pat
     for directory in [root / "quests/001/i18n", root / "docs/guides/kubernetes-4/i18n"]:
         shutil.copyfile(directory / "en.yaml", directory / "zz.yaml")
     lessons = {
+        "kubernetes-20": {
+            "content": {
+                language.name: "### Relay image {#relay-release-image}"
+                for language in (root / "locales").iterdir()
+                if language.is_dir()
+            }
+        },
         "fixture": {
             "content": {lang: "```sh\necho hello\n```" for lang in ["en", "ru", "zz"]}
         }

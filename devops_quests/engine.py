@@ -5,6 +5,7 @@ import json
 import logging
 import random
 import re
+from subprocess import TimeoutExpired
 
 from .scoring import POLICY
 
@@ -139,28 +140,27 @@ class Engine:
             goals = []
             failures = []
             for goal in stage["objectives"]:
-                result = await asyncio.to_thread(
-                    self.runtime.exec,
-                    run,
-                    "set -euo pipefail\ncd ~/quest\n" + goal["check"],
-                    check=False,
-                    timeout=25,
-                )
-                goals.append(result.returncode == 0)
-                if result.returncode:
-                    detail = self.redact((result.stderr or result.stdout or "")[:2000])
-                    detail = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", detail)
-                    detail = "".join(
-                        c for c in detail if c.isprintable() or c in "\n\t"
-                    )[:2000]
-                    failures.append(
-                        {
-                            "objective": len(goals) - 1,
-                            "code": result.returncode,
-                            "detail": detail,
-                            "reason": self.probe_reason(detail),
-                        }
+                try:
+                    result = await asyncio.to_thread(
+                        self.runtime.exec,
+                        run,
+                        "set -euo pipefail\ncd ~/quest\n" + goal["check"],
+                        check=False,
+                        timeout=25,
                     )
+                    passed = result.returncode == 0
+                except TimeoutExpired as error:
+                    result = error
+                    passed = False
+                if not passed:
+                    failures.append(
+                        self.failed_probe(
+                            result,
+                            len(goals),
+                            self.catalog.messages[run["level"]]["en"],
+                        )
+                    )
+                goals.append(passed)
             events = run["events"]
             active_ids = {active["id"] for active in self.store.active()}
             self.keep_observations = {
@@ -254,6 +254,30 @@ class Engine:
             activity=self.store.clock(),
         )
         return self.store.run(run["id"], run["user_id"])
+
+    @classmethod
+    def failed_probe(cls, result, objective, messages):
+        timed_out = isinstance(result, TimeoutExpired)
+        streams = []
+        for stream in (result.stderr, result.stdout):
+            if isinstance(stream, bytes):
+                stream = stream.decode("utf-8", errors="replace")
+            cleaned = cls.redact(re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", stream or ""))
+            streams.append("".join(char for char in cleaned if char.isprintable() or char in "\n\t"))
+
+        # Capture streams independently before bounding the collapsed detail.
+        keys = dict.fromkeys(
+            key for stream in streams for key in re.findall(r"\[DQ:([a-z0-9_]+)\]", stream)
+            if "diagnostics." + key in messages
+        )
+        detail = "\n".join(stream for stream in streams if stream)[:2000]
+        return {
+            "objective": objective,
+            "code": None if timed_out else result.returncode,
+            "detail": detail,
+            "reason": "checks.cause.timeout" if timed_out else cls.probe_reason(detail),
+            "diagnostic_keys": list(keys),
+        }
 
     @staticmethod
     def probe_reason(detail):

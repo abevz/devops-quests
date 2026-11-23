@@ -9,8 +9,13 @@ from pathlib import Path
 
 import yaml
 
-from devops_quests.catalog import ROOT
+from devops_quests.catalog import ROOT, public_guide_texts
 from devops_quests.code_translation import fenced_blocks, same_code
+from devops_quests.diagnostics import (
+    diagnostic_destination,
+    guide_sections,
+    validate_dependencies,
+)
 from devops_quests.i18n import LANGUAGE
 
 DOTTED_LITERAL = re.compile(
@@ -50,6 +55,37 @@ def quest_keys(quest):
         if "label" in hint:
             keys.add(hint["label"])
     return keys
+
+
+def diagnostic_errors(quest, values, guide_anchors):
+    en = values["en"]
+    keys = {key for bundle in values.values() for key in bundle if key.startswith("diagnostics.")}
+    parents = quest.get("diagnostic_dependencies", {})
+    try:
+        validate_dependencies(parents, {key.removeprefix("diagnostics.") for key in en
+                                        if key.startswith("diagnostics.")})
+    except ValueError as error:
+        yield {"error": "invalid_diagnostic_dependencies", "detail": str(error)}
+
+    for key in sorted(keys):
+        destinations = {}
+        for language, bundle in values.items():
+            if key not in bundle:
+                continue  # Missing translations are reported by the bundle audit.
+            try:
+                guide, anchor = diagnostic_destination(bundle[key])
+            except ValueError as error:
+                yield {"key": key, "language": language,
+                       "error": "invalid_diagnostic_cause", "detail": str(error)}
+                continue
+            destinations[language] = (guide, anchor)
+            if guide_anchors.get(guide, {}).get(language, {}).get(anchor, 0) != 1:
+                yield {"key": key, "language": language, "error": "unknown_diagnostic_anchor",
+                       "guide": guide, "anchor": anchor}
+        expected = destinations.get("en")
+        for language, destination in destinations.items():
+            if expected and destination != expected:
+                yield {"key": key, "language": language, "error": "different_diagnostic_destination"}
 
 
 def audit(root=ROOT):
@@ -253,16 +289,26 @@ def audit(root=ROOT):
         resources[str(directory) + ("/" + filename if filename else "")] = values
         exact_machine_code(label, values)
 
+    index = json.loads((root / "docs/guide-excerpts.json").read_text())
+    lesson_files = {}
+    for name in ("guide-lessons.yaml", "guide-topics.yaml"):
+        path = root / "docs" / name
+        lesson_files[name] = yaml.safe_load(path.read_text()) if path.exists() else {}
+    guide_anchors = {}
+    for name, item in index.items():
+        resource = item.get("resource", name)
+        values = resources.get(str(root / "docs/guides" / resource / "i18n"), {})
+        contents, _ = public_guide_texts(lesson_files["guide-lessons.yaml"].get(resource), values)
+        guide_anchors[name] = {language: Counter(guide_sections(content))
+                               for language, content in contents.items()}
+
     # These published UI titles and practical lessons live outside flat bundles.
     for filename, field in [
         ("guide-lessons.yaml", "content"),
         ("guide-lessons.yaml", "additional"),
         ("guide-topics.yaml", None),
     ]:
-        path = root / "docs" / filename
-        if not path.exists():
-            continue
-        for name, item in yaml.safe_load(path.read_text()).items():
+        for name, item in lesson_files[filename].items():
             if field == "additional" and not item.get(field):
                 continue
             label = f"docs/{filename}/{name}"
@@ -281,7 +327,10 @@ def audit(root=ROOT):
         try:
             quest = yaml.safe_load(path.read_text())
             keys = quest_keys(quest)
-            english = resources[str(path.parent / "i18n")]["en"]
+            values = resources[str(path.parent / "i18n")]
+            english = values["en"]
+            errors.extend({"quest": quest["id"], **error}
+                          for error in diagnostic_errors(quest, values, guide_anchors))
             for key in keys:
                 if not english.get(key):
                     errors.append(
@@ -330,7 +379,6 @@ def audit(root=ROOT):
                             "error": "missing_english_reference",
                         }
                     )
-    index = json.loads((root / "docs/guide-excerpts.json").read_text())
     for name, item in index.items():
         values = resources[str(root / "docs/guides" / item["resource"] / "i18n")]
         original = values.get("en", {}).get("text", "")

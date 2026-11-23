@@ -37,6 +37,15 @@ def public_reference(text):
     return "\n".join(result)
 
 
+def public_guide_texts(lesson, messages):
+    reference = {
+        lang: public_reference(value["text"])
+        for lang, value in messages.items()
+        if "text" in value
+    }
+    return (lesson["content"], reference) if lesson else (reference, {})
+
+
 def released_levels(root):
     levels = yaml.safe_load((root / "levels.yaml").read_text())
     return tuple(
@@ -117,16 +126,14 @@ class Catalog:
         resource = item.get("resource", name)
         messages = self.guide_messages[resource]
         lesson = self.guide_lessons.get(resource)
-        reference = {
-            lang: public_reference(value["text"]) for lang, value in messages.items()
-        }
+        content, reference = public_guide_texts(lesson, messages)
         return {
             "id": resource,
             "titles": self.guide_titles.get(
                 resource, {lang: value["heading"] for lang, value in messages.items()}
             ),
-            "content": lesson["content"] if lesson else reference,
-            "reference": reference if lesson else {},
+            "content": content,
+            "reference": reference,
             "profile": lesson["profile"] if lesson else None,
             "example": lesson["example"] if lesson else None,
             "additional": lesson.get("additional", {}) if lesson else {},
@@ -255,6 +262,7 @@ class Catalog:
         result["diagnostics"] = {
             key.removeprefix("diagnostics."): self.text(number, key) for key in diagnostic_keys
         }
+        result["diagnostic_dependencies"] = quest.get("diagnostic_dependencies", {})
         if debrief:
             result["debrief"] = self.text(number, quest["debrief"])
             result["phrases"] = [self.text(number, key) for key in quest["phrases"]]

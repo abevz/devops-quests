@@ -11,5 +11,5 @@ test("Polish machine translation selects the native label and all Polish plural 
   for (const [count, expected] of [[1, "1 punkt"], [2, "2 punkty"], [5, "5 punktów"], [12, "12 punktów"], [22, "22 punkty"], [1.5, "1,5 punktu"]])
     assert.equal(i18n.t("level.points", { count }), expected);
   assert.equal(i18n.t("map.matches", { count: 22 }), "22 pasujące zadania");
-  assert.equal(i18n.t("checks.failed", { count: 5 }), "5 celów nie zostało osiągniętych.");
+  assert.equal(i18n.t("checks.failed", { count: 5 }), "Nie spełniono 5 warunków.");
 });

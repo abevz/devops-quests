@@ -76,6 +76,20 @@ For a named destination, end a lesson heading in every language with the same
 `{#section-id}` and link to `guides#guide=lesson-id&section=section-id`.
 Use the same link destination in every translation of the diagnostic.
 
+When one repair should come before another, declare the order in the quest's
+`diagnostic_dependencies` mapping. Each key lists the condition keys to address
+before it. The UI uses the conditions reported in the current check to indicate a
+starting point and which later checks may pass after repair. Every key must have
+a localized cause, and the dependencies must be acyclic.
+
+```yaml
+diagnostic_dependencies:
+  dns: [shelf_service]
+  missing_dns_udp_53: [dns]
+  missing_dns_tcp_53: [dns]
+  http: [missing_dns_udp_53, missing_dns_tcp_53]
+```
+
 - **Good:** For 003, “The state address is missing. This can happen when the root has
   not called or applied the child module.” Link to the matching module-call paragraph.
 - **Bad:** “Check failed; try again,” or one generic cause and unrelated guide link
