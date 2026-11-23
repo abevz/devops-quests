@@ -4,12 +4,32 @@ failed=0
 set +e
 (
 set -e
+set +e
+(
+set -e
 test "$(cat /run/dq/facts/0/initial-throttled)" -ge 10
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The frozen baseline sample could not be verified: ✗ [DQ:performance_baseline]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 kubectl get deployment board -o json | jq -e '.spec.replicas==1' >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The producer replica count could not be verified: ✗ [DQ:performance_replicas]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -154,7 +174,17 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 kubectl get deployment board -o json | jq -e '.status.readyReplicas==1' >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The producer ready replica count could not be verified: ✗ [DQ:performance_ready]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -274,7 +304,17 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-94
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The actual producer response could not be verified: ✗ [DQ:performance_http]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

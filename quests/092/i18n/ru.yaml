@@ -33,16 +33,6 @@ hints.2.text: Восстановите объявленный интерфейс
 phrases.0: Я проверил backup до использования при восстановлении.
 phrases.1: Я согласовал адреса модулей без замены ресурса.
 phrases.2: Я проверил identity, outputs и пустой итоговый plan.
-diagnostics.condition_0: /run/dq/facts/0/safe-state.sha256 должен быть непустым, а sha256(safe-state.json) должен
-  совпадать с его содержимым.
-diagnostics.condition_1: safe-state.json resources должен содержать module.north.local_file.ledger.
-diagnostics.condition_2: tofu state list должен совпадать с module.station.local_file.ledger.
-diagnostics.condition_3: /run/dq/facts/0/original-id должен быть непустым, а tofu output -raw ledger_id должен совпадать
-  с его содержимым.
-diagnostics.condition_4: ledger.txt должен совпадать с north-92.
-diagnostics.condition_5: recovery-plan.json resource_changes length должен совпадать с 1.
-diagnostics.condition_6: У каждой записи в recovery-plan.json resource_changes должно быть actions ["no-op"].
-diagnostics.condition_7: План OpenTofu с detailed-exitcode должен завершиться с кодом 0.
 stages.0.objectives.0.text: Предоставленная резервная копия восстановления `safe-state.json` на workstation остаётся
   неповреждённой.
 stages.0.objectives.1.text: State OpenTofu содержит только настроенный ресурс реестра.
@@ -52,17 +42,20 @@ stages.0.objectives.4.text: Сохранённый основной план с�
   план содержит все четыре исходные управляемые привязки с `no-op`.
 stages.0.objectives.5.text: Оба корня state сходятся с сохранёнными lineage, исходными снимками, новой идентичностью
   обслуживания и исходными инфраструктурой и данными.
-diagnostics.recovery_plans: Оба сохранённых плана должны охватывать текущие исходные управляемые привязки с no-op
-  и прежними ID.
-diagnostics.recovery_target: Инфраструктурный state и интерфейс runtime должны сохранять исходные ресурсы модуля
-  и настоящую новую запись обслуживания.
-diagnostics.recovery_identity: Сохраните исходный ID ledger провайдера, live Docker ID, подключённую сеть и идентичность
-  создания исходного смонтированного тома.
-diagnostics.recovery_lineage: Сохраните исходную lineage каждого state и не откатывайте serial.
-diagnostics.recovery_data: Сохраните каждый исходный байт файла /data/ledger в сохранённом томе.
-diagnostics.recovery_backups: Сохраните каждый исходный текущий снимок state в before-recovery.tfstate и infra/before-recovery.tfstate.
-diagnostics.recovery_convergence: Инфраструктурный корень тоже должен давать код 0 свежего подробного плана.
-diagnostics.probe_0_4: Сохранённый основной план содержит ровно один исходный ledger с `no-op`; инфраструктурный
-  план содержит все четыре исходные управляемые привязки с `no-op`.
-diagnostics.probe_0_5: Оба корня state сходятся с сохранёнными lineage, исходными снимками, новой идентичностью
-  обслуживания и исходными инфраструктурой и данными.
+diagnostics.condition_0: Перенос state прямо из safe-state.json или правка копии меняет хэш её исходных байтов. Верните выданную копию и работайте с дубликатами; контрольная сумма зафиксирована, правка рабочего файла checksum не разрешает другие байты. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-untouched-source-backup)
+diagnostics.condition_1: Копия могла быть заменена текущим снимком после переименования модуля. Выданный источник восстановления содержит module.north.local_file.ledger; храните его отдельно от текущего снимка root и переносите привязки только на дубликате. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-original-backup-binding)
+diagnostics.condition_2: Setup оставляет ledger в module.orphan, хотя main.tf вызывает module.station. Перенесите существующую привязку по адресу конфигурации без замены файла, а привязки fabric держите в infra; root должен содержать только module.station.local_file.ledger. Ошибка CLI или backend тоже нарушает сравнение. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-configured-root-address)
+diagnostics.condition_3: Выход ledger_id может ссылаться на старый модуль, отсутствовать в state или содержать ID нового файла. Исправьте привязку и выход, изучите сохранённый план перед применением изменений выходов и сохраните исходный ID; ошибка чтения выхода тоже нарушает сравнение. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-original-ledger-output)
+diagnostics.condition_4: Файл ledger.txt на workstation мог исчезнуть или измениться после исправления модуля. Содержимое при чтении shell должно быть north-92; это другой файл, не файл сохранённого Docker volume, чьи полные байты проверяются отдельно. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-workstation-ledger-content)
+diagnostics.condition_5: recovery-plan.json может отсутствовать, быть некорректным, экспортированным из другого root или описывать лишние привязки. Экспортируйте сохранённый план основного root через tofu show -json и проверьте ровно одну запись resource_changes перед проверкой идентичности. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-root-plan-entry-count)
+diagnostics.condition_6: Старый план или план до восстановления может предлагать create, delete или update. Исправьте существующую привязку ledger и конфигурацию, затем заново сохраните основной план; каждая запись resource_changes должна иметь точный список действий no-op. Некорректный JSON тоже не проходит. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-saved-root-no-op)
+diagnostics.recovery_plans: Оба JSON-плана могут читаться, но описывать новые ID, другие адреса или неполный набор привязок. Основной план сохраняет исходный ledger в module.station.local_file.ledger; infra содержит четыре исходных управляемых типа с no-op, сохранёнными ID и адресами модуля fabric для Docker. В infra разрешены записи data только для чтения. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-saved-plan-original-identities)
+diagnostics.condition_7: Подробный план даёт код 2 при изменениях или 1 при ошибке модуля, провайдера либо backend; оба не равны требуемому 0. Восстановите пакет, существующие привязки и выходы после просмотра плана, не заменяя исходные объекты. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-fresh-root-plan)
+diagnostics.recovery_target: Замена infra state целиком старой копией теряет новую завершённую запись terraform_data. Объедините только отсутствующие fabric-привязки с копией текущего infra state; сохраните четыре исходных управляемых типа, по одному исходному экземпляру, input/output progress и точный выход runtime. Ошибка чтения state или выхода даёт тот же маркер. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-retained-target-state)
+diagnostics.recovery_lineage: Публикация целого старого state в любой root может заменить lineage или откатить serial. Сохраните каждый текущий root отдельно и переносите только нужные привязки; оба serial должны быть целыми не ниже зафиксированных начальных значений. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-independent-lineages-and-serials)
+diagnostics.recovery_identity: Пересоздание контейнера или volume может дать внешне правильный план, потеряв исходную идентичность. Сохраните provider ID ledger, исходный работающий контейнер, подключение к исходной сети и volume в /data с зафиксированным временем создания. Ошибки наблюдения Docker дают тот же маркер; правка ID в state не чинит заменённый объект. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-physical-original-objects)
+diagnostics.recovery_data: Файл volume мог исчезнуть, быть переписан или читаться из другого volume, даже если первая строка верна. Исходные полные байты включают запись sequence; сравните SHA-256 /data/ledger внутри исходного контейнера. Ошибка Docker exec или чтения даёт тот же маркер. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-retained-volume-bytes)
+diagnostics.recovery_backups: Нужные снимки могут отсутствовать, быть сохранены после восстановления или перепутаны со старой safe-state.json. Сохраните начальные текущие снимки root и infra по объявленным путям до переноса привязок. Здесь сравнивается канонический декодированный JSON, поэтому только изменение пробелов не нарушает условие. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-initial-current-snapshots)
+diagnostics.recovery_convergence: Инфраструктурный root после восстановления state может предлагать изменения или не загружать восстановленный пакет либо provider. Сохранённого JSON с no-op недостаточно; запустите свежий подробный infra-план и различайте код 2 с изменениями и код 1 с ошибкой наблюдения или конфигурации. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-fresh-infra-plan)
+diagnostics.probe_0_4: Основной план прошёл начальные именованные проверки, но Python observer не прочитал зафиксированные идентичности или infra-план, не разобрал JSON либо форму документа до именованного результата. Проверьте пути обоих экспортов и их структуру; ранее выданные маркеры подавляют этот fallback. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-saved-plan-observation)
+diagnostics.probe_0_5: Начальный root-план прошёл, но Python мог упасть из-за отсутствующих frozen inputs, неожиданной формы state/Docker JSON или необработанного исключения финального infra-плана до именованного результата. Проверьте входы и ошибки плана; пойманные CLI-сбои уже дают recovery-маркер, а предыдущие маркеры подавляют fallback. [Причина и проверка](guides#guide=terraform-4&section=module-recovery-recovery-observation-fallback)

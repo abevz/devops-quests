@@ -213,3 +213,44 @@ curl -fsS -H "X-Vault-Token: $VAULT_READER_TOKEN" -H "Content-Type: application/
 ### Сохранение исходного workload contract {#vault-pod-retained-workload-contract}
 
 Могли измениться UID Deployment, selector, единственная реплика или полная pod specification, либо один текущий принадлежащий Pod не Ready с одобренным эффективным значением. Сохраните image, программу, security и secret-ссылку; ошибки API, запуска и таймауты дают тот же fallback.  `kubectl get deployment relay -o json | jq "{uid:.metadata.uid,replicas:.spec.replicas,selector:.spec.selector,template:.spec.template.spec}"; kubectl get pods -o wide`.
+
+
+### Запуск существующего сервиса {#original-vault-start-existing-service}
+
+Setup останавливает уже инициализированный исходный Vault; недоступный endpoint не означает, что данные надо инициализировать. Подайте ограниченный запрос запуска из control/README.md и повторите проверку. Ошибка запроса, неверный ответ или initialized false дают этот маркер; квитанция агента сама не доказывает здоровье сервиса. `cat control/README.md vault-agent-status.json; source platform.env; curl -fsS --max-time 2 "$VAULT_ADDR/v1/sys/init" | jq .initialized`.
+
+### Наблюдение исходной инициализации {#original-vault-observe-original-initialization}
+
+Исходный Vault уже инициализирован. Остановленный сервис, ошибка seal-status или нечитаемый JSON тоже нарушают initialized; восстановите доступность и изучите статус до изменения данных. Повторная инициализация или замена storage может уничтожить нужные далее идентичности. `source platform.env; curl -fsS --max-time 2 "$VAULT_ADDR/v1/sys/seal-status" | jq "{initialized,sealed}"`.
+
+### Распечатывание исходного кластера {#original-vault-unseal-original-cluster}
+
+Запуск остановленного процесса оставляет существующий storage запечатанным. Подайте две различные выданные доли через API распечатывания, не печатая их; одной доли недостаточно. Ошибка запроса статуса или неверный ответ тоже нарушают сравнение sealed false. `source platform.env; curl -fsS --max-time 2 "$VAULT_ADDR/v1/sys/seal-status" | jq "{sealed,progress,t,n}"`.
+
+### Сохранение идентичности кластера {#original-vault-retain-cluster-identity}
+
+Другой Vault или заново инициализированный storage может быть доступен и распечатан, но иметь иной ID кластера. Восстановите исходный сервис и storage; сравните cluster_id с зафиксированным original-cluster-id. Отсутствие frozen input или ошибка статуса тоже нарушают сравнение. `cat /run/dq/facts/0/original-cluster-id; source platform.env; curl -fsS --max-time 2 "$VAULT_ADDR/v1/sys/seal-status" | jq .cluster_id`.
+
+### Сохранение кворума восстановления {#original-vault-retain-recovery-quorum}
+
+Исходная инициализация задаёт порог t равный 2 и число долей n равное 3. Повторная инициализация или другой endpoint может дать иные параметры; восстановите исходный источник и изучите ответ. Ошибка запроса или JSON тоже нарушает сравнения; эти маркеры не требуют печатать доли. `source platform.env; curl -fsS --max-time 2 "$VAULT_ADDR/v1/sys/seal-status" | jq "{t,n}"`.
+
+### Доступ reader к источнику {#original-vault-reader-source-boundary}
+
+Старый запрос к источнику может не пройти при остановленном или запечатанном Vault, неверном reader или пути либо значении не north-secret. Проверьте выданный reader через приватный канал заголовка; успех источника ещё не доказывает обновление кеша приложений. `source platform.env; curl -fsS --max-time 2 -H @<(printf "X-Vault-Token: %s\n" "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e ".data.data.value == "north-secret"" >/dev/null`.
+
+### Manager сохраняет запрет {#original-vault-manager-remains-denied}
+
+Запрос с reader вместо manager или выдача manager доступа к источнику нарушает требуемый запрет. Используйте отдельный выданный manager и ожидайте HTTP 403 на пути dispatch; ошибка сети, ответ запечатанного источника или другой HTTP-код тоже не проходят. `source platform.env; curl -sS --max-time 2 -o /dev/null -w "%{http_code}\n" -H @<(printf "X-Vault-Token: %s\n" "$VAULT_MANAGER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"`.
+
+### Приватный режим файла долей {#original-vault-private-share-file-mode}
+
+unseal-shares.json может отсутствовать или получить другие права при восстановлении. Верните режим 0600, не выводя содержимое. Это условие сравнивает только режим, не структуру JSON и не требует менять исходный кворум распечатывания. `stat -c "%a %U" unseal-shares.json`.
+
+### Цепочка кеширующих потребителей {#original-vault-cached-consumer-chain}
+
+Доступ к Vault сам не обновляет приложения. Первое изначально использует запрещённый manager token; исправьте точный профиль источника и приватный обычный файл reader с UID 1000 и режимом 0600, затем подайте SIGHUP исходному процессу. Исправьте устаревший URL downstream и подайте SIGHUP его исходному процессу после готовности первого. Сравните статус, логи и зафиксированные digest/version; изменения процессов, программы, прав, неверные входы и сбои наблюдения или timeout без имени дают тот же fallback. `cat consumer/source.json downstream/source.json consumer/application.log downstream/application.log; curl -fsS --max-time 2 http://127.0.0.1:18081/status; curl -fsS --max-time 2 http://127.0.0.1:18082/status`.
+
+### Ранний ввод платформы {#original-vault-early-platform-input}
+
+Условие упало до именованного наблюдения Vault, например из-за отсутствующего, нечитаемого или некорректного platform.env. Верните выданное окружение и текущий workspace; обычные ошибки HTTP, статуса или значения уже именованы. Обёртка выдаёт fallback только без существующего маркера и оставляет очистку приватных заголовков в исходном дочернем процессе. `test -r platform.env; bash -n platform.env; pwd`.

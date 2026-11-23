@@ -34,7 +34,9 @@ def test_vault_failure_lines_are_localized(tmp_path, catalog, number, stage, exp
     source = (ROOT / f"quests/{number:03}/check-{stage}.sh").read_text()
     checks = [goal["check"] for goal in catalog.quests[number]["stages"][stage]["objectives"]]
     if len(checks) == 1:
-        assert source == checks[0]
+        prelude = "set -euo pipefail\ncd ~/quest\n"
+        expected_script = checks[0] if checks[0].startswith(prelude) else prelude + checks[0]
+        assert source == expected_script.rstrip("\n") + "\n"
     else:
         expected_script = "set -euo pipefail\ncd ~/quest\nfailed=0\nset +e\n"
         for check in checks:

@@ -4,6 +4,15 @@ failed=0
 set +e
 (
 set -e
+dq_fallback_output=$(mktemp) || {
+  dq_fallback_status=$?
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_0]' >&2
+  exit "$dq_fallback_status"
+}
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
+(
+set -e
 source platform.env
 status=$(curl -fsS "$VAULT_ADDR/v1/sys/seal-status" 2>/dev/null || true)
 failed=0
@@ -32,6 +41,18 @@ if ! jq -e '.n == 3' <<<"$status" >/dev/null 2>&1; then
   failed=1
 fi
 exit "$failed"
+) >"$dq_fallback_output" 2>&1
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(cluster|initialized|sealed|shares|threshold)\]' "$dq_fallback_output"; then
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_0]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -146,6 +167,15 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_fallback_output=$(mktemp) || {
+  dq_fallback_status=$?
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_2]' >&2
+  exit "$dq_fallback_status"
+}
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
+(
+set -e
 source platform.env
 umask 077
 headers=$(mktemp -d)
@@ -158,6 +188,18 @@ if ! test "$(curl -sS -o /dev/null -w '%{http_code}' -H @"$headers/manager" "$VA
   failed=1
 fi
 exit "$failed"
+) >"$dq_fallback_output" 2>&1
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(manager)\]' "$dq_fallback_output"; then
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_2]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
