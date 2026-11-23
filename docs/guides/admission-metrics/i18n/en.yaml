@@ -2,22 +2,13 @@ heading: Admission budgets and metrics
 text: '# Admission budgets and metrics
 
 
-  ResourceQuota accounts for every admitted consumer in a namespace. LimitRange supplies defaults at admission;
-  changing it does not rewrite existing Pods. A Deployment replacement or surge may need budget while older Pods
-  still consume it. Compare quota usage, both desired templates, current admitted resources and ReplicaSet condition
-  messages. Coordinate resource generations within the fixed budget. CPU defaults and current admitted memory are
-  separate observations; neither proves editing history or node capacity.
+  ResourceQuota accounts for every admitted consumer in a namespace. LimitRange supplies defaults at admission; changing it does not rewrite existing Pods. A Deployment replacement or surge may need budget while older Pods still consume it. Compare quota usage, both desired templates, current admitted resources and ReplicaSet condition messages. Coordinate resource generations within the fixed budget. CPU defaults and current admitted memory are separate observations; neither proves editing history or node capacity.
 
 
-  In quest 127, scrape transport, stored series labels and downstream query intent have different lifetimes. A gauge
-  describes a current value; count and sum must refer to the intended series scope. Healthy scrape targets do not
-  update an old consumer configuration. Follow the live exporter, private Prometheus and both query consumers, including
-  their desired inputs, current Pod environment, provided polling code, served aggregate and advancing observation
-  count. Current snapshots and progress are evidence of current operation, not proof of the entire request history.
+  In quest 127, scrape transport, stored series labels and downstream query intent have different lifetimes. A gauge describes a current value; count and sum must refer to the intended series scope. Healthy scrape targets do not update an old consumer configuration. Follow the live exporter, private Prometheus and both query consumers, including their desired inputs, current Pod environment, provided polling code, served aggregate and advancing observation count. Current snapshots and progress are evidence of current operation, not proof of the entire request history.
 
 
-  References: [LimitRange](https://kubernetes.io/docs/concepts/policy/limit-range/), [ResourceQuota](https://kubernetes.io/docs/concepts/policy/resource-quotas/),
-  [Prometheus queries](https://prometheus.io/docs/prometheus/latest/querying/basics/).
+  References: [LimitRange](https://kubernetes.io/docs/concepts/policy/limit-range/), [ResourceQuota](https://kubernetes.io/docs/concepts/policy/resource-quotas/), [Prometheus queries](https://prometheus.io/docs/prometheus/latest/querying/basics/).
 
 
   In quest 126, inspect admission state:
@@ -58,13 +49,7 @@ text: '# Admission budgets and metrics
   ```
 
 
-  In quest 121, distinguish a failed admission transport from an explicit policy denial. A control receipt confirms
-  only its bounded request; it does not prove that an application record was admitted. API publication and consumer
-  adoption have separate lifetimes: an environment is captured at process startup, and a subPath mount keeps its
-  original file binding. Compare the policy-protected record and key with desired workload references, current owned
-  Pods, actual inputs and responses. Preserved staging data is a control, not a substitute for adopting the validated
-  source. Retain the private trust and fail-closed boundary while testing accepted and rejected server dry-runs.
-  Current state does not establish the full request history.
+  In quest 121, distinguish a failed admission transport from an explicit policy denial. A control receipt confirms only its bounded request; it does not prove that an application record was admitted. API publication and consumer adoption have separate lifetimes: an environment is captured at process startup, and a subPath mount keeps its original file binding. Compare the policy-protected record and key with desired workload references, current owned Pods, actual inputs and responses. Preserved staging data is a control, not a substitute for adopting the validated source. Retain the private trust and fail-closed boundary while testing accepted and rejected server dry-runs. Current state does not establish the full request history.
 
 
   ### Single validation webhook {#q121-admission-single-webhook}
@@ -393,5 +378,422 @@ text: '# Admission budgets and metrics
 
   ```
 
+
+
+  ### Hard budget of station {#q126-station-quota-budget}
+
+
+  The station ResourceQuota may be missing or its hard values may differ from CPU requests 200m, limits 400m, memory requests 32Mi, limits 64Mi and 2 Pods.
+
+
+  ```bash
+
+  kubectl get resourcequota station -o json | jq ''.spec.hard''
+
+  ```
+
+
+  ### Inputs to the quota check {#q126-station-quota-observer}
+
+
+  The quota observer may have stopped before reporting a condition. Confirm that the exercise can read the current ResourceQuota station.
+
+
+  ```bash
+
+  kubectl get resourcequota station -o json
+
+  ```
+
+
+  ### Default CPU limit {#q126-station-limitrange-default}
+
+
+  The Container entry in LimitRange defaults may be missing or use a different default CPU limit. Check for 200m.
+
+
+  ```bash
+
+  kubectl get limitrange defaults -o json | jq ''.spec.limits[] | select(.type=="Container") | .default.cpu''
+
+  ```
+
+
+  ### Default CPU request {#q126-station-limitrange-request}
+
+
+  The Container entry in LimitRange defaults may be missing or use a different default CPU request. Check for 100m.
+
+
+  ```bash
+
+  kubectl get limitrange defaults -o json | jq ''.spec.limits[] | select(.type=="Container") | .defaultRequest.cpu''
+
+  ```
+
+
+  ### Resource settings in the board template {#q126-station-board-empty-resources}
+
+
+  The board worker template may explicitly set resources, or the worker may be missing. Leave resources empty in the template so that admission supplies the defaults.
+
+
+  ```bash
+
+  kubectl get deployment board -o json | jq ''.spec.template.spec.containers[] | select(.name=="worker") | .resources''
+
+  ```
+
+
+  ### Inputs to the admission policy check {#q126-station-admission-policy-observer}
+
+
+  The policy observer may have stopped before reporting a condition. Check the LimitRange, quota and Deployments in the exercise namespace.
+
+
+  ```bash
+
+  kubectl get resourcequota station; kubectl get limitrange defaults; kubectl get deployment board client
+
+  ```
+
+
+  ### Retained quota and Deployment identities {#q126-station-retained-admission-objects}
+
+
+  A protected ResourceQuota or Deployment may be missing or have a different UID. Compare live objects with the supplied admission identity records.
+
+
+  ```bash
+
+  jq ''.identities'' /run/dq/facts/0/admission-identities.json; kubectl get resourcequota/station deployment/board deployment/client -o custom-columns=KIND:.kind,NAME:.metadata.name,UID:.metadata.uid
+
+  ```
+
+
+  ### Retained workload templates {#q126-station-retained-admission-templates}
+
+
+  The board or client template may differ from the contract. Check the replica count, the original worker image and the empty resources field for admission defaults.
+
+
+  ```bash
+
+  jq ''{replicas: .contract.replicas, images}'' /run/dq/facts/0/admission-identities.json; kubectl get deployments board client -o json | jq ''.items[] | {name: .metadata.name, replicas: .spec.replicas, worker: [.spec.template.spec.containers[] | select(.name == "worker") | {image,resources}]}''
+
+  ```
+
+
+  ### Ready board replica {#q126-station-board-ready-replica}
+
+
+  The board Deployment may still be reconciling, or its ready count may differ from one. Check the current status.
+
+
+  ```bash
+
+  kubectl get deployment board -o jsonpath=''{.status.readyReplicas}''
+
+  ```
+
+
+  ### Worker requests in admitted Pods {#q126-station-admitted-worker-requests}
+
+
+  There may be no non-terminating board Pod with worker requests of CPU 100m and memory 16Mi. Check the admitted Pod spec.
+
+
+  ```bash
+
+  kubectl get pods -l app=board -o json | jq ''.items[] | select(.metadata.deletionTimestamp == null) | .spec.containers[] | select(.name=="worker") | .resources.requests''
+
+  ```
+
+
+  ### Worker limits in admitted Pods {#q126-station-admitted-worker-limits}
+
+
+  There may be no non-terminating board Pod with worker limits of CPU 200m and memory 32Mi. Check the admitted Pod spec.
+
+
+  ```bash
+
+  kubectl get pods -l app=board -o json | jq ''.items[] | select(.metadata.deletionTimestamp == null) | .spec.containers[] | select(.name=="worker") | .resources.limits''
+
+  ```
+
+
+  ### Readiness of a board worker {#q126-station-admitted-worker-readiness}
+
+
+  The worker may be unready on all non-terminating board Pods. Check container readiness on the current Pods.
+
+
+  ```bash
+
+  kubectl get pods -l app=board -o json | jq ''.items[] | {name: .metadata.name, deleting: .metadata.deletionTimestamp, statuses: .status.containerStatuses}''
+
+  ```
+
+
+  ### Readiness and resources on the same Pod {#q126-station-admitted-single-example}
+
+
+  The expected requests, limits and readiness may occur in different Pods. Check for one non-terminating board Pod whose worker meets all three conditions.
+
+
+  ```bash
+
+  kubectl get pods -l app=board -o json | jq ''.items[] | {name: .metadata.name, deleting: .metadata.deletionTimestamp, containers: .spec.containers, statuses: .status.containerStatuses}''
+
+  ```
+
+
+  ### Current admitted client {#q126-station-admitted-client}
+
+
+  The client rollout may be stale, point to a changed workload or contain a current worker with unexpected resources or readiness. Check the Deployment generation, current owner chain and admitted Pod.
+
+
+  ```bash
+
+  jq ''{identity: .identities["deployment/client"], image: .images.client, replicas: .contract.replicas, admitted: .contract.admitted}'' /run/dq/facts/0/admission-identities.json; kubectl get deployment client -o json | jq ''{uid: .metadata.uid, generation: .metadata.generation, observed: .status.observedGeneration, desired: .spec.replicas, ready: .status.readyReplicas}''; kubectl get replicasets,pods -o json | jq ''.items[] | {kind, name: .metadata.name, uid: .metadata.uid, owners: .metadata.ownerReferences, phase: .status.phase, statuses: .status.containerStatuses, workers: [.spec.containers[]? | select(.name=="worker") | {image,resources}]}''
+
+  ```
+
+
+  ### Observed quota use {#q126-station-observed-quota-usage}
+
+
+  The quota controller may still be reconciling or the admitted workload usage may differ from the budget. Compare status.used for requests, limits and Pods after board and client settle.
+
+
+  ```bash
+
+  kubectl get resourcequota station -o json | jq ''.status.used''
+
+  ```
+
+
+  ### Inputs to the live admission check {#q126-station-admitted-pods-observer}
+
+
+  The live admission observer may have stopped before reporting a condition. Check quota and workload reads and the availability of the admitted Pods.
+
+
+  ```bash
+
+  kubectl get resourcequota station; kubectl get deployments,replicasets,pods
+
+  ```
+
+
+  ### Live board response from client {#q126-station-admitted-board-http}
+
+
+  The admitted client may be unable to reach board:8080 or receive the expected north-126 response. Check the live request from client.
+
+
+  ```bash
+
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  ### HTTP port exposed by board {#q127-metrics-board-service-port}
+
+
+  The board Service may lack its named http port on TCP 8080. Check the published port tuple.
+
+
+  ```bash
+
+  kubectl get service board -o json | jq ''.spec.ports''
+
+  ```
+
+
+  ### Board Service target port {#q127-metrics-board-target-port}
+
+
+  The board targetPort may point to the wrong port or a name that fails to resolve to TCP 8080 on all current target Pods. Check the Service and container port declarations.
+
+
+  ```bash
+
+  kubectl get service board -o json | jq ''.spec.ports''; kubectl get pods -l app=board -o json | jq ''.items[] | {name: .metadata.name, ports: [.spec.containers[].ports]}''
+
+  ```
+
+
+  ### Board Service selector {#q127-metrics-board-selector}
+
+
+  The Service selector may miss an intended board Pod or match another workload. Check app: board and compare the full selector with the live Pod labels.
+
+
+  ```bash
+
+  kubectl get service board -o json | jq ''.spec.selector''; kubectl get pods --show-labels
+
+  ```
+
+
+  ### Inputs to the board Service check {#q127-metrics-board-observer-input}
+
+
+  The observer may have stopped before reporting a condition. Check access to the board Service and the current workloads.
+
+
+  ```bash
+
+  kubectl get service board; kubectl get deployments,replicasets,pods
+
+  ```
+
+
+  ### Preserved observer workload identities {#q127-metrics-retained-observer-identity}
+
+
+  A supplied Service or workload may be unreadable, replaced or running a different image. Compare the current objects and worker images with the recorded identities.
+
+
+  ```bash
+
+  jq ''{serviceUID,deployments}'' /run/dq/facts/0/observer-identities.json; kubectl get deployment board client observer-count observer-total -o custom-columns=NAME:.metadata.name,UID:.metadata.uid,IMAGE:.spec.template.spec.containers[*].image; kubectl get service board -o jsonpath=''{.metadata.uid}''; kubectl get replicaset,pod -o json | jq ''.items[] | {kind, name: .metadata.name, uid: .metadata.uid, owner: .metadata.ownerReferences, workers: [.spec.containers[]? | {name,image}]}''
+
+  ```
+
+
+  ### Preserved observer program {#q127-metrics-retained-observer-program}
+
+
+  The metrics or program ConfigMap may have been replaced, the observer program may differ, or the current worker may start another command. Check the supplied ConfigMaps, launch command and hash of the mounted program.
+
+
+  ```bash
+
+  jq ''{metricsUID,programUID,programHash}'' /run/dq/facts/0/observer-identities.json; kubectl get configmaps board-metrics observer-program -o custom-columns=NAME:.metadata.name,UID:.metadata.uid; kubectl get configmap observer-program -o json | jq -jr ''.data["poll.sh"]'' | sha256sum; kubectl get deployments observer-count observer-total -o json | jq ''.items[] | {name: .metadata.name, launch: [.spec.template.spec.containers[] | select(.name=="worker") | .command]}''; for name in observer-count observer-total; do kubectl exec "deployment/$name" -c worker -- sha256sum /opt/observer/poll.sh; done
+
+  ```
+
+
+  ### Observer inputs in the template {#q127-metrics-observer-environment-template}
+
+
+  The Deployment template may resolve different query inputs for the observer. Compare PROMETHEUS_URL, METRIC, ROUTE, JOB and each observer''s OPERATION with the supplied intent.
+
+
+  ```bash
+
+  jq ''{intent, operations: [.contract.consumers[] | {deployment,operation}]}'' /run/dq/facts/0/observer-identities.json; kubectl get deployments observer-count observer-total -o json | jq ''.items[] | {name: .metadata.name, env: [.spec.template.spec.containers[] | select(.name=="worker") | {env,envFrom}]}''
+
+  ```
+
+
+  ### Live observer environment {#q127-metrics-observer-current-environment}
+
+
+  A current ready observer Pod may be unavailable, or the worker environment may differ from the intended inputs. Check the current owner chain and repeat the exercise''s in-Pod observation.
+
+
+  ```bash
+
+  jq ''{intent, operations: [.contract.consumers[] | {deployment,operation}]}'' /run/dq/facts/0/observer-identities.json; kubectl get deployments,replicasets,pods -o wide; for name in observer-count observer-total; do kubectl exec "deployment/$name" -c worker -- sh -c ''printf "%s\n" "$PROMETHEUS_URL" "$METRIC" "$ROUTE" "$JOB" "$OPERATION"''; done
+
+  ```
+
+
+  ### Prometheus query status {#q127-metrics-query-status}
+
+
+  The marked Prometheus query may be unreachable or may have returned an error. Check the supplied endpoint from client and repeat the query named in the failure to confirm status success.
+
+
+  ```bash
+
+  url=$(jq -er .url /run/dq/facts/0/prometheus-target.json); for query in up%7Bjob%3D%22board%22%7D sum%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29 count%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29; do kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=$query"; done
+
+  ```
+
+
+  ### Number of Prometheus results {#q127-metrics-query-vector-cardinality}
+
+
+  The marked query may return no entries or more than one. Check the job and route filters and confirm exactly one result for that query.
+
+
+  ```bash
+
+  url=$(jq -er .url /run/dq/facts/0/prometheus-target.json); for query in up%7Bjob%3D%22board%22%7D sum%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29 count%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29; do kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=$query" | jq ''.data.result | length''; done
+
+  ```
+
+
+  ### Observed Prometheus sample {#q127-metrics-query-observed-value}
+
+
+  The marked query may have returned a different sample value. Compare up with 1, sum with 7 or count with 2 for the named query.
+
+
+  ```bash
+
+  url=$(jq -er .url /run/dq/facts/0/prometheus-target.json); for query in up%7Bjob%3D%22board%22%7D sum%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29 count%28station_queue_depth%7Bjob%3D%22board%22%2Croute%3D%22north%22%7D%29; do kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=$query" | jq ''.data.result[0].value[1]''; done
+
+  ```
+
+
+  ### Health of the active board target {#q127-metrics-active-board-target}
+
+
+  Prometheus may lack an active board target with health up and empty lastError. Inspect the active target list and its scrape error.
+
+
+  ```bash
+
+  url=$(jq -er .url /run/dq/facts/0/prometheus-target.json); kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/targets?state=active" | jq ''.data.activeTargets[] | {job: .labels.job, health, lastError}''
+
+  ```
+
+
+  ### Result served by the observer {#q127-metrics-observer-result-delivery}
+
+
+  An observer may have no current ready worker or may publish a stale or incorrect result. Check the loopback response in each observer, where count must show 2 and sum must show 7.
+
+
+  ```bash
+
+  jq ''.contract.consumers[] | {deployment,operation,expected}'' /run/dq/facts/0/observer-identities.json; for name in observer-count observer-total; do kubectl rollout status "deployment/$name" --timeout=10s; kubectl exec "deployment/$name" -c worker -- wget -qO- -T 2 http://127.0.0.1:8080; done
+
+  ```
+
+
+  ### Progress of observer polling {#q127-metrics-observer-poll-progress}
+
+
+  The observation counter may be stalled. Read /tmp/observations twice in the same current worker and confirm that it increases while polling continues.
+
+
+  ```bash
+
+  for name in observer-count observer-total; do kubectl rollout status "deployment/$name" --timeout=10s; pod=$(kubectl get pods -l "app=$name" -o json | jq -er ''[.items[] | select(.metadata.deletionTimestamp==null and any(.status.conditions[]?; .type=="Ready" and .status=="True")) | .metadata.name] | if length==1 then .[0] else error("expected one current Ready Pod") end'') || continue; kubectl exec "$pod" -c worker -- cat /tmp/observations; sleep 1.1; kubectl exec "$pod" -c worker -- cat /tmp/observations; done
+
+  ```
+
+
+  ### Inputs to the result delivery check {#q127-metrics-observer-delivery-input}
+
+
+  The delivery observer may have stopped before reporting a condition. Check that the Prometheus endpoint and the client and observer Pods are available.
+
+
+  ```bash
+
+  test -s /run/dq/facts/0/prometheus-target.json; kubectl get deployment client observer-count observer-total
+
+  ```
+
   '
-source_hash: 780e7a7e74fe948e705bffaf9d98d89be823be3f00505062782f3514c3174eca
+source_hash: 11ec2dd8e01098f5dc55ab27de38a6e4e2065c8ae0806960c12ea67026751784

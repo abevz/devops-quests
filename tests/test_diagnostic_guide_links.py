@@ -21,7 +21,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 126))
+@pytest.mark.parametrize("quest", range(1, 131))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -567,6 +567,29 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
             if r"[DQ:denied_${path//\//_}]" in check:
                 paths, = re.findall(r"^for path in ([a-z/ ]+); do$", check, re.M)
                 emitted.update("denied_" + path.replace("/", "_") for path in paths.split())
+            for _, body in re.findall(
+                r"<<'(DQ_QUOTA|DQ_DEFAULTS|DQ_ADMITTED|DQ_ADMISSION_POLICY|DQ_ADMISSION_CONSUMERS|"
+                r"DQ_OBSERVER_INPUTS|DQ_OBSERVER_DELIVERY|DQ_CHECKPOINT_SNAPSHOT|DQ_CHECKPOINT_RESTORE|"
+                r"DQ_RETIREMENT)'\n(.*?)\n\1(?:\n|$)", check, re.S
+            ):
+                for call in ast.walk(ast.parse(body)):
+                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name):
+                        position = {"emit": 0, "require": 1}.get(call.func.id)
+                        if position is not None and len(call.args) > position:
+                            value = call.args[position]
+                            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                                emitted.add(value.value)
+            if '[DQ:${query}_value]' in check:
+                queries = re.findall(r"^query=([a-z]+)$", check, re.M)
+                suffixes = re.findall(r'check "\$\{query\}_([a-z]+)"', check)
+                emitted.update(f"{query}_{suffix}" for query in queries for suffix in (*suffixes, "value"))
+            if quest == 130:
+                for body in re.findall(r"<<'DQ_BOSS'\n(.*?)\nDQ_BOSS(?:\n|$)", check, re.S):
+                    for node in ast.walk(ast.parse(body)):
+                        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.List)
+                                and any(isinstance(target, ast.Name) and target.id == "checks"
+                                        for target in node.targets)):
+                            emitted.update(ast.literal_eval(item.elts[0]) for item in node.value.elts)
             assert emitted, (quest, goal["text"])
             markers.update(emitted)
     explanations = catalog.public(quest)["diagnostics"]
