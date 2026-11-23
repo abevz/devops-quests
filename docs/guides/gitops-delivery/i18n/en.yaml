@@ -626,5 +626,120 @@ text: '# Private registry and GitOps recovery
 
   The original consumer may still be unavailable after image pull or return another route; inspect rollout and the actual worker HTTP response, rather than relying on registry readiness alone. The supplied registry is stopped, the existing pull Secret has retired credentials, and the original Deployment has zero replicas. First use the documented start interface during objective polling; then update the existing Secret and scale the original Deployment to one. Preserve the original source, trust and pod specification.  `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080`.
 
+
+
+  ### Read the supplied platform input {#private-git-provided-input-startup}
+
+
+  The supplied platform.env may be missing, unreadable or invalid, or the observation may stop before a named result; check its syntax and required variables without printing credentials. This fallback is used only when this group fails without its own detailed marker.  `test -r platform.env; bash -n platform.env`.
+
+
+  ### Repository source {#private-git-source-repository}
+
+
+  The application may still reference another repository, or its API object could not be read; compare repoURL with the supplied GIT_URL.  `kubectl get application board -o json | jq .spec.source.repoURL`.
+
+
+  ### Resolve the manifest directory {#private-git-manifest-path}
+
+
+  Setup leaves the source path at retired; the source must resolve to the relative manifests directory without an absolute path or parent traversal.  `kubectl get application board -o json | jq .spec.source.path`.
+
+
+  ### Track the intended branch {#private-git-tracked-branch}
+
+
+  The application may track another ref or have no readable source; targetRevision must select main.  `kubectl get application board -o json | jq .spec.source.targetRevision`.
+
+
+  ### Observe reconciliation {#private-git-reconciliation}
+
+
+  A wrong source path, an unpublished change or a reconciliation error may leave sync.status different from Synced; inspect application conditions and the revision before retrying.  `kubectl get application board -o json | jq .status`.
+
+
+  ### Compare the stage revision {#private-git-stage-revision}
+
+
+  The expected commit may be absent or the application may still report an older revision: stage one uses the frozen baseline, while stage two uses the published working release-commit. A Synced status alone does not establish that equality.  `cat /run/dq/facts/0/baseline-commit release-commit; kubectl get application board -o json | jq .status.sync.revision`.
+
+
+  ### Retain automated reconciliation {#private-git-automated-reconciliation}
+
+
+  Automated reconciliation may have been removed or disabled; selfHeal must be true in both stages, and prune is additionally required in the release stage.  `kubectl get application board -o json | jq .spec.syncPolicy.automated`.
+
+
+  ### Health after publication {#private-git-release-health}
+
+
+  The application can be Synced while the private image cannot start; inspect health conditions and Pod events. Healthy is required for the release stage, not the initial source-path repair.  `kubectl get application board -o json | jq .status.health; kubectl get pods`.
+
+
+  ### Initial effective pull requirements {#private-git-initial-pull-contract}
+
+
+  Always may be missing from the named container or current owned Pods, or their effective pull references may differ from the single existing registry-pull name; API and object-shape errors also use secrets. This stage requires active Pods, without requiring the approved release image or readiness yet.  `kubectl get deployment board -o json | jq .spec.template.spec; kubectl get pods -o json`.
+
+
+  ### Publish a new descendant commit {#private-git-published-descendant}
+
+
+  The release may remain local, fetch may fail, release-commit may name a different remote head, or history may have been replaced. Publish a new descendant of the frozen baseline to origin/main and retain its commit in release-commit; merely republishing the baseline is insufficient.  `git -C repository fetch origin main; git -C repository log --oneline -3 origin/main; cat release-commit`.
+
+
+  ### Verify the published manifest {#private-git-published-manifest}
+
+
+  The published manifests/board.yaml may still use the mutable retired image, omit Always or use different pull references. Its named container image must exactly equal the frozen release; an empty template pull list may inherit the existing registry-pull reference from the live ServiceAccount. Fetch, parsing and API errors can also report git_image.  `git -C repository show origin/main:manifests/board.yaml; jq .image /run/dq/facts/0/private-release.json`.
+
+
+  ### Compare the live template {#private-git-live-template}
+
+
+  A corrected Git file may not yet be reconciled into the live named container; compare its exact frozen image and Always policy. API, missing-container and malformed-object errors can also report live_image.  `kubectl get deployment board -o json | jq .spec.template.spec.containers`.
+
+
+  ### Observe a ready private image {#private-git-ready-private-image}
+
+
+  The rollout may be blocked by image pulls or readiness, or a current owned Pod may not yet run the exact frozen image with its digest and ready running state. A matching template alone does not prove this; API or frozen-input errors also report image_id.  `kubectl rollout status deployment/board --timeout=3s; kubectl get pods -o json | jq .items[].status.containerStatuses`.
+
+
+  ### Observe the authenticated digest {#private-git-authenticated-digest}
+
+
+  The frozen image field may be absent, or the registry request may fail because of supplied endpoint, credentials, CA or availability. The check requests the frozen digest over authenticated TLS using working platform.env and registry-ca.crt; it does not compare endpoint or credential hashes with an original authority.  `jq .image /run/dq/facts/0/private-release.json; test -r registry-ca.crt`.
+
+
+  ### Observe the Service response {#private-git-service-response}
+
+
+  The process may still serve an old response or Service routing may be broken; the actual request to port 8080 must return north-80 after the rollout.  `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`.
+
+
+  ### initial: observation startup {#private-git-initial-observer-startup}
+
+
+  The initial observation may stop while reading platform.env or loading Python helpers before it emits a detailed result; check the supplied input and dq_check availability. Already named image, policy, pull or API failures keep their own markers.  `test -r platform.env; bash -n platform.env; python3 -I -c "import dq_check"`.
+
+
+  ### Git: observation startup {#private-git-git-observer-startup}
+
+
+  The Git observation may stop while reading platform.env or loading Python helpers before it emits a detailed result; check the supplied input and dq_check availability. Already named image, policy, pull or API failures keep their own markers.  `test -r platform.env; bash -n platform.env; python3 -I -c "import dq_check"`.
+
+
+  ### live: observation startup {#private-git-live-observer-startup}
+
+
+  The live observation may stop while reading platform.env or loading Python helpers before it emits a detailed result; check the supplied input and dq_check availability. Already named image, policy, pull or API failures keep their own markers.  `test -r platform.env; bash -n platform.env; python3 -I -c "import dq_check"`.
+
+
+  ### ready: observation startup {#private-git-ready-observer-startup}
+
+
+  The ready observation may stop while reading platform.env or loading Python helpers before it emits a detailed result; check the supplied input and dq_check availability. Already named image, policy, pull or API failures keep their own markers.  `test -r platform.env; bash -n platform.env; python3 -I -c "import dq_check"`.
+
   '
-source_hash: 221bff7bfc1dc1d94d5044bf4f344e73350502401d4a88037c7e37063aa3d519
+source_hash: 8c6968dac92211592a7e79c7074f8150009d8c9d78bdf6ffa3669bb8b7bb72c4

@@ -626,5 +626,120 @@ text: '# Восстановление приватного реестра и Git
 
   Исходный потребитель может оставаться недоступным после image pull либо выдавать другой маршрут; проверьте rollout и реальный HTTP-ответ worker, а не только готовность registry. Выданный registry остановлен, существующий pull Secret содержит старые credentials, а исходный Deployment имеет ноль реплик. Сначала используйте описанный start-интерфейс при опросе целей, затем обновите существующий Secret и масштабируйте исходный Deployment до одной реплики. Сохраните источник, trust и pod specification.  `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080`.
 
+
+
+  ### Чтение выданных входных данных {#private-git-provided-input-startup}
+
+
+  Выданный platform.env может отсутствовать, не читаться или содержать ошибку; наблюдение также может оборваться до именованного результата. Проверьте синтаксис и нужные переменные без вывода credentials. Fallback появляется только при сбое группы без её подробного маркера.  `test -r platform.env; bash -n platform.env`.
+
+
+  ### Репозиторий источника {#private-git-source-repository}
+
+
+  Приложение может ссылаться на другой репозиторий, либо API-объект не прочитан; сравните repoURL с выданным GIT_URL.  `kubectl get application board -o json | jq .spec.source.repoURL`.
+
+
+  ### Путь каталога манифестов {#private-git-manifest-path}
+
+
+  Setup оставляет путь retired; источник должен разрешаться в относительный каталог manifests без абсолютного пути и перехода к родителю.  `kubectl get application board -o json | jq .spec.source.path`.
+
+
+  ### Отслеживаемая ветка {#private-git-tracked-branch}
+
+
+  Приложение может отслеживать другую ссылку либо не иметь читаемого источника; targetRevision выбирает main.  `kubectl get application board -o json | jq .spec.source.targetRevision`.
+
+
+  ### Наблюдение согласования {#private-git-reconciliation}
+
+
+  Неверный путь, неопубликованное изменение или ошибка согласования могут оставить sync.status отличным от Synced; изучите conditions и revision приложения.  `kubectl get application board -o json | jq .status`.
+
+
+  ### Ревизия текущего этапа {#private-git-stage-revision}
+
+
+  Ожидаемый commit может отсутствовать, а приложение показывать старую revision: первый этап использует зафиксированный baseline, второй — опубликованный рабочий release-commit. Одного Synced недостаточно для равенства.  `cat /run/dq/facts/0/baseline-commit release-commit; kubectl get application board -o json | jq .status.sync.revision`.
+
+
+  ### Автоматическое согласование {#private-git-automated-reconciliation}
+
+
+  Автоматическое согласование могло быть удалено или выключено; selfHeal нужен в обоих этапах, prune дополнительно требуется на этапе релиза.  `kubectl get application board -o json | jq .spec.syncPolicy.automated`.
+
+
+  ### Готовность после публикации {#private-git-release-health}
+
+
+  Приложение может быть Synced, хотя приватный image не запускается; изучите health conditions и события Pod. Healthy требуется на этапе релиза, а не при начальном исправлении пути.  `kubectl get application board -o json | jq .status.health; kubectl get pods`.
+
+
+  ### Исходные требования pull {#private-git-initial-pull-contract}
+
+
+  Always может отсутствовать у именованного контейнера или текущих принадлежащих ему Pod, а эффективные pull-ссылки отличаться от единственного registry-pull; ошибки API и структуры также дают secrets. Здесь нужны активные Pod, но ещё не одобренный image релиза или готовность.  `kubectl get deployment board -o json | jq .spec.template.spec; kubectl get pods -o json`.
+
+
+  ### Публикация нового потомка commit {#private-git-published-descendant}
+
+
+  Релиз мог остаться локальным, fetch завершиться ошибкой, release-commit указывать другой remote head, а история быть заменена. Опубликуйте нового потомка baseline в origin/main и сохраните его в release-commit; повторной публикации baseline недостаточно.  `git -C repository fetch origin main; git -C repository log --oneline -3 origin/main; cat release-commit`.
+
+
+  ### Проверка опубликованного манифеста {#private-git-published-manifest}
+
+
+  Опубликованный manifests/board.yaml может сохранять mutable retired image, не иметь Always или использовать другие pull-ссылки. Image именованного контейнера должен точно совпадать с зафиксированным релизом; пустой список template может наследовать registry-pull от живого ServiceAccount. Ошибки fetch, разбора и API также дают git_image.  `git -C repository show origin/main:manifests/board.yaml; jq .image /run/dq/facts/0/private-release.json`.
+
+
+  ### Сравнение живого template {#private-git-live-template}
+
+
+  Исправленный файл Git мог ещё не попасть в живой именованный контейнер; сравните точный зафиксированный image и Always. Ошибки API, отсутствия контейнера и структуры также дают live_image.  `kubectl get deployment board -o json | jq .spec.template.spec.containers`.
+
+
+  ### Наблюдение готового приватного image {#private-git-ready-private-image}
+
+
+  Rollout может блокироваться pull или readiness, либо текущий принадлежащий Pod ещё не запускает точный image с его digest в ready/running состоянии. Одного template недостаточно; ошибки API и зафиксированных входных данных также дают image_id.  `kubectl rollout status deployment/board --timeout=3s; kubectl get pods -o json | jq .items[].status.containerStatuses`.
+
+
+  ### Наблюдение digest с аутентификацией {#private-git-authenticated-digest}
+
+
+  Поле зафиксированного image может отсутствовать, либо запрос registry не пройти из-за endpoint, credentials, CA или доступности. Проверка запрашивает зафиксированный digest по authenticated TLS с рабочими platform.env и registry-ca.crt; хэши endpoint или credentials с исходной authority не сравниваются.  `jq .image /run/dq/facts/0/private-release.json; test -r registry-ca.crt`.
+
+
+  ### Ответ Service {#private-git-service-response}
+
+
+  Процесс может отдавать старый ответ либо маршрут Service не работать; реальный запрос на порт 8080 после rollout должен вернуть north-80.  `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`.
+
+
+  ### initial: запуск наблюдения {#private-git-initial-observer-startup}
+
+
+  Наблюдение initial может оборваться при чтении platform.env или загрузке Python helpers до подробного результата; проверьте выданный файл и доступность dq_check. Именованные ошибки image, policy, pull или API сохраняют собственные маркеры.  `test -r platform.env; bash -n platform.env; python3 -I -c "import dq_check"`.
+
+
+  ### Git: запуск наблюдения {#private-git-git-observer-startup}
+
+
+  Наблюдение Git может оборваться при чтении platform.env или загрузке Python helpers до подробного результата; проверьте выданный файл и доступность dq_check. Именованные ошибки image, policy, pull или API сохраняют собственные маркеры.  `test -r platform.env; bash -n platform.env; python3 -I -c "import dq_check"`.
+
+
+  ### live: запуск наблюдения {#private-git-live-observer-startup}
+
+
+  Наблюдение live может оборваться при чтении platform.env или загрузке Python helpers до подробного результата; проверьте выданный файл и доступность dq_check. Именованные ошибки image, policy, pull или API сохраняют собственные маркеры.  `test -r platform.env; bash -n platform.env; python3 -I -c "import dq_check"`.
+
+
+  ### ready: запуск наблюдения {#private-git-ready-observer-startup}
+
+
+  Наблюдение ready может оборваться при чтении platform.env или загрузке Python helpers до подробного результата; проверьте выданный файл и доступность dq_check. Именованные ошибки image, policy, pull или API сохраняют собственные маркеры.  `test -r platform.env; bash -n platform.env; python3 -I -c "import dq_check"`.
+
   '
-source_hash: 221bff7bfc1dc1d94d5044bf4f344e73350502401d4a88037c7e37063aa3d519
+source_hash: 8c6968dac92211592a7e79c7074f8150009d8c9d78bdf6ffa3669bb8b7bb72c4

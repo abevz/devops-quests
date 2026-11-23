@@ -626,5 +626,120 @@ text: '# Private Registry und GitOps wiederherstellen
 
   Der ursprüngliche Verbraucher bleibt nach Image-Pull möglicherweise unerreichbar oder liefert eine andere Route; prüfen Sie Rollout und tatsächliche worker HTTP-Antwort statt allein Registry-Bereitschaft. Die gelieferte Registry ist gestoppt, das bestehende Pull-Secret enthält alte credentials und das ursprüngliche Deployment hat null Repliken. Nutzen Sie zuerst die dokumentierte Start-Schnittstelle bei der Zielabfrage, aktualisieren Sie dann das bestehende Secret und skalieren Sie das ursprüngliche Deployment auf eins. Erhalten Sie Quelle, Trust und Pod-Spezifikation.  `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080`.
 
+
+
+  ### Gelieferte Eingaben lesen {#private-git-provided-input-startup}
+
+
+  platform.env fehlt möglicherweise, ist unlesbar oder ungültig, oder die Beobachtung endet vor einem benannten Ergebnis; prüfen Sie Syntax und benötigte Variablen ohne credentials auszugeben. Dieser Fallback erscheint nur bei Gruppenfehler ohne eigenen Detailmarker.  `test -r platform.env; bash -n platform.env`.
+
+
+  ### Quellrepository {#private-git-source-repository}
+
+
+  Die Anwendung verweist möglicherweise auf ein anderes Repository oder der API-Abruf scheitert; vergleichen Sie repoURL mit dem gelieferten GIT_URL.  `kubectl get application board -o json | jq .spec.source.repoURL`.
+
+
+  ### Manifestverzeichnis auflösen {#private-git-manifest-path}
+
+
+  Setup belässt den Pfad retired; die Quelle muss zum relativen Verzeichnis manifests führen, ohne absoluten Pfad oder Elternverzeichniswechsel.  `kubectl get application board -o json | jq .spec.source.path`.
+
+
+  ### Gewünschten Branch verfolgen {#private-git-tracked-branch}
+
+
+  Die Anwendung verfolgt möglicherweise eine andere Referenz oder die Quelle ist unlesbar; targetRevision muss main wählen.  `kubectl get application board -o json | jq .spec.source.targetRevision`.
+
+
+  ### Abgleich beobachten {#private-git-reconciliation}
+
+
+  Falscher Quellpfad, unveröffentlichte Änderung oder Abgleichfehler können sync.status ungleich Synced lassen; prüfen Sie conditions und revision.  `kubectl get application board -o json | jq .status`.
+
+
+  ### Revision der aktuellen Stufe {#private-git-stage-revision}
+
+
+  Der erwartete Commit fehlt möglicherweise oder die Anwendung meldet eine ältere Revision: Stufe eins nutzt die eingefrorene Baseline, Stufe zwei den veröffentlichten Arbeitswert release-commit. Synced allein belegt diese Gleichheit nicht.  `cat /run/dq/facts/0/baseline-commit release-commit; kubectl get application board -o json | jq .status.sync.revision`.
+
+
+  ### Automatischen Abgleich erhalten {#private-git-automated-reconciliation}
+
+
+  Automatischer Abgleich wurde möglicherweise entfernt oder deaktiviert; selfHeal muss in beiden Stufen true sein, prune zusätzlich in der Veröffentlichungsstufe.  `kubectl get application board -o json | jq .spec.syncPolicy.automated`.
+
+
+  ### Gesundheit nach Veröffentlichung {#private-git-release-health}
+
+
+  Die Anwendung kann Synced sein, obwohl das private Image nicht startet; prüfen Sie health conditions und Pod-Ereignisse. Healthy ist in der Veröffentlichungsstufe erforderlich, nicht bei der anfänglichen Pfadreparatur.  `kubectl get application board -o json | jq .status.health; kubectl get pods`.
+
+
+  ### Anfängliche Pull-Anforderungen {#private-git-initial-pull-contract}
+
+
+  Always fehlt möglicherweise im benannten Container oder aktuellen zugehörigen Pods, oder wirksame Pull-Verweise weichen vom einzigen Namen registry-pull ab; API- und Strukturfehler ergeben ebenfalls secrets. Diese Stufe verlangt aktive Pods, noch kein freigegebenes Image oder Bereitschaft.  `kubectl get deployment board -o json | jq .spec.template.spec; kubectl get pods -o json`.
+
+
+  ### Neuen Nachfolgecommit veröffentlichen {#private-git-published-descendant}
+
+
+  Die Veröffentlichung bleibt möglicherweise lokal, fetch scheitert, release-commit nennt einen anderen Remote-Stand oder die Historie wurde ersetzt. Veröffentlichen Sie einen neuen Nachfolger der Baseline auf origin/main und halten Sie ihn in release-commit fest; dieselbe Baseline erneut zu veröffentlichen reicht nicht.  `git -C repository fetch origin main; git -C repository log --oneline -3 origin/main; cat release-commit`.
+
+
+  ### Veröffentlichtes Manifest prüfen {#private-git-published-manifest}
+
+
+  Das veröffentlichte manifests/board.yaml enthält möglicherweise noch das mutable retired Image, kein Always oder andere Pull-Verweise. Das benannte Container-Image muss exakt der eingefrorenen Veröffentlichung entsprechen; eine leere Template-Liste darf registry-pull vom aktuellen ServiceAccount erben. Fetch-, Parse- und API-Fehler ergeben ebenfalls git_image.  `git -C repository show origin/main:manifests/board.yaml; jq .image /run/dq/facts/0/private-release.json`.
+
+
+  ### Aktuelles Template vergleichen {#private-git-live-template}
+
+
+  Die korrigierte Git-Datei ist möglicherweise noch nicht im benannten Live-Container angekommen; vergleichen Sie exaktes eingefrorenes Image und Always. API-Fehler, fehlender Container oder fehlerhafte Struktur ergeben ebenfalls live_image.  `kubectl get deployment board -o json | jq .spec.template.spec.containers`.
+
+
+  ### Bereites privates Image beobachten {#private-git-ready-private-image}
+
+
+  Der Rollout wird möglicherweise durch Pull oder Readiness blockiert, oder ein aktueller zugehöriger Pod führt das exakte eingefrorene Image noch nicht mit Digest und ready/running Zustand aus. Das Template allein belegt dies nicht; API- oder Eingabefehler ergeben ebenfalls image_id.  `kubectl rollout status deployment/board --timeout=3s; kubectl get pods -o json | jq .items[].status.containerStatuses`.
+
+
+  ### Authentifizierten Digest beobachten {#private-git-authenticated-digest}
+
+
+  Das eingefrorene Image-Feld fehlt möglicherweise oder die Registry-Anfrage scheitert an Endpoint, credentials, CA oder Verfügbarkeit. Die Prüfung ruft den eingefrorenen Digest über authenticated TLS mit aktuellem platform.env und registry-ca.crt ab; Endpoint- oder Credential-Hashes werden nicht mit einer ursprünglichen Authority verglichen.  `jq .image /run/dq/facts/0/private-release.json; test -r registry-ca.crt`.
+
+
+  ### Service-Antwort beobachten {#private-git-service-response}
+
+
+  Der Prozess liefert möglicherweise eine alte Antwort oder das Service-Routing ist gestört; die tatsächliche Anfrage an Port 8080 muss nach dem Rollout north-80 liefern.  `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`.
+
+
+  ### initial: Beobachtungsstart {#private-git-initial-observer-startup}
+
+
+  Die initial Beobachtung endet möglicherweise beim Lesen von platform.env oder Laden der Python helpers vor einem Detailergebnis; prüfen Sie Eingabe und dq_check. Benannte Image-, Policy-, Pull- oder API-Fehler behalten eigene Marker.  `test -r platform.env; bash -n platform.env; python3 -I -c "import dq_check"`.
+
+
+  ### Git: Beobachtungsstart {#private-git-git-observer-startup}
+
+
+  Die Git Beobachtung endet möglicherweise beim Lesen von platform.env oder Laden der Python helpers vor einem Detailergebnis; prüfen Sie Eingabe und dq_check. Benannte Image-, Policy-, Pull- oder API-Fehler behalten eigene Marker.  `test -r platform.env; bash -n platform.env; python3 -I -c "import dq_check"`.
+
+
+  ### live: Beobachtungsstart {#private-git-live-observer-startup}
+
+
+  Die live Beobachtung endet möglicherweise beim Lesen von platform.env oder Laden der Python helpers vor einem Detailergebnis; prüfen Sie Eingabe und dq_check. Benannte Image-, Policy-, Pull- oder API-Fehler behalten eigene Marker.  `test -r platform.env; bash -n platform.env; python3 -I -c "import dq_check"`.
+
+
+  ### ready: Beobachtungsstart {#private-git-ready-observer-startup}
+
+
+  Die ready Beobachtung endet möglicherweise beim Lesen von platform.env oder Laden der Python helpers vor einem Detailergebnis; prüfen Sie Eingabe und dq_check. Benannte Image-, Policy-, Pull- oder API-Fehler behalten eigene Marker.  `test -r platform.env; bash -n platform.env; python3 -I -c "import dq_check"`.
+
   '
-source_hash: 221bff7bfc1dc1d94d5044bf4f344e73350502401d4a88037c7e37063aa3d519
+source_hash: 8c6968dac92211592a7e79c7074f8150009d8c9d78bdf6ffa3669bb8b7bb72c4
