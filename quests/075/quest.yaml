@@ -7,44 +7,83 @@ stages:
 - brief: stages.0.brief
   objectives:
   - text: stages.0.objectives.0.text
-    check: 'source platform.env
-
+    check: |-
+      set +e
+      (
+      set -e
+      source platform.env
       source webhook.env
-
       GITEA_API="${GIT_URL%/rail/station.git}/api/v1/repos/rail/station"
-
       hook=$(cat /run/dq/facts/0/hook-id)
-
-      curl -fsS -u "$GIT_USER:$GIT_PASSWORD" "$GITEA_API/hooks/$hook" | jq -e --arg url "$(jq -er .url /run/dq/facts/0/webhook-target.json)"
-      ''.active==true and .type=="gogs" and (.config.url | sub("\\?$";""))==$url and .config.content_type=="json"
-      and .events==["push"] and .branch_filter=="main"'' >/dev/null'
+      curl -fsS -u "$GIT_USER:$GIT_PASSWORD" "$GITEA_API/hooks/$hook" | jq -e --arg url "$(jq -er .url /run/dq/facts/0/webhook-target.json)" '.active==true and .type=="gogs" and (.config.url | sub("\\?$";""))==$url and .config.content_type=="json" and .events==["push"] and .branch_filter=="main"' >/dev/null
+      )
+      code=$?
+      set -e
+      if [ "$code" -ne 0 ]; then
+        printf '%s\n' 'The existing hook configuration could not be verified: ✗ [DQ:webhook_hook]' >&2
+        exit "$code"
+      fi
   - text: stages.0.objectives.1.text
     keep: true
-    check: 'source platform.env
-
+    check: |-
+      set +e
+      (
+      set -e
+      source platform.env
       git -C repository fetch origin main >/dev/null 2>&1
-
       test "$(git -C repository rev-parse origin/main)" = "$(cat release-commit)"
-
       test "$(cat release-commit)" != "$(cat /run/dq/facts/0/initial-commit)"
-
-      git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/initial-commit)" origin/main'
+      git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/initial-commit)" origin/main
+      )
+      code=$?
+      set -e
+      if [ "$code" -ne 0 ]; then
+        printf '%s\n' 'The published revision could not be verified: ✗ [DQ:webhook_revision]' >&2
+        exit "$code"
+      fi
   - text: stages.0.objectives.2.text
     keep: true
-    check: 'source platform.env
-
-      kubectl get application board -o json | jq -e --arg url "$GIT_URL" ''def same_dir($want): if type!="string"
-      then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts
-      | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url and (.spec.source.path | same_dir("manifests"))
-      and .spec.source.targetRevision=="main"'' >/dev/null'
+    check: |-
+      set +e
+      (
+      set -e
+      source platform.env
+      kubectl get application board -o json | jq -e --arg url "$GIT_URL" 'def same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url and (.spec.source.path | same_dir("manifests")) and .spec.source.targetRevision=="main"' >/dev/null
+      )
+      code=$?
+      set -e
+      if [ "$code" -ne 0 ]; then
+        printf '%s\n' 'The Application source could not be verified: ✗ [DQ:webhook_source]' >&2
+        exit "$code"
+      fi
   - text: stages.0.objectives.3.text
-    check: 'source platform.env
-
-      kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" ''.status.sync.status=="Synced"
-      and .status.health.status=="Healthy" and .status.sync.revision==$rev'' >/dev/null'
+    check: |-
+      set +e
+      (
+      set -e
+      source platform.env
+      kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" '.status.sync.status=="Synced" and .status.health.status=="Healthy" and .status.sync.revision==$rev' >/dev/null
+      )
+      code=$?
+      set -e
+      if [ "$code" -ne 0 ]; then
+        printf '%s\n' 'The reconciled Application status could not be verified: ✗ [DQ:webhook_health]' >&2
+        exit "$code"
+      fi
   - text: stages.0.objectives.4.text
     keep: true
-    check: kubectl rollout status deployment/board --timeout=3s >/dev/null
+    check: |-
+      set +e
+      (
+      set -e
+      kubectl rollout status deployment/board --timeout=3s >/dev/null
+      )
+      code=$?
+      set -e
+      if [ "$code" -ne 0 ]; then
+        printf '%s\n' 'The current workload rollout could not be verified: ✗ [DQ:webhook_rollout]' >&2
+        exit "$code"
+      fi
   - text: stages.0.objectives.5.text
     check: "dq_probe_output=$(mktemp)\ntrap 'rm -f \"$dq_probe_output\"' EXIT\nset +e\n(\nset -euo pipefail\ndq_failed=0\n\
       set +e\n(\nset -euo pipefail\ntimeout --kill-after=1s 8s bash -euo pipefail <<'DQ_LEGACY'\ntest \"$(timeout\
@@ -77,10 +116,19 @@ stages:
       \ this objective: ✗ [DQ:probe_0_5]'\nfi\nrm -f \"$dq_probe_output\"\ntrap - EXIT\ntest \"$dq_probe_status\"\
       \ -eq 0\n"
   - text: stages.0.objectives.6.text
-    check: 'source platform.env
-
-      jq -e --arg repo "${GIT_URL%.git}" ''.repo==$repo and .branch=="main" and .authenticated==true'' /run/dq/observations/webhook.json
-      >/dev/null'
+    check: |-
+      set +e
+      (
+      set -e
+      source platform.env
+      jq -e --arg repo "${GIT_URL%.git}" '.repo==$repo and .branch=="main" and .authenticated==true' /run/dq/observations/webhook.json >/dev/null
+      )
+      code=$?
+      set -e
+      if [ "$code" -ne 0 ]; then
+        printf '%s\n' 'The protected event acceptance could not be verified: ✗ [DQ:webhook_acceptance]' >&2
+        exit "$code"
+      fi
 hints:
 - text: hints.0.text
   guide: gitops-delivery

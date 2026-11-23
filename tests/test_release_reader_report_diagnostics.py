@@ -414,3 +414,96 @@ def test_073_missing_environment_stops_before_policy_observation(tmp_path):
     assert result.returncode == 1
     assert result.stderr.count("[DQ:vault_capabilities]") == 1
     assert not (tmp_path / "api-called").exists()
+
+
+@pytest.mark.parametrize("index,marker", [
+    (0, "webhook_hook"), (1, "webhook_revision"), (2, "webhook_source"),
+    (3, "webhook_health"), (6, "webhook_acceptance"),
+])
+def test_075_missing_environment_stops_before_external_observation(tmp_path, index, marker):
+    result = run_check(tmp_path, 75, index, {
+        "curl": "touch api-called\n", "kubectl": "touch api-called\n",
+        "git": "touch api-called\n", "jq": "touch api-called\n",
+    })
+    assert result.returncode == 1
+    assert result.stderr.count(f"[DQ:{marker}]") == 1
+    assert not (tmp_path / "api-called").exists()
+
+
+def test_075_missing_webhook_environment_stops_before_hook_api(tmp_path):
+    (tmp_path / "platform.env").touch()
+    result = run_check(tmp_path, 75, 0, {"curl": "touch api-called\n"})
+    assert result.returncode == 1
+    assert "[DQ:webhook_hook]" in result.stderr
+    assert not (tmp_path / "api-called").exists()
+
+
+@pytest.mark.parametrize("api_status,json_status,expected", [(7, 0, 7), (0, 1, 1), (0, 0, 0)])
+def test_075_hook_pipeline_retains_both_command_statuses(
+    tmp_path, api_status, json_status, expected,
+):
+    (tmp_path / "platform.env").write_text(
+        "GIT_URL=http://provided/rail/station.git\nGIT_USER=provided\nGIT_PASSWORD=provided\n"
+    )
+    (tmp_path / "webhook.env").touch()
+    result = run_check(tmp_path, 75, 0, {
+        "cat": "printf 7\n", "curl": f"exit {api_status}\n",
+        "jq": f"/bin/cat >/dev/null\nexit {json_status}\n",
+    })
+    assert result.returncode == expected
+    assert ("[DQ:webhook_hook]" in result.stderr) == (expected != 0)
+
+
+@pytest.mark.parametrize("code", [0, 1, 7, 127])
+def test_075_rollout_retains_command_status(tmp_path, code):
+    result = run_check(tmp_path, 75, 4, {"kubectl": f"exit {code}\n"})
+    assert result.returncode == code
+    assert ("[DQ:webhook_rollout]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("index,marker", [(0, "dag_validate"), (6, "dag_plan")])
+@pytest.mark.parametrize("code", [0, 1, 2, 127])
+def test_076_tofu_validation_and_plan_retain_exit_status(tmp_path, index, marker, code):
+    result = run_check(tmp_path, 76, index, {"tofu": f"exit {code}\n"})
+    assert result.returncode == code
+    assert (f"[DQ:{marker}]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("code", [0, 1, 7, 127])
+def test_076_module_checksum_retains_exit_status(tmp_path, code):
+    result = run_check(tmp_path, 76, 1, {"sha256sum": f"exit {code}\n"})
+    assert result.returncode == code
+    assert ("[DQ:dag_module_source]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("north,good", [("dispatch:north", True), ("other", False), (None, False)])
+def test_076_observes_applied_north_file(tmp_path, north, good):
+    if north is not None:
+        (tmp_path / "north.txt").write_text(north + "\n")
+    result = run_check(tmp_path, 76, 3)
+    assert result.returncode == (0 if good else 1)
+    assert ("[DQ:dag_north]" in result.stderr) == (not good)
+
+
+@pytest.mark.parametrize("south,others,expected_marker", [
+    ("wrong", False, "dag_south"), (None, True, "dag_south"),
+    ("dispatch:north:south", False, "dag_delivery"),
+    ("dispatch:north:south", True, None),
+])
+def test_076_south_failure_keeps_existing_branch_diagnostic_separate(
+    tmp_path, south, others, expected_marker,
+):
+    if south is not None:
+        (tmp_path / "south.txt").write_text(south + "\n")
+    (tmp_path / "east.txt").write_text("dispatch:east\n" if others else "wrong\n")
+    (tmp_path / "archive.txt").write_text(
+        "dispatch:north:south|dispatch:east:archive\n" if others else "wrong\n"
+    )
+    result = run_check(tmp_path, 76, 4)
+    output = result.stdout + result.stderr
+    assert result.returncode == (1 if expected_marker else 0)
+    assert output.count("[DQ:") == (1 if expected_marker else 0)
+    if expected_marker:
+        assert f"[DQ:{expected_marker}]" in output
+    if south is None:
+        assert "south.txt" in result.stderr  # Preserve the original read error too.

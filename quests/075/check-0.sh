@@ -4,13 +4,26 @@ failed=0
 set +e
 (
 set -e
+set +e
+(
+set -e
 source platform.env
 source webhook.env
 GITEA_API="${GIT_URL%/rail/station.git}/api/v1/repos/rail/station"
 hook=$(cat /run/dq/facts/0/hook-id)
 curl -fsS -u "$GIT_USER:$GIT_PASSWORD" "$GITEA_API/hooks/$hook" | jq -e --arg url "$(jq -er .url /run/dq/facts/0/webhook-target.json)" '.active==true and .type=="gogs" and (.config.url | sub("\\?$";""))==$url and .config.content_type=="json" and .events==["push"] and .branch_filter=="main"' >/dev/null
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The existing hook configuration could not be verified: ✗ [DQ:webhook_hook]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 source platform.env
@@ -19,22 +32,59 @@ test "$(git -C repository rev-parse origin/main)" = "$(cat release-commit)"
 test "$(cat release-commit)" != "$(cat /run/dq/facts/0/initial-commit)"
 git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/initial-commit)" origin/main
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The published revision could not be verified: ✗ [DQ:webhook_revision]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 source platform.env
 kubectl get application board -o json | jq -e --arg url "$GIT_URL" 'def same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url and (.spec.source.path | same_dir("manifests")) and .spec.source.targetRevision=="main"' >/dev/null
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The Application source could not be verified: ✗ [DQ:webhook_source]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 source platform.env
 kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" '.status.sync.status=="Synced" and .status.health.status=="Healthy" and .status.sync.revision==$rev' >/dev/null
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The reconciled Application status could not be verified: ✗ [DQ:webhook_health]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 kubectl rollout status deployment/board --timeout=3s >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The current workload rollout could not be verified: ✗ [DQ:webhook_rollout]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -132,8 +182,18 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 source platform.env
 jq -e --arg repo "${GIT_URL%.git}" '.repo==$repo and .branch=="main" and .authenticated==true' /run/dq/observations/webhook.json >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The protected event acceptance could not be verified: ✗ [DQ:webhook_acceptance]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
