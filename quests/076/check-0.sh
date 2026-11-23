@@ -4,12 +4,32 @@ failed=0
 set +e
 (
 set -e
+set +e
+(
+set -e
 tofu validate -no-color >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The root module configuration could not be validated: ✗ [DQ:dag_validate]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 sha256sum -c /run/dq/facts/0/original-module.sha256 >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The original child module checksum could not be verified: ✗ [DQ:dag_module_source]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -68,12 +88,25 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 test "$(cat north.txt)" = dispatch:north
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The applied north route could not be verified: ✗ [DQ:dag_north]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
-test "$(cat south.txt)" = dispatch:north:south
+if ! test "$(cat south.txt)" = dispatch:north:south; then
+  printf '%s\n' 'The applied south route could not be verified: ✗ [DQ:dag_south]' >&2
+  exit 1
+fi
 if ! test "$(cat east.txt)" = dispatch:east || ! test "$(cat archive.txt)" = 'dispatch:north:south|dispatch:east:archive'; then
  printf '%s\n' 'Construct the independent branch and joined delivery described by the route contract: ✗ [DQ:dag_delivery]'
  exit 1
@@ -199,7 +232,17 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
 tofu plan -input=false -detailed-exitcode -no-color >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The final converged plan could not be verified: ✗ [DQ:dag_plan]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"
