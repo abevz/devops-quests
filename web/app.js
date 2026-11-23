@@ -13,7 +13,7 @@ import {
   trackForLevel,
 } from "./play.mjs";
 import { keySequence } from "./controls.mjs";
-import { diagnosticMessages } from "./diagnostics.mjs";
+import { checkFeedback, conditionKeys, showProbeReason } from "./diagnostics.mjs";
 import { scoreBreakdown } from "./score-preview.mjs";
 import { loadI18n, languageControls } from "./vendor/locale.js";
 const $ = (id) => document.getElementById(id),
@@ -82,16 +82,19 @@ function block(value, parent, language = contentLanguage()) {
   parent.append(p);
   return p;
 }
-function renderDiagnosticMessages(failure, messages, parent, reasonLanguage = contentLanguage()) {
+function renderDiagnosticMessages(failure, messages, parent, keys, feedback) {
   const reason = failure.reason ?? "checks.cause.unsatisfied";
-  const summary = el("p", i18n.t(reason, undefined, reasonLanguage));
-  parent.append(summary);
-  for (const explanation of diagnosticMessages(failure.detail ?? "", messages)) {
-    const content = block(explanation, parent);
+  keys ??= conditionKeys(failure, messages);
+  if (showProbeReason(reason, keys.length > 0, Boolean(feedback))) {
+    parent.append(elc("p", reason));
+  }
+  for (const key of keys) {
+    if (feedback?.start.has(key)) parent.append(elc("strong", "checks.fix_first"));
+    const content = block(messages[key], parent);
+    if (feedback?.waiting.has(key)) parent.append(elc("p", "checks.fix_after", undefined, "muted"));
     for (const link of content.querySelectorAll('a[href^="guides#guide="]')) {
       link.target = "_blank";
       link.rel = "noopener";
-      if (reason === "checks.cause.unsatisfied") summary.remove();
     }
   }
 }
@@ -909,7 +912,7 @@ function renderQuest() {
     disposeTerminals();
   }
   renderIfChanged($("bay-facts"), [q.id, q.facts], () => renderFacts(q.facts));
-  renderIfChanged($("check-feedback"), [r.id, lastCheck], () => renderCheckFeedback(r, q));
+  renderIfChanged($("check-feedback"), [r.id, r.stage, lastCheck], () => renderCheckFeedback(r, q));
   tick();
 }
 function renderObjectiveList(items, node) {
@@ -1028,12 +1031,18 @@ function renderCheckFeedback(run, quest) {
     if (result.status) node.append(el("p", t("checks." + result.status)));
     return;
   }
-  node.append(el("strong", t("checks.failed", { count: result.remaining.length })));
-  for (const item of result.remaining) {
+  if (result.stage !== run.stage) return;
+  const feedback = checkFeedback(result.remaining, quest.diagnostics, quest.diagnostic_dependencies);
+  node.append(elc("strong", "checks.failed", { count: feedback.count }));
+  for (const { failure: item, keys } of feedback.groups) {
     const wrap = el("div", undefined, "check-failure");
-    block(quest.stages[result.stage].objectives[item.objective], wrap);
-    wrap.append(el("p", t("checks.reason", { code: item.code })));
-    renderDiagnosticMessages(item, quest.diagnostics, wrap, i18n.language);
+    const objective = el("div", undefined, "check-objective");
+    const mark = el("span", "✗");
+    mark.setAttribute("aria-hidden", "true");
+    objective.append(mark);
+    block(quest.stages[result.stage].objectives[item.objective], objective);
+    wrap.append(objective);
+    renderDiagnosticMessages(item, quest.diagnostics, wrap, keys, feedback);
     if (item.detail) {
       const diagnostic = el("details");
       diagnostic.append(el("summary", t("checks.diagnostic")), el("pre", item.detail));
