@@ -4,6 +4,9 @@ failed=0
 set +e
 (
 set -e
+set +e
+(
+set -e
 source platform.env
 git -C repository fetch origin main >/dev/null 2>&1
 test "$(git -C repository rev-parse origin/main)" = "$(cat release-commit)"
@@ -11,27 +14,74 @@ faulty=$(cat /run/dq/facts/0/faulty-commit)
 test "$(cat release-commit)" != "$faulty"
 git -C repository merge-base --is-ancestor "$faulty" origin/main
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The forward recovery head could not be verified: ✗ [DQ:rollback_head]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 source platform.env
 kubectl get application board -o json | jq -e --arg url "$GIT_URL" 'def same_dir($want): if type!="string" then false elif startswith("/") then false else (split("/") | map(select(.!="" and .!="."))) as $parts | ($parts | all(.!="..")) and ($parts | join("/")==$want) end; .spec.source.repoURL==$url and (.spec.source.path | same_dir("manifests")) and .spec.source.targetRevision=="main"' >/dev/null
 )
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The retained Git source could not be verified: ✗ [DQ:rollback_source]' >&2
+  exit "$code"
+fi
+)
 [ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
 (
 set -e
 source platform.env
 kubectl get application board -o json | jq -e --arg rev "$(cat release-commit)" --arg url "$GIT_URL" '.spec.syncPolicy.automated.selfHeal==true and .spec.syncPolicy.automated.prune==true and .status.sync.status=="Synced" and .status.health.status=="Healthy" and .status.sync.revision==$rev' >/dev/null
 )
-[ $? -eq 0 ] || failed=1
-(
+code=$?
 set -e
-kubectl rollout status deployment/board --timeout=3s >/dev/null
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The synchronized recovery revision could not be verified: ✗ [DQ:rollback_sync]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
 set -e
+set +e
+(
+set -e
+kubectl rollout status deployment/board --timeout=3s >/dev/null
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The current producer rollout could not be verified: ✗ [DQ:rollback_rollout]' >&2
+  exit "$code"
+fi
+)
+[ $? -eq 0 ] || failed=1
+(
+set -e
+set +e
+(
+set -e
 test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-95
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The actual producer response could not be verified: ✗ [DQ:rollback_http]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (

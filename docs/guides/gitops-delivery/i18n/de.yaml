@@ -784,5 +784,132 @@ text: '# Private Registry und GitOps wiederherstellen
 
   Veröffentlichtes Manifest oder Live-ConfigMap enthalten möglicherweise noch den anfänglichen leeren Datensatz oder ein vorhandener Pod hält nach der ConfigMap-Änderung seine alte subPath Datei. Veröffentlichen Sie den geprüften Workstation-Bericht über Git und aktualisieren Sie den Verbraucher, bis veröffentlichtes, aktuelles und ausgeliefertes JSON übereinstimmen. Ein fehlgeschlagener Traceability-Observer stoppt vor dem Auslieferungsvergleich. Nach Prüfung müssen Git-Manifestdaten, Live-ConfigMap-Daten und ausgeliefertes JSON dem Bericht entsprechen. Lesefehler vor dem Python-Vergleich teilen den Traceability-Fallback. Die vorhandene Datei ist als subPath gemountet: nach Datensatzveröffentlichung und Aktualisierung von release-commit aktualisiert die Referenz die Anwendung und ersetzt den Pod per Rollout-Restart zur Übernahme der neuen Datei. `git -C repository show origin/main:manifests/provenance.yaml; kubectl get configmap build-record -o json | jq .data; kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/provenance.json`.
 
+
+
+  ### Vorwärts wiederherstellen ohne Verlaufslöschung {#forward-rollback-retained-faulty-history}
+
+
+  Ein Reset von main auf den gesunden Commit entfernt die geforderte Abstammung von faulty-commit; ein veralteter release-commit kann noch den fehlerhaften oder früheren Stand nennen. Revertieren Sie die Änderung mit neuem Commit, veröffentlichen Sie weitere Reparaturen und aktualisieren Sie den Beleg auf abgerufenes origin/main. Eingabe-, Fetch- und Abstammungsbefehlsfehler nutzen denselben Marker. `git -C repository fetch origin main; git -C repository log --oneline -5 origin/main; cat release-commit; git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/faulty-commit)" origin/main`.
+
+
+  ### Hauptquelle in Git erhalten {#forward-rollback-retained-main-source}
+
+
+  Eine andere Repository-, Branch- oder Verzeichnisquelle der board-Application umgeht die gelieferte Wiederherstellung. Erhalten Sie Git-URL, Ziel main und relativen Pfad zu manifests ohne Elternwechsel. Fehlende Plattformeingabe, API-Fehler oder gescheiterter JSON-Vergleich nutzen denselben Marker. `test -r platform.env; kubectl get application board -o json | jq .spec.source`.
+
+
+  ### Abgeglichene main-Revision {#forward-rollback-reconciled-main-revision}
+
+
+  Der Produzent gleicht möglicherweise noch die falsche Revision ab, ist nicht bereit oder hat self-healing/pruning deaktiviert. Reparieren Sie die Git-Definition und warten Sie auf Synced und Healthy bei aktuellem release-commit mit beiden Flags true; das beweist noch keine neue Publikation bei unabhängig gepinnten reader Applications. `cat release-commit; kubectl get application board -o json | jq "{automation:.spec.syncPolicy.automated,status:.status}"`.
+
+
+  ### Produzentenrollout {#forward-rollback-producer-rollout}
+
+
+  Die fehlerhafte readiness probe verwendet 8099, der Server hört jedoch auf 8080; der Rollout kann trotz Git-Synchronisierung blockieren. Reparieren Sie die Git-Definition über neue Commits und prüfen Sie Rollout und Ereignisse; CLI-Fehler oder die dreisekündige Beobachtungsgrenze scheitern ebenfalls. `kubectl rollout status deployment/board --timeout=3s; kubectl describe deployment board; git -C repository show origin/main:manifests/board.yaml`.
+
+
+  ### HTTP-Antwort des Produzenten {#forward-rollback-producer-http}
+
+
+  Eine synchronisierte Application kann wegen der fehlerhaften Probe keinen bereiten Service-Endpunkt haben oder einen anderen Inhalt als north-95 liefern. Beobachten Sie nach der Reparatur den board-Endpunkt aus seinem worker; exec-/HTTP-Timeout oder Befehlsfehler scheitern ebenfalls am ursprünglichen Vergleich. `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`.
+
+
+  ### Ursprüngliche Applications und Deployments {#forward-rollback-original-application-identities}
+
+
+  Löschen und Neuerstellen von board, reader-a oder reader-b erhält Namen, ändert aber eingefrorene Application- oder Deployment-UIDs. Reparieren Sie jedes Originalobjekt vor Ort; der Identitätsmarker nennt Produzent oder reader-Lane. Geprüft wird aktuelle Identität, keine unterbrechungsfreie Geschichte. `kubectl get application,deployment -o json | jq ".items[] | {kind,name:.metadata.name,uid:.metadata.uid}"`.
+
+
+  ### Weitergeführter Verbraucherverlauf {#forward-rollback-forward-consumer-history}
+
+
+  Der abgerufene Stand entspricht möglicherweise noch dem früheren reader-Baseline oder der Produzent zeigt auf ein anderes Repository. Erhalten Sie Baseline-Abstammung und veröffentlichen Sie einen neueren Commit mit freigegebenen reader-Daten. Ein Fehler des Abstammungsbefehls meldet rollback_observation statt dieses Vergleichsmarkers. `git -C repository log --oneline -5 origin/main; kubectl get application board -o json | jq .spec.source.repoURL`.
+
+
+  ### Aktuelle Commit-Pins der Leser {#forward-rollback-current-reader-commit-pins}
+
+
+  Reader sind anfangs an einen älteren Commit gebunden; eine Produzentenreparatur verschiebt ihre Revision nicht. Veröffentlichen Sie freigegebene Manifeste, pinnen Sie jede originale reader Application auf den aktuellen vollständigen Git-Commit, erhalten Sie Pfad, project und destination und warten Sie auf Synced und Healthy bei dieser Revision; main allein erfüllt den immutable Pin-Vergleich nicht. `git -C repository rev-parse origin/main; kubectl get application reader-a reader-b -o json | jq ".items[] | {name:.metadata.name,source:.spec.source,project:.spec.project,destination:.spec.destination,status:.status}"`.
+
+
+  ### Veröffentlichte Leserprojektion {#forward-rollback-published-reader-projection}
+
+
+  Ein gesunder reader kann sein Originalprogramm weiterhin mit alter Publikation ausführen. Erhalten Sie image, command und args des reader in Git, Live-Deployment und jedem aktuellen zugehörigen Pod; schließen Sie den Rollout ab und veröffentlichen Sie freigegebenes JSON über genau eine passende ConfigMap-Projektion in der document root. Git- und Live-ConfigMap-data müssen als vollständige Maps übereinstimmen, dekodierte Publikation muss alle freigegebenen Werte enthalten. Äquivalente direkte oder projected ConfigMap-Bindungen sind möglich. `git -C repository ls-tree -r --name-only origin/main -- readers; kubectl get deployment reader-a reader-b -o yaml; kubectl get configmaps -o yaml`.
+
+
+  ### Publikation bei jedem Leser {#forward-rollback-every-reader-publication}
+
+
+  Git, Live-ConfigMap und gesunder Status beweisen keine aktuellen Daten in jedem reader Pod. Prüfen Sie jeden aktuellen zugehörigen Pod über localhost und dessen Service: HTTP-JSON muss freigegebene schema, generation und route enthalten. Alte Mount-Dateien können Aktualisierungszeit benötigen; ersetzen Sie das erhaltene reader-Programm nicht durch eine erfundene Antwort. `kubectl get pods -o wide; kubectl exec deployment/reader-a -c worker -- wget -qO- -T 2 http://reader-a:8080; kubectl exec deployment/reader-b -c worker -- wget -qO- -T 2 http://reader-b:8080`.
+
+
+  ### Begrenzte Rollback-Beobachtung {#forward-rollback-bounded-rollback-observation}
+
+
+  Ein Git- oder Kubernetes-Befehl überschritt möglicherweise die verbleibende Zeit oder das gemeinsame 14-Sekunden-Budget endete vor Beobachtung beider reader-Lanes. Prüfen Sie API/Git-Zugriff und Konvergenz vor erneutem Abfragen; das benannte Budget gehört zum Observer und beweist keinen bestimmten Konfigurationsfehler. `git -C repository rev-parse origin/main; kubectl --request-timeout=2s get application,deployment,pods -o wide`.
+
+
+  ### Lesbare Rollback-Eingaben {#forward-rollback-readable-rollback-inputs}
+
+
+  Der Observer kann eingefrorenen Vertrag, Git-Verlauf, Kubernetes-Dokumente oder projected reader-Daten nicht lesen. Abgefangene CLI-Fehler, ungültiges JSON/YAML, fehlende Felder und doppelte veröffentlichte Ressourcenidentitäten melden diesen Marker; auch ein Fehler des Baseline-Abstammungsbefehls landet hier. Prüfen Sie tatsächliche Eingaben vor Objektänderungen aufgrund unzugänglicher Beobachtung. `test -r /run/dq/facts/0/rollback-contract.json; git -C repository ls-tree -r --name-only origin/main -- readers; kubectl --request-timeout=2s get application,deployment -o yaml`.
+
+
+  ### Gesunder Vertrag und früher Fallback {#forward-rollback-healthy-contract-and-early-fallback}
+
+
+  Der ursprüngliche Health-Observer kann gegenüber gesundem Git-Baseline veränderte desired/live-Ressourcen oder Sicherheit, inkompatible liveness/startup probes, unterschiedliches Verhalten, blockierten Rollout oder fehlendes north-95 ablehnen. Er meldet diesen Fallback statt feinerer Marker. Spätere unbenannte Start-, Plattformeingabe- oder unbehandelte Strukturfehler gelangen ebenfalls hierher; benannte Rollback-Fehler unterdrücken ihn. Erhalten Sie Baseline-Ressourcen und Sicherheit beim Reparieren der readiness über Git. `git -C repository show "$(cat /run/dq/facts/0/healthy-commit):manifests/board.yaml"; git -C repository show origin/main:manifests/board.yaml; kubectl get deployment board -o yaml`.
+
+
+  ### Unveränderte Archivbytes {#archived-release-untouched-archive-bytes}
+
+
+  recovery-image.tar fehlt möglicherweise, wurde nach Wiederherstellung verändert oder die eingefrorene Prüfsumme ist unlesbar. Erhalten Sie das gelieferte Archiv und vergleichen Sie rohe SHA-256 mit dem Beleg. Ein ähnliches neues Image oder geänderte Arbeitsprüfsumme belegt keine Originalbytes. `sha256sum recovery-image.tar; cat /run/dq/facts/0/archive.sha256`.
+
+
+  ### Exakte Registry-Bytes und geschütztes Artefakt {#archived-release-exact-registry-bytes-and-protected-artifact}
+
+
+  Setup entfernt verwendbare lokale Release-Aliasse und das Registry-Manifest; das Archiv muss exakt dieses Release statt eines Neubaus wiederherstellen. Prüfen Sie vertrauenswürdiges TLS, gelieferte Authentifizierung, Immutable-Manifest-Digest, identische Tag-1-Bytes sowie Digest und Größe jedes Config-/Layer-Blobs. Das unabhängige protected-Artefakt samt Blobs muss erhalten bleiben. Jeder Befehls- oder Vergleichsfehler dieser Registry-Phase nutzt denselben Marker. `sha256sum recovery-image.tar; test -r /run/dq/facts/0/registry-ca.crt; docker image ls --digests; jq "{protected_image,protected_tag}" /run/dq/facts/0/recovery-baseline.json`.
+
+
+  ### Ursprüngliche angehaltene Verbraucher {#archived-release-original-suspended-consumers}
+
+
+  Neue Controller, Services oder Batch-Definitionen erhalten Namen, ändern aber eingefrorene UIDs. Reparieren Sie Originalobjekte und lassen Sie den CronJob angehalten; eine manuelle Wiederherstellung verlangt keinen aktiven Zeitplan. Fehlende oder ungültige Baseline-/Objektdokumente vor der Source-Phase nutzen ebenfalls diesen Identitätsmarker. `kubectl get deployment,service,cronjob,application -o json | jq ".items[] | {kind,name:.metadata.name,uid:.metadata.uid,suspend:.spec.suspend}"`.
+
+
+  ### Veröffentlichte unveränderliche Quelle {#archived-release-published-immutable-source}
+
+
+  Eine wiederhergestellte Registry aktualisiert Git und Verbraucher nicht automatisch. Veröffentlichen Sie den archivierten Image-Digest in der vorhandenen Web-Deployment-Definition, erhalten Sie Application-Source, Projekt station und Ziel und warten Sie auf Synchronisierung des aktuellen Git-Stands mit self-healing/pruning. Das Live-worker-Image muss exakt der deklarierten digest-pinned Referenz entsprechen; ein veränderlicher Tag allein scheitert. `git -C repository show origin/main:manifests/web.yaml; kubectl get application release -o json | jq "{spec,status:.status.sync}"; kubectl get deployment archive-web -o yaml`.
+
+
+  ### Tatsächliche Web-Übernahme {#archived-release-real-web-adoption}
+
+
+  Das Web-Deployment kann das richtige Image nennen, während alte oder nicht bereite Pods laufen. Erhalten Sie positive ganzzahlige replicas, aktuelle observed generation und genau die bereiten aktuellen zugehörigen Pods mit diesem Image; archive-web muss per HTTP den ursprünglichen Wert archive-97 liefern. API-, exec- und HTTP-Fehler dieser Web-Phase nutzen denselben Marker. `kubectl rollout status deployment/archive-web --timeout=3s; kubectl get pods -o wide; kubectl exec deployment/archive-web -c worker -- wget -qO- -T 3 http://archive-web:8080`.
+
+
+  ### Echte abgeschlossene manuelle Ausführung {#archived-release-real-completed-manual-execution}
+
+
+  Eine reparierte angehaltene CronJob-Vorlage repariert keinen alten unterbrochenen Job und erzeugt keinen Erfolg. Lassen Sie den Zeitplan aus und erstellen Sie einen neuen erfolgreichen Job aus der korrigierten Archiv-Image-Vorlage. Vollständige Pod-Spec muss der Vorlage entsprechen, ein echter zugehöriger worker Pod mit Code 0, archiviertem Runtime-Digest und Logs mit checked-97 erfolgreich sein; genau ein neuer abgeschlossener Job wird akzeptiert, alte Fehlversuche dürfen bleiben. `kubectl get cronjob archive-scan -o yaml; kubectl get jobs,pods -o wide`.
+
+
+  ### Beobachten ohne Statusmanipulation {#archived-release-observe-without-status-forgery}
+
+
+  Patch-Rechte des Spielers auf Pod- oder Job-status erlaubten erfundene Ausführungsbelege. Erhalten Sie die Ablehnung beider Status-Patch-Prüfungen und beobachten Sie echte Containerbeendigung, Image-Identität und Logs. Fehlgeschlagene Berechtigungsbeobachtung oder andere Ausgabe als no scheitert ebenfalls. `kubectl auth can-i patch pods --subresource=status; kubectl auth can-i patch jobs --subresource=status`.
+
+
+  ### Unbenannter Eingabefehler der Verbraucher {#archived-release-unlabelled-consumer-input}
+
+
+  Nach der Registry-Phase können Git-Fetch, veröffentlichtes Web-Manifest, gemeinsamer Kubernetes-Snapshot oder Python-/Helper-Start vor einem benannten Vergleich scheitern. Prüfen Sie diese tatsächlichen Lesewege und den Workspace. Registry-Fehler haben recovery_registry, abgefangene identity/source/web/batch-Fehler behalten eigene Marker; der Fallback erscheint nur ohne sie. `git -C repository fetch origin main; git -C repository show origin/main:manifests/web.yaml; kubectl get deployment,service,cronjob,job,application,pods,replicasets -o json >/dev/null`.
+
   '
-source_hash: 08e798570ee84cbb30e7ce844179e851cf9e58ca8d8f29b1377f7d4704bc74dc
+source_hash: 89ea86c10a9069d87a7f95c02e976edb8e29245ac4653bc646a0c7bb3cfc0635

@@ -784,5 +784,132 @@ text: '# Naprawa prywatnego rejestru i GitOps
 
   Opublikowany manifest lub żywy ConfigMap może zachować początkowy pusty rekord, albo istniejący Pod stary plik subPath po zmianie ConfigMap. Opublikuj zweryfikowany raport przez Git i odśwież odbiorcę do zgodności published, live i served JSON. Błąd traceability observer zatrzymuje wykonanie przed porównaniem delivery. Po weryfikacji dane Git manifest, żywego ConfigMap i HTTP JSON mają odpowiadać raportowi. Błędy odczytu przed porównaniem Python dzielą fallback traceability. Istniejący plik ma mount subPath: po publikacji rekordu i aktualizacji release-commit rozwiązanie odświeża aplikację i wymienia Pod przez rollout restart, aby przyjął nowy plik. `git -C repository show origin/main:manifests/provenance.yaml; kubectl get configmap build-record -o json | jq .data; kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/provenance.json`.
 
+
+
+  ### Odzyskanie bez usuwania historii {#forward-rollback-retained-faulty-history}
+
+
+  Reset main do zdrowego commitu usuwa wymagane pochodzenie od faulty-commit, a stary release-commit może nadal wskazywać błędny lub wcześniejszy head. Cofnij zmianę nowym commitem, opublikuj dalsze odzyskiwanie i ustaw robocze potwierdzenie na pobrany origin/main. Błędy wejść, fetch i polecenia ancestry też dają marker. `git -C repository fetch origin main; git -C repository log --oneline -5 origin/main; cat release-commit; git -C repository merge-base --is-ancestor "$(cat /run/dq/facts/0/faulty-commit)" origin/main`.
+
+
+  ### Zachowanie głównego źródła Git {#forward-rollback-retained-main-source}
+
+
+  Przekierowanie Application board do innego repozytorium, gałęzi lub katalogu omija źródło odzyskiwania. Zachowaj dostarczony Git URL, cel main i względną ścieżkę do manifests bez przejścia do rodzica. Brak danych platformy, błąd API lub porównania JSON też daje marker. `test -r platform.env; kubectl get application board -o json | jq .spec.source`.
+
+
+  ### Uzgodniona rewizja main {#forward-rollback-reconciled-main-revision}
+
+
+  Producent może nadal uzgadniać błędną rewizję, być niezdrowy lub mieć wyłączone self-healing/pruning. Napraw definicję Git i poczekaj na Synced i Healthy dla bieżącego release-commit z obiema flagami true; to jeszcze nie dowodzi przyjęcia nowej publikacji przez osobno przypięte reader Applications. `cat release-commit; kubectl get application board -o json | jq "{automation:.spec.syncPolicy.automated,status:.status}"`.
+
+
+  ### Rollout producenta {#forward-rollback-producer-rollout}
+
+
+  Błędna readiness probe używa portu 8099, choć serwer słucha na 8080, więc rollout może stać mimo synchronizacji Git. Napraw definicję Git przez nowe commity i sprawdź rollout/events; błąd CLI lub trzysekundowy limit obserwacji też nie przejdzie. `kubectl rollout status deployment/board --timeout=3s; kubectl describe deployment board; git -C repository show origin/main:manifests/board.yaml`.
+
+
+  ### Odpowiedź HTTP producenta {#forward-rollback-producer-http}
+
+
+  Zsynchronizowane Application może nie mieć gotowego endpoint Service przez złą probe albo zwracać treść inną niż north-95. Sprawdź rzeczywisty endpoint board z jego worker po naprawie; timeout lub błąd exec/HTTP też narusza pierwotne porównanie. `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`.
+
+
+  ### Pierwotne Application i Deployment {#forward-rollback-original-application-identities}
+
+
+  Usunięcie i odtworzenie board, reader-a lub reader-b zachowuje nazwę, lecz zmienia zamrożony UID Application albo Deployment. Napraw każdy oryginalny obiekt na miejscu; marker wskazuje producenta lub linię reader. To obserwacja bieżącej tożsamości, nie ciągłości historii. `kubectl get application,deployment -o json | jq ".items[] | {kind,name:.metadata.name,uid:.metadata.uid}"`.
+
+
+  ### Historia odbiorców do przodu {#forward-rollback-forward-consumer-history}
+
+
+  Pobrany head może nadal być wcześniejszym reader baseline lub producent wskazywać inne repozytorium. Zachowaj pochodzenie od baseline i opublikuj nowszy commit z zatwierdzonymi danymi reader. Błąd polecenia ancestry daje rollback_observation zamiast tego markera porównania. `git -C repository log --oneline -5 origin/main; kubectl get application board -o json | jq .spec.source.repoURL`.
+
+
+  ### Bieżące przypięcia commit odbiorców {#forward-rollback-current-reader-commit-pins}
+
+
+  Reader zaczynają przypięte do starego commitu, więc naprawa producenta nie przesuwa ich rewizji. Opublikuj zatwierdzone manifesty, przypnij każde pierwotne reader Application do bieżącego pełnego Git commit, zachowaj ścieżkę, project i destination i poczekaj na Synced i Healthy tej rewizji; samo main nie spełnia porównania immutable pin. `git -C repository rev-parse origin/main; kubectl get application reader-a reader-b -o json | jq ".items[] | {name:.metadata.name,source:.spec.source,project:.spec.project,destination:.spec.destination,status:.status}"`.
+
+
+  ### Opublikowana projekcja odbiorców {#forward-rollback-published-reader-projection}
+
+
+  Zdrowy reader może nadal uruchamiać pierwotny program ze starą publikacją. Zachowaj image, command i args reader w Git, żywym Deployment i każdym bieżącym należącym Pod; zakończ rollout i opublikuj zatwierdzony JSON przez dokładnie jedną zgodną projekcję ConfigMap w document root. Dane Git i żywego ConfigMap mają być równe jako pełne mapy, a publikacja zawierać zatwierdzone wartości. Równoważne bezpośrednie lub projected powiązania ConfigMap mogą przejść. `git -C repository ls-tree -r --name-only origin/main -- readers; kubectl get deployment reader-a reader-b -o yaml; kubectl get configmaps -o yaml`.
+
+
+  ### Publikacja każdego odbiorcy {#forward-rollback-every-reader-publication}
+
+
+  Git, żywy ConfigMap i zdrowy status nie dowodzą przyjęcia danych przez każdy reader Pod. Sprawdź każdy bieżący należący Pod przez localhost i Service: HTTP JSON musi zawierać zatwierdzone schema, generation i route. Stary plik mount może potrzebować czasu aktualizacji; nie zastępuj zachowanego programu reader sfabrykowaną odpowiedzią. `kubectl get pods -o wide; kubectl exec deployment/reader-a -c worker -- wget -qO- -T 2 http://reader-a:8080; kubectl exec deployment/reader-b -c worker -- wget -qO- -T 2 http://reader-b:8080`.
+
+
+  ### Ograniczona obserwacja rollback {#forward-rollback-bounded-rollback-observation}
+
+
+  Polecenie Git lub Kubernetes mogło przekroczyć pozostały czas albo wspólny budżet 14 sekund wygasł przed obserwacją obu linii reader. Sprawdź API/Git i zbieżność przed ponownym odpytywaniem; nazwany budżet dotyczy obserwatora i nie dowodzi błędu konkretnego predykatu. `git -C repository rev-parse origin/main; kubectl --request-timeout=2s get application,deployment,pods -o wide`.
+
+
+  ### Czytelne dane rollback {#forward-rollback-readable-rollback-inputs}
+
+
+  Obserwator może nie odczytać zamrożonego kontraktu, historii Git, dokumentów Kubernetes lub projected danych reader. Przechwycone błędy CLI, zły JSON/YAML, brak pól i zduplikowane tożsamości zasobów dają marker; błąd polecenia ancestry baseline też trafia tutaj. Sprawdź rzeczywiste dane przed zmianą obiektów na podstawie niedostępnej obserwacji. `test -r /run/dq/facts/0/rollback-contract.json; git -C repository ls-tree -r --name-only origin/main -- readers; kubectl --request-timeout=2s get application,deployment -o yaml`.
+
+
+  ### Zdrowy kontrakt i wczesny fallback {#forward-rollback-healthy-contract-and-early-fallback}
+
+
+  Pierwotny health observer może odrzucić desired/live zasoby lub zabezpieczenia zmienione względem zdrowego Git baseline, złe liveness/startup probes, różnice zachowania desired/live, zablokowany rollout albo brak north-95. Daje ten fallback bez dokładniejszych markerów. Późniejszy nienazwany błąd startu, platform input lub struktury dokumentu też trafia tutaj; nazwane błędy rollback go tłumią. Zachowaj zasoby i bezpieczeństwo baseline, naprawiając readiness przez Git. `git -C repository show "$(cat /run/dq/facts/0/healthy-commit):manifests/board.yaml"; git -C repository show origin/main:manifests/board.yaml; kubectl get deployment board -o yaml`.
+
+
+  ### Niezmienione bajty archiwum {#archived-release-untouched-archive-bytes}
+
+
+  Dostarczony recovery-image.tar może zniknąć lub zmienić się po odzyskiwaniu albo zamrożona suma jest nieczytelna. Zachowaj archiwum i porównaj SHA-256 surowych bajtów z potwierdzeniem. Podobny nowy image lub zmiana roboczego checksum nie potwierdza pierwotnych bajtów. `sha256sum recovery-image.tar; cat /run/dq/facts/0/archive.sha256`.
+
+
+  ### Dokładne bajty registry i chroniony artefakt {#archived-release-exact-registry-bytes-and-protected-artifact}
+
+
+  Setup usuwa użyteczne lokalne aliasy wydania i manifest registry; archiwum ma przywrócić dokładnie to wydanie, nie nowy build. Sprawdź zaufany TLS, dostarczone uwierzytelnienie, immutable manifest digest, identyczne bajty tagu 1 i digest/rozmiar każdego config/layer. Niezależny protected artefakt i jego blobs też muszą przetrwać. Każdy błąd polecenia lub porównania tej fazy registry daje ten sam marker. `sha256sum recovery-image.tar; test -r /run/dq/facts/0/registry-ca.crt; docker image ls --digests; jq "{protected_image,protected_tag}" /run/dq/facts/0/recovery-baseline.json`.
+
+
+  ### Pierwotni wstrzymani odbiorcy {#archived-release-original-suspended-consumers}
+
+
+  Odtworzenie kontrolerów, Service lub definicji batch zachowuje nazwy, lecz zmienia UID. Napraw pierwotne obiekty i pozostaw CronJob wstrzymany; ręczne uruchomienie odzyskiwania nie wymaga włączania harmonogramu. Brak lub złe dokumenty baseline/obiektu przed fazą source też dają marker tożsamości. `kubectl get deployment,service,cronjob,application -o json | jq ".items[] | {kind,name:.metadata.name,uid:.metadata.uid,suspend:.spec.suspend}"`.
+
+
+  ### Opublikowane niezmienne źródło {#archived-release-published-immutable-source}
+
+
+  Odtworzenie registry samo nie aktualizuje Git ani odbiorcy. Opublikuj digest archiwalnego image w istniejącym web Deployment, zachowaj source Application, project station i destination, poczekaj na synchronizację bieżącego Git head przy automatycznych self-healing/pruning. Image żywego worker ma dokładnie odpowiadać zadeklarowanej referencji digest-pinned; sam zmienny tag nie przejdzie. `git -C repository show origin/main:manifests/web.yaml; kubectl get application release -o json | jq "{spec,status:.status.sync}"; kubectl get deployment archive-web -o yaml`.
+
+
+  ### Rzeczywiste przyjęcie web {#archived-release-real-web-adoption}
+
+
+  Web Deployment może wskazywać odzyskany image, gdy rollout używa starych lub niegotowych Pod. Zachowaj dodatnie całkowite replicas, bieżącą observed generation i dokładnie gotowe aktualne należące Pod z tym image; rzeczywisty HTTP archive-web ma zwracać pierwotne archive-97. Błędy API, exec lub HTTP w fazie web dają ten sam marker. `kubectl rollout status deployment/archive-web --timeout=3s; kubectl get pods -o wide; kubectl exec deployment/archive-web -c worker -- wget -qO- -T 3 http://archive-web:8080`.
+
+
+  ### Rzeczywiste zakończone uruchomienie ręczne {#archived-release-real-completed-manual-execution}
+
+
+  Naprawa szablonu wstrzymanego CronJob nie naprawia poprzedniego Job ani nie tworzy sukcesu. Zachowaj wyłączony harmonogram i utwórz jeden nowy udany Job z naprawionego szablonu archiwalnego image. Pełny Pod spec ma odpowiadać szablonowi, rzeczywisty należący worker Pod zakończyć się kodem 0, runtime image digest być archiwalny, logi checked-97; dozwolony jest dokładnie jeden nowy ukończony Job, stare błędy mogą zostać. `kubectl get cronjob archive-scan -o yaml; kubectl get jobs,pods -o wide`.
+
+
+  ### Obserwacja bez edycji statusu wykonania {#archived-release-observe-without-status-forgery}
+
+
+  Nadanie graczowi prawa zmiany status Pod lub Job umożliwia fałszywy dowód wykonania. Zachowaj odmowę obu kontroli status patch i obserwuj rzeczywiste zakończenie kontenera, image identity i logi. Błąd odczytu autoryzacji lub wynik inny niż no również nie przejdzie. `kubectl auth can-i patch pods --subresource=status; kubectl auth can-i patch jobs --subresource=status`.
+
+
+  ### Nienazwany błąd danych odbiorców {#archived-release-unlabelled-consumer-input}
+
+
+  Po fazie registry może zawieść Git fetch, odczyt opublikowanego web manifest, zbiorczy zrzut Kubernetes lub start Python/helper przed nazwanym porównaniem. Sprawdź rzeczywiste odczyty i workspace. Błędy registry mają recovery_registry, przechwycone identity/source/web/batch zachowują markery; fallback pojawia się tylko bez nich. `git -C repository fetch origin main; git -C repository show origin/main:manifests/web.yaml; kubectl get deployment,service,cronjob,job,application,pods,replicasets -o json >/dev/null`.
+
   '
-source_hash: 08e798570ee84cbb30e7ce844179e851cf9e58ca8d8f29b1377f7d4704bc74dc
+source_hash: 89ea86c10a9069d87a7f95c02e976edb8e29245ac4653bc646a0c7bb3cfc0635

@@ -21,7 +21,7 @@ def catalog():
     return Catalog()
 
 
-@pytest.mark.parametrize("quest", range(1, 95))
+@pytest.mark.parametrize("quest", range(1, 98))
 def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, quest):
     markers = set()
     for stage in catalog.quests[quest]["stages"]:
@@ -89,6 +89,96 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                     names = ast.literal_eval(generator.iter)
                     assert names and all(isinstance(name, str) for name in names)
                     emitted.update(prefix + name.replace("-", "_") for prefix in prefixes for name in names)
+            for body in re.findall(r"<<'DQ_ROLLBACK_ADOPTION'\n(.*?)\nDQ_ROLLBACK_ADOPTION(?:\n|$)", check, re.S):
+                tree = ast.parse(body)
+                calls = [node.args[0] for node in ast.walk(tree)
+                         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                         and node.func.id == "reject" and node.args]
+                emitted.update(value.value for value in calls
+                               if isinstance(value, ast.Constant) and isinstance(value.value, str))
+                identity_loop, = [node for node in ast.walk(tree)
+                                  if isinstance(node, ast.For) and isinstance(node.target, ast.Name)
+                                  and node.target.id == "name" and isinstance(node.iter, ast.Tuple)]
+                names = ast.literal_eval(identity_loop.iter)
+                suffix, = [node.value for node in ast.walk(identity_loop)
+                           if isinstance(node, ast.Assign) and any(
+                               isinstance(target, ast.Name) and target.id == "suffix"
+                               for target in node.targets)]
+                assert ast.unparse(suffix) == "'board' if name == 'board' else name[-1]"
+                identity_suffixes = {name if name == suffix.body.value else name[-1] for name in names}
+                setup = (Path(__file__).resolve().parents[1] / f"quests/{quest:03}/setup-0.sh").read_text()
+                receipt, = re.findall(r"<<'DQ_ROLLBACK_RECEIPT'\n(.*?)\nDQ_ROLLBACK_RECEIPT(?:\n|$)", setup, re.S)
+                lane_loop, = [node for node in ast.walk(ast.parse(receipt))
+                              if isinstance(node, ast.For) and isinstance(node.target, ast.Name)
+                              and node.target.id == "lane"]
+                lanes = ast.literal_eval(lane_loop.iter)
+                profiles = [call.args[0] for call in ast.walk(lane_loop)
+                            if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                            and isinstance(call.func.value, ast.Name) and call.func.value.id == "consumers"
+                            and call.func.attr == "append"]
+                profile, = profiles
+                lane, = [value for key, value in zip(profile.keys, profile.values, strict=True)
+                         if isinstance(key, ast.Constant) and key.value == "lane"]
+                assert isinstance(lane, ast.Name) and lane.id == "lane"
+                for value in calls:
+                    if not isinstance(value, ast.BinOp):
+                        continue
+                    assert isinstance(value.op, ast.Add) and isinstance(value.left, ast.Constant)
+                    assert isinstance(value.right, ast.Name)
+                    prefix = value.left.value
+                    if value.right.id == "suffix":
+                        assert prefix == "rollback_identity_"
+                        emitted.update(prefix + suffix for suffix in identity_suffixes)
+                    else:
+                        assert value.right.id == "lane" and prefix in {
+                            "rollback_source_", "rollback_delivery_", "rollback_http_"
+                        }
+                        emitted.update(prefix + lane for lane in lanes)
+            for body in re.findall(r"<<'DQ_RESTORE_IDENTITY'\n(.*?)\nDQ_RESTORE_IDENTITY(?:\n|$)", check, re.S):
+                tree = ast.parse(body)
+                host_loop, = [node for node in ast.walk(tree)
+                              if isinstance(node, ast.For) and isinstance(node.target, ast.Tuple)
+                              and isinstance(node.target.elts[0], ast.Name)
+                              and node.target.elts[0].id == "active_index"]
+                assert isinstance(host_loop.iter, ast.Call) and host_loop.iter.func.id == "enumerate"
+                hosts, start = host_loop.iter.args
+                indices = range(ast.literal_eval(start), ast.literal_eval(start) + len(ast.literal_eval(hosts)))
+                calls = [node.args[0] for node in ast.walk(tree)
+                         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                         and node.func.id == "reject" and node.args]
+                for value in calls:
+                    if isinstance(value, ast.Constant):
+                        emitted.add(value.value)
+                        continue
+                    assert isinstance(value, ast.BinOp) and isinstance(value.op, ast.Add)
+                    if isinstance(value.left, ast.Name):
+                        assert value.left.id == "marker"
+                        prefixes = {node.value.value for node in ast.walk(host_loop)
+                                    if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+                                    and any(isinstance(target, ast.Name) and target.id == "marker"
+                                            for target in node.targets)}
+                        assert prefixes == {"live_binding_", "live_data_"}
+                        emitted.update(prefix + str(index) for prefix in prefixes for index in indices)
+                    else:
+                        assert isinstance(value.left, ast.Constant)
+                        prefix = value.left.value
+                        if prefix == "restore_observation":
+                            assert isinstance(value.right, ast.IfExp)
+                            assert isinstance(value.right.orelse, ast.Constant) and value.right.orelse.value == ""
+                            emitted.add(prefix)
+                            emitted.update(prefix + "_" + str(index) for index in indices)
+                        else:
+                            assert prefix in {"application_identity_", "application_ready_"}
+                            emitted.update(prefix + str(index) for index in indices)
+                caller, = [node.value.value for node in ast.walk(tree)
+                           if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+                           and any(isinstance(target, ast.Name) and target.id == "caller_program"
+                                   for target in node.targets)]
+                for call in ast.walk(ast.parse(caller)):
+                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "print":
+                        for argument in call.args:
+                            if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                                emitted.update(MARKER.findall(argument.value))
             for delimiter, function, position in (
                 ("DQ_HANDOVER", "reject", 0),
                 ("DQ_GIT_ACCESS", "reject", 0),
@@ -330,7 +420,7 @@ def test_each_migrated_condition_has_a_localized_explanation_and_guide(catalog, 
                             and isinstance(call.args[1].value, str)):
                         emitted.add(call.args[1].value)
             for body in re.findall(
-                r"<<'DQ_MAINTENANCE_(?:POLICY|EVICTIONS)'\n(.*?)\nDQ_MAINTENANCE_(?:POLICY|EVICTIONS)(?:\n|$)",
+                r"<<'(?:DQ_MAINTENANCE_(?:POLICY|EVICTIONS)|DQ_RECOVERY_CONSUMERS)'\n(.*?)\n(?:DQ_MAINTENANCE_(?:POLICY|EVICTIONS)|DQ_RECOVERY_CONSUMERS)(?:\n|$)",
                 check, re.S,
             ):
                 # The producer prints the current failure variable. Its source

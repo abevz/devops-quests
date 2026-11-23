@@ -4,7 +4,17 @@ failed=0
 set +e
 (
 set -e
+set +e
+(
+set -e
 test "$(sha256sum recovery-image.tar | cut -d' ' -f1)" = "$(cat /run/dq/facts/0/archive.sha256)"
+)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'The supplied recovery archive could not be verified: ✗ [DQ:recovery_archive]' >&2
+  exit "$code"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
