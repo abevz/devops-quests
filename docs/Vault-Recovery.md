@@ -175,3 +175,16 @@ kubectl get secret route-secret -o json | jq '(.data.value | @base64d)=="north-s
 ```bash
 curl -fsS -H "X-Vault-Token: $VAULT_READER_TOKEN" -H "Content-Type: application/json" --request POST --data '{"paths":["secret/data/dispatch","secret/data/unrelated","sys/mounts"]}' "$VAULT_ADDR/v1/sys/capabilities-self"
 ```
+
+
+### Два отказа и четыре поля экспорта {#audit-correlate-two-denied-paths}
+
+Исходный incident либо два consumer-incident могут терять поля, добавлять лишнее или соответствовать другому отказу; сопоставьте точные четырёхполевые записи из зафиксированного экспорта для обоих путей KV. Исходный отказ относится к secret/data/dispatch; выданное приложение обращается к secret/dispatch с уже выданным reader. Исправьте узкую живую политику и путь приложения, затем обновите кэш исходного процесса. Экспорт содержит только request_id, path, operation и reason. `jq '.[] | {request_id,path,operation,reason}' /run/dq/facts/0/consumer-audit.json`.
+
+### Узкая политика reader KV-v2 {#audit-narrow-kv-v2-reader-policy}
+
+Выданная политика reader указывает неверный путь или даёт лишние права; нужны read на secret/data/dispatch и deny на secret/data/other и sys/audit. После редактирования файла обновите живую именованную политику. Исходный отказ относится к secret/data/dispatch; выданное приложение обращается к secret/dispatch с уже выданным reader. Исправьте узкую живую политику и путь приложения, затем обновите кэш исходного процесса. Экспорт содержит только request_id, path, operation и reason. `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") -H "Content-Type: application/json" --request POST --data '{"paths":["secret/data/dispatch","secret/data/other","sys/audit"]}' "$VAULT_ADDR/v1/sys/capabilities-self"`.
+
+### Принятие исправленного источника исходным процессом {#audit-original-consumer-path-and-cached-publication}
+
+Исходное приложение запускается с неверным путём KV и кэширует ошибку; исправьте политику reader и source-профиль, затем отправьте SIGHUP тому же PID. Сохраните приватный файл reader, идентичность процесса и одобренные HTTP-метаданные; ручного чтения Vault недостаточно. Исходный отказ относится к secret/data/dispatch; выданное приложение обращается к secret/dispatch с уже выданным reader. Исправьте узкую живую политику и путь приложения, затем обновите кэш исходного процесса. Экспорт содержит только request_id, path, operation и reason. `curl -fsS --max-time 2 http://127.0.0.1:18081/status`.

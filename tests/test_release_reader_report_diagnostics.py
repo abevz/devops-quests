@@ -397,3 +397,20 @@ def test_070_capabilities_pipeline_retains_transport_and_denial_semantics(
     }, stage=1)
     assert result.returncode == expected
     assert ("[DQ:secret_capabilities]" in result.stderr) == (expected != 0)
+
+
+@pytest.mark.parametrize("transport,json_status,expected", [(7, 0, 7), (0, 1, 1), (0, 0, 0)])
+def test_073_capabilities_retains_pipeline_status(tmp_path, transport, json_status, expected):
+    (tmp_path / "platform.env").write_text("VAULT_READER_TOKEN=provided\nVAULT_ADDR=http://provided\n")
+    result = run_check(tmp_path, 73, 1, {
+        "curl": f"exit {transport}\n", "jq": f"cat >/dev/null\nexit {json_status}\n",
+    })
+    assert result.returncode == expected
+    assert ("[DQ:vault_capabilities]" in result.stderr) == (expected != 0)
+
+
+def test_073_missing_environment_stops_before_policy_observation(tmp_path):
+    result = run_check(tmp_path, 73, 1, {"curl": "touch api-called\n"})
+    assert result.returncode == 1
+    assert result.stderr.count("[DQ:vault_capabilities]") == 1
+    assert not (tmp_path / "api-called").exists()

@@ -45,17 +45,6 @@ questions.1.points.0: Ogranicza liczbę ponownych prób, a nie czas trwania zega
 questions.1.points.1: activeDeadlineSeconds ogranicza okno wykonania Job.
 questions.1.points.2: Sprawdź sterownik conditions i zakończone kontenery.
 questions.1.prompt: Czy backoffLimit liczy sekundy, które upłynęły?
-diagnostics.uid: original-job-uid musi być niepusty i odpowiadać UID job/importer.
-diagnostics.worker_command: job/importer musi zawierać worker z poleceniem `["sh", "-c", "echo invalid-route >&2;
-  exit 1"]`.
-diagnostics.restart: job/importer restartPolicy musi być równe Never.
-diagnostics.failed_count: job/importer status.failed musi wynosić co najmniej 1.
-diagnostics.failed_condition: job/importer Failed musi być równe True.
-diagnostics.failed_pod: Pod w stanie Failed kontrolowany przez job/importer z pierwotnym UID musi mieć kontener
-  worker zakończony kodem 1.
-diagnostics.field_backofflimit: job/importer backoffLimit musi być równe 1.
-diagnostics.field_activedeadlineseconds: job/importer activeDeadlineSeconds musi być równe 30.
-diagnostics.field_parallelism: job/importer parallelism musi być równe 1.
 stages.0.objectives.0.text: Oryginalny Job walidacji zachowuje tożsamość i dostarczone polecenie, wykonuje po jednej
   próbie i nie uruchamia ponownie uszkodzonego kontenera.
 stages.0.objectives.1.text: Ogranicz oryginalny Job i regularne wykonania do limitu ponowień `1` i czasu `30` sekund.
@@ -64,13 +53,20 @@ stages.0.objectives.1.text: Ogranicz oryginalny Job i regularne wykonania do lim
   lub anulować po kolejnym terminie.
 stages.0.objectives.2.text: Oryginalny Job i co najmniej jeden bieżący zaplanowany podrzędny Job osiągają `Failed=True`
   z co najmniej `1` nieudaną próbą i własnym Podem `Failed`, którego `worker` kończy się kodem `1`.
-diagnostics.batch_current: Nie udało się zaobserwować oryginalnego Job.
-diagnostics.batch_original: Oryginalny Job musi zachować tożsamość i podane obciążenie.
-diagnostics.batch_recurrence: Regularny walidator musi być włączony co minutę i zachowywać aktywne wykonanie bez
-  nakładania.
-diagnostics.batch_template: Regularny szablon musi zachować podane obciążenie i wszystkie granice wykonania.
-diagnostics.batch_child: Nie zaobserwowano bieżącego ograniczonego nieudanego Job należącego do regularnego walidatora.
-diagnostics.batch_failed_pod: Nie zaobserwowano własnego Failed worker Pod z kodem zakończenia 1 dla tego ograniczonego
-  zaplanowanego Job.
-diagnostics.probe_0_1: Bieżące obserwacje nie potwierdzają polityki oryginalnych i regularnych wykonań.
-diagnostics.probe_0_2: Bieżące obserwacje nie potwierdzają oryginalnych i zaplanowanych dowodów awarii.
+diagnostics.uid: Odtworzenie importer zmienia zamrożony UID; popraw istniejący Job i sprawdź API, jeśli pierwotnego obiektu nie można odczytać. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-preserve-original-job)
+diagnostics.worker_command: Zastąpienie dostarczonego błędnego polecenia sukcesem ukrywa błąd walidacji; zachowaj pierwotne polecenie worker z żywego Job i zamrożonych facts. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-retain-failing-worker-command)
+diagnostics.restart: Restart policy inna niż Never może ponawiać proces w Pod zamiast pozostawić oczekiwaną awarię wykonania; zachowaj dostarczoną politykę. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-never-restart-policy)
+diagnostics.field_parallelism: Przy zmianie limitów mógł wzrosnąć parallelism; zachowaj jeden dla importer i sprawdź API, jeśli pola nie można odczytać. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-single-parallel-execution)
+diagnostics.field_backofflimit: Dostarczony Job dopuszcza 100 powtórzeń; zmniejsz backoffLimit do jednego w istniejącym Job, ograniczając błędną walidację. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-bound-current-job-retries)
+diagnostics.field_activedeadlineseconds: Dostarczone activeDeadlineSeconds wynosi 300; ustaw wymagane 30 sekund dla istniejącego Job zamiast usuwać wykonanie. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-bound-current-job-deadline)
+diagnostics.batch_current: Bieżący Job może nie istnieć albo żądanie API, JSON lub limit czasu blokuje odczyt; sprawdź importer przed porównaniem pierwotnej aplikacji. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-current-job-api-observation)
+diagnostics.batch_original: Bieżący Job mógł zostać zastąpiony lub zmieniono image, polecenie worker albo Never; porównaj z zamrożonym batch-identities. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-original-image-command-and-identity)
+diagnostics.batch_recurrence: Cykliczny CronJob może nie istnieć, być suspended, mieć inny harmonogram lub dopuszczać nakładanie; porównaj z batch-contract.json. Błędy API/limitu czasu też dają ten marker. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-active-cron-schedule-and-concurrency)
+diagnostics.batch_template: Szablon CronJob może zachowywać szerokie retry/deadline lub zmieniać aplikację; przenieś cztery dokładne limity oraz pierwotne image, polecenie i Never. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-bounded-recurring-job-template)
+diagnostics.failed_count: Błędne polecenie mogło jeszcze nie wykonać się lub ukryto awarię; zachowaj pierwotny Job i sprawdź licznik failed oraz events. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-observe-current-failed-attempt)
+diagnostics.failed_condition: Job może nadal ponawiać według starych limitów lub nie osiągnął końcowej awarii; sprawdź ograniczenia i poczekaj na Failed=True. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-terminal-current-job-failure)
+diagnostics.failed_pod: Sama etykieta nie dowodzi przynależności błędnego Pod do pierwotnego Job; sprawdź controller owner UID, fazę Failed i exit code jeden dla worker. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-original-job-owned-failed-pod)
+diagnostics.batch_child: Poprawny szablon nie dowodzi wykonania; poczekaj na rzeczywisty ograniczony Job należący do CronJob, zakończony awarią. Błędy API/limitów czasu przy Jobs też dają ten marker. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-observed-cron-owned-failed-job)
+diagnostics.batch_failed_pod: Cykliczne wykonanie może nie mieć Failed Pod z pierwotną aplikacją i exit code jeden; prześledź CronJob→Job→Pod po controller UID. Błędy API/limitów czasu przy Pods też dają ten marker. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-child-owner-chain-and-real-exit)
+diagnostics.probe_0_1: Wcześniejsza kontrola shell z limitem 8s może przekroczyć czas bez markera, np. przy zablokowanym kubectl; błędy startu helper lub zamrożonych facts też dają fallback. Błędy API/limity czasu wewnątrz obserwatora Python dają marker żądanego obiektu. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-policy-startup-fallback)
+diagnostics.probe_0_2: Wcześniejsza kontrola shell z limitem 8s może przekroczyć czas bez markera, np. przy zablokowanym kubectl; błędy startu helper lub zamrożonych facts też dają fallback. Błędy API/limity czasu wewnątrz obserwatora Python dają marker żądanego obiektu. [Przyczyna i kontrola](guides#guide=kubernetes-20&section=batch-evidence-startup-fallback)
