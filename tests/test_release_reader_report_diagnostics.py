@@ -861,3 +861,99 @@ def test_094_baseline_wrapper_retains_original_numeric_test(tmp_path, baseline, 
     result = subprocess.run(["bash", "-euo", "pipefail", "-c", check], capture_output=True, text=True)
     assert result.returncode == expected
     assert ("[DQ:performance_baseline]" in result.stderr) == (expected != 0)
+
+
+@pytest.mark.parametrize("fetch_status,ancestor_status,expected,calls", [
+    (0, 0, 0, ["fetch", "rev-parse", "merge-base"]),
+    (7, 0, 7, ["fetch"]),
+    (0, 1, 1, ["fetch", "rev-parse", "merge-base"]),
+    (0, 127, 127, ["fetch", "rev-parse", "merge-base"]),
+])
+def test_095_head_wrapper_preserves_fetch_and_ancestry(
+    tmp_path, fetch_status, ancestor_status, expected, calls,
+):
+    import shlex
+
+    prepare_091_bay(tmp_path)
+    faulty = tmp_path / "faulty-commit"
+    faulty.write_text("b" * 40 + "\n")
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    git = binary / "git"
+    git.write_text(f'''#!/bin/bash
+test "$1" = -C && test "$2" = repository || exit 98
+printf '%s\\n' "$3" >> git-calls
+case "$3" in
+ fetch) exit {fetch_status} ;;
+ rev-parse) printf '%s\\n' '{'a' * 40}' ;;
+ merge-base) test "$4" = --is-ancestor && test "$5" = '{'b' * 40}' && test "$6" = origin/main || exit 99
+             exit {ancestor_status} ;;
+ *) exit 99 ;;
+esac
+''')
+    git.chmod(0o755)
+    check = objective(95, 0).replace("/run/dq/facts/0/faulty-commit", shlex.quote(str(faulty)))
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", check], cwd=tmp_path,
+        env={**os.environ, "PATH": f"{binary}:{os.environ['PATH']}"}, capture_output=True, text=True,
+    )
+    assert result.returncode == expected
+    assert ("[DQ:rollback_head]" in result.stderr) == (expected != 0)
+    assert (tmp_path / "git-calls").read_text().splitlines() == calls
+
+
+@pytest.mark.parametrize("index,marker", [(1, "rollback_source"), (2, "rollback_sync"), (3, "rollback_rollout")])
+@pytest.mark.parametrize("code", [0, 1, 7, 127])
+def test_095_api_and_rollout_wrappers_preserve_status_and_detail(tmp_path, index, marker, code):
+    prepare_091_bay(tmp_path)
+    # Controlled command statuses exercise the wrapper, not the real jq predicate;
+    # native validation covers the actual Application JSON and workload rollout.
+    result = run_check(tmp_path, 95, index, {
+        "kubectl": f"printf '{{}}\\n'\nprintf 'raw API detail\\n' >&2\nexit {code}\n",
+        "jq": "cat >/dev/null\nexit 0\n",
+    })
+    assert result.returncode == code
+    assert "raw API detail" in result.stderr
+    assert (f"[DQ:{marker}]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("text,command_code,expected", [("north-95", 0, 0), ("retired", 0, 1), ("", 7, 1)])
+def test_095_http_wrapper_retains_actual_value_comparison(tmp_path, text, command_code, expected):
+    result = run_check(tmp_path, 95, 4, {
+        "kubectl": f"printf %s '{text}'\nprintf 'raw HTTP error\\n' >&2\nexit {command_code}\n",
+    })
+    assert result.returncode == expected
+    assert "raw HTTP error" in result.stderr
+    assert ("[DQ:rollback_http]" in result.stderr) == (expected != 0)
+
+
+@pytest.mark.parametrize("index,marker", [(0, "rollback_head"), (1, "rollback_source"), (2, "rollback_sync")])
+def test_095_missing_platform_input_stops_before_commands(tmp_path, index, marker):
+    prepare_091_bay(tmp_path, platform=False)
+    result = run_check(tmp_path, 95, index, {
+        name: "touch command-called\nexit 0\n" for name in ("git", "kubectl", "jq")
+    })
+    assert result.returncode == 1
+    assert "platform.env" in result.stderr and f"[DQ:{marker}]" in result.stderr
+    assert not (tmp_path / "command-called").exists()
+
+
+@pytest.mark.parametrize("kind,expected", [("match", 0), ("changed", 1), ("missing_archive", 1), ("missing_receipt", 1)])
+def test_097_archive_wrapper_retains_original_hash_comparison(tmp_path, kind, expected):
+    import hashlib
+    import shlex
+
+    archive = tmp_path / "recovery-image.tar"
+    if kind != "missing_archive":
+        archive.write_bytes(b"changed" if kind == "changed" else b"controlled archive bytes")
+    receipt = tmp_path / "archive.sha256"
+    if kind != "missing_receipt":
+        receipt.write_text(hashlib.sha256(b"controlled archive bytes").hexdigest() + "\n")
+    check = objective(97, 0).replace("/run/dq/facts/0/archive.sha256", shlex.quote(str(receipt)))
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", check], cwd=tmp_path, capture_output=True, text=True,
+    )
+    assert result.returncode == expected
+    assert ("[DQ:recovery_archive]" in result.stderr) == (expected != 0)
+    if kind in ("missing_archive", "missing_receipt"):
+        assert "No such file" in result.stderr
