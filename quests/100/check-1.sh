@@ -4,6 +4,15 @@ failed=0
 set +e
 (
 set -e
+dq_fallback_output=$(mktemp) || {
+  dq_fallback_status=$?
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_0]' >&2
+  exit "$dq_fallback_status"
+}
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
+(
+set -e
 set -euo pipefail
 cd ~/quest
 source platform.env
@@ -12,6 +21,18 @@ if ! git -C repository fetch origin main >/dev/null 2>&1; then printf '%s\n' 'gi
 rev=$(cat release-commit 2>/dev/null || true)
 if ! test -n "$rev" || ! test "$(git -C repository rev-parse origin/main 2>/dev/null)" = "$rev"; then printf '%s\n' 'origin/main = release-commit: ✗ [DQ:origin]'; failed=1; fi
 exit "$failed"
+) >"$dq_fallback_output" 2>&1
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(fetch|origin)\]' "$dq_fallback_output"; then
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_0]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -70,6 +91,15 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_fallback_output=$(mktemp) || {
+  dq_fallback_status=$?
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_2]' >&2
+  exit "$dq_fallback_status"
+}
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
+(
+set -e
 set -euo pipefail
 cd ~/quest
 source platform.env
@@ -86,6 +116,18 @@ check_app 'sync status = Synced [DQ:synced]' '.status.sync.status=="Synced"'
 check_app 'health status = Healthy [DQ:health]' '.status.health.status=="Healthy"'
 check_app 'sync revision = release-commit [DQ:release_revision]' '.status.sync.revision==$rev'
 exit "$failed"
+) >"$dq_fallback_output" 2>&1
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(health|path|prune|release_revision|repo|selfheal|synced|target)\]' "$dq_fallback_output"; then
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_2]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -154,14 +196,44 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_fallback_output=$(mktemp) || {
+  dq_fallback_status=$?
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_4]' >&2
+  exit "$dq_fallback_status"
+}
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
+(
+set -e
 set -euo pipefail
 cd ~/quest
 source platform.env
 failed=0
 if ! test "$(kubectl get secret route-secret -o json 2>/dev/null | jq -er .data.value 2>/dev/null | base64 -d 2>/dev/null)" = north-secret; then printf '%s\n' 'secret/route-secret value = north-secret: ✗ [DQ:secret]'; failed=1; fi
 exit "$failed"
+) >"$dq_fallback_output" 2>&1
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(secret)\]' "$dq_fallback_output"; then
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_4]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
+(
+set -e
+dq_fallback_output=$(mktemp) || {
+  dq_fallback_status=$?
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_5]' >&2
+  exit "$dq_fallback_status"
+}
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
 (
 set -e
 set -euo pipefail
@@ -175,6 +247,18 @@ printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN" > "$header"
 if ! curl -fsS --max-time 3 -H @"$header" "$VAULT_ADDR/v1/secret/data/dispatch" 2>/dev/null | jq -e '.data.data.value=="north-secret"' >/dev/null 2>&1; then printf '%s\n' 'Vault reader dispatch value = north-secret: ✗ [DQ:reader]'; failed=1; fi
 if ! test "$(curl -sS --max-time 3 -o /dev/null -w '%{http_code}' -H @"$header" "$VAULT_ADDR/v1/secret/data/other" 2>/dev/null)" = 403; then printf '%s\n' 'Vault reader other path HTTP 403: ✗ [DQ:denied]'; failed=1; fi
 exit "$failed"
+) >"$dq_fallback_output" 2>&1
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(denied|reader)\]' "$dq_fallback_output"; then
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_5]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
 (
@@ -243,12 +327,33 @@ test "$dq_probe_status" -eq 0
 [ $? -eq 0 ] || failed=1
 (
 set -e
+dq_fallback_output=$(mktemp) || {
+  dq_fallback_status=$?
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_7]' >&2
+  exit "$dq_fallback_status"
+}
+trap 'rm -f "$dq_fallback_output"' EXIT
+set +e
+(
+set -e
 set -euo pipefail
 cd ~/quest
 source platform.env
 failed=0
 if ! test "$(timeout 4s kubectl exec --pod-running-timeout=2s deployment/board -c worker -- wget -qO- -T 3 http://board:8080 2>/dev/null)" = north-100; then printf '%s\n' 'board:8080 = north-100: ✗ [DQ:http]'; failed=1; fi
 exit "$failed"
+) >"$dq_fallback_output" 2>&1
+dq_fallback_status=$?
+set -e
+cat "$dq_fallback_output"
+if [ "$dq_fallback_status" -ne 0 ] && ! grep -Eq '\[DQ:(http)\]' "$dq_fallback_output"; then
+  printf '%s\n' 'The supplied platform input or observation could not be read: ✗ [DQ:probe_1_7]'
+fi
+rm -f "$dq_fallback_output"
+trap - EXIT
+if [ "$dq_fallback_status" -ne 0 ]; then
+  exit "$dq_fallback_status"
+fi
 )
 [ $? -eq 0 ] || failed=1
 exit "$failed"

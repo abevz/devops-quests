@@ -254,3 +254,68 @@ unseal-shares.json может отсутствовать или получить
 ### Ранний ввод платформы {#original-vault-early-platform-input}
 
 Условие упало до именованного наблюдения Vault, например из-за отсутствующего, нечитаемого или некорректного platform.env. Верните выданное окружение и текущий workspace; обычные ошибки HTTP, статуса или значения уже именованы. Обёртка выдаёт fallback только без существующего маркера и оставляет очистку приватных заголовков в исходном дочернем процессе. `test -r platform.env; bash -n platform.env; pwd`.
+
+
+### Ссылка на публикацию Secret {#credential-incident-secret-publication-reference}
+
+Выпуск токена сам не публикует значение Vault в Kubernetes. Используйте новый station-token с выданным sync-script и сохраните эффективный последний ROUTE_SECRET связанным с route-secret/value без встроенного значения. Декодированный Secret должен содержать требуемую строку north-secret. Отсутствие входов, неверная структура worker/env, ошибки API, JSON и decode дают fallback.
+
+```bash
+kubectl get deployment board -o json | jq ".spec.template.spec.containers[] | select(.name=="worker") | .env"; kubectl get secret route-secret -o json | jq -er .data.value | base64 -d | grep -qx north-secret
+```
+
+### Приватный ограниченный новый токен {#credential-incident-private-bounded-replacement}
+
+station-token изначально отсутствует; повторное использование скомпрометированного reader или режим не 0600 нарушают восстановление. Выпустите токен через синхронный manager role с документированными параметрами, приватно сохраните ответ без печати и используйте новый отличный токен. Проверяются доступ к источнику, точные policies [default, rail-reader] и оставшийся TTL больше 0, не более 600 секунд; ошибки lookup/read/API тоже нарушают условие.
+
+```bash
+stat -c %a station-token; cat control/README.md; source platform.env; curl -fsS --max-time 2 -H @<(printf "X-Vault-Token: %s\n" "$(cat station-token)") "$VAULT_ADDR/v1/auth/token/lookup-self" | jq "{policies:.data.policies,ttl:.data.ttl}"
+```
+
+### Отзыв скомпрометированного accessor {#credential-incident-compromised-accessor-revocation}
+
+Новый токен не отзывает исходный скомпрометированный reader. Вызовите синхронный manager revoke-accessor с зафиксированным compromised-accessor; старый выданный credential затем должен получить HTTP 403 на источнике. Ошибка сети или другой код не доказывает требуемый запрет, а статичный issuer-status не подтверждает отзыв.
+
+```bash
+source platform.env; curl -sS --max-time 2 -o /dev/null -w "%{http_code}\n" -H @<(printf "X-Vault-Token: %s\n" "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
+```
+
+### Опубликованный Secret маршрута {#q100-published-route-secret}
+
+Secret Kubernetes мог отсутствовать или сохранять прежнее значение. Когда чтение через reader заработает, выполните выданную синхронизацию и проверьте route-secret/value без вывода содержимого.
+
+```bash
+test "$(kubectl get secret route-secret -o json | jq -er .data.value | base64 -d)" = north-secret
+```
+
+### Доступ reader к dispatch {#q100-reader-dispatch}
+
+У выданного reader могло не быть доступа к secret/data/dispatch либо источник вернул другое значение. Проверьте политику и ожидаемое поле без вывода токена или содержимого.
+
+```bash
+source platform.env; curl -fsS --max-time 3 -H @<(printf "X-Vault-Token: %s\n" "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null
+```
+
+### Отказ на соседнем пути {#q100-reader-sibling-denial}
+
+Слишком широкая политика reader может дать доступ к secret/data/other. Проверьте, что этот запрос получает HTTP 403, и отличайте отказ от тайм-аута или другого статуса.
+
+```bash
+source platform.env; curl -sS --max-time 3 -o /dev/null -w "%{http_code}\n" -H @<(printf "X-Vault-Token: %s\n" "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/other"
+```
+
+### Входы проверки Secret {#q100-secret-probe-input}
+
+Проверка Secret может остановиться до сравнения значения, если недоступны выданное окружение или рабочая папка. Проверьте входы и доступ к route-secret без записи значений в логи.
+
+```bash
+pwd; test -r platform.env; kubectl get secret route-secret -o name
+```
+
+### Входы проверки reader {#q100-reader-probe-input}
+
+Проверка reader может остановиться до HTTP-запросов, если не читается platform.env или нельзя подготовить закрытый заголовок. Проверьте входы и инструменты без вывода токена.
+
+```bash
+pwd; test -r platform.env; command -v curl
+```
