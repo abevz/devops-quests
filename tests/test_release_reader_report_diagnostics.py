@@ -507,3 +507,103 @@ def test_076_south_failure_keeps_existing_branch_diagnostic_separate(
         assert f"[DQ:{expected_marker}]" in output
     if south is None:
         assert "south.txt" in result.stderr  # Preserve the original read error too.
+
+
+@pytest.mark.parametrize("index,marker", [(1, "pdb_replicas"), (2, "pdb_status")])
+@pytest.mark.parametrize("api_status,json_status,expected", [(7, 0, 7), (0, 4, 4), (0, 0, 0)])
+def test_077_pdb_pipeline_preserves_api_and_json_failures(
+    tmp_path, index, marker, api_status, json_status, expected,
+):
+    result = run_check(tmp_path, 77, index, {
+        "kubectl": f"exit {api_status}\n", "jq": f"cat >/dev/null\nexit {json_status}\n",
+    })
+    assert result.returncode == expected
+    assert (f"[DQ:{marker}]" in result.stderr) == (expected != 0)
+
+
+@pytest.mark.parametrize("index,marker", [(4, "eviction_request"), (5, "eviction_replacement"), (6, "eviction_observed")])
+@pytest.mark.parametrize("code", [0, 1, 2, 127])
+def test_077_eviction_predicate_retains_result(tmp_path, monkeypatch, index, marker, code):
+    monkeypatch.setenv("DQ_NAMESPACE", "dq-0123456789abcdef01234567")
+    result = run_check(tmp_path, 77, index, {
+        "jq": f"/bin/cat >/dev/null\nexit {code}\n", "kubectl": "exit 0\n",
+    })
+    assert result.returncode == code
+    assert (f"[DQ:{marker}]" in result.stderr) == (code != 0)
+
+
+@pytest.mark.parametrize("body,cli_status,good", [("no", 1, True), ("yes", 0, False), ("", 7, False)])
+def test_077_expected_authorization_denial_is_successful_observation(tmp_path, body, cli_status, good):
+    result = run_check(tmp_path, 77, 7, {"kubectl": f"printf %s '{body}'\nexit {cli_status}\n"})
+    assert result.returncode == (0 if good else 1)
+    assert ("[DQ:pod_status_denied]" in result.stderr) == (not good)
+
+
+@pytest.mark.parametrize("number,index,stage,expected,marker", [
+    (77, 3, 0, "north-77", "pdb_http"), (78, 3, 1, "north-78", "registry_http"),
+])
+@pytest.mark.parametrize("correct", [True, False])
+def test_077_078_observes_actual_http_body(tmp_path, number, index, stage, expected, marker, correct):
+    response = expected if correct else "other"
+    result = run_check(tmp_path, number, index, {"kubectl": f"printf %s {response}\n"}, stage=stage)
+    assert result.returncode == (0 if correct else 1)
+    assert (f"[DQ:{marker}]" in result.stderr) == (not correct)
+
+
+@pytest.mark.parametrize("stage,index,marker", [(0, 0, "registry_start"), (1, 1, "registry_pull_policy")])
+def test_078_missing_environment_stops_before_api(tmp_path, stage, index, marker):
+    result = run_check(tmp_path, 78, index, {
+        "curl": "touch api-called\n", "kubectl": "touch api-called\n", "jq": "touch api-called\n",
+    }, stage=stage)
+    assert result.returncode == 1
+    assert f"[DQ:{marker}]" in result.stderr
+    assert not (tmp_path / "api-called").exists()
+
+
+@pytest.mark.parametrize("api_status,json_status,expected", [(7, 0, 7), (0, 4, 4), (0, 0, 0)])
+def test_078_failed_image_policy_stops_before_pod_observation(tmp_path, api_status, json_status, expected):
+    (tmp_path / "platform.env").touch()
+    result = run_check(tmp_path, 78, 1, {
+        "jq": f'''if [ "$1" = -er ]; then printf 'image@sha256:fixture'; exit 0; fi
+/bin/cat >/dev/null
+exit {json_status}
+''',
+        "kubectl": f'''if [ "$2" = pods ]; then touch pods-called; fi
+exit {api_status}
+''',
+    }, stage=1)
+    assert result.returncode == expected
+    assert ("[DQ:registry_pull_policy]" in result.stderr) == (expected != 0)
+    assert (tmp_path / "pods-called").exists() == (expected == 0)
+
+
+@pytest.mark.parametrize("index,fields", [
+    (2, ["dir_mode"]), (3, ["banner_mode", "route_mode"]),
+    (4, ["banner_content"]), (5, ["route_content"]),
+])
+@pytest.mark.parametrize("mode", ["empty", "detailed", "opaque", "foreign"])
+def test_079_failed_remote_probe_always_has_a_known_diagnostic(
+    tmp_path, monkeypatch, index, fields, mode,
+):
+    monkeypatch.setenv("DQ_NAMESPACE", "dq-0123456789abcdef01234567")
+    ssh = r"""remote="${@: -1}"
+case MODE in
+ detailed) printf '%s' "$remote" | grep -oE '\[DQ:host_[123]_[a-z_]+\]' | head -1 ;;
+ opaque) printf '%s\n' 'opaque remote startup output' ;;
+ foreign) printf '%s\n' '[DQ:unrelated_remote_message]' ;;
+esac
+exit 7
+""".replace("MODE", mode)
+    result = run_check(tmp_path, 79, index, {"ssh": ssh})
+    expected = (
+        [f"host_{host}_{field}" for host in (1, 2, 3) for field in fields]
+        if mode == "detailed" else [f"ssh_{host}" for host in (1, 2, 3) for _ in fields]
+    )
+    import re
+    markers = re.findall(r"\[DQ:([a-z0-9_]+)\]", result.stdout + result.stderr)
+    assert result.returncode == 1
+    assert [marker for marker in markers if marker != "unrelated_remote_message"] == expected
+    if mode == "opaque":
+        assert result.stdout.count("opaque remote startup output") == 3 * len(fields)
+    if mode == "foreign":
+        assert markers.count("unrelated_remote_message") == 3 * len(fields)
