@@ -335,4 +335,162 @@ text: |
   ```bash
   command -v python3; kubectl get deployment reader -o name; kubectl get serviceaccount reader -o name
   ```
-source_hash: b5f7b2154e61c70a27b253e449456c2096249e91607182389f2ae483acea699e
+
+
+  ### Uprawnienie do odczytu route {#q125-station-reader-role}
+
+  Rola station-reader może przyznawać więcej niż get dla ConfigMap route. Sprawdź każdą regułę dla nazwanego zasobu z podstawowej grupy API.
+
+  ```bash
+  kubectl get role station-reader -o json | jq '.rules'
+  ```
+
+  ### Podmiot powiązania station-reader {#q125-station-reader-subject}
+
+  W RoleBinding station-reader może brakować podmiotu lub może być wpisany inny podmiot. Sprawdź, czy każdy podmiot wskazuje controller w przestrzeni nazw ćwiczenia.
+
+  ```bash
+  kubectl get rolebinding station-reader -o json | jq '.subjects'
+  ```
+
+  ### Bieżący dostęp controller do route {#q125-station-reader-live-allow}
+
+  Bieżącemu żądaniu controller do configmaps/route może brakować uprawnienia do tej nazwy lub poświadczenie może pochodzić z niegotowego wdrożenia. Sprawdź selektor, powiązanie i rollout, a następnie ponów sprawdzenie HTTP 200.
+
+  ```bash
+  kubectl get role,rolebinding station-reader; kubectl rollout status deployment/controller --timeout=10s
+  ```
+
+  ### Wartość zwrócona dla route {#q125-station-reader-route-value}
+
+  Żądanie controller mogło nie zwrócić wartości trasy lub zwrócić inną wartość niż north-125. Po potwierdzeniu, że żądanie się powiodło, sprawdź bieżący ConfigMap.
+
+  ```bash
+  kubectl get configmap route -o jsonpath='{.data.route}'
+  ```
+
+  ### Żądania odrzucane dla controller {#q125-station-reader-denials}
+
+  Controller może mieć zbyt szerokie uprawnienia lub żądanie mogło nie dotrzeć do API z ważnym poświadczeniem. Sprawdź powiązania pod kątem nadmiarowego dostępu do zasobów, nazw lub czasowników i ponów oznaczone żądanie, oczekując HTTP 403.
+
+  ```bash
+  kubectl get roles,rolebindings -o yaml
+  ```
+
+  ### Odmowa dostępu observer do route {#q125-station-reader-observer-denial}
+
+  Żądanie observer do configmaps/route mogło uzyskać dostęp lub zakończyć się przed autoryzacją. Sprawdź rollout i powiązania observer, a następnie ponów sprawdzenie HTTP 403.
+
+  ```bash
+  kubectl get rolebinding station-reader -o json | jq '.subjects'; kubectl rollout status deployment/observer --timeout=10s
+  ```
+
+  ### Wykaz obciążeń i kont {#q125-consumer-authority-actors}
+
+  Kontrola mogła nie odczytać bieżących Deploymentów lub ServiceAccountów. Sprawdź listę obciążeń i tożsamości w przestrzeni nazw ćwiczenia.
+
+  ```bash
+  kubectl get deployments,serviceaccounts
+  ```
+
+  ### Zachowane obciążenia i tożsamości kontrolne {#q125-consumer-authority-retained-identity}
+
+  Mógł się zmienić pierwotny UID, obraz worker lub konto kontrolne. Porównaj bieżące obciążenia i chronione ServiceAccounty z dostarczonym zapisem tożsamości.
+
+  ```bash
+  jq '{identities,images,originalAccounts}' /run/dq/facts/0/authority-identities.json; kubectl get deployment controller observer publisher sampler -o json | jq '.items[] | {name: .metadata.name, uid: .metadata.uid, account: .spec.template.spec.serviceAccountName, image: [.spec.template.spec.containers[] | select(.name == "worker") | .image]}'; kubectl get serviceaccount controller observer -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+  ```
+
+  ### Oddzielne konta konsumentów {#q125-consumer-authority-separate-accounts}
+
+  Konsumenci mogą współdzielić ServiceAccount lub używać zarezerwowanej tożsamości. Sprawdź, czy publisher i sampler mają różne, niezarezerwowane konta w bieżącym wdrożeniu.
+
+  ```bash
+  kubectl get deployment publisher sampler -o custom-columns=NAME:.metadata.name,ACCOUNT:.spec.template.spec.serviceAccountName
+  ```
+
+  ### Projektowane poświadczenia w bieżących Podach {#q125-consumer-authority-projected-credential}
+
+  Domyślny token może wciąż być montowany, a jawnie projektowane poświadczenie może być niedostępne albo powiązane z innym kontem lub Podem. Sprawdź ustawienia automatycznego montowania i projekcję w bieżącym wdrożeniu.
+
+  ```bash
+  kubectl get deployments publisher sampler -o json | jq '.items[] | {name: .metadata.name, spec: .spec.template.spec | {serviceAccountName, automountServiceAccountToken, volumes}}'
+  kubectl get serviceaccounts -o json | jq '.items[] | {name: .metadata.name, automountServiceAccountToken}'
+  kubectl get replicaset,pod -o json | jq '.items[] | {kind, name: .metadata.name, uid: .metadata.uid, owner: .metadata.ownerReferences, account: .spec.serviceAccountName}'
+  for name in controller observer publisher sampler; do
+    kubectl rollout status "deployment/$name" --timeout=10s
+    kubectl exec "deployment/$name" -c worker -- cat /credential/token |
+      python3 -I -c 'import base64,json,sys; part=sys.stdin.read().split(".")[1]; claims=json.loads(base64.urlsafe_b64decode(part+"===")); print(json.dumps({"subject": claims.get("sub"), "pod_uid": claims.get("kubernetes.io",{}).get("pod",{}).get("uid")}))'
+  done
+  ```
+
+  ### Uprawnienia konsumentów do wskazanych rekordów {#q125-consumer-authority-named-grants}
+
+  Powiązania mogą być niedostępne, nie istnieć lub mieć szerszy zakres niż Role w przestrzeni nazw z get dla jednego przypisanego ConfigMap. Sprawdź pasujące podmioty reprezentujące konta i grupy oraz wskazane przez nie Role.
+
+  Kontrola zasad odczytuje Role i RoleBindingi w przestrzeni nazw ćwiczenia. Kontrola dostępu wykonuje żądania API wymienione w celach.
+
+  ```bash
+  kubectl get roles,rolebindings -o yaml
+  ```
+
+  ### Bieżące workery i obserwacje API {#q125-consumer-authority-live-observation}
+
+  Ćwiczenie mogło nie odczytać bieżącego gotowego worker lub nie otrzymać prawidłowej odpowiedzi API. Sprawdź Deployment oraz jego bieżący ReplicaSet i Pod, a następnie ponów sprawdzenie żądań.
+
+  ```bash
+  kubectl get deployments,replicasets,pods -o wide
+  ```
+
+  ### Dozwolone żądanie przypisanego rekordu {#q125-consumer-authority-allowed-record}
+
+  Dozwolone żądanie konsumenta mogło się nie powieść lub zwrócić niewłaściwy rekord. Sprawdź uprawnienie do nazwanego ConfigMap i bieżące dane konsumenta według dostarczonego kontraktu.
+
+  ```bash
+  api=$(cat api-endpoint)
+  jq -c '.consumers[]' authority-contract.json | while IFS= read -r consumer; do
+    name=$(jq -er .deployment <<<"$consumer")
+    record=$(jq -er .configMap <<<"$consumer")
+    jq '{deployment, configMap, key, expected: .response}' <<<"$consumer"
+    kubectl rollout status "deployment/$name" --timeout=10s
+    token=$(kubectl exec "deployment/$name" -c worker -- cat /credential/token)
+    printf 'header = "Authorization: Bearer %s"\n' "$token" |
+      curl --config - --cacert api-ca.pem -sS --max-time 3 -w '\nHTTP %{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/$record"
+    unset token
+  done
+  ```
+
+  ### Żądania odrzucane dla tożsamości konsumentów {#q125-consumer-authority-denied-records}
+
+  Niedozwolone żądanie mogło otrzymać status inny niż 403. Sprawdź uprawnienia do rekordów innych konsumentów, listowania i zasobów kontrolnych oraz błędy przed autoryzacją.
+
+  ```bash
+  api=$(cat api-endpoint)
+  for name in controller observer publisher sampler; do
+    kubectl rollout status "deployment/$name" --timeout=10s
+    token=$(kubectl exec "deployment/$name" -c worker -- cat /credential/token)
+    for path in configmaps/route configmaps/release-plan configmaps/sampling configmaps secrets secrets/control configmaps/offlimits; do
+      printf '%s %s ' "$name" "$path"
+      printf 'header = "Authorization: Bearer %s"\n' "$token" |
+        curl --config - --cacert api-ca.pem -sS --max-time 3 -o /dev/null -w 'HTTP %{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
+    done
+    unset token
+  done
+  ```
+
+  ### Dane kontroli polityki dostępu {#q125-consumer-authority-policy-observer}
+
+  Kontrola polityk mogła się przerwać przed wskazaniem konkretnego warunku. Sprawdź dostarczony zapis tożsamości i dane API o obciążeniach, kontach i uprawnieniach.
+
+  ```bash
+  test -s /run/dq/facts/0/authority-identities.json; kubectl get deployments,serviceaccounts,roles,rolebindings
+  ```
+
+  ### Dane kontroli bieżących żądań {#q125-consumer-authority-request-observer}
+
+  Kontrola żądań mogła się przerwać przed wskazaniem konkretnego warunku. Sprawdź dostarczony adres API, plik CA oraz gotowość bieżących Podów.
+
+  ```bash
+  test -s /run/dq/facts/0/api-ca.pem; test -s /run/dq/facts/0/api-endpoint; kubectl get deployments,pods
+  ```
+source_hash: a371aef6dac29a2c44cde67a8febdf4643573ec8889e40bee31b5acca9fc5203

@@ -335,4 +335,162 @@ text: |
   ```bash
   command -v python3; kubectl get deployment reader -o name; kubectl get serviceaccount reader -o name
   ```
-source_hash: b5f7b2154e61c70a27b253e449456c2096249e91607182389f2ae483acea699e
+
+
+  ### Permiso de lectura sobre route {#q125-station-reader-role}
+
+  El Role station-reader puede conceder más que get sobre ConfigMap route. Comprueba cada regla para el recurso nombrado del grupo principal de la API.
+
+  ```bash
+  kubectl get role station-reader -o json | jq '.rules'
+  ```
+
+  ### Sujeto de station-reader {#q125-station-reader-subject}
+
+  Es posible que falte un sujeto en el RoleBinding station-reader o que se haya indicado otro. Comprueba que cada sujeto identifique a controller en el espacio de nombres del ejercicio.
+
+  ```bash
+  kubectl get rolebinding station-reader -o json | jq '.subjects'
+  ```
+
+  ### Acceso real de controller a route {#q125-station-reader-live-allow}
+
+  La solicitud real de controller a configmaps/route puede carecer del permiso para ese nombre o usar una credencial de un despliegue pendiente. Comprueba el selector, el vínculo y el rollout antes de repetir la comprobación de HTTP 200.
+
+  ```bash
+  kubectl get role,rolebinding station-reader; kubectl rollout status deployment/controller --timeout=10s
+  ```
+
+  ### Valor devuelto para route {#q125-station-reader-route-value}
+
+  La solicitud de controller puede no devolver un valor de ruta o devolver uno distinto de north-125. Tras confirmar que la solicitud funciona, comprueba el ConfigMap actual.
+
+  ```bash
+  kubectl get configmap route -o jsonpath='{.data.route}'
+  ```
+
+  ### Solicitudes denegadas a controller {#q125-station-reader-denials}
+
+  Controller puede tener un permiso demasiado amplio o la solicitud puede no haber llegado a la API con una credencial válida. Revisa los vínculos para detectar permisos excesivos de recursos, nombres o verbos y repite la comprobación marcada para HTTP 403.
+
+  ```bash
+  kubectl get roles,rolebindings -o yaml
+  ```
+
+  ### Acceso a route denegado a observer {#q125-station-reader-observer-denial}
+
+  La solicitud de observer a configmaps/route puede tener acceso o fallar antes de la autorización. Comprueba el rollout y los vínculos de observer y repite la comprobación de HTTP 403.
+
+  ```bash
+  kubectl get rolebinding station-reader -o json | jq '.subjects'; kubectl rollout status deployment/observer --timeout=10s
+  ```
+
+  ### Inventario de cargas y cuentas {#q125-consumer-authority-actors}
+
+  Es posible que la comprobación no pueda leer los Deployments o ServiceAccounts actuales. Verifica el inventario de cargas e identidades del espacio de nombres del ejercicio.
+
+  ```bash
+  kubectl get deployments,serviceaccounts
+  ```
+
+  ### Cargas e identidades de control conservadas {#q125-consumer-authority-retained-identity}
+
+  Es posible que hayan cambiado el UID original, la imagen de worker o la cuenta de control. Compara las cargas y los ServiceAccounts protegidos con el registro de identidades proporcionado.
+
+  ```bash
+  jq '{identities,images,originalAccounts}' /run/dq/facts/0/authority-identities.json; kubectl get deployment controller observer publisher sampler -o json | jq '.items[] | {name: .metadata.name, uid: .metadata.uid, account: .spec.template.spec.serviceAccountName, image: [.spec.template.spec.containers[] | select(.name == "worker") | .image]}'; kubectl get serviceaccount controller observer -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+  ```
+
+  ### Cuentas independientes de consumidores {#q125-consumer-authority-separate-accounts}
+
+  Los consumidores pueden compartir un ServiceAccount o usar una identidad reservada. Comprueba que publisher y sampler tengan cuentas distintas y no reservadas en el despliegue actual.
+
+  ```bash
+  kubectl get deployment publisher sampler -o custom-columns=NAME:.metadata.name,ACCOUNT:.spec.template.spec.serviceAccountName
+  ```
+
+  ### Credenciales proyectadas en los Pods actuales {#q125-consumer-authority-projected-credential}
+
+  Es posible que el token predeterminado siga montado o que la credencial proyectada no esté disponible o corresponda a otra cuenta o Pod. Comprueba el montaje automático y la proyección en el despliegue actual.
+
+  ```bash
+  kubectl get deployments publisher sampler -o json | jq '.items[] | {name: .metadata.name, spec: .spec.template.spec | {serviceAccountName, automountServiceAccountToken, volumes}}'
+  kubectl get serviceaccounts -o json | jq '.items[] | {name: .metadata.name, automountServiceAccountToken}'
+  kubectl get replicaset,pod -o json | jq '.items[] | {kind, name: .metadata.name, uid: .metadata.uid, owner: .metadata.ownerReferences, account: .spec.serviceAccountName}'
+  for name in controller observer publisher sampler; do
+    kubectl rollout status "deployment/$name" --timeout=10s
+    kubectl exec "deployment/$name" -c worker -- cat /credential/token |
+      python3 -I -c 'import base64,json,sys; part=sys.stdin.read().split(".")[1]; claims=json.loads(base64.urlsafe_b64decode(part+"===")); print(json.dumps({"subject": claims.get("sub"), "pod_uid": claims.get("kubernetes.io",{}).get("pod",{}).get("uid")}))'
+  done
+  ```
+
+  ### Permisos sobre registros asignados a consumidores {#q125-consumer-authority-named-grants}
+
+  Los vínculos pueden ser ilegibles, inexistentes o más amplios que un Role del espacio de nombres con get sobre el único ConfigMap asignado al consumidor. Revisa los sujetos que coincidan con las cuentas y los grupos y los Roles referenciados.
+
+  La comprobación de políticas lee Roles y RoleBindings del espacio de nombres del ejercicio. La comprobación de acceso ejecuta las solicitudes a la API enumeradas en los objetivos.
+
+  ```bash
+  kubectl get roles,rolebindings -o yaml
+  ```
+
+  ### Workers actuales y observaciones de la API {#q125-consumer-authority-live-observation}
+
+  El ejercicio puede no detectar un worker actual y listo o no recibir una respuesta válida de la API. Comprueba el Deployment, su ReplicaSet actual y el Pod antes de repetir las solicitudes.
+
+  ```bash
+  kubectl get deployments,replicasets,pods -o wide
+  ```
+
+  ### Solicitud permitida para el registro asignado {#q125-consumer-authority-allowed-record}
+
+  La solicitud permitida de un consumidor puede haber fallado o devuelto un registro incorrecto. Verifica su permiso sobre el ConfigMap nombrado y los datos actuales de ese consumidor según el contrato proporcionado.
+
+  ```bash
+  api=$(cat api-endpoint)
+  jq -c '.consumers[]' authority-contract.json | while IFS= read -r consumer; do
+    name=$(jq -er .deployment <<<"$consumer")
+    record=$(jq -er .configMap <<<"$consumer")
+    jq '{deployment, configMap, key, expected: .response}' <<<"$consumer"
+    kubectl rollout status "deployment/$name" --timeout=10s
+    token=$(kubectl exec "deployment/$name" -c worker -- cat /credential/token)
+    printf 'header = "Authorization: Bearer %s"\n' "$token" |
+      curl --config - --cacert api-ca.pem -sS --max-time 3 -w '\nHTTP %{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/$record"
+    unset token
+  done
+  ```
+
+  ### Solicitudes denegadas a las identidades de consumidores {#q125-consumer-authority-denied-records}
+
+  Una solicitud prohibida puede haber recibido un estado distinto de 403. Revisa los permisos entre consumidores, de listado y de recursos de control, así como los fallos previos a la autorización.
+
+  ```bash
+  api=$(cat api-endpoint)
+  for name in controller observer publisher sampler; do
+    kubectl rollout status "deployment/$name" --timeout=10s
+    token=$(kubectl exec "deployment/$name" -c worker -- cat /credential/token)
+    for path in configmaps/route configmaps/release-plan configmaps/sampling configmaps secrets secrets/control configmaps/offlimits; do
+      printf '%s %s ' "$name" "$path"
+      printf 'header = "Authorization: Bearer %s"\n' "$token" |
+        curl --config - --cacert api-ca.pem -sS --max-time 3 -o /dev/null -w 'HTTP %{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
+    done
+    unset token
+  done
+  ```
+
+  ### Entradas de la comprobación de la política de acceso {#q125-consumer-authority-policy-observer}
+
+  La observación de políticas puede haberse interrumpido antes de indicar una condición concreta. Comprueba el registro de identidades proporcionado y las lecturas de la API sobre cargas, cuentas y permisos.
+
+  ```bash
+  test -s /run/dq/facts/0/authority-identities.json; kubectl get deployments,serviceaccounts,roles,rolebindings
+  ```
+
+  ### Entradas de la comprobación de solicitudes reales {#q125-consumer-authority-request-observer}
+
+  La observación de solicitudes puede haberse interrumpido antes de indicar una condición concreta. Verifica el endpoint de la API, el archivo de CA y la disponibilidad de los Pods actuales.
+
+  ```bash
+  test -s /run/dq/facts/0/api-ca.pem; test -s /run/dq/facts/0/api-endpoint; kubectl get deployments,pods
+  ```
+source_hash: a371aef6dac29a2c44cde67a8febdf4643573ec8889e40bee31b5acca9fc5203

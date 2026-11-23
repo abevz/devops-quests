@@ -335,4 +335,162 @@ text: |
   ```bash
   command -v python3; kubectl get deployment reader -o name; kubectl get serviceaccount reader -o name
   ```
-source_hash: b5f7b2154e61c70a27b253e449456c2096249e91607182389f2ae483acea699e
+
+
+  ### Named read permission on route {#q125-station-reader-role}
+
+  The station-reader Role may grant more than get on ConfigMap route. Check every rule for the named core API resource.
+
+  ```bash
+  kubectl get role station-reader -o json | jq '.rules'
+  ```
+
+  ### Subject of station-reader {#q125-station-reader-subject}
+
+  The station-reader RoleBinding may have a missing or different subject. Check that each subject identifies controller in the exercise namespace.
+
+  ```bash
+  kubectl get rolebinding station-reader -o json | jq '.subjects'
+  ```
+
+  ### Live controller access to route {#q125-station-reader-live-allow}
+
+  The live controller request for configmaps/route may lack the named grant or use a credential from an unready rollout. Check the selector, binding and rollout before repeating the exercise check for HTTP 200.
+
+  ```bash
+  kubectl get role,rolebinding station-reader; kubectl rollout status deployment/controller --timeout=10s
+  ```
+
+  ### Value returned for route {#q125-station-reader-route-value}
+
+  The controller request may return no route value or a value other than north-125. Check the live ConfigMap after confirming that the request succeeds.
+
+  ```bash
+  kubectl get configmap route -o jsonpath='{.data.route}'
+  ```
+
+  ### Requests denied for controller {#q125-station-reader-denials}
+
+  The controller request may have an overly broad grant or may not have reached the API with a valid credential. Check the bindings for broad resource, name or verb access and repeat the marked request for HTTP 403.
+
+  ```bash
+  kubectl get roles,rolebindings -o yaml
+  ```
+
+  ### Route access denied for observer {#q125-station-reader-observer-denial}
+
+  The observer request to configmaps/route may be granted access or fail before authorization. Check the observer rollout and bindings, then repeat the check for HTTP 403.
+
+  ```bash
+  kubectl get rolebinding station-reader -o json | jq '.subjects'; kubectl rollout status deployment/observer --timeout=10s
+  ```
+
+  ### Workload and account inventory {#q125-consumer-authority-actors}
+
+  The check may be unable to read current Deployments or ServiceAccounts. Verify the workload and identity inventory in the exercise namespace.
+
+  ```bash
+  kubectl get deployments,serviceaccounts
+  ```
+
+  ### Preserved workloads and control identities {#q125-consumer-authority-retained-identity}
+
+  The original UID, worker image or control account may have changed. Compare the live workloads and protected ServiceAccounts with the supplied identity record.
+
+  ```bash
+  jq '{identities,images,originalAccounts}' /run/dq/facts/0/authority-identities.json; kubectl get deployment controller observer publisher sampler -o json | jq '.items[] | {name: .metadata.name, uid: .metadata.uid, account: .spec.template.spec.serviceAccountName, image: [.spec.template.spec.containers[] | select(.name == "worker") | .image]}'; kubectl get serviceaccount controller observer -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+  ```
+
+  ### Separate consumer accounts {#q125-consumer-authority-separate-accounts}
+
+  The consumers may share a ServiceAccount or use a reserved identity. Check that publisher and sampler have distinct, nonreserved accounts in the current rollout.
+
+  ```bash
+  kubectl get deployment publisher sampler -o custom-columns=NAME:.metadata.name,ACCOUNT:.spec.template.spec.serviceAccountName
+  ```
+
+  ### Projected credentials in current Pods {#q125-consumer-authority-projected-credential}
+
+  The default token may still be mounted or the explicit projected credential may be unavailable or tied to a different account or Pod. Check automount settings and projection in the current rollout.
+
+  ```bash
+  kubectl get deployments publisher sampler -o json | jq '.items[] | {name: .metadata.name, spec: .spec.template.spec | {serviceAccountName, automountServiceAccountToken, volumes}}'
+  kubectl get serviceaccounts -o json | jq '.items[] | {name: .metadata.name, automountServiceAccountToken}'
+  kubectl get replicaset,pod -o json | jq '.items[] | {kind, name: .metadata.name, uid: .metadata.uid, owner: .metadata.ownerReferences, account: .spec.serviceAccountName}'
+  for name in controller observer publisher sampler; do
+    kubectl rollout status "deployment/$name" --timeout=10s
+    kubectl exec "deployment/$name" -c worker -- cat /credential/token |
+      python3 -I -c 'import base64,json,sys; part=sys.stdin.read().split(".")[1]; claims=json.loads(base64.urlsafe_b64decode(part+"===")); print(json.dumps({"subject": claims.get("sub"), "pod_uid": claims.get("kubernetes.io",{}).get("pod",{}).get("uid")}))'
+  done
+  ```
+
+  ### Named grants for consumers {#q125-consumer-authority-named-grants}
+
+  Bindings may be unreadable, absent or broader than a namespace Role with get on the consumer's one assigned ConfigMap. Check matching account and group subjects and their referenced Roles.
+
+  The policy check reads Roles and RoleBindings in the exercise namespace. The live check observes the API requests named in the objectives.
+
+  ```bash
+  kubectl get roles,rolebindings -o yaml
+  ```
+
+  ### Current workers and API observations {#q125-consumer-authority-live-observation}
+
+  The exercise may not be able to observe a current ready worker or receive a valid API response. Check the Deployment and its current ReplicaSet and Pod before repeating the request checks.
+
+  ```bash
+  kubectl get deployments,replicasets,pods -o wide
+  ```
+
+  ### Allowed request for the assigned record {#q125-consumer-authority-allowed-record}
+
+  An allowed consumer request may have failed or returned the wrong record. Verify its named ConfigMap grant and the current data for that consumer in the supplied contract.
+
+  ```bash
+  api=$(cat api-endpoint)
+  jq -c '.consumers[]' authority-contract.json | while IFS= read -r consumer; do
+    name=$(jq -er .deployment <<<"$consumer")
+    record=$(jq -er .configMap <<<"$consumer")
+    jq '{deployment, configMap, key, expected: .response}' <<<"$consumer"
+    kubectl rollout status "deployment/$name" --timeout=10s
+    token=$(kubectl exec "deployment/$name" -c worker -- cat /credential/token)
+    printf 'header = "Authorization: Bearer %s"\n' "$token" |
+      curl --config - --cacert api-ca.pem -sS --max-time 3 -w '\nHTTP %{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/$record"
+    unset token
+  done
+  ```
+
+  ### Requests denied for consumer identities {#q125-consumer-authority-denied-records}
+
+  A forbidden request may have received a status other than 403. Check for cross-consumer, list and control-resource grants and for requests that fail before authorization.
+
+  ```bash
+  api=$(cat api-endpoint)
+  for name in controller observer publisher sampler; do
+    kubectl rollout status "deployment/$name" --timeout=10s
+    token=$(kubectl exec "deployment/$name" -c worker -- cat /credential/token)
+    for path in configmaps/route configmaps/release-plan configmaps/sampling configmaps secrets secrets/control configmaps/offlimits; do
+      printf '%s %s ' "$name" "$path"
+      printf 'header = "Authorization: Bearer %s"\n' "$token" |
+        curl --config - --cacert api-ca.pem -sS --max-time 3 -o /dev/null -w 'HTTP %{http_code}\n' "$api/api/v1/namespaces/$DQ_NAMESPACE/$path"
+    done
+    unset token
+  done
+  ```
+
+  ### Inputs to the authority policy check {#q125-consumer-authority-policy-observer}
+
+  The policy observer may have stopped before returning a specific condition. Check the supplied identity record and API observations for workloads, accounts and grants.
+
+  ```bash
+  test -s /run/dq/facts/0/authority-identities.json; kubectl get deployments,serviceaccounts,roles,rolebindings
+  ```
+
+  ### Inputs to the live request check {#q125-consumer-authority-request-observer}
+
+  The request observer may have stopped before returning a specific condition. Check the supplied API endpoint and CA file and the readiness of current Pods.
+
+  ```bash
+  test -s /run/dq/facts/0/api-ca.pem; test -s /run/dq/facts/0/api-endpoint; kubectl get deployments,pods
+  ```
+source_hash: a371aef6dac29a2c44cde67a8febdf4643573ec8889e40bee31b5acca9fc5203

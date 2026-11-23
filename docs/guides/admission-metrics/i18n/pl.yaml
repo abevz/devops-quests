@@ -63,5 +63,334 @@ text: '# Budżety admission i metryki
   zachowuje pierwotne powiązanie pliku. Porównaj chroniony rekord i klucz z żądanymi referencjami obciążeń, ich
   bieżącymi Podami, rzeczywistymi wejściami i odpowiedziami. Zachowane dane przejściowe są kontrolą, nie zastępują
   przyjęcia sprawdzanego źródła. Zachowaj prywatną granicę zaufania i fail-closed podczas zaakceptowanych i odrzuconych
-  serwerowych dry-runs. Bieżący stan nie dowodzi pełnej historii żądań.'
-source_hash: 4db2f384d864f640df5472fe8dc4da935730d1ce9bd37c6315faa5eff107cd45
+  serwerowych dry-runs. Bieżący stan nie dowodzi pełnej historii żądań.
+
+
+  ### Jeden webhook walidujący {#q121-admission-single-webhook}
+
+
+  Konfiguracja stanowiska może nie istnieć lub zawierać dodatkowe webhooki. Sprawdź, czy ma dokładnie jeden wpis.
+
+
+  ```bash
+
+  kubectl get validatingwebhookconfiguration "dq-webhook-${DQ_NAMESPACE#dq-}" -o json | jq ''.webhooks | length''
+
+  ```
+
+
+  ### Nazwa webhooka walidującego {#q121-admission-webhook-identity}
+
+
+  Wpis webhooka mógł zostać przemianowany lub zastąpiony. Sprawdź route.training.devops-quests.local w aktywnej konfiguracji.
+
+
+  ```bash
+
+  kubectl get validatingwebhookconfiguration "dq-webhook-${DQ_NAMESPACE#dq-}" -o json | jq -r ''.webhooks[0].name''
+
+  ```
+
+
+  ### Polityka obsługi błędów webhooka {#q121-admission-failure-mode}
+
+
+  Obejście mogło zmienić failurePolicy na Ignore. Zachowaj Fail, aby niedostępny webhook nie pomijał walidacji po cichu.
+
+
+  ```bash
+
+  kubectl get validatingwebhookconfiguration "dq-webhook-${DQ_NAMESPACE#dq-}" -o json | jq -r ''.webhooks[0].failurePolicy''
+
+  ```
+
+
+  ### Limit czasu webhooka w sekundach {#q121-admission-timeout-seconds}
+
+
+  Podczas diagnozy dostępności można było zmienić timeout webhooka. Sprawdź, czy timeoutSeconds nadal wynosi 2.
+
+
+  ```bash
+
+  kubectl get validatingwebhookconfiguration "dq-webhook-${DQ_NAMESPACE#dq-}" -o json | jq ''.webhooks[0].timeoutSeconds''
+
+  ```
+
+
+  ### Adres punktu walidacji {#q121-admission-validation-endpoint}
+
+
+  Walidator może nadal wskazywać wycofaną ścieżkę lub inny adres. Sprawdź HTTPS URL webhooka stanowiska na porcie 8443 z /validate.
+
+
+  ```bash
+
+  kubectl get validatingwebhookconfiguration "dq-webhook-${DQ_NAMESPACE#dq-}" -o json | jq -r ''.webhooks[0].clientConfig.url''
+
+  ```
+
+
+  ### Urząd certyfikacji dla walidacji {#q121-admission-certificate-authority}
+
+
+  Pakiet CA może nie istnieć, mieć zły format lub zawierać inny certyfikat. Porównaj jedyny zdekodowany certyfikat z admission-ca.pem.
+
+
+  ```bash
+
+  kubectl get validatingwebhookconfiguration "dq-webhook-${DQ_NAMESPACE#dq-}" -o json | jq -er ''.webhooks[0].clientConfig.caBundle'' | base64 -d | openssl x509 -noout -fingerprint -sha256; openssl x509 -in admission-ca.pem -noout -fingerprint -sha256
+
+  ```
+
+
+  ### Przestrzeń nazw objęta webhookiem {#q121-admission-sandbox-namespace-selector}
+
+
+  Selektor może pomijać etykietę uruchomienia lub instalacji albo obejmować inną przestrzeń. Porównaj go z dwiema etykietami i zachowaj dokładny zakres.
+
+
+  ```bash
+
+  kubectl get namespace "$DQ_NAMESPACE" --show-labels; kubectl get validatingwebhookconfiguration "dq-webhook-${DQ_NAMESPACE#dq-}" -o json | jq ''.webhooks[0].namespaceSelector''
+
+  ```
+
+
+  ### Bieżący rekord trasy {#q121-admission-current-route-record}
+
+
+  Aktywna ConfigMap route może mieć starą wartość lub być nieczytelna. Potwierdź north-121 w kluczu route rzeczywistego obiektu.
+
+
+  ```bash
+
+  kubectl get configmap route -o json | jq -e ''.data.route == "north-121"''
+
+  ```
+
+
+  ### Zaakceptowana próba po stronie serwera {#q121-admission-accepted-dry-run}
+
+
+  Nawet poprawny obiekt może nie przejść serwerowego dry-run z powodu niedostępnego webhooka lub CA. Porównaj wynik serwerowego dry-run z bieżącym route.
+
+
+  ```bash
+
+  kubectl get configmap route -o json | jq ''del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)'' | kubectl apply --dry-run=server -f -
+
+  ```
+
+
+  ### Dane odrzucanej próby {#q121-admission-denied-dry-run-input}
+
+
+  Obiekt route może nie istnieć lub mieć błędny JSON, co blokuje przygotowanie dry-run z closed. Sprawdź wejście przed oceną odpowiedzi serwera.
+
+
+  ```bash
+
+  kubectl get configmap route -o json | jq ''.data.route="closed" | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)''
+
+  ```
+
+
+  ### Odrzucenie zamkniętej trasy {#q121-admission-reject-closed-route}
+
+
+  Zmieniona wartość może przejść walidację przez zły zakres lub ścieżkę webhooka. Wykonaj serwerowy dry-run z closed i potwierdź odmowę.
+
+
+  ```bash
+
+  kubectl get configmap route -o json | jq ''.data.route="closed" | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)'' | kubectl apply --dry-run=server -f -
+
+  ```
+
+
+  ### Oczekiwany komunikat odrzucenia {#q121-admission-exact-validation-denial}
+
+
+  Ogólny błąd TLS lub transportu może przerwać dry-run przed walidacją. Sprawdź, czy komunikat zawiera Station route must be north-121.
+
+
+  ```bash
+
+  kubectl get configmap route -o json | jq ''.data.route="closed" | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)'' | kubectl apply --dry-run=server -f -
+
+  ```
+
+
+  ### Gotowe repliki board {#q121-admission-board-ready-count}
+
+
+  Naprawiona trasa może przechodzić walidację, chociaż kontener worker board nadal startuje lub nie jest gotowy. Sprawdź rollout i poczekaj na jedną gotową replikę.
+
+
+  ```bash
+
+  kubectl get deployment board -o jsonpath=''{.status.readyReplicas}''; kubectl get pods -l app=board
+
+  ```
+
+
+  ### Rzeczywista odpowiedź board {#q121-admission-board-live-response}
+
+
+  Udany dry-run może towarzyszyć starej lub niedostępnej odpowiedzi board. Odpytaj board z client i porównaj treść z north-121.
+
+
+  ```bash
+
+  kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  ### Dane kontroli webhooka {#q121-admission-config-observer-input}
+
+
+  Kontrola webhooka może zatrzymać się przed wskazaniem warunku, gdy narzędzia lub dane są niedostępne. Sprawdź narzędzia, CA i dostęp do przestrzeni.
+
+
+  ```bash
+
+  command -v python3; test -r admission-ca.pem; kubectl get namespace "$DQ_NAMESPACE" -o name
+
+  ```
+
+
+  ### Zachowana tożsamość konsumentów {#q121-admission-retained-consumer-identities}
+
+
+  Dostarczone obciążenie mogło zostać odtworzone lub używać innego obrazu w szablonie lub podach. Porównaj bieżące UID i obrazy z zamrożonym zapisem.
+
+
+  ```bash
+
+  jq ''.deployments'' /run/dq/facts/0/adoption-identities.json; kubectl get deployment board client route-env route-file -o custom-columns=NAME:.metadata.name,UID:.metadata.uid,IMAGE:.spec.template.spec.containers[*].image; kubectl get replicaset,pod -o json | jq ''.items[] | {kind, name: .metadata.name, uid: .metadata.uid, owner: .metadata.ownerReferences, workers: [.spec.containers[]? | {name,image}]}''
+
+  ```
+
+
+  ### Zachowany rekord roboczy {#q121-admission-preserved-staged-record}
+
+
+  Edycja staged-route na wzór przyjętego obiektu mogła zmienić pierwotne dane lub UID. Porównaj pełny zapis staging z pierwotnym i podłącz konsumentów do route.
+
+
+  ```bash
+
+  jq ''.staging | {uid: .metadata.uid, data, binaryData}'' /run/dq/facts/0/adoption-identities.json; kubectl get configmap staged-route -o json | jq ''{uid: .metadata.uid, data, binaryData}''
+
+  ```
+
+
+  ### Źródłowy rekord trasy {#q121-admission-source-route-record}
+
+
+  Konfiguracja konsumentów może być stara lub nie istnieć. Potwierdź north-121 w kluczu route faktycznie przyjętego ConfigMap route.
+
+
+  ```bash
+
+  kubectl get configmap route -o json | jq -e ''.data.route == "north-121"''
+
+  ```
+
+
+  ### Bieżące Pody konsumentów {#q121-admission-current-consumer-pods}
+
+
+  Po wdrożeniu konsument może nie mieć dokładnie jednego bieżącego gotowego poda. Sprawdź oba wdrożenia i ich aktualne pody.
+
+
+  ```bash
+
+  kubectl get deployment route-env route-file -o wide; kubectl get replicasets,pods -l ''app in (route-env,route-file)'' -o wide
+
+  ```
+
+
+  ### Zachowany program startowy {#q121-admission-preserved-startup-program}
+
+
+  Zmiana polecenia lub argumentów startu mogła zamaskować niewłaściwe dane. Porównaj żądany i aktywny program z dostarczonym i popraw źródło.
+
+
+  ```bash
+
+  jq ''.deployments | {env: .["route-env"], file: .["route-file"]}'' /run/dq/facts/0/adoption-identities.json; kubectl get deployment route-env route-file -o json | jq ''.items[] | {name: .metadata.name, startup: [.spec.template.spec.containers[] | {name,command,args}]}''; kubectl get pods -o json | jq ''.items[] | {name: .metadata.name, owner: .metadata.ownerReferences, startup: [.spec.containers[] | {name,command,args}]}''
+
+  ```
+
+
+  ### Odwołanie do przyjętego źródła {#q121-admission-adopted-config-reference}
+
+
+  Konsument może nadal odwoływać się do staged-route albo używać literału lub niejednoznacznej projekcji pliku. Sprawdź route/route w szablonie i podzie przez unikalny ROUTE lub plik tylko do odczytu.
+
+
+  ```bash
+
+  kubectl get deployment route-env route-file -o json | jq ''.items[] | {name: .metadata.name, containers: .spec.template.spec.containers, volumes: .spec.template.spec.volumes}''
+
+  kubectl get replicaset,pod -o json | jq ''.items[] | {kind, name: .metadata.name, uid: .metadata.uid, owners: .metadata.ownerReferences, containers: .spec.containers, volumes: .spec.volumes}''
+
+  ```
+
+
+  ### Rzeczywiste dane wejściowe konsumenta {#q121-admission-live-consumer-input}
+
+
+  Konfiguracja może być poprawna, choć konsument nadal widzi starą zmienną lub plik. Odczytaj aktywne ROUTE i /config/route i porównaj z north-121.
+
+
+  ```bash
+
+  kubectl exec deployment/route-env -c worker -- printenv ROUTE; kubectl exec deployment/route-file -c worker -- cat /config/route
+
+  ```
+
+
+  ### Rzeczywisty wynik publikowany przez konsumenta {#q121-admission-live-consumer-publication}
+
+
+  Konsument może czytać poprawne dane, ale zwracać stare wyjście startowe. Odpytaj loopback u każdego konsumenta i porównaj z north-121.
+
+
+  ```bash
+
+  for deployment_name in route-env route-file; do kubectl exec "deployment/$deployment_name" -c worker -- wget -qO- -T 2 http://127.0.0.1:8080; done
+
+  ```
+
+
+  ### Bieżąca obserwacja konsumentów {#q121-admission-current-observation-failure}
+
+
+  Kontrola może nie odczytać obciążenia, wejścia poda lub odpowiedzi w limicie czasu. Sprawdź API i powtórz obserwacje osobno przed oceną przyjęcia.
+
+
+  ```bash
+
+  kubectl get deployment route-env route-file -o name; kubectl get pods -l ''app in (route-env,route-file)''
+
+  ```
+
+
+  ### Dane kontroli przyjęcia źródła {#q121-admission-adoption-observer-input}
+
+
+  Kontrola przyjęcia może zatrzymać się przed wskazaniem warunku przez błąd procesu lub danych. Sprawdź narzędzia, dostarczony kontrakt i dostęp do obu konsumentów.
+
+
+  ```bash
+
+  command -v python3; test -r adoption-contract.json; kubectl get deployment route-env route-file -o name
+
+  ```
+
+  '
+source_hash: 780e7a7e74fe948e705bffaf9d98d89be823be3f00505062782f3514c3174eca

@@ -1302,5 +1302,521 @@ text: '# Private registry and GitOps recovery
 
   ```
 
+
+
+  ### History after the baseline {#q122-parent-forward-git-history}
+
+
+  The current HEAD may no longer descend from the supplied baseline, or the baseline may be unreadable. Inspect the commit ancestry before publishing a forward repair.
+
+
+  ```bash
+
+  git -C repository log --oneline --graph --decorate -12
+
+  ```
+
+
+  ### Repair commit in the local repository {#q122-parent-repair-commit}
+
+
+  A working-tree edit may still leave HEAD at the baseline. Compare the two revisions and verify the intended repair is committed.
+
+
+  ```bash
+
+  git -C repository rev-parse HEAD; cat baseline-commit
+
+  ```
+
+
+  ### Published main branch {#q122-parent-published-main}
+
+
+  The local repair commit may not be the current remote main, or the remote lookup may fail. Compare local HEAD with the branch tip returned by origin.
+
+
+  ```bash
+
+  git -C repository rev-parse HEAD; git -C repository ls-remote origin refs/heads/main
+
+  ```
+
+
+  ### Resource kind of the child manifest {#q122-parent-git-child-kind}
+
+
+  The committed child may be missing, invalid YAML, or another kind of resource. Inspect apps/child.yaml in HEAD for kind Application.
+
+
+  ```bash
+
+  git -C repository show HEAD:apps/child.yaml
+
+  ```
+
+
+  ### Name of the child manifest {#q122-parent-git-child-name}
+
+
+  The committed child may have a different metadata name or be unreadable. Inspect apps/child.yaml in HEAD and keep the child named board.
+
+
+  ```bash
+
+  git -C repository show HEAD:apps/child.yaml
+
+  ```
+
+
+  ### Source in the committed child manifest {#q122-parent-git-child-source}
+
+
+  The Git child may still point to a retired, absolute or parent-traversing directory. Verify its committed relative source path resolves to manifests.
+
+
+  ```bash
+
+  git -C repository show HEAD:apps/child.yaml
+
+  ```
+
+
+  ### Project of the live child Application {#q122-parent-live-child-project}
+
+
+  The live child may have been reconciled into another AppProject or may still show an earlier spec. Check that the child’s current project is station.
+
+
+  ```bash
+
+  kubectl get application board -o jsonpath=''{.spec.project}''
+
+  ```
+
+
+  ### Destination of the live child Application {#q122-parent-live-child-destination}
+
+
+  The live child may target the wrong namespace. Compare its destination namespace with the supplied bay namespace.
+
+
+  ```bash
+
+  kubectl get application board -o jsonpath=''{.spec.destination.namespace}''; printf ''%s\n'' "$DQ_NAMESPACE"
+
+  ```
+
+
+  ### Source of the live child Application {#q122-parent-live-child-source}
+
+
+  The committed path can be correct while the active child still uses the former directory. Compare the active relative path with manifests after reconciling parent.
+
+
+  ```bash
+
+  kubectl get application board -o jsonpath=''{.spec.source.path}''
+
+  ```
+
+
+  ### Tracking of the child by its parent {#q122-parent-live-child-tracking}
+
+
+  A manually created child may lack the parent’s tracking annotation. Compare the live tracking ID with the parent identity in the bay.
+
+
+  ```bash
+
+  kubectl get application board -o json | jq ''.metadata.annotations["argocd.argoproj.io/tracking-id"]''
+
+  ```
+
+
+  ### Sync state of both Applications {#q122-parent-and-child-sync-state}
+
+
+  The affected Application may still be OutOfSync or unable to apply its source. Check the flagged parent or board status and its reconciliation errors.
+
+
+  ```bash
+
+  kubectl get application parent board -o json | jq ''.items[] | {name: .metadata.name, sync: .status.sync.status}''
+
+  ```
+
+
+  ### Published revision used by both Applications {#q122-parent-and-child-published-revision}
+
+
+  An Application may report a synchronization to an earlier commit. Compare the affected parent or board revision with the current published HEAD.
+
+
+  ```bash
+
+  git -C repository rev-parse HEAD; kubectl get application parent board -o json | jq ''.items[] | {name: .metadata.name, revision: .status.sync.revision}''
+
+  ```
+
+
+  ### Health of the synchronized Applications {#q122-parent-child-application-health}
+
+
+  The child may be synced while its workload is still unhealthy. Check board’s health and its running Pods after reconciliation.
+
+
+  ```bash
+
+  kubectl get application board -o jsonpath=''{.status.health.status}''; kubectl get pods -l app=board
+
+  ```
+
+
+  ### Preserved UID of the parent Application {#q122-retained-parent-application-uid}
+
+
+  Recreating the parent Application under the same name permanently changes its UID. Compare the live parent UID with the original frozen receipt.
+
+
+  ```bash
+
+  cat /run/dq/facts/0/parent-uid; kubectl get application parent -o jsonpath=''{.metadata.uid}''
+
+  ```
+
+
+  ### Preserved path of the parent Application {#q122-retained-parent-apps-path}
+
+
+  The live parent may point directly at workload manifests instead of the child directory. Check that its exact source path stays apps.
+
+
+  ```bash
+
+  kubectl get application parent -o jsonpath=''{.spec.source.path}''
+
+  ```
+
+
+  ### Readiness of the child workload {#q122-parent-child-workload-ready}
+
+
+  The child-managed Deployment may have no ready replica yet. Inspect its Pod events and wait for one ready board replica.
+
+
+  ```bash
+
+  kubectl get deployment board -o jsonpath=''{.status.readyReplicas}''; kubectl get pods -l app=board
+
+  ```
+
+
+  ### Live response of the child service {#q122-parent-child-live-service}
+
+
+  The Application can be healthy while board serves stale content or is temporarily unreachable. Query the live Service and compare its body with north-122.
+
+
+  ```bash
+
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+
+  ```
+
+
+  ### Approved child publication {#q122-parent-child-approved-publication}
+
+
+  The committed or live worker may lack the read-only board-publication mount, the ConfigMap may lack child tracking or the approved revision, or the live path may serve a stale value. Inspect all three boundaries.
+
+
+  ```bash
+
+  cat /run/dq/facts/0/approved-publication
+
+  git -C repository show HEAD:manifests/board.yaml
+
+  kubectl get deployment board -o json | jq ''.spec.template.spec | {volumes, mounts: [.containers[] | select(.name=="worker") | .volumeMounts]}''
+
+  kubectl get configmap board-publication -o json | jq ''{revision: .data.revision, tracking: .metadata.annotations["argocd.argoproj.io/tracking-id"]}''
+
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/publication/revision
+
+  ```
+
+
+  ### Inputs to the child check {#q122-parent-child-observer-input}
+
+
+  The child observer may stop before naming a condition if its workstation tooling, repository or inputs fail. Check the local Git checkout and API access.
+
+
+  ```bash
+
+  command -v python3; git -C repository status --short; kubectl get application parent board -o name
+
+  ```
+
+
+  ### Inputs to the publication check {#q122-parent-publication-observer-input}
+
+
+  The publication observer may stop before a field can be named if its local process or inputs fail. Check the repository, tools and access to board-publication and board.
+
+
+  ```bash
+
+  command -v python3; kubectl get configmap board-publication -o name; git -C repository status --short
+
+  ```
+
+
+  ### Namespace recorded in the contract {#q123-appset-frozen-namespace}
+
+
+  The frozen ApplicationSet target may lack a readable namespace. Check the supplied namespace before looking up the generated Applications.
+
+
+  ```bash
+
+  jq -er .namespace /run/dq/facts/0/appset-target.json
+
+  ```
+
+
+  ### Repository recorded in the contract {#q123-appset-frozen-repository}
+
+
+  The target receipt may be unreadable or omit its repository URL. Verify repoURL in the frozen input before comparing generated sources.
+
+
+  ```bash
+
+  jq -er .repoURL /run/dq/facts/0/appset-target.json
+
+  ```
+
+
+  ### Receipt for the approved release {#q123-appset-approved-release-receipt}
+
+
+  The frozen release commit may be unreadable or empty. Verify the approved revision receipt before comparing either Application’s sync status.
+
+
+  ```bash
+
+  test -s /run/dq/facts/0/release-commit
+
+  ```
+
+
+  ### UID of the live ApplicationSet {#q123-appset-live-uid}
+
+
+  The current station ApplicationSet may be absent or unreadable. Read its UID in the supplied namespace before checking generated owners.
+
+
+  ```bash
+
+  ns=$(jq -er .namespace /run/dq/facts/0/appset-target.json); kubectl -n "$ns" get applicationset station -o json | jq ''.metadata.uid''
+
+  ```
+
+
+  ### Source path in the template {#q123-appset-template-directory}
+
+
+  The template may still point at the retired directory or a fixed path. Check the exact parameterized path stations/{{.station}}.
+
+
+  ```bash
+
+  ns=$(jq -er .namespace /run/dq/facts/0/appset-target.json); kubectl -n "$ns" get applicationset station -o json | jq ''.spec.template.spec.source.path''
+
+  ```
+
+
+  ### Go template setting of the ApplicationSet {#q123-appset-go-template-mode}
+
+
+  Go templating may be disabled or unset, preventing the path expression from expanding. Check that goTemplate is boolean true.
+
+
+  ```bash
+
+  ns=$(jq -er .namespace /run/dq/facts/0/appset-target.json); kubectl -n "$ns" get applicationset station -o json | jq ''.spec.goTemplate''
+
+  ```
+
+
+  ### Station entries in the list generator {#q123-appset-list-station-elements}
+
+
+  The first list generator may omit or reorder the supplied stations. Inspect its station values and keep north followed by south.
+
+
+  ```bash
+
+  ns=$(jq -er .namespace /run/dq/facts/0/appset-target.json); kubectl -n "$ns" get applicationset station -o json | jq ''.spec.generators[0].list.elements''
+
+  ```
+
+
+  ### Both named Applications {#q123-appset-expected-pair}
+
+
+  Either expected Application may be missing or the named lookup may fail. Verify that the controller generated both north and south in the supplied namespace.
+
+
+  ```bash
+
+  ns=$(jq -er .namespace /run/dq/facts/0/appset-target.json); kubectl -n "$ns" get application north south -o json | jq ''.items[].metadata.name''
+
+  ```
+
+
+  ### Project of the generated Applications {#q123-appset-generated-project}
+
+
+  The affected Application may have inherited another AppProject. Inspect the generated spec and ensure the template assigns station as its project.
+
+
+  ```bash
+
+  ns=$(jq -er .namespace /run/dq/facts/0/appset-target.json); kubectl -n "$ns" get application north south -o json | jq ''.items[] | {name: .metadata.name, project: .spec.project}''
+
+  ```
+
+
+  ### Repository of the generated Applications {#q123-appset-generated-repository}
+
+
+  The affected Application may target a different source repository or lack a readable original URL. Compare its repoURL with the frozen appset-target.json value.
+
+
+  ```bash
+
+  ns=$(jq -er .namespace /run/dq/facts/0/appset-target.json); jq -er .repoURL /run/dq/facts/0/appset-target.json; kubectl -n "$ns" get application north south -o json | jq ''.items[] | {name: .metadata.name, repo: .spec.source.repoURL}''
+
+  ```
+
+
+  ### Source directory of each station {#q123-appset-generated-station-directory}
+
+
+  A template expression may have expanded to the wrong location. Inspect the affected Application’s exact path, stations/north for north or stations/south for south.
+
+
+  ```bash
+
+  ns=$(jq -er .namespace /run/dq/facts/0/appset-target.json); kubectl -n "$ns" get application north south -o json | jq ''.items[] | {name: .metadata.name, path: .spec.source.path}''
+
+  ```
+
+
+  ### Namespace destination of each station {#q123-appset-generated-bay-destination}
+
+
+  The generated Application may target a namespace other than the bay. Compare the affected destination with the supplied runtime namespace.
+
+
+  ```bash
+
+  ns=$(jq -er .namespace /run/dq/facts/0/appset-target.json); printf ''%s\n'' "$DQ_NAMESPACE"; kubectl -n "$ns" get application north south -o json | jq ''.items[] | {name: .metadata.name, namespace: .spec.destination.namespace}''
+
+  ```
+
+
+  ### Ownership of the generated Applications {#q123-appset-generated-owner-reference}
+
+
+  A same-name Application may lack an ApplicationSet owner reference or refer to a stale UID. Compare its owner UID with the current station ApplicationSet.
+
+
+  ```bash
+
+  ns=$(jq -er .namespace /run/dq/facts/0/appset-target.json); kubectl -n "$ns" get applicationset station -o json | jq ''.metadata.uid''; kubectl -n "$ns" get application north south -o json | jq ''.items[] | {name: .metadata.name, owners: .metadata.ownerReferences}''
+
+  ```
+
+
+  ### Sync of the generated Applications {#q123-appset-generated-sync-state}
+
+
+  The affected Application may still be OutOfSync because its source or controller reconciliation is unfinished. Inspect its sync status and reported errors.
+
+
+  ```bash
+
+  ns=$(jq -er .namespace /run/dq/facts/0/appset-target.json); kubectl -n "$ns" get application north south -o json | jq ''.items[] | {name: .metadata.name, sync: .status.sync.status}''
+
+  ```
+
+
+  ### Release revision used by the generated Applications {#q123-appset-generated-release-revision}
+
+
+  An Application may be Synced to an earlier commit or the maintenance branch. Compare the affected observed revision with the approved release-commit.
+
+
+  ```bash
+
+  ns=$(jq -er .namespace /run/dq/facts/0/appset-target.json); cat /run/dq/facts/0/release-commit; kubectl -n "$ns" get application north south -o json | jq ''.items[] | {name: .metadata.name, revision: .status.sync.revision}''
+
+  ```
+
+
+  ### Health of the generated Applications {#q123-appset-generated-application-health}
+
+
+  The affected Application can have the intended revision while its workload is still not Healthy. Inspect its health status and the corresponding deployment rollout.
+
+
+  ```bash
+
+  ns=$(jq -er .namespace /run/dq/facts/0/appset-target.json); kubectl -n "$ns" get application north south -o json | jq ''.items[] | {name: .metadata.name, health: .status.health.status}''
+
+  ```
+
+
+  ### Ready replicas per station {#q123-appset-station-ready-replicas}
+
+
+  The named Deployment may be missing or may have no ready replica yet. Check its rollout and wait for one replica to become ready.
+
+
+  ```bash
+
+  kubectl get deployment north south -o custom-columns=NAME:.metadata.name,READY:.status.readyReplicas
+
+  ```
+
+
+  ### Live HTTP response per station {#q123-appset-station-live-http}
+
+
+  The affected Deployment may still serve a legacy body or have no reachable endpoint. Query both workloads and compare north with north-123 and south with south-123.
+
+
+  ```bash
+
+  for station in north south; do kubectl exec "deployment/$station" -- wget -qO- -T 3 "http://$station:8080"; done
+
+  ```
+
+
+  ### Approved release reference and main {#q123-appset-frozen-release-source}
+
+
+  A template or generated Application may still track main, or the private refs may have moved. Compare the approved release ref and unchanged maintenance main against the remote and check the template and both generated targetRevision values.
+
+
+  ```bash
+
+  ns=$(jq -er .namespace /run/dq/facts/0/appset-target.json); ref=$(cat /run/dq/facts/0/release-ref); repo=$(jq -er .repoURL /run/dq/facts/0/appset-target.json); cat /run/dq/facts/0/release-commit /run/dq/facts/0/maintenance-commit; git -C repository ls-remote "$repo" refs/heads/main "refs/heads/$ref"; kubectl -n "$ns" get applicationset station -o json | jq ''.spec.template.spec.source.targetRevision''; kubectl -n "$ns" get application north south -o json | jq ''.items[] | {name: .metadata.name, revision: .spec.source.targetRevision}''
+
+  ```
+
   '
-source_hash: 47edfa2107490fac491c73e2a5af211a0d005fc1872c99850e3dfb5417fddcfa
+source_hash: f8c4efc37f86ef464608175b0f1be850c8870a7cb19f89be25e6fd461743823b
