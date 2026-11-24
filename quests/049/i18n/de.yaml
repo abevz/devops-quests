@@ -22,29 +22,39 @@ debrief: Die funktionale Reaktion konnte die beiden Artefakte nicht unterscheide
   identity könnte.
 stages.0.brief: Die vorgesehene unveränderliche Version muss Verbrauchern zur Verfügung stehen.
 hints.0.text: Ein Tag und die Identität des laufenden Images beantworten unterschiedliche Fragen.
-hints.1.text: 'Das veränderliche Tag parcel:stable bezeichnet einen anderen Konfigurations-Digest trotz identischem
-  HTTP-Text. Die vorgesehene unveränderliche Referenz steht in release-catalog.txt und PRIVATE_IMAGE.
-
+hints.1.text: |-
+  Das veränderliche Tag parcel:stable bezeichnet einen anderen Konfigurations-Digest trotz identischem HTTP-Text. Die vorgesehene unveränderliche Referenz steht in release-catalog.txt und PRIVATE_IMAGE.
 
   Prüfen Sie die mitgelieferten Eingaben und den beobachteten Zustand:
 
-
-  ```sh
-
-  cat release-catalog.txt board.yaml registry-pull.yaml
-
-  kubectl describe deployment board
-
-  ```'
-hints.2.text: |-
   Verwenden Sie die vollständige registry/repository@sha256-Referenz, keinen neu getaggten stable-Namen.
 
+  ```sh
+  cat release-catalog.txt board.yaml
+  kubectl get secret registry-pull -o custom-columns=NAME:.metadata.name,TYPE:.type
+  kubectl describe deployment board
+  ```
+hints.2.text: |-
   Prüfen Sie das beobachtete Ergebnis:
 
-  - `source platform.env; printf "%s\n" "$PRIVATE_IMAGE"; kubectl get deployment board -o json | jq '{name:.metadata.name,replicas:.spec.replicas,worker:(.spec.template.spec.containers[]|select(.name=="worker")|{image,imagePullPolicy})}'; kubectl get pods -o json | jq '.items[] | select(.metadata.deletionTimestamp==null and any(.spec.containers[]?;.name=="worker")) | {pod:.metadata.name,pullSecrets:[.spec.imagePullSecrets[]?.name]}'` — Die bereitgestellte unveränderliche Image-Referenz entspricht dem Deployment-Image; Pull-Policy ist `Always` mit nur `registry-pull`.
-  - `kubectl get pods -l app=board -o json | jq '.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running") | .status.containerStatuses[]? | select(.name=="worker") | {ready,imageID}'` — Ein bereiter Container meldet den vorgesehenen Digest in `imageID`.
-  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080` — Der Rollout wird abgeschlossen; HTTP liefert `north-49`.
+  Die Deployment-Vorlage muss die bereitgestellte unveränderliche Image-Referenz und den Wert `Always` für `imagePullPolicy` verwenden. Prüfe, ob `board` mindestens einen aktiven Pod besitzt. Jeder dieser Pods muss `Always` verwenden und ausschließlich `registry-pull` aufführen. Finde mindestens einen Pod in der Phase `Running`, dessen Container `worker` die bereitgestellte Image-Referenz verwendet, läuft, bereit ist und den erwarteten Digest in `imageID` meldet.
 
+  ```sh
+  source platform.env && printf '%s\n' "$PRIVATE_IMAGE"
+  kubectl get deployments,replicasets,pods -o json | jq '
+    def owned($kind; $uids): any(.metadata.ownerReferences[]?;
+      .controller == true and .kind == $kind and (.uid as $uid | $uids | index($uid) != null));
+    .items as $items | ($items[] | select(.kind == "Deployment" and .metadata.name == "board")) as $board
+    | [$items[] | select(.kind == "ReplicaSet" and owned("Deployment"; [$board.metadata.uid])) | .metadata.uid] as $rs
+    | {template: [$board.spec.template.spec.containers[] | select(.name == "worker") | {image, imagePullPolicy}],
+       active: [$items[] | select(.kind == "Pod" and owned("ReplicaSet"; $rs) and .metadata.deletionTimestamp == null
+         and .status.phase != "Failed" and .status.phase != "Succeeded")
+         | {pod: .metadata.name, phase: .status.phase, pullSecrets: [.spec.imagePullSecrets[]?.name],
+            worker: [.spec.containers[] | select(.name == "worker") | {image, imagePullPolicy}],
+            status: [.status.containerStatuses[]? | select(.name == "worker") | {ready, imageID, running: (.state.running != null)}]}]}'
+  ```
+
+  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080` — Der Rollout wird abgeschlossen; HTTP liefert `north-49`.
 phrases.0: Ich habe das vorgesehene Manifest digest mit dem laufenden Container identity verglichen.
 phrases.1: Ich habe eine unveränderte HTTP-Antwort nicht als Beweis für das korrekte Artefakt gewertet.
 phrases.2: Ich habe das authentifizierte Ziehen beibehalten und gleichzeitig das veränderbare Tag durch ein

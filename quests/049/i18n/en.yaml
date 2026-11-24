@@ -19,29 +19,39 @@ brief: 'The required release identity is not established by the `board` consumer
 debrief: The functional response could not distinguish the two artifacts; the immutable image identity could.
 stages.0.brief: The intended immutable release must be available to consumers.
 hints.0.text: A tag and a running image identity answer different questions.
-hints.1.text: 'The mutable parcel:stable tag identifies an alternative configuration digest even though HTTP
-  text is identical. The intended immutable reference is in release-catalog.txt and PRIVATE_IMAGE.
-
+hints.1.text: |-
+  The mutable parcel:stable tag identifies an alternative configuration digest even though HTTP text is identical. The intended immutable reference is in release-catalog.txt and PRIVATE_IMAGE.
 
   Inspect the supplied inputs and observed state:
 
-
-  ```sh
-
-  cat release-catalog.txt board.yaml registry-pull.yaml
-
-  kubectl describe deployment board
-
-  ```'
-hints.2.text: |-
   Use the complete registry/repository@sha256 reference, not a retagged stable name.
 
+  ```sh
+  cat release-catalog.txt board.yaml
+  kubectl get secret registry-pull -o custom-columns=NAME:.metadata.name,TYPE:.type
+  kubectl describe deployment board
+  ```
+hints.2.text: |-
   Verify the observed result:
 
-  - `source platform.env; printf "%s\n" "$PRIVATE_IMAGE"; kubectl get deployment board -o json | jq '{name:.metadata.name,replicas:.spec.replicas,worker:(.spec.template.spec.containers[]|select(.name=="worker")|{image,imagePullPolicy})}'; kubectl get pods -o json | jq '.items[] | select(.metadata.deletionTimestamp==null and any(.spec.containers[]?;.name=="worker")) | {pod:.metadata.name,pullSecrets:[.spec.imagePullSecrets[]?.name]}'` — The supplied immutable image reference matches the Deployment image; pull policy is `Always` with only `registry-pull`.
-  - `kubectl get pods -l app=board -o json | jq '.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running") | .status.containerStatuses[]? | select(.name=="worker") | {ready,imageID}'` — A ready container reports the intended digest in `imageID`.
-  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080` — Rollout completes; HTTP returns `north-49`.
+  The Deployment template must use the supplied immutable image reference and set `imagePullPolicy` to `Always`. Check that `board` owns at least one active Pod. Every active Pod must use `Always` and list only `registry-pull`. Find at least one Pod in phase `Running` whose `worker` uses the supplied image reference, is running and ready, and reports the intended digest in `imageID`.
 
+  ```sh
+  source platform.env && printf '%s\n' "$PRIVATE_IMAGE"
+  kubectl get deployments,replicasets,pods -o json | jq '
+    def owned($kind; $uids): any(.metadata.ownerReferences[]?;
+      .controller == true and .kind == $kind and (.uid as $uid | $uids | index($uid) != null));
+    .items as $items | ($items[] | select(.kind == "Deployment" and .metadata.name == "board")) as $board
+    | [$items[] | select(.kind == "ReplicaSet" and owned("Deployment"; [$board.metadata.uid])) | .metadata.uid] as $rs
+    | {template: [$board.spec.template.spec.containers[] | select(.name == "worker") | {image, imagePullPolicy}],
+       active: [$items[] | select(.kind == "Pod" and owned("ReplicaSet"; $rs) and .metadata.deletionTimestamp == null
+         and .status.phase != "Failed" and .status.phase != "Succeeded")
+         | {pod: .metadata.name, phase: .status.phase, pullSecrets: [.spec.imagePullSecrets[]?.name],
+            worker: [.spec.containers[] | select(.name == "worker") | {image, imagePullPolicy}],
+            status: [.status.containerStatuses[]? | select(.name == "worker") | {ready, imageID, running: (.state.running != null)}]}]}'
+  ```
+
+  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080` — Rollout completes; HTTP returns `north-49`.
 phrases.0: I compared the intended manifest digest with the running container identity.
 phrases.1: I did not treat an unchanged HTTP response as proof of the correct artifact.
 phrases.2: I retained authenticated pulling while replacing the mutable tag with a digest.

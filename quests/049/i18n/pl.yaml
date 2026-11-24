@@ -22,29 +22,39 @@ debrief: Odpowiedź funkcjonalna nie pozwalała na rozróżnienie tych dwóch ar
   mógłby.
 stages.0.brief: Wymagane niezmienne wydanie musi być dostępne dla odbiorców.
 hints.0.text: Tag i tożsamość uruchomionego obrazu odpowiadają na różne pytania.
-hints.1.text: 'Zmienny tag parcel:stable wskazuje alternatywny digest konfiguracji mimo identycznej treści
-  HTTP. Wymagana niezmienna referencja jest w release-catalog.txt i PRIVATE_IMAGE.
-
+hints.1.text: |-
+  Zmienny tag parcel:stable wskazuje alternatywny digest konfiguracji mimo identycznej treści HTTP. Wymagana niezmienna referencja jest w release-catalog.txt i PRIVATE_IMAGE.
 
   Sprawdź dostarczone dane wejściowe i obserwowany stan:
 
-
-  ```sh
-
-  cat release-catalog.txt board.yaml registry-pull.yaml
-
-  kubectl describe deployment board
-
-  ```'
-hints.2.text: |-
   Użyj pełnego odniesienia do registry/repository@sha256, a nie zmienionej nazwy stable.
 
+  ```sh
+  cat release-catalog.txt board.yaml
+  kubectl get secret registry-pull -o custom-columns=NAME:.metadata.name,TYPE:.type
+  kubectl describe deployment board
+  ```
+hints.2.text: |-
   Sprawdź obserwowany wynik:
 
-  - `source platform.env; printf "%s\n" "$PRIVATE_IMAGE"; kubectl get deployment board -o json | jq '{name:.metadata.name,replicas:.spec.replicas,worker:(.spec.template.spec.containers[]|select(.name=="worker")|{image,imagePullPolicy})}'; kubectl get pods -o json | jq '.items[] | select(.metadata.deletionTimestamp==null and any(.spec.containers[]?;.name=="worker")) | {pod:.metadata.name,pullSecrets:[.spec.imagePullSecrets[]?.name]}'` — Dostarczona niezmienna referencja obrazu odpowiada obrazowi Deployment; polityka pobierania to `Always` z tylko `registry-pull`.
-  - `kubectl get pods -l app=board -o json | jq '.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running") | .status.containerStatuses[]? | select(.name=="worker") | {ready,imageID}'` — Gotowy kontener podaje wymagany digest w `imageID`.
-  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080` — Rollout się kończy; HTTP zwraca `north-49`.
+  Szablon Deployment musi używać dostarczonej niezmiennej referencji obrazu i wartości `Always` w polu `imagePullPolicy`. Sprawdź, czy `board` jest właścicielem co najmniej jednego aktywnego Poda. Każdy taki Pod musi mieć politykę `Always` i odwołanie wyłącznie do `registry-pull`. Znajdź co najmniej jeden Pod w fazie `Running`, którego kontener `worker` używa dostarczonej referencji obrazu, działa, jest gotowy i zwraca oczekiwany digest w `imageID`.
 
+  ```sh
+  source platform.env && printf '%s\n' "$PRIVATE_IMAGE"
+  kubectl get deployments,replicasets,pods -o json | jq '
+    def owned($kind; $uids): any(.metadata.ownerReferences[]?;
+      .controller == true and .kind == $kind and (.uid as $uid | $uids | index($uid) != null));
+    .items as $items | ($items[] | select(.kind == "Deployment" and .metadata.name == "board")) as $board
+    | [$items[] | select(.kind == "ReplicaSet" and owned("Deployment"; [$board.metadata.uid])) | .metadata.uid] as $rs
+    | {template: [$board.spec.template.spec.containers[] | select(.name == "worker") | {image, imagePullPolicy}],
+       active: [$items[] | select(.kind == "Pod" and owned("ReplicaSet"; $rs) and .metadata.deletionTimestamp == null
+         and .status.phase != "Failed" and .status.phase != "Succeeded")
+         | {pod: .metadata.name, phase: .status.phase, pullSecrets: [.spec.imagePullSecrets[]?.name],
+            worker: [.spec.containers[] | select(.name == "worker") | {image, imagePullPolicy}],
+            status: [.status.containerStatuses[]? | select(.name == "worker") | {ready, imageID, running: (.state.running != null)}]}]}'
+  ```
+
+  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080` — Rollout się kończy; HTTP zwraca `north-49`.
 phrases.0: Porównałem zamierzony manifest digest z działającym kontenerem identity.
 phrases.1: Niezmiennej odpowiedzi HTTP nie traktowałem jako dowodu na istnienie prawidłowego artefaktu.
 phrases.2: Zachowałem uwierzytelnione ciągnięcie podczas wymiany znacznika zmiennego na digest.
