@@ -21,29 +21,39 @@ brief: 'El consumidor `board` no acredita la identidad de versión requerida.
 debrief: La respuesta funcional no pudo distinguir los dos artefactos; la imagen inmutable identity podría.
 stages.0.brief: La versión inmutable prevista debe estar disponible para los consumidores.
 hints.0.text: Una etiqueta y la identidad de la imagen en ejecución responden a preguntas distintas.
-hints.1.text: 'La etiqueta mutable parcel:stable identifica un digest de configuración alternativo aunque el
-  texto HTTP es idéntico. La referencia inmutable prevista está en release-catalog.txt y PRIVATE_IMAGE.
-
+hints.1.text: |-
+  La etiqueta mutable parcel:stable identifica un digest de configuración alternativo aunque el texto HTTP es idéntico. La referencia inmutable prevista está en release-catalog.txt y PRIVATE_IMAGE.
 
   Inspecciona las entradas suministradas y el estado observado:
 
-
-  ```sh
-
-  cat release-catalog.txt board.yaml registry-pull.yaml
-
-  kubectl describe deployment board
-
-  ```'
-hints.2.text: |-
   Utilice la referencia registry/repository@sha256 completa, no un nombre stable reetiquetado.
 
+  ```sh
+  cat release-catalog.txt board.yaml
+  kubectl get secret registry-pull -o custom-columns=NAME:.metadata.name,TYPE:.type
+  kubectl describe deployment board
+  ```
+hints.2.text: |-
   Verifica el resultado observado:
 
-  - `source platform.env; printf "%s\n" "$PRIVATE_IMAGE"; kubectl get deployment board -o json | jq '{name:.metadata.name,replicas:.spec.replicas,worker:(.spec.template.spec.containers[]|select(.name=="worker")|{image,imagePullPolicy})}'; kubectl get pods -o json | jq '.items[] | select(.metadata.deletionTimestamp==null and any(.spec.containers[]?;.name=="worker")) | {pod:.metadata.name,pullSecrets:[.spec.imagePullSecrets[]?.name]}'` — La referencia inmutable suministrada coincide con la imagen del Deployment; la política de descarga es `Always` con solo `registry-pull`.
-  - `kubectl get pods -l app=board -o json | jq '.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running") | .status.containerStatuses[]? | select(.name=="worker") | {ready,imageID}'` — Un contenedor listo informa el digest previsto en `imageID`.
-  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080` — El rollout se completa; HTTP devuelve `north-49`.
+  La plantilla del Deployment debe usar la referencia inmutable suministrada y el valor `Always` en `imagePullPolicy`. Comprueba que `board` sea propietario de al menos un Pod activo. Cada Pod activo debe usar `Always` y tener solo `registry-pull` en su lista. Busca al menos un Pod en fase `Running` cuyo contenedor `worker` use la referencia de imagen suministrada, esté en ejecución y listo, y muestre el digest esperado en `imageID`.
 
+  ```sh
+  source platform.env && printf '%s\n' "$PRIVATE_IMAGE"
+  kubectl get deployments,replicasets,pods -o json | jq '
+    def owned($kind; $uids): any(.metadata.ownerReferences[]?;
+      .controller == true and .kind == $kind and (.uid as $uid | $uids | index($uid) != null));
+    .items as $items | ($items[] | select(.kind == "Deployment" and .metadata.name == "board")) as $board
+    | [$items[] | select(.kind == "ReplicaSet" and owned("Deployment"; [$board.metadata.uid])) | .metadata.uid] as $rs
+    | {template: [$board.spec.template.spec.containers[] | select(.name == "worker") | {image, imagePullPolicy}],
+       active: [$items[] | select(.kind == "Pod" and owned("ReplicaSet"; $rs) and .metadata.deletionTimestamp == null
+         and .status.phase != "Failed" and .status.phase != "Succeeded")
+         | {pod: .metadata.name, phase: .status.phase, pullSecrets: [.spec.imagePullSecrets[]?.name],
+            worker: [.spec.containers[] | select(.name == "worker") | {image, imagePullPolicy}],
+            status: [.status.containerStatuses[]? | select(.name == "worker") | {ready, imageID, running: (.state.running != null)}]}]}'
+  ```
+
+  - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080` — El rollout se completa; HTTP devuelve `north-49`.
 phrases.0: Comparé el manifiesto previsto digest con el contenedor en ejecución identity.
 phrases.1: No traté una respuesta HTTP sin cambios como prueba del artefacto correcto.
 phrases.2: Mantuve la extracción autenticada mientras reemplazaba la etiqueta mutable con una digest.
