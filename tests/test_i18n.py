@@ -296,10 +296,17 @@ def test_validator_audits_third_language_metadata_lessons_and_exact_code(tmp_pat
     (language / "metadata.json").write_text(json.dumps(metadata))
     for directory in [root / "quests/001/i18n", root / "docs/guides/kubernetes-4/i18n"]:
         shutil.copyfile(directory / "en.yaml", directory / "zz.yaml")
+    quest = yaml.safe_load((root / "quests/001/quest.yaml").read_text())
+    sections = {"relay-release-image"}
+    sections.update(
+        hint["section"] for hint in quest["hints"]
+        if hint.get("guide") == "kubernetes-20" and "section" in hint
+    )
+    relay_guide = "\n\n".join(f"### Relay image {{#{section}}}" for section in sorted(sections))
     lessons = {
         "kubernetes-20": {
             "content": {
-                language.name: "### Relay image {#relay-release-image}"
+                language.name: relay_guide
                 for language in (root / "locales").iterdir()
                 if language.is_dir()
             }
