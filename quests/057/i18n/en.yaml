@@ -17,16 +17,24 @@ stages.0.objectives.1.text: Both workloads are ready and publish the current reg
   PVCs.
 hints.0.text: A bound volume supplies capacity, not the required data. Keep the existing source intact while separating
   provisioning from application recovery.
-hints.1.text: Compare `storage-contract.json`, `kubectl get pvc -o yaml` and `kubectl describe pod` with both workload
-  definitions and actual source files. The healthy source claim exposes its working storage settings through the
-  namespaced API.
-hints.2.text: |-
-  After recovering binding and transferring the dataset, verify current state against the contract. Keep source data and identities. Expected observations:
+hints.1.text: |-
+  Compare `storage-contract.json`, `kubectl get pvc -o yaml` and `kubectl describe pod` with both workload definitions and actual source files. The healthy source claim exposes its working storage settings through the namespaced API.
 
-  - `kubectl get pvc` — source and target claims are Bound.
-  - `kubectl exec deployment/relay -c worker -- stat -c '%F:%s' /spool/index.html /spool/payload.bin` — the declared regular-file types and sizes match.
-  - `kubectl exec deployment/relay -c worker -- sha256sum /spool/index.html /spool/payload.bin` — both checksums match the contract.
-  - `kubectl exec deployment/relay -c worker -- wget -qO- http://127.0.0.1:8080` — the response matches the current source publication.
+  Before making changes, record the UIDs of both Deployments and the source PVC, plus the supplied worker image references. Use `kubectl get deployments reserve relay -o yaml` and `kubectl get pvc reserve -o yaml`.
+hints.2.text: |-
+  Check that both claims are `Bound` and each Deployment has one ready replica. Compare the mounts in the Deployment templates and live Pods with `storage-contract.json`. `reserve` must mount `/archive` read-only, and `relay` must mount `/spool`. For each workload, verify the two regular files, their byte sizes and SHA-256 checksums, and the HTTP response against the contract. Compare the UIDs of both Deployments and the source PVC and the worker images in the Deployment templates and ready Pods with your initial observations.
+
+  ```sh
+  kubectl get pvc reserve spool -o yaml
+  kubectl get deployments,pods,replicasets -o yaml
+  for entry in reserve:/archive relay:/spool; do
+    workload=${entry%%:*}; root=${entry#*:}
+    kubectl rollout status "deployment/$workload" --timeout=10s
+    kubectl exec "deployment/$workload" -c worker -- stat -c '%F:%s' "$root/index.html" "$root/payload.bin"
+    kubectl exec "deployment/$workload" -c worker -- sha256sum "$root/index.html" "$root/payload.bin"
+    kubectl exec "deployment/$workload" -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/
+  done
+  ```
 debrief: Provisioning restored capacity; a separate data transfer restored the actual source record and payload
   on the target claim. The original source volume and workload identities remained.
 phrases.0: I checked the running state before making a change.

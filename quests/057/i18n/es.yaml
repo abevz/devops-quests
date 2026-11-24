@@ -17,16 +17,24 @@ stages.0.objectives.1.text: Ambos lectores están listos y publican los archivos
   declarados.
 hints.0.text: Un volumen enlazado proporciona capacidad, no los datos necesarios. Conserva la fuente existente y
   separa la provisión de la recuperación de la aplicación.
-hints.1.text: Compara `storage-contract.json`, `kubectl get pvc -o yaml` y `kubectl describe pod` con las definiciones
-  de ambos lectores y los archivos fuente reales. El claim fuente sano muestra su configuración funcional mediante
-  la API del namespace.
-hints.2.text: |-
-  Tras recuperar el enlace y transferir los datos, verifica el estado actual frente al contrato. Conserva fuente e identidades. Observaciones esperadas:
+hints.1.text: |-
+  Compara `storage-contract.json`, `kubectl get pvc -o yaml` y `kubectl describe pod` con las definiciones de ambos lectores y los archivos fuente reales. El claim fuente sano muestra su configuración funcional mediante la API del namespace.
 
-  - `kubectl get pvc` — claims fuente y destino en Bound.
-  - `kubectl exec deployment/relay -c worker -- stat -c '%F:%s' /spool/index.html /spool/payload.bin` — tipos regulares y tamaños declarados coinciden.
-  - `kubectl exec deployment/relay -c worker -- sha256sum /spool/index.html /spool/payload.bin` — ambas sumas coinciden con el contrato.
-  - `kubectl exec deployment/relay -c worker -- wget -qO- http://127.0.0.1:8080` — la respuesta coincide con la publicación fuente actual.
+  Antes de hacer cambios, anota los UID de ambos Deployment y de la PVC de origen, así como las referencias de imagen suministradas para worker. Usa `kubectl get deployments reserve relay -o yaml` y `kubectl get pvc reserve -o yaml`.
+hints.2.text: |-
+  Comprueba que ambas PVC estén en estado `Bound` y que cada Deployment tenga una réplica lista. Contrasta los montajes de las plantillas y los Pods activos con `storage-contract.json`. `reserve` debe montar `/archive` en solo lectura y `relay` debe montar `/spool`. Compara con el contrato los tipos de los dos archivos regulares, sus tamaños en bytes, sus sumas SHA-256 y la respuesta HTTP de cada aplicación. Compara los UID de ambos Deployment y de la PVC de origen, así como las imágenes de worker en las plantillas de Deployment y en los Pods listos, con tus observaciones iniciales.
+
+  ```sh
+  kubectl get pvc reserve spool -o yaml
+  kubectl get deployments,pods,replicasets -o yaml
+  for entry in reserve:/archive relay:/spool; do
+    workload=${entry%%:*}; root=${entry#*:}
+    kubectl rollout status "deployment/$workload" --timeout=10s
+    kubectl exec "deployment/$workload" -c worker -- stat -c '%F:%s' "$root/index.html" "$root/payload.bin"
+    kubectl exec "deployment/$workload" -c worker -- sha256sum "$root/index.html" "$root/payload.bin"
+    kubectl exec "deployment/$workload" -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/
+  done
+  ```
 debrief: La provisión recuperó capacidad; otra transferencia recuperó el registro y payload actuales en el claim
   destino. Se conservaron el volumen fuente y las identidades de los workloads.
 phrases.0: Verifiqué el estado de ejecución antes de realizar un cambio.
