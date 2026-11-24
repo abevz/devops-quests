@@ -33,19 +33,41 @@ hints.1.text: |-
 
   Prüfen Sie die bereitgestellte Konfiguration und aktuelle Beobachtungen auf der Workstation:
 
+  Ändere nur die Quelle von station auf ./modules/v2. Initialisiere nach der Änderung erneut und speichere den Plan zur Prüfung. Prüfe vor der Anwendung des gespeicherten Plans, dass alle Aktionen verwalteter Ressourcen no-op sind.
+
   ```sh
-  cat main.tf modules/v1/main.tf modules/v2/main.tf
+  cat main.tf
+  cat modules/v1/main.tf
+  cat modules/v2/main.tf
   tofu state list
   ```
-hints.2.text: |-
-  Ändere nur die Quelle von station auf ./modules/v2, initialisiere erneut und wende den gespeicherten Plan an.
-  Speichere den binären Plan und exportiere ihn mit tofu show -json in das angeforderte JSON-Artefakt.
 
+  Erzeuge nach dem Quellenwechsel die Dateien für die Prüfung.
+
+  ```sh
+  tofu init -input=false -no-color &&
+    tofu plan -input=false -no-color -out=upgrade.plan &&
+    tofu show -json upgrade.plan > upgrade-plan.json
+  ```
+
+  Prüfe den gespeicherten Plan und wende ihn nur an, wenn alle Ressourcenaktionen no-op sind.
+
+  ```sh
+  jq -e 'all(.resource_changes[]; .change.actions == ["no-op"])' upgrade-plan.json >/dev/null &&
+    tofu apply -input=false -no-color upgrade.plan
+  ```
+hints.2.text: |-
   Prüfen Sie das Ergebnis in `~/quest` auf der Workstation:
 
   - `diff -u <(tofu state list | sort) <(sort original-addresses); tofu output -json ids | jq -e --slurpfile old original-ids.json '. == $old[0]'` — Keine Inventarunterschiede; der ID-Vergleich gibt `true` aus.
   - `cat north.txt depot.txt; tofu output -json contracts; sha256sum north.txt` — Die Dateien zeigen `north-47` und `depot-47`; `station` meldet Version `2` und die angezeigte Prüfsumme, `depot` dagegen Version `1`.
   - `jq -r '.resource_changes[] | .address + " " + (.change.actions | join(","))' upgrade-plan.json; tofu plan -input=false -detailed-exitcode -no-color` — Jede gespeicherte Aktion ist `no-op`; die aktuelle Planung endet mit `0` ohne Änderungen.
+
+  Der gespeicherte Plan muss auch Release 2 und die aktuelle Prüfsumme für station sowie Release 1 für depot enthalten.
+
+  ```sh
+  jq '.planned_values.outputs.contracts.value' upgrade-plan.json
+  ```
 phrases.0: Ich habe eine lokale Modulquelle aktualisiert und dabei ihre Aufruf- und Ressourcenadressen
   beibehalten.
 phrases.1: Ich habe einen gespeicherten plan überprüft, der eine Ausgabe hinzugefügt hat, ohne die Dateien
