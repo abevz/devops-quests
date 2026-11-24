@@ -27,10 +27,19 @@ hints.1.text: |-
   kubectl exec shelf-0 -c worker -- cat /etc/resolv.conf
   ```
 hints.2.text: |-
-  Verifica identidades y disponibilidad de la fuente, después resolución A ordinal, respuesta remota y publicación local desde el consumidor.
+  Compara los UID con los registros originales suministrados. `shelf` y `ledger-shelf-0` conservan sus UID, mientras que `shelf-0` tiene uno nuevo. El Service no tiene IP virtual y selecciona el workload shelf. El origen y el inspector tienen una réplica lista cada uno. En el Deployment y los Pods del inspector, comprueba la imagen suministrada y que no montan la PVC de origen. El DNS debe resolver el nombre desde el inspector y todas las respuestas HTTP, desde shelf y las interfaces remota y local, deben ser `ledger-111`.
 
   ```sh
+  for binding in statefulset/shelf:original-statefulset-uid pvc/ledger-shelf-0:original-pvc-uid pod/shelf-0:original-pod-uid; do
+    object=${binding%%:*}; original=${binding#*:}
+    printf "%s original=%s current=%s\n" "$object" "$(cat "$original")" "$(kubectl get "$object" -o jsonpath='{.metadata.uid}')"
+  done
+  kubectl get statefulset shelf
+  kubectl get service shelf -o yaml
+  kubectl rollout status deployment/inspector --timeout=10s
+  kubectl get deployments,pods,replicasets -o yaml
   fqdn="shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."
+  kubectl exec shelf-0 -c worker -- wget -qO- -T 3 http://shelf-0.shelf:8080
   kubectl exec deployment/inspector -c worker -- nslookup -type=A "$fqdn"
   kubectl exec deployment/inspector -c worker -- wget -qO- -T 3 "http://$fqdn:8080"
   kubectl exec deployment/inspector -c worker -- wget -qO- -T 3 http://127.0.0.1:8080

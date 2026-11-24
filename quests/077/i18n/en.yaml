@@ -39,21 +39,29 @@ hints.0.text: A disruption budget uses actual readiness, not just the desired re
 hints.1.text: |-
   Compare the Pod readiness probe, its failure events and the PDB status before deciding whether an eviction is safe.
 
+  Look at the original Pod name and UID, the namespace, and the readiness and termination settings. In the Eviction request, find the target and UID precondition before comparing them with the observed Pod.
+
   ```sh
   kubectl describe pods -l app=board
   kubectl get pdb -o yaml
   kubectl get pods -l app=board -o yaml
+  jq . original-pod-uids.json
+  if test -f eviction.json; then jq . eviction.json; fi
   ```
 hints.2.text: |-
-  Restore the failing readiness condition inside the existing Pod without replacing it. Once the budget permits maintenance, construct a policy/v1 Eviction in `eviction.json` with the original Pod name, `$DQ_NAMESPACE` and `deleteOptions.preconditions.uid`; submit it to that Pod's eviction subresource. Keep the supplied termination window.
-
-  Verify two ready replicas, the healthy minimum and allowance, HTTP continuity, exactly one surviving original UID, and the server receipt for the evicted UID.
+  Expect two ready replicas, two healthy Pods with one required and one disruption allowed, and HTTP `north-77`. The submitted Eviction must name the original Pod and its UID. The evicted UID must be absent from the live Pods, exactly one original UID must survive, and the server receipt must include the evicted UID. The status patch permission check must return `no`.
 
   ```sh
   kubectl get deployment board
-  kubectl get pdb
-  cat eviction.json
-  cat /run/dq/observations/evictions.json
+  kubectl get pdb board-budget
+  jq . eviction.json
+  uid=$(jq -er .deleteOptions.preconditions.uid eviction.json)
+  kubectl get pods -l app=board -o json |
+    jq --arg uid "$uid" --slurpfile original original-pod-uids.json '
+      [.items[].metadata.uid] as $live |
+      {evictedPresent: ($live | index($uid) != null),
+       originalSurvivors: [$live[] | select(. as $candidate | $original[0] | index($candidate) != null)]}'
+  jq --arg uid "$uid" 'index($uid) != null' /run/dq/observations/evictions.json
   kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
   kubectl auth can-i patch pods --subresource=status
   ```

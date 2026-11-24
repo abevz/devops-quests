@@ -28,13 +28,27 @@ hints.1.text: |-
   kubectl top pods -l app=board
   ```
 hints.2.text: |-
-  Sprawdź bieżącą i docelową liczbę dwa, wykorzystanie CPU powyżej celu, dwa gotowe Pody serwera i rosnące liczniki ukończeń. Odpowiedź główna pozostaje bez zmian.
+  Sprawdź, czy `ScalingActive` ma wartość `True`, bieżąca i żądana liczba replik to dwa, a wykorzystanie CPU przekracza wartość docelową `50` procent. Oba Pody tego Deploymentu muszą być gotowe i zgłaszać metryki CPU w jednostkach millicore. Porównaj dwa pomiary liczników ukończonych żądań na tych samych Podach: żaden licznik nie powinien maleć, a ich suma powinna wzrosnąć. Żądanie z Deploymentu `client` do głównej ścieżki powinno nadal zwracać `north-112`.
 
   ```sh
-  kubectl get hpa board
-  kubectl get pods -l app=board
+  kubectl get hpa board -o yaml
+  kubectl get deployment board
   kubectl top pods -l app=board
-  kubectl exec deployment/board -c worker -- wc -l /tmp/work-completions
+  pods=$(kubectl get deployments,replicasets,pods -o json | jq -r '
+    def owned($kind; $uids): any(.metadata.ownerReferences[]?;
+      .controller == true and .kind == $kind and (.uid as $uid | $uids | index($uid) != null));
+    .items as $items | ($items[] | select(.kind == "Deployment" and .metadata.name == "board")) as $board
+    | [$items[] | select(.kind == "ReplicaSet" and owned("Deployment"; [$board.metadata.uid])) | .metadata.uid] as $rs
+    | $items[] | select(.kind == "Pod" and owned("ReplicaSet"; $rs) and .metadata.deletionTimestamp == null
+      and .status.phase != "Failed" and .status.phase != "Succeeded") | .metadata.name')
+  sample() {
+    while IFS= read -r pod; do
+      printf '%s ' "$pod"
+      kubectl exec "$pod" -c worker -- sh -c 'if test -f /tmp/work-completions; then wc -l < /tmp/work-completions; else echo 0; fi'
+    done <<< "$pods"
+  }
+  test -n "$pods" && sample && sleep 1 && sample
+  kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://board:8080
   ```
 phrases.0: Sprawdziłem potok metryk przed zmianą HPA.
 phrases.1: Dostarczyłem sensowny CPU request.

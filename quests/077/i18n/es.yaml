@@ -40,21 +40,29 @@ hints.0.text: Un presupuesto de interrupción usa la disponibilidad real, no sol
 hints.1.text: |-
   Compara la sonda de disponibilidad del Pod, sus eventos de fallo y el estado del PDB antes de decidir si una expulsión es segura.
 
+  Revisa el nombre y el UID del Pod original, el espacio de nombres y los ajustes de disponibilidad y terminación. En la solicitud Eviction, localiza el destino y la precondición UID y compáralos con el Pod observado.
+
   ```sh
   kubectl describe pods -l app=board
   kubectl get pdb -o yaml
   kubectl get pods -l app=board -o yaml
+  jq . original-pod-uids.json
+  if test -f eviction.json; then jq . eviction.json; fi
   ```
 hints.2.text: |-
-  Restaura la condición de disponibilidad que falla dentro del Pod existente sin reemplazarlo. Cuando el presupuesto permita mantenimiento, construye una Eviction policy/v1 en `eviction.json` con el nombre del Pod original, `$DQ_NAMESPACE` y `deleteOptions.preconditions.uid`; envíala al subrecurso eviction de ese Pod. Conserva la ventana de terminación suministrada.
-
-  Verifica dos réplicas listas, el mínimo sano y el permiso, continuidad HTTP, exactamente un UID original restante y el recibo del servidor para el UID expulsado.
+  Espera dos réplicas listas, dos Pods sanos con un mínimo de uno, un desalojo permitido y la respuesta HTTP `north-77`. El Eviction enviado debe indicar el nombre del Pod original y su UID. El UID desalojado debe haber desaparecido de los Pods activos, debe sobrevivir exactamente un UID original y el comprobante del servidor debe incluir el UID desalojado. La comprobación del permiso para modificar el estado debe devolver `no`.
 
   ```sh
   kubectl get deployment board
-  kubectl get pdb
-  cat eviction.json
-  cat /run/dq/observations/evictions.json
+  kubectl get pdb board-budget
+  jq . eviction.json
+  uid=$(jq -er .deleteOptions.preconditions.uid eviction.json)
+  kubectl get pods -l app=board -o json |
+    jq --arg uid "$uid" --slurpfile original original-pod-uids.json '
+      [.items[].metadata.uid] as $live |
+      {evictedPresent: ($live | index($uid) != null),
+       originalSurvivors: [$live[] | select(. as $candidate | $original[0] | index($candidate) != null)]}'
+  jq --arg uid "$uid" 'index($uid) != null' /run/dq/observations/evictions.json
   kubectl exec deployment/client -- wget -qO- -T 3 http://board:8080
   kubectl auth can-i patch pods --subresource=status
   ```
