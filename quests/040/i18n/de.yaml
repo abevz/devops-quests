@@ -48,12 +48,19 @@ hints.2.text: |-
   ```sh
   kubectl get deployment board
   kubectl rollout status deployment/board --timeout=3s
-  for pod in $(kubectl get pods -l app=board -o json | jq -r '.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running") | .metadata.name'); do
+  pods=$(kubectl get deployments,replicasets,pods -o json | jq -r '
+    def owned($kind; $uids): any(.metadata.ownerReferences[]?;
+      .controller == true and .kind == $kind and (.uid as $uid | $uids | index($uid) != null));
+    .items as $items | ($items[] | select(.kind == "Deployment" and .metadata.name == "board")) as $board
+    | [$items[] | select(.kind == "ReplicaSet" and owned("Deployment"; [$board.metadata.uid])) | .metadata.uid] as $rs
+    | $items[] | select(.kind == "Pod" and owned("ReplicaSet"; $rs)
+      and .metadata.deletionTimestamp == null and .status.phase == "Running") | .metadata.name')
+  test -n "$pods" && while IFS= read -r pod; do
     kubectl exec "$pod" -c worker -- wget -qO- -T 3 http://board:8080
     printf '\n'
     kubectl exec "$pod" -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/ready
     printf '\n'
-  done
+  done <<< "$pods"
   ```
 phrases.0: Ich habe die Wartungschargen mit serial eins begrenzt.
 phrases.1: Ich habe den Wartungsvertrag für jedes Ziel überprüft.
