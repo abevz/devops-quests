@@ -33,19 +33,41 @@ hints.1.text: |-
 
   Изучите предоставленную конфигурацию и текущие наблюдения на workstation:
 
+  Измените только источник station на ./modules/v2. После правки повторите инициализацию и сохраните план для проверки. Перед применением сохранённого плана убедитесь, что все действия с управляемыми ресурсами имеют тип no-op.
+
   ```sh
-  cat main.tf modules/v1/main.tf modules/v2/main.tf
+  cat main.tf
+  cat modules/v1/main.tf
+  cat modules/v2/main.tf
   tofu state list
   ```
-hints.2.text: |-
-  Измените только источник station на ./modules/v2, выполните повторную инициализацию и примените сохранённый план.
-  Сохраните бинарный план и экспортируйте его через tofu show -json в требуемый JSON-артефакт.
 
+  После смены источника сформируйте файлы для проверки.
+
+  ```sh
+  tofu init -input=false -no-color &&
+    tofu plan -input=false -no-color -out=upgrade.plan &&
+    tofu show -json upgrade.plan > upgrade-plan.json
+  ```
+
+  Проверьте сохранённый план и применяйте его, только если все действия с ресурсами имеют тип no-op.
+
+  ```sh
+  jq -e 'all(.resource_changes[]; .change.actions == ["no-op"])' upgrade-plan.json >/dev/null &&
+    tofu apply -input=false -no-color upgrade.plan
+  ```
+hints.2.text: |-
   Проверьте результат из `~/quest` на workstation:
 
   - `diff -u <(tofu state list | sort) <(sort original-addresses); tofu output -json ids | jq -e --slurpfile old original-ids.json '. == $old[0]'` — Нет различий в составе; сравнение ID печатает `true`.
   - `cat north.txt depot.txt; tofu output -json contracts; sha256sum north.txt` — Файлы показывают `north-47` и `depot-47`; `station` сообщает версию `2` и показанную контрольную сумму, а `depot` — версию `1`.
   - `jq -r '.resource_changes[] | .address + " " + (.change.actions | join(","))' upgrade-plan.json; tofu plan -input=false -detailed-exitcode -no-color` — Каждое сохранённое действие — `no-op`; текущее планирование завершается с кодом `0` без изменений.
+
+  В сохранённом плане для station должны быть release 2 и текущая контрольная сумма, а для depot — release 1.
+
+  ```sh
+  jq '.planned_values.outputs.contracts.value' upgrade-plan.json
+  ```
 phrases.0: Я обновил источник одного локального модуля и сохранил адреса вызова и ресурсов.
 phrases.1: Я изучил сохранённый plan с новым output без пересоздания файлов.
 phrases.2: Я проверил provider ID и пустой итоговый plan после обновления модуля.
