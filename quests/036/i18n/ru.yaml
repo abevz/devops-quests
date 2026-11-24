@@ -30,29 +30,39 @@ stages.0.objectives.2.text: Предложенный файл замены не 
 stages.0.objectives.3.text: Существующий выход идентичности реестра сохраняет исходный ID провайдера.
 stages.0.objectives.4.text: OpenTofu не сообщает об ожидающих изменениях инфраструктуры.
 hints.0.text: Предложенное изменение отличается от применённого изменения управляемого объекта.
-hints.1.text: 'Изучите actions до согласия.
-
-
-  Изучите поставленные входные данные и текущее управляемое состояние:
-
+hints.1.text: |-
+  Сопоставьте путь ledger в main.tf с управляемым состоянием. Сохраните и экспортируйте предложение о замене, пока в конфигурации указано предложенное имя. После записи верните требуемое имя ledger.txt и оставьте предложение неприменённым.
 
   ```sh
-
   cat main.tf
-
   tofu show -no-color
+  tofu plan -input=false -no-color -out=rejected.tfplan &&
+    tofu show -json rejected.tfplan > rejected-plan.json
+  ```
+hints.2.text: |-
+  Сохранённое изменение local_file включает создание и удаление. Прежний путь указывает на ledger.txt, а прежний ID совпадает с original-id.
 
-  tofu plan -input=false -no-color
+  ```sh
+  jq '.resource_changes[]
+    | select(.mode == "managed" and .type == "local_file")
+    | {address, actions: .change.actions, before_path: .change.before.filename,
+       before_id: .change.before.id}' rejected-plan.json
+  cat original-id
+  ```
 
-  ```'
-hints.2.text: "Сохраните бинарный plan и используйте tofu show -json.\n\nИзменение filename у local_file вызывает\
-  \ замену. Проверяемое изменение было с ledger.txt на retired-ledger.txt; восстановите требуемое имя файла,\
-  \ не применяя это предложение.\n\nПроверьте наблюдаемый результат:\n\n- `jq '.resource_changes[] | {address,\
-  \ actions: .change.actions}' rejected-plan.json` — Ожидается, что отклонённое предложение по реестру включает\
-  \ удаление и создание.\n\n- Ожидается `revision-36`; `ls` сообщает об отсутствии старого файла; оба ID совпадают.\n\
-  \n  ```sh\n  cat ledger.txt\n  ls retired-ledger.txt\n  cat original-id\n  tofu output -raw ledger_id\n \
-  \ ```\n\n- `tofu plan -input=false -detailed-exitcode -no-color` — Ожидаются отсутствие изменений и код завершения\
-  \ `0`."
+  Исходный файл содержит revision-36. Проверка отсутствия проходит, а текущий ID ledger совпадает с original-id.
+
+  ```sh
+  cat ledger.txt
+  test ! -e retired-ledger.txt
+  test "$(tofu output -raw ledger_id)" = "$(cat original-id)"
+  ```
+
+  Итоговый детальный план сообщает об отсутствии изменений и завершается с кодом 0.
+
+  ```sh
+  tofu plan -input=false -detailed-exitcode -no-color
+  ```
 phrases.0: Я изучил действия замены в сохранённом plan.
 phrases.1: Я отклонил разрушительное изменение до применения.
 phrases.2: Я сохранил идентичность реестра и проверил пустой plan после восстановления.
