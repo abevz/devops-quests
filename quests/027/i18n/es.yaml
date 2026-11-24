@@ -16,29 +16,35 @@ brief: 'Una versión privada no está disponible para su consumidor de Kubernete
 stages.0.brief: El consumidor de Kubernetes debe cumplir el contrato de descarga de imagen y disponibilidad.
 hints.0.text: Una carga y la estación de trabajo pueden autenticarse de forma independiente en un registro
   privado.
-hints.1.text: 'Leer los eventos de extracción de imágenes; distinguir la autorización de una imagen faltante.
-
+hints.1.text: |-
+  Leer los eventos de extracción de imágenes; distinguir la autorización de una imagen faltante.
 
   Inspecciona las entradas suministradas y el estado observado:
 
-
-  ```sh
-
-  cat deployment.yaml
-
-  kubectl describe pod -l app=relay
-
-  ```'
-hints.2.text: |-
   Las credenciales exclusivas del juego están en platform.env; Kubernetes necesita un docker-registry Secret.
 
-  Adjunte ese Secret a través de imagePullSecrets mientras mantiene el digest privado y el Always policy.
+  Vincula el Secret mediante imagePullSecrets. Conserva el digest de la imagen privada y la política de descarga Always.
 
+  ```sh
+  cat deployment.yaml
+  kubectl get pods -l app=relay
+  kubectl describe pod -l app=relay
+  ```
+hints.2.text: |-
   Verifica el resultado observado:
 
   - `kubectl get deployment relay -o json | jq '{name:.metadata.name,replicas:.spec.replicas,worker:(.spec.template.spec.containers[]|select(.name=="worker")|{image,imagePullPolicy})}'` — Muestra `relay` con su referencia de imagen privada y política de descarga `Always`.
   - `kubectl rollout status deployment/relay --timeout=10s` — El rollout se completa.
 
+  Inspecciona los Pods actuales de relay. El imageID del worker listo debe contener el digest esperado. Los Pods activos deben conservar Always y una referencia al Secret de descarga.
+
+  ```sh
+  kubectl get pods -l app=relay -o json |
+    jq '.items[] | select(.metadata.deletionTimestamp == null and (.status.phase != "Failed" and .status.phase != "Succeeded"))
+    | {pod: .metadata.name, pullSecrets: [.spec.imagePullSecrets[]?.name],
+       worker: [.spec.containers[] | select(.name == "worker") | {image, imagePullPolicy}],
+       running: [.status.containerStatuses[]? | select(.name == "worker") | {imageID, ready}]}'
+  ```
 debrief: El registro requería credenciales. Creó un namespace pull secret, lo adjuntó a la plantilla pod y
   verificó una imagen autenticada real pull.
 phrases.0: Verifiqué el estado de ejecución antes de realizar un cambio.
