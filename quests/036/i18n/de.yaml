@@ -32,29 +32,39 @@ stages.0.objectives.3.text: Die bestehende Ausgabe zur Ledger-Identität behält
 stages.0.objectives.4.text: OpenTofu meldet keine ausstehenden Infrastrukturänderungen.
 hints.0.text: Eine vorgeschlagene Änderung ist etwas anderes als eine ausgeführte Änderung an einem verwalteten
   Objekt.
-hints.1.text: 'Überprüfen Sie actions vor der Genehmigung.
-
-
-  Prüfen Sie die mitgelieferten Eingaben und den aktuellen verwalteten Zustand:
-
+hints.1.text: |-
+  Vergleiche den Ledger-Pfad in main.tf mit dem verwalteten Zustand. Speichere und exportiere den Ersatzvorschlag, solange der vorgeschlagene Dateiname konfiguriert ist. Stelle anschließend den vorgesehenen Namen ledger.txt wieder her und lasse den Vorschlag unangewendet.
 
   ```sh
-
   cat main.tf
-
   tofu show -no-color
+  tofu plan -input=false -no-color -out=rejected.tfplan &&
+    tofu show -json rejected.tfplan > rejected-plan.json
+  ```
+hints.2.text: |-
+  Die gespeicherte local_file-Änderung umfasst Erstellen und Löschen. Der vorherige Pfad verweist auf ledger.txt und die vorherige ID entspricht original-id.
 
-  tofu plan -input=false -no-color
+  ```sh
+  jq '.resource_changes[]
+    | select(.mode == "managed" and .type == "local_file")
+    | {address, actions: .change.actions, before_path: .change.before.filename,
+       before_id: .change.before.id}' rejected-plan.json
+  cat original-id
+  ```
 
-  ```'
-hints.2.text: "Speichern Sie eine Binärdatei plan und verwenden Sie dann tofu show -json.\n\nÄnderungen an\
-  \ filename bei local_file erzwingen Ersatz. Die geprüfte Änderung führte von ledger.txt zu retired-ledger.txt;\
-  \ stellen Sie den vorgesehenen Dateinamen wieder her, ohne diesen Vorschlag anzuwenden.\n\nPrüfen Sie das\
-  \ beobachtete Ergebnis:\n\n- `jq '.resource_changes[] | {address, actions: .change.actions}' rejected-plan.json`\
-  \ — Erwartet: Der abgelehnte Ledger-Vorschlag umfasst Löschen und Erstellen.\n\n- Erwartet: `revision-36`;\
-  \ `ls` meldet die ausgemusterte Datei als nicht vorhanden; beide IDs stimmen überein.\n\n  ```sh\n  cat ledger.txt\n\
-  \  ls retired-ledger.txt\n  cat original-id\n  tofu output -raw ledger_id\n  ```\n\n- `tofu plan -input=false\
-  \ -detailed-exitcode -no-color` — Erwartet: keine Änderungen, Exit-Code `0`."
+  Die ursprüngliche Datei enthält revision-36. Die Abwesenheitsprüfung ist erfolgreich und die aktuelle Ledger-ID entspricht original-id.
+
+  ```sh
+  cat ledger.txt
+  test ! -e retired-ledger.txt
+  test "$(tofu output -raw ledger_id)" = "$(cat original-id)"
+  ```
+
+  Der abschließende Detailplan meldet keine Änderungen und endet mit Exit-Code 0.
+
+  ```sh
+  tofu plan -input=false -detailed-exitcode -no-color
+  ```
 phrases.0: Ich habe die Austauschaktionen in einem gespeicherten plan überprüft.
 phrases.1: Ich habe eine destruktive Änderung abgelehnt, bevor ich sie angewendet habe.
 phrases.2: Ich habe die Ledger-Identität beibehalten und eine leere Wiederherstellung überprüft plan.
