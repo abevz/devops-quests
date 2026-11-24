@@ -24,25 +24,41 @@ stages.0.objectives.2.text: The inspection run reports changed=0, unreachable=0 
 stages.0.objectives.3.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/banner.txt` contains
   `north-46`.
 hints.0.text: Tags select an execution scope; safe inspection must be designed rather than assumed.
-hints.1.text: 'A tag selects tasks, not a promise that they are read-only. The supplied copy task carries inspect,
-  so selecting it can overwrite the healthy banner.
-
+hints.1.text: |-
+  A tag selects tasks, not a promise that they are read-only. The supplied copy task carries inspect, so selecting it can overwrite the healthy banner.
 
   Use --list-tasks --tags inspect to inspect the selected scope.
 
-
   Inspect the supplied inputs and execution scope:
 
+  ```sh
+  cat inventory.ini
+  cat rollout.yml
+  ansible-playbook -i inventory.ini --list-tasks --tags inspect rollout.yml
+  ```
+hints.2.text: |-
+  Once the inspect selection contains only read-only tasks, capture each banner's checksum and metadata before and after the real inspection.
 
   ```sh
+  cd ~/quest
+  snapshot_banners() {
+    for number in 1 2 3; do
+      host="app${number}-${DQ_NAMESPACE#dq-}"
+      printf 'app%s\n' "$number"
+      ssh -n -o BatchMode=yes -p 2222 "root@$host" \
+        'sha256sum /srv/site/banner.txt &&
+         stat -c "%f %u %g %y %z %N" /srv/site/banner.txt &&
+         stat -L -c "%f %u %g %y %z" /srv/site/banner.txt' || return
+    done
+  }
+  before=$(snapshot_banners) &&
+    ansible-playbook --tags inspect rollout.yml > inspection.log &&
+    after=$(snapshot_banners) &&
+    diff -u <(printf '%s\n' "$before") <(printf '%s\n' "$after") &&
+    cat inspection.log
+  ```
 
-  cat rollout.yml
-
-  ansible-playbook -i inventory.ini --list-tasks --tags inspect rollout.yml
-
-  ```'
-hints.2.text: |-
-  From `~/quest`, record a real inspection with `ansible-playbook --tags inspect rollout.yml > inspection.log`. Compare each banner’s contents and `stat` output before and after the run; both stay unchanged. `cat inspection.log` must show changed=0, unreachable=0 and failed=0 for app1, app2 and app3.
+  The diff should be empty. In inspection.log, each of app1, app2 and app3 must report changed=0, unreachable=0 and failed=0.
 phrases.0: I inspected which tasks the requested Ansible tag would select.
 phrases.1: I separated inspection and deployment tags before running the diagnostic.
 phrases.2: I checked both changed=0 and the actual unchanged files on every target.

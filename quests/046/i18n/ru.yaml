@@ -23,25 +23,41 @@ stages.0.objectives.2.text: Проверочный запуск сообщает
 stages.0.objectives.3.text: На каждом управляемом хосте (`app1`, `app2`, `app3`) файл `/srv/site/banner.txt`
   содержит `north-46`.
 hints.0.text: Теги выбирают область выполнения; безопасность инспекции нужно обеспечить, а не предполагать.
-hints.1.text: 'Тег выбирает задачи, но не обещает отсутствие изменений. Выданная задача copy помечена inspect,
-  поэтому её выбор может перезаписать исправный баннер.
-
+hints.1.text: |-
+  Тег выбирает задачи, но не обещает отсутствие изменений. Выданная задача copy помечена inspect, поэтому её выбор может перезаписать исправный баннер.
 
   Посмотрите выбранные задачи через --list-tasks --tags inspect.
 
-
   Изучите поставленные входные данные и область выполнения:
 
+  ```sh
+  cat inventory.ini
+  cat rollout.yml
+  ansible-playbook -i inventory.ini --list-tasks --tags inspect rollout.yml
+  ```
+hints.2.text: |-
+  Когда тег inspect выбирает только задачи чтения, снимите контрольную сумму и метаданные файла на каждом хосте до и после реальной проверки.
 
   ```sh
+  cd ~/quest
+  snapshot_banners() {
+    for number in 1 2 3; do
+      host="app${number}-${DQ_NAMESPACE#dq-}"
+      printf 'app%s\n' "$number"
+      ssh -n -o BatchMode=yes -p 2222 "root@$host" \
+        'sha256sum /srv/site/banner.txt &&
+         stat -c "%f %u %g %y %z %N" /srv/site/banner.txt &&
+         stat -L -c "%f %u %g %y %z" /srv/site/banner.txt' || return
+    done
+  }
+  before=$(snapshot_banners) &&
+    ansible-playbook --tags inspect rollout.yml > inspection.log &&
+    after=$(snapshot_banners) &&
+    diff -u <(printf '%s\n' "$before") <(printf '%s\n' "$after") &&
+    cat inspection.log
+  ```
 
-  cat rollout.yml
-
-  ansible-playbook -i inventory.ini --list-tasks --tags inspect rollout.yml
-
-  ```'
-hints.2.text: |-
-  В `~/quest` запишите реальную инспекцию командой `ansible-playbook --tags inspect rollout.yml > inspection.log`. Сравните содержимое каждого баннера и вывод `stat` до и после запуска: они не меняются. `cat inspection.log` должен показать changed=0, unreachable=0 и failed=0 для app1, app2 и app3.
+  Команда diff должна завершиться без вывода. В inspection.log у каждого из app1, app2 и app3 должны быть changed=0, unreachable=0 и failed=0.
 phrases.0: Я изучил задачи, выбираемые запрошенным тегом Ansible.
 phrases.1: Я разделил теги инспекции и доставки до запуска диагностики.
 phrases.2: Я проверил changed=0 и фактически неизменные файлы каждой цели.

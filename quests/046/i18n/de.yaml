@@ -26,25 +26,41 @@ stages.0.objectives.3.text: Auf jedem verwalteten Host (`app1`, `app2`, `app3`) 
   den Inhalt `north-46`.
 hints.0.text: Tags wählen einen Ausführungsumfang; sichere Inspektion muss vorgesehen werden und darf nicht
   nur angenommen werden.
-hints.1.text: 'Ein Tag wählt Aufgaben aus, nicht das Versprechen, dass sie schreibgeschützt sind. Die bereitgestellte
-  copy-Aufgabe trägt inspect und kann dadurch das intakte Banner überschreiben.
-
+hints.1.text: |-
+  Ein Tag wählt Aufgaben aus, nicht das Versprechen, dass sie schreibgeschützt sind. Die bereitgestellte copy-Aufgabe trägt inspect und kann dadurch das intakte Banner überschreiben.
 
   Prüfe mit --list-tasks --tags inspect die ausgewählten Aufgaben.
 
-
   Prüfen Sie die mitgelieferten Eingaben und den Ausführungsumfang:
 
+  ```sh
+  cat inventory.ini
+  cat rollout.yml
+  ansible-playbook -i inventory.ini --list-tasks --tags inspect rollout.yml
+  ```
+hints.2.text: |-
+  Sobald das Tag inspect nur lesende Aufgaben auswählt, erfasse vor und nach der tatsächlichen Inspektion Prüfsumme und Metadaten des Banners auf jedem Host.
 
   ```sh
+  cd ~/quest
+  snapshot_banners() {
+    for number in 1 2 3; do
+      host="app${number}-${DQ_NAMESPACE#dq-}"
+      printf 'app%s\n' "$number"
+      ssh -n -o BatchMode=yes -p 2222 "root@$host" \
+        'sha256sum /srv/site/banner.txt &&
+         stat -c "%f %u %g %y %z %N" /srv/site/banner.txt &&
+         stat -L -c "%f %u %g %y %z" /srv/site/banner.txt' || return
+    done
+  }
+  before=$(snapshot_banners) &&
+    ansible-playbook --tags inspect rollout.yml > inspection.log &&
+    after=$(snapshot_banners) &&
+    diff -u <(printf '%s\n' "$before") <(printf '%s\n' "$after") &&
+    cat inspection.log
+  ```
 
-  cat rollout.yml
-
-  ansible-playbook -i inventory.ini --list-tasks --tags inspect rollout.yml
-
-  ```'
-hints.2.text: |-
-  Zeichne in `~/quest` eine echte Inspektion mit `ansible-playbook --tags inspect rollout.yml > inspection.log` auf. Vergleiche den Inhalt jedes Banners und die Ausgabe von `stat` vor und nach dem Lauf; beide bleiben unverändert. `cat inspection.log` muss changed=0, unreachable=0 und failed=0 für app1, app2 und app3 zeigen.
+  Der Befehl diff soll keine Unterschiede ausgeben. In inspection.log müssen für app1, app2 und app3 jeweils changed=0, unreachable=0 und failed=0 stehen.
 phrases.0: Ich habe untersucht, welche Aufgaben das angeforderte Ansible-Tag auswählen würde.
 phrases.1: Ich habe Inspektions- und Bereitstellungs-Tags getrennt, bevor ich die Diagnose ausgeführt habe.
 phrases.2: Ich habe sowohl changed=0 als auch die tatsächlich unveränderten Dateien auf jedem Ziel überprüft.

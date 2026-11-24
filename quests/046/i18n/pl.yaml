@@ -25,25 +25,41 @@ stages.0.objectives.2.text: Wykonanie inspekcji zgłasza changed=0, unreachable=
 stages.0.objectives.3.text: Na każdym zarządzanym hoście (`app1`, `app2`, `app3`) plik `/srv/site/banner.txt`
   zawiera `north-46`.
 hints.0.text: Tagi wybierają zakres wykonania; bezpieczną inspekcję trzeba zaprojektować, a nie zakładać.
-hints.1.text: 'Znacznik wybiera zadania, a nie obietnicę, że są one tylko do odczytu. Dostarczone zadanie copy
-  ma inspect, więc jego wybór może nadpisać poprawny baner.
-
+hints.1.text: |-
+  Znacznik wybiera zadania, a nie obietnicę, że są one tylko do odczytu. Dostarczone zadanie copy ma inspect, więc jego wybór może nadpisać poprawny baner.
 
   Użyj --list-tasks --tags inspect, aby sprawdzić wybrany zakres.
 
-
   Sprawdź dostarczone dane wejściowe i zakres wykonania:
 
+  ```sh
+  cat inventory.ini
+  cat rollout.yml
+  ansible-playbook -i inventory.ini --list-tasks --tags inspect rollout.yml
+  ```
+hints.2.text: |-
+  Gdy tag inspect wybiera wyłącznie zadania odczytu, zapisz sumę kontrolną i metadane banera na każdym hoście przed rzeczywistą inspekcją i po niej.
 
   ```sh
+  cd ~/quest
+  snapshot_banners() {
+    for number in 1 2 3; do
+      host="app${number}-${DQ_NAMESPACE#dq-}"
+      printf 'app%s\n' "$number"
+      ssh -n -o BatchMode=yes -p 2222 "root@$host" \
+        'sha256sum /srv/site/banner.txt &&
+         stat -c "%f %u %g %y %z %N" /srv/site/banner.txt &&
+         stat -L -c "%f %u %g %y %z" /srv/site/banner.txt' || return
+    done
+  }
+  before=$(snapshot_banners) &&
+    ansible-playbook --tags inspect rollout.yml > inspection.log &&
+    after=$(snapshot_banners) &&
+    diff -u <(printf '%s\n' "$before") <(printf '%s\n' "$after") &&
+    cat inspection.log
+  ```
 
-  cat rollout.yml
-
-  ansible-playbook -i inventory.ini --list-tasks --tags inspect rollout.yml
-
-  ```'
-hints.2.text: |-
-  W `~/quest` zapisz rzeczywistą inspekcję poleceniem `ansible-playbook --tags inspect rollout.yml > inspection.log`. Porównaj treść każdego banera i wynik `stat` przed uruchomieniem i po nim; oba pozostają bez zmian. `cat inspection.log` musi pokazać changed=0, unreachable=0 i failed=0 dla app1, app2 i app3.
+  Polecenie diff powinno zakończyć się bez wyniku. W inspection.log każdy z hostów app1, app2 i app3 musi mieć changed=0, unreachable=0 i failed=0.
 phrases.0: Sprawdziłem, jakie zadania wybierze żądany tag Ansible.
 phrases.1: Przed uruchomieniem diagnostyki oddzieliłem tagi inspekcji i wdrożenia.
 phrases.2: Sprawdziłem zarówno changed=0, jak i faktycznie niezmienione pliki na każdym celu.
