@@ -27,30 +27,25 @@ brief: 'The private `board` consumer is unavailable.
 debrief: Registry authentication and Kubernetes consumer configuration were separate parts of the rotation.
 stages.0.brief: The private release must meet its credential and consumer contract.
 hints.0.text: A successful push from the workstation does not authenticate the kubelet.
-hints.1.text: 'Inspect the supplied inputs and observed state:
+hints.1.text: |-
+  Inspect the supplied inputs and observed state:
 
-
-  ```sh
-
-  cat board.yaml
-
-  kubectl describe pod -l app=board
-
-  kubectl get secrets
-
-  ```'
-hints.2.text: |-
   Inspect imagePullSecrets and the Pod pull failure without printing credentials.
 
   Replace the stale Docker auth Secret and restart the failed consumer. API Secret data must contain a valid Docker credential document; use either nested auth or matching username/password fields.
   Do not print credential values or save them in shell history.
 
+  ```sh
+  cat board.yaml
+  kubectl describe pod -l app=board
+  kubectl get secrets
+  ```
+hints.2.text: |-
   Verify the observed result:
 
   - `source platform.env; kubectl get secret registry-pull -o json | jq -e 'env as $e | .type as $t | (if $t=="kubernetes.io/dockerconfigjson" then (.data[".dockerconfigjson"]|@base64d|fromjson|.auths) elif $t=="kubernetes.io/dockercfg" then (.data[".dockercfg"]|@base64d|fromjson) else {} end)[$e.REGISTRY] | if ((.auth//"")|length)>0 then ((.auth|gsub("[\r\n]";"")|@base64d)==($e.REGISTRY_USER+":"+$e.REGISTRY_PASSWORD)) else .username==$e.REGISTRY_USER and .password==$e.REGISTRY_PASSWORD end'` — Prints `true` without exposing credentials.
   - `source platform.env; kubectl get deployment board -o json | jq '{name:.metadata.name,replicas:.spec.replicas,worker:(.spec.template.spec.containers[]|select(.name=="worker")|{image,imagePullPolicy})}'; kubectl get pods -o json | jq '.items[] | select(.metadata.deletionTimestamp==null and any(.spec.containers[]?;.name=="worker")) | {pod:.metadata.name,pullSecrets:[.spec.imagePullSecrets[]?.name]}'` — Shows `board`, replicas `1`, the supplied `PRIVATE_IMAGE`, `Always` and only `registry-pull`.
   - `kubectl rollout status deployment/board --timeout=10s; kubectl exec --pod-running-timeout=5s deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080` — Rollout completes; HTTP returns `north-42`.
-
 phrases.0: I separated registry authentication from the kubelet pull credential.
 phrases.1: I rotated the consumer Secret while retaining the immutable image reference.
 phrases.2: I verified a fresh private pull and the recovered application response.

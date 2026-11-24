@@ -15,29 +15,35 @@ brief: 'Prywatne wydanie jest niedostępne dla odbiorcy Kubernetes.
   '
 stages.0.brief: Odbiorca Kubernetes musi spełniać kontrakt pobierania obrazu i gotowości.
 hints.0.text: Workload i stacja robocza mogą niezależnie uwierzytelniać się w prywatnym rejestrze.
-hints.1.text: 'Przeczytaj zdarzenia przyciągające obraz; odróżnij autoryzację od brakującego obrazu.
-
+hints.1.text: |-
+  Sprawdź zdarzenia pobierania obrazu. Ustal, czy przyczyną jest odmowa dostępu, czy brak obrazu.
 
   Sprawdź dostarczone dane wejściowe i obserwowany stan:
 
-
-  ```sh
-
-  cat deployment.yaml
-
-  kubectl describe pod -l app=relay
-
-  ```'
-hints.2.text: |-
   Dane uwierzytelniające tylko do gry znajdują się w platform.env; Kubernetes potrzebuje docker-registry Secret.
 
-  Dołącz te Secret do imagePullSecrets, zachowując prywatną politykę digest i Always.
+  Podłącz Secret przez imagePullSecrets. Zachowaj digest prywatnego obrazu i politykę pobierania Always.
 
+  ```sh
+  cat deployment.yaml
+  kubectl get pods -l app=relay
+  kubectl describe pod -l app=relay
+  ```
+hints.2.text: |-
   Sprawdź obserwowany wynik:
 
   - `kubectl get deployment relay -o json | jq '{name:.metadata.name,replicas:.spec.replicas,worker:(.spec.template.spec.containers[]|select(.name=="worker")|{image,imagePullPolicy})}'` — Pokazuje `relay` z referencją prywatnego obrazu i polityką pobierania `Always`.
   - `kubectl rollout status deployment/relay --timeout=10s` — Rollout się kończy.
 
+  Sprawdź bieżące Pody relay. Pole imageID gotowego worker musi zawierać oczekiwany digest. Aktywne Pody muszą zachować Always i referencję do Secretu pobierania.
+
+  ```sh
+  kubectl get pods -l app=relay -o json |
+    jq '.items[] | select(.metadata.deletionTimestamp == null and (.status.phase != "Failed" and .status.phase != "Succeeded"))
+    | {pod: .metadata.name, pullSecrets: [.spec.imagePullSecrets[]?.name],
+       worker: [.spec.containers[] | select(.name == "worker") | {image, imagePullPolicy}],
+       running: [.status.containerStatuses[]? | select(.name == "worker") | {imageID, ready}]}'
+  ```
 debrief: Rejestr wymagał poświadczeń. Utworzyłeś namespace pull secret, dołączyłeś go do szablonu pod i zweryfikowałeś
   pobieranie prawdziwego uwierzytelnionego obrazu.
 phrases.0: Przed dokonaniem zmiany sprawdziłem stan działania.

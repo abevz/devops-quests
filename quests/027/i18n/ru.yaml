@@ -15,29 +15,35 @@ brief: 'Приватный выпуск недоступен потребите�
   '
 stages.0.brief: Потребитель Kubernetes должен соответствовать контракту загрузки образа и готовности.
 hints.0.text: Workload и рабочая станция могут независимо аутентифицироваться в приватном реестре.
-hints.1.text: 'Прочитайте события pull: отличите отказ авторизации от отсутствия образа.
-
+hints.1.text: |-
+  Прочитайте события pull: отличите отказ авторизации от отсутствия образа.
 
   Изучите поставленные входные данные и наблюдаемое состояние:
 
-
-  ```sh
-
-  cat deployment.yaml
-
-  kubectl describe pod -l app=relay
-
-  ```'
-hints.2.text: |-
   Учебные credential находятся в platform.env; Kubernetes нужен docker-registry Secret.
 
   Подключите Secret через imagePullSecrets, сохранив приватный digest и policy Always.
 
+  ```sh
+  cat deployment.yaml
+  kubectl get pods -l app=relay
+  kubectl describe pod -l app=relay
+  ```
+hints.2.text: |-
   Проверьте наблюдаемый результат:
 
   - `kubectl get deployment relay -o json | jq '{name:.metadata.name,replicas:.spec.replicas,worker:(.spec.template.spec.containers[]|select(.name=="worker")|{image,imagePullPolicy})}'` — Показывает `relay` со ссылкой на приватный образ и политикой загрузки `Always`.
   - `kubectl rollout status deployment/relay --timeout=10s` — Rollout завершается.
 
+  Проверьте текущие Pod relay. В imageID готового worker должен быть ожидаемый digest. У действующих Pod должны быть Always и ссылка на Secret для загрузки из реестра.
+
+  ```sh
+  kubectl get pods -l app=relay -o json |
+    jq '.items[] | select(.metadata.deletionTimestamp == null and (.status.phase != "Failed" and .status.phase != "Succeeded"))
+    | {pod: .metadata.name, pullSecrets: [.spec.imagePullSecrets[]?.name],
+       worker: [.spec.containers[] | select(.name == "worker") | {image, imagePullPolicy}],
+       running: [.status.containerStatuses[]? | select(.name == "worker") | {imageID, ready}]}'
+  ```
 debrief: Registry требовал credential. Вы создали pull secret в namespace, подключили его к шаблону pod и проверили
   реальное получение образа.
 phrases.0: Я проверил фактическое состояние до изменения.

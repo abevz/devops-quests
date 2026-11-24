@@ -15,29 +15,35 @@ brief: 'A private release is unavailable to its Kubernetes consumer.
   '
 stages.0.brief: The Kubernetes consumer must meet the image-pull and readiness contract.
 hints.0.text: A workload and the workstation may authenticate to a private registry independently.
-hints.1.text: 'Read the image-pull events; distinguish authorization from a missing image.
-
+hints.1.text: |-
+  Read the image-pull events; distinguish authorization from a missing image.
 
   Inspect the supplied inputs and observed state:
 
-
-  ```sh
-
-  cat deployment.yaml
-
-  kubectl describe pod -l app=relay
-
-  ```'
-hints.2.text: |-
   The game-only credentials are in platform.env; Kubernetes needs a docker-registry Secret.
 
   Attach that Secret through imagePullSecrets while keeping the private digest and Always policy.
 
+  ```sh
+  cat deployment.yaml
+  kubectl get pods -l app=relay
+  kubectl describe pod -l app=relay
+  ```
+hints.2.text: |-
   Verify the observed result:
 
   - `kubectl get deployment relay -o json | jq '{name:.metadata.name,replicas:.spec.replicas,worker:(.spec.template.spec.containers[]|select(.name=="worker")|{image,imagePullPolicy})}'` — Shows `relay` with its private image reference and pull policy `Always`.
   - `kubectl rollout status deployment/relay --timeout=10s` — The rollout completes.
 
+  Inspect current relay Pods. The ready worker's imageID must contain the expected digest. The active Pods must retain Always and a registry pull Secret reference.
+
+  ```sh
+  kubectl get pods -l app=relay -o json |
+    jq '.items[] | select(.metadata.deletionTimestamp == null and (.status.phase != "Failed" and .status.phase != "Succeeded"))
+    | {pod: .metadata.name, pullSecrets: [.spec.imagePullSecrets[]?.name],
+       worker: [.spec.containers[] | select(.name == "worker") | {image, imagePullPolicy}],
+       running: [.status.containerStatuses[]? | select(.name == "worker") | {imageID, ready}]}'
+  ```
 debrief: The registry required credentials. You created a namespace pull secret, attached it to the pod template
   and verified a real authenticated image pull.
 phrases.0: I checked the running state before making a change.
