@@ -28,13 +28,27 @@ hints.1.text: |-
   kubectl top pods -l app=board
   ```
 hints.2.text: |-
-  Verifica cantidades actual y deseada de dos, utilización CPU superior al objetivo, dos Pods servidores listos y contadores de finalización crecientes. La respuesta raíz no cambia.
+  Comprueba que `ScalingActive` sea `True`, que haya dos réplicas actuales y deseadas y que la utilización de CPU supere el objetivo del `50` por ciento. Los dos Pods del Deployment deben estar listos y mostrar métricas de CPU en milinúcleos. Compara dos observaciones de los contadores de solicitudes completadas de los mismos Pods: cada contador debe mantenerse o aumentar y la suma debe crecer. La petición desde el Deployment `client` a la ruta raíz debe seguir devolviendo `north-112`.
 
   ```sh
-  kubectl get hpa board
-  kubectl get pods -l app=board
+  kubectl get hpa board -o yaml
+  kubectl get deployment board
   kubectl top pods -l app=board
-  kubectl exec deployment/board -c worker -- wc -l /tmp/work-completions
+  pods=$(kubectl get deployments,replicasets,pods -o json | jq -r '
+    def owned($kind; $uids): any(.metadata.ownerReferences[]?;
+      .controller == true and .kind == $kind and (.uid as $uid | $uids | index($uid) != null));
+    .items as $items | ($items[] | select(.kind == "Deployment" and .metadata.name == "board")) as $board
+    | [$items[] | select(.kind == "ReplicaSet" and owned("Deployment"; [$board.metadata.uid])) | .metadata.uid] as $rs
+    | $items[] | select(.kind == "Pod" and owned("ReplicaSet"; $rs) and .metadata.deletionTimestamp == null
+      and .status.phase != "Failed" and .status.phase != "Succeeded") | .metadata.name')
+  sample() {
+    while IFS= read -r pod; do
+      printf '%s ' "$pod"
+      kubectl exec "$pod" -c worker -- sh -c 'if test -f /tmp/work-completions; then wc -l < /tmp/work-completions; else echo 0; fi'
+    done <<< "$pods"
+  }
+  test -n "$pods" && sample && sleep 1 && sample
+  kubectl exec deployment/client -c worker -- wget -qO- -T 3 http://board:8080
   ```
 phrases.0: Revisé la canalización de métricas antes de cambiar el HPA.
 phrases.1: Proporcioné un CPU request significativo.

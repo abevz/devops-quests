@@ -27,10 +27,19 @@ hints.1.text: |-
   kubectl exec shelf-0 -c worker -- cat /etc/resolv.conf
   ```
 hints.2.text: |-
-  Prüfe erhaltene Quellidentitäten und Bereitschaft, danach ordinale A-Auflösung, entfernte Antwort und lokale Veröffentlichung aus dem Verbraucher.
+  Vergleiche die UIDs mit den bereitgestellten Originalaufzeichnungen. `shelf` und `ledger-shelf-0` behalten ihre UIDs, während `shelf-0` eine neue UID hat. Der Headless Service wählt den shelf-Workload aus. Quelle und Inspector haben je eine bereite Replik. Prüfe im Deployment und in den Pods des Inspectors das bereitgestellte Image sowie die Mounts. Das Quell-PVC darf dort nicht eingebunden sein. DNS muss den Namen aus dem Inspector auflösen, und die HTTP-Antworten von shelf sowie von der entfernten und lokalen Schnittstelle müssen `ledger-111` lauten.
 
   ```sh
+  for binding in statefulset/shelf:original-statefulset-uid pvc/ledger-shelf-0:original-pvc-uid pod/shelf-0:original-pod-uid; do
+    object=${binding%%:*}; original=${binding#*:}
+    printf "%s original=%s current=%s\n" "$object" "$(cat "$original")" "$(kubectl get "$object" -o jsonpath='{.metadata.uid}')"
+  done
+  kubectl get statefulset shelf
+  kubectl get service shelf -o yaml
+  kubectl rollout status deployment/inspector --timeout=10s
+  kubectl get deployments,pods,replicasets -o yaml
   fqdn="shelf-0.shelf.$DQ_NAMESPACE.svc.cluster.local."
+  kubectl exec shelf-0 -c worker -- wget -qO- -T 3 http://shelf-0.shelf:8080
   kubectl exec deployment/inspector -c worker -- nslookup -type=A "$fqdn"
   kubectl exec deployment/inspector -c worker -- wget -qO- -T 3 "http://$fqdn:8080"
   kubectl exec deployment/inspector -c worker -- wget -qO- -T 3 http://127.0.0.1:8080
