@@ -16,16 +16,24 @@ stages.0.objectives.0.text: Целевой claim привязан; исходн�
 stages.0.objectives.1.text: Оба читателя готовы и публикуют текущие обычные файлы с объявленных PVC.
 hints.0.text: Привязанный том предоставляет ёмкость, а не нужные данные. Сохраните источник, разделяя provisioning
   и восстановление приложения.
-hints.1.text: Сопоставьте `storage-contract.json`, `kubectl get pvc -o yaml` и `kubectl describe pod` с определениями
-  обоих читателей и фактическими исходными файлами. Рабочие настройки здорового claim-источника доступны через namespaced
-  API.
-hints.2.text: |-
-  После восстановления привязки и переноса данных проверьте текущее состояние по контракту. Сохраните источник и идентичности. Ожидаемые наблюдения:
+hints.1.text: |-
+  Сопоставьте `storage-contract.json`, `kubectl get pvc -o yaml` и `kubectl describe pod` с определениями обоих читателей и фактическими исходными файлами. Рабочие настройки здорового claim-источника доступны через namespaced API.
 
-  - `kubectl get pvc` — исходный и целевой claim имеют состояние Bound.
-  - `kubectl exec deployment/relay -c worker -- stat -c '%F:%s' /spool/index.html /spool/payload.bin` — типы обычных файлов и размеры совпадают с объявленными.
-  - `kubectl exec deployment/relay -c worker -- sha256sum /spool/index.html /spool/payload.bin` — обе контрольные суммы совпадают с контрактом.
-  - `kubectl exec deployment/relay -c worker -- wget -qO- http://127.0.0.1:8080` — ответ совпадает с текущей публикацией источника.
+  Перед изменениями запишите UID обоих Deployment и исходного PVC, а также выданные ссылки на образы worker. Используйте `kubectl get deployments reserve relay -o yaml` и `kubectl get pvc reserve -o yaml`.
+hints.2.text: |-
+  Проверьте, что оба PVC в состоянии `Bound` и у каждого Deployment одна готовая реплика. Сверьте точки монтирования в шаблонах и действующих Pod с `storage-contract.json`. У `reserve` должен быть `/archive` только для чтения, у `relay` — `/spool`. Для обоих приложений сверьте типы двух обычных файлов, их размеры в байтах и SHA-256, а также ответ HTTP с контрактом. Сверьте UID обоих Deployment и исходного PVC, а также образы worker в шаблонах Deployment и готовых Pod с тем, что наблюдали до изменений.
+
+  ```sh
+  kubectl get pvc reserve spool -o yaml
+  kubectl get deployments,pods,replicasets -o yaml
+  for entry in reserve:/archive relay:/spool; do
+    workload=${entry%%:*}; root=${entry#*:}
+    kubectl rollout status "deployment/$workload" --timeout=10s
+    kubectl exec "deployment/$workload" -c worker -- stat -c '%F:%s' "$root/index.html" "$root/payload.bin"
+    kubectl exec "deployment/$workload" -c worker -- sha256sum "$root/index.html" "$root/payload.bin"
+    kubectl exec "deployment/$workload" -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/
+  done
+  ```
 debrief: Provisioning вернул ёмкость, а отдельный перенос данных восстановил текущую запись источника и payload
   на целевом claim. Исходный том и идентичности workload сохранились.
 phrases.0: Я проверил фактическое состояние до изменения.
