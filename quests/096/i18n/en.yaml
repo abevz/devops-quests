@@ -25,15 +25,39 @@ stages.0.objectives.2.text: On every managed host (`app1`, `app2`, `app3`), `/sr
 stages.0.objectives.3.text: HTTP on port `8080` returns `north-96` on every managed host (`app1`, `app2`, `app3`).
 hints.0.text: A trusted snapshot and a running instance have different lifetimes. Plan the extraction scope against
   the current instance binding and data already in use.
-hints.1.text: Compare `tar -tf recovery.tar`, `application-contract.json`, `provided-application.py` and the original
-  live receipts. Inspect the managed hosts’ current application inputs and HTTP response before extracting. Follow
-  which archive members would overwrite state belonging to the live instance.
-hints.2.text: Construct the certified checksum guard before extraction and select the configuration members with
-  unarchive include/exclude filters. Notify the supported `dq-service reload` handler after extraction. Honor the
-  declared restore destination, owner and group for the caller context. Run `ansible-playbook rollout.yml`; confirm
-  `sha256sum recovery.tar` matches the frozen receipt, the original file ownership and mode still hold, and HTTP
-  on `8080` and `8081` shows `north-96`. The provided application must keep its original instance and tenant values;
-  the caller replay must also refresh its service.
+hints.1.text: |-
+  Compare `tar -tf recovery.tar`, `application-contract.json`, `provided-application.py` and the original live receipts. Inspect the managed hosts’ current application inputs and HTTP response before extracting. Follow which archive members would overwrite state belonging to the live instance.
+
+  Locate the checksum and the configuration members in the archive inventory. Compare their paths with the live instance identity files, then inspect the caller’s restore path, owner and group.
+hints.2.text: |-
+  Run `ansible-playbook rollout.yml`; confirm `sha256sum recovery.tar` matches the frozen receipt, the original file ownership and mode still hold, and HTTP on `8080` and `8081` shows `north-96`. The provided application must keep its original instance and tenant values; the caller replay must also refresh its service.
+
+  ```sh
+  (
+    set -euo pipefail
+    printf '%s  recovery.tar\n' "$(cat artifact.sha256)" | sha256sum -c -
+    for number in 1 2 3; do
+      inventory_name="app$number"
+      host="$inventory_name-${DQ_NAMESPACE#dq-}"
+      test "$(curl -fsS --max-time 3 "http://$host:8080/")" = north-96
+      curl -fsS --max-time 3 "http://$host:8081/" |
+        jq -e --arg host "$inventory_name" --slurpfile live original-live-data.json '
+          $live[0][$host] as $before | .message == "north-96" and
+          .instance == $before["consumer-binding.json"].json.instance and
+          .account == $before["tenant.json"].json.account and
+          .balance == $before["tenant.json"].json.balance' >/dev/null
+      test "$(ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host" "stat -c '%u:%g %a' /srv/site/message")" = "0:0 644"
+      expected=$(jq -er --arg host "$inventory_name" '
+        .[$host] | [.["consumer-binding.json"], .["tenant.json"]][] | [.uid, .gid, .mode] | @tsv
+      ' original-live-data.json | while read -r uid gid mode; do
+        printf '%s %s %o\n' "$uid" "$gid" "$mode"
+      done)
+      observed=$(ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host"       "stat -c '%u %g %a' /srv/site/consumer-binding.json /srv/site/tenant.json")
+      test "$observed" = "$expected"
+      printf '%s: HTTP, restored message and protected-file metadata match\n' "$inventory_name"
+    done
+  )
+  ```
 phrases.0: I verified the recovery artifact before distributing it.
 phrases.1: I restored explicit ownership and permissions.
 phrases.2: I checked each target and the live service after reload.

@@ -29,14 +29,39 @@ stages.0.objectives.3.text: HTTP en el puerto `8080` devuelve `north-96` en cada
   `app3`).
 hints.0.text: Una instantánea fiable y una instancia activa tienen ciclos de vida distintos. Planifica el alcance
   de extracción respecto a la vinculación actual y los datos que ya están en uso.
-hints.1.text: Compara `tar -tf recovery.tar`, `application-contract.json`, `provided-application.py` y los registros
-  activos originales. Antes de extraer, revisa entradas actuales y respuestas HTTP en los hosts administrados. Sigue
-  qué miembros del archivo sobrescribirían estado de la instancia activa.
-hints.2.text: Construye la comprobación certificada de suma antes de extraer y selecciona miembros de configuración
-  con include/exclude de unarchive. Tras extraer, notifica al handler admitido `dq-service reload`. Respeta destino,
-  propietario y grupo del contrato del invocador. Ejecuta `ansible-playbook rollout.yml`; confirma `sha256sum recovery.tar`
-  con el recibo congelado, propietarios y permisos originales, y `north-96` por HTTP en `8080` y `8081`. La aplicación
-  debe conservar su instancia y valores originales; la ejecución del invocador también debe actualizar su servicio.
+hints.1.text: |-
+  Compara `tar -tf recovery.tar`, `application-contract.json`, `provided-application.py` y los registros activos originales. Antes de extraer, revisa entradas actuales y respuestas HTTP en los hosts administrados. Sigue qué miembros del archivo sobrescribirían estado de la instancia activa.
+
+  Localiza la suma y los miembros de configuración en el inventario del archivo. Compara sus rutas con los archivos de identidad de la instancia activa y revisa la ruta de restauración, el propietario y el grupo del invocador.
+hints.2.text: |-
+  Ejecuta `ansible-playbook rollout.yml`; confirma `sha256sum recovery.tar` con el recibo congelado, propietarios y permisos originales, y `north-96` por HTTP en `8080` y `8081`. La aplicación debe conservar su instancia y valores originales; la ejecución del invocador también debe actualizar su servicio.
+
+  ```sh
+  (
+    set -euo pipefail
+    printf '%s  recovery.tar\n' "$(cat artifact.sha256)" | sha256sum -c -
+    for number in 1 2 3; do
+      inventory_name="app$number"
+      host="$inventory_name-${DQ_NAMESPACE#dq-}"
+      test "$(curl -fsS --max-time 3 "http://$host:8080/")" = north-96
+      curl -fsS --max-time 3 "http://$host:8081/" |
+        jq -e --arg host "$inventory_name" --slurpfile live original-live-data.json '
+          $live[0][$host] as $before | .message == "north-96" and
+          .instance == $before["consumer-binding.json"].json.instance and
+          .account == $before["tenant.json"].json.account and
+          .balance == $before["tenant.json"].json.balance' >/dev/null
+      test "$(ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host" "stat -c '%u:%g %a' /srv/site/message")" = "0:0 644"
+      expected=$(jq -er --arg host "$inventory_name" '
+        .[$host] | [.["consumer-binding.json"], .["tenant.json"]][] | [.uid, .gid, .mode] | @tsv
+      ' original-live-data.json | while read -r uid gid mode; do
+        printf '%s %s %o\n' "$uid" "$gid" "$mode"
+      done)
+      observed=$(ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host"       "stat -c '%u %g %a' /srv/site/consumer-binding.json /srv/site/tenant.json")
+      test "$observed" = "$expected"
+      printf '%s: HTTP, restored message and protected-file metadata match\n' "$inventory_name"
+    done
+  )
+  ```
 phrases.0: Verifiqué la recuperación artifact antes de distribuirla.
 phrases.1: Restablecí la propiedad y los permisos explícitos.
 phrases.2: Revisé cada objetivo y el servicio en vivo después de reload.

@@ -28,14 +28,39 @@ stages.0.objectives.3.text: HTTP na porcie `8080` zwraca `north-96` na każdym z
   `app3`).
 hints.0.text: Zaufany zrzut i działająca instancja mają różne cykle życia. Planuj zakres wypakowania względem bieżącego
   powiązania instancji i już używanych danych.
-hints.1.text: Porównaj `tar -tf recovery.tar`, `application-contract.json`, `provided-application.py` i oryginalne
-  zapisy stanu. Przed wypakowaniem sprawdź bieżące wejścia aplikacji i odpowiedzi HTTP na zarządzanych hostach.
-  Prześledź, które elementy archiwum nadpiszą stan działającej instancji.
-hints.2.text: Zbuduj certyfikowaną kontrolę sumy przed wypakowaniem i wybierz elementy konfiguracji przez include/exclude
-  modułu unarchive. Po wypakowaniu powiadom obsługiwany handler `dq-service reload`. Uwzględnij katalog, właściciela
-  i grupę z kontraktu wywołującego. Uruchom `ansible-playbook rollout.yml`; potwierdź zgodność `sha256sum recovery.tar`
-  z zamrożonym potwierdzeniem, oryginalnych właścicieli i uprawnień oraz `north-96` przez HTTP na `8080` i `8081`.
-  Aplikacja ma zachować instancję i wartości dzierżawcy; przebieg wywołującego również musi odświeżyć jego usługę.
+hints.1.text: |-
+  Porównaj `tar -tf recovery.tar`, `application-contract.json`, `provided-application.py` i oryginalne zapisy stanu. Przed wypakowaniem sprawdź bieżące wejścia aplikacji i odpowiedzi HTTP na zarządzanych hostach. Prześledź, które elementy archiwum nadpiszą stan działającej instancji.
+
+  Odszukaj sumę kontrolną i pliki konfiguracji w spisie archiwum. Porównaj ich ścieżki z plikami tożsamości działającej instancji, a potem sprawdź ścieżkę odtwarzania, właściciela i grupę wywołującego.
+hints.2.text: |-
+  Uruchom `ansible-playbook rollout.yml`; potwierdź zgodność `sha256sum recovery.tar` z zamrożonym potwierdzeniem, oryginalnych właścicieli i uprawnień oraz `north-96` przez HTTP na `8080` i `8081`. Aplikacja ma zachować instancję i wartości dzierżawcy; przebieg wywołującego również musi odświeżyć jego usługę.
+
+  ```sh
+  (
+    set -euo pipefail
+    printf '%s  recovery.tar\n' "$(cat artifact.sha256)" | sha256sum -c -
+    for number in 1 2 3; do
+      inventory_name="app$number"
+      host="$inventory_name-${DQ_NAMESPACE#dq-}"
+      test "$(curl -fsS --max-time 3 "http://$host:8080/")" = north-96
+      curl -fsS --max-time 3 "http://$host:8081/" |
+        jq -e --arg host "$inventory_name" --slurpfile live original-live-data.json '
+          $live[0][$host] as $before | .message == "north-96" and
+          .instance == $before["consumer-binding.json"].json.instance and
+          .account == $before["tenant.json"].json.account and
+          .balance == $before["tenant.json"].json.balance' >/dev/null
+      test "$(ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host" "stat -c '%u:%g %a' /srv/site/message")" = "0:0 644"
+      expected=$(jq -er --arg host "$inventory_name" '
+        .[$host] | [.["consumer-binding.json"], .["tenant.json"]][] | [.uid, .gid, .mode] | @tsv
+      ' original-live-data.json | while read -r uid gid mode; do
+        printf '%s %s %o\n' "$uid" "$gid" "$mode"
+      done)
+      observed=$(ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host"       "stat -c '%u %g %a' /srv/site/consumer-binding.json /srv/site/tenant.json")
+      test "$observed" = "$expected"
+      printf '%s: HTTP, restored message and protected-file metadata match\n' "$inventory_name"
+    done
+  )
+  ```
 phrases.0: Przed dystrybucją zweryfikowałem odzyskiwanie artifact.
 phrases.1: Przywróciłem wyraźną własność i uprawnienia.
 phrases.2: Sprawdziłem każdy cel i usługę na żywo po reload.
