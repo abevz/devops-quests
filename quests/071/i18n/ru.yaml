@@ -26,20 +26,27 @@ hints.0.text: Конфигурация, старый полный checkpoint и 
 hints.1.text: |-
   Сопоставьте конфигурацию со списками текущего и сохранённого state. Изучите предлагаемые действия: что есть только в старом checkpoint, а что появилось только в новом state?
 
+  Сравните lineage, serial и ID ресурсов в текущем состоянии и контрольной точке. Найдите в условии требование сохранить исходное частичное состояние и установите, какая привязка отсутствует только в текущем наборе.
+
   ```sh
+  cat main.tf
   tofu state list
   tofu state list -state=recovery-checkpoint.tfstate
+  jq '{file:input_filename,lineage,serial,resources:[.resources[] | {module,type,name,ids:[.instances[].attributes.id]}]}' terraform.tfstate recovery-checkpoint.tfstate
   tofu plan -input=false -no-color
   ```
 hints.2.text: |-
-  До изменений сохраните текущий частичный state и работайте с копией доверенного checkpoint. Восстановите только недостающую привязку в существующий локальный state, не перезаписывая новые записи. Затем сохраните и экспортируйте план, оставляющий записанные ID и создающий только недостающий маршрут. Проверьте исходный checkpoint, lineage/serial копии, действия плана и итоговую сходимость.
+  Проверьте исходный checkpoint, lineage/serial копии, действия плана и итоговую сходимость.
 
   ```sh
   tofu state list
   tofu output -raw north_id
-  cat recovery-plan.json
+  jq '[.resource_changes[] | {address,mode,type,actions:.change.actions,before_id:.change.before.id,after_id:.change.after.id,before_file:.change.before.filename,after_file:.change.after.filename}]' recovery-plan.json
+  jq '{file:input_filename,lineage,serial,resources:[.resources[] | {module,type,name,ids:[.instances[].attributes.id]}]}' before-recovery.tfstate recovery-checkpoint.tfstate
   tofu plan -input=false -detailed-exitcode -no-color
   ```
+
+  Сверьте `before-recovery.tfstate` со значениями частичного состояния, записанными до восстановления. Сохранённая контрольная точка — отдельная более ранняя запись. В `recovery-plan.json` для существующего северного файла и двух идентификаторов операций ожидается `no-op`, для отсутствующего южного файла — `create`. Идентификаторы обеих операций до и после должны совпадать с исходными записями.
 phrases.0: Я изучил частичный state до повторного apply.
 phrases.1: Я сохранил ресурс, которым state уже управлял корректно.
 phrases.2: Я проверил сохранённый recovery plan и пустой итоговый plan.

@@ -27,20 +27,27 @@ hints.0.text: La configuración, un checkpoint completo antiguo y un state parci
 hints.1.text: |-
   Compara la configuración con los inventarios de state actual y conservado. Revisa las acciones propuestas e identifica qué existe solo en el checkpoint antiguo y qué solo en el state nuevo.
 
+  Compara lineage, serial e ID de recursos en el estado actual y el punto de control. Busca en el enunciado el requisito de conservar el estado parcial original e identifica qué vínculo falta solo en el estado actual.
+
   ```sh
+  cat main.tf
   tofu state list
   tofu state list -state=recovery-checkpoint.tfstate
+  jq '{file:input_filename,lineage,serial,resources:[.resources[] | {module,type,name,ids:[.instances[].attributes.id]}]}' terraform.tfstate recovery-checkpoint.tfstate
   tofu plan -input=false -no-color
   ```
 hints.2.text: |-
-  Captura el state parcial actual antes de modificarlo y trabaja con una copia del checkpoint de confianza. Restaura solo el binding ausente en el state local existente sin sobrescribir registros posteriores. Guarda y exporta un plan que conserve las identidades y cree solo la ruta ausente. Verifica la entrada, lineage/serial de la copia, acciones y convergencia final.
+  Verifica la entrada, lineage/serial de la copia, acciones y convergencia final.
 
   ```sh
   tofu state list
   tofu output -raw north_id
-  cat recovery-plan.json
+  jq '[.resource_changes[] | {address,mode,type,actions:.change.actions,before_id:.change.before.id,after_id:.change.after.id,before_file:.change.before.filename,after_file:.change.after.filename}]' recovery-plan.json
+  jq '{file:input_filename,lineage,serial,resources:[.resources[] | {module,type,name,ids:[.instances[].attributes.id]}]}' before-recovery.tfstate recovery-checkpoint.tfstate
   tofu plan -input=false -detailed-exitcode -no-color
   ```
+
+  Compara `before-recovery.tfstate` con los valores observados del estado parcial antes de recuperar. El punto de control conservado es un registro anterior separado. En `recovery-plan.json`, el archivo norte existente y las dos identidades de operación deben mostrar `no-op`, y el archivo sur ausente `create`. Los dos ID de operación deben coincidir con sus valores registrados antes y después en el plan.
 phrases.0: Inspeccioné el estado parcial antes de volver a intentar un apply.
 phrases.1: Conservé el recurso que ya estaba administrado correctamente.
 phrases.2: Verifiqué el recovery plan guardado y el plan vacío final.
