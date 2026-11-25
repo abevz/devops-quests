@@ -22,57 +22,33 @@ stages.0.brief: Bewahren Sie die ursprüngliche Revision beim Wiederherstellen d
 stages.1.brief: Das veröffentlichte Release muss an Auslieferungs- und Laufzeitgrenzen übereinstimmen.
 hints.0.text: Eine abgeglichene Quelle und eine gesunde Laufzeit sind getrennte Ergebnisse. Vergleichen Sie Auslieferungs-
   und Verbrauchergrenze.
-hints.1.text: 'Stufe 1: inspect application.yaml – Argo CD zeigt bei der Überarbeitung auf einen retired Git-Pfad
-  statt auf source.path=manifests main mit automatisiertem self-heal und prune.
+hints.1.text: |-
+  Prüfe die Objekte der aktuellen Phase und ihre bereitgestellten Definitionen.
 
-
-  Stufe 2: Ein Synced Application ist immer noch fehlerhaft, da der private registry pull Secret fehlt und reader.hcl
-  auf den falschen Vault verweist KV Pfad.
-
-
-  Prüfen Sie mitgelieferte Definitionen, Ressourcenbeschreibungen und Ereignisse der jeweiligen Phase.
-
+  Vergleiche in der privaten Lieferphase die Image-Referenz, die Namen der Pull-Secrets und den Vault-Policy-Pfad. Prüfe Synchronisierereingabe und Laufzeitstatus anhand von Metadaten und Statusantworten.
 
   ```sh
-
   git -C repository log --all --oneline
-
   cat reader.hcl
-
   kubectl describe application board
-
   kubectl describe deployment board
-
   kubectl describe pod -l app=board
-
   ```
-
 
   Phase 1/2: Prüfen Sie diese Ressourcendefinitionen für diese Phase.
 
-
   ```sh
-
   kubectl get application board -o yaml
-
   kubectl get deployment board -o yaml
-
   kubectl get pods -l app=board -o yaml
-
   ```
-
 
   Phase 2: Prüfen Sie diese Ressourcendefinitionen für diese Phase.
 
-
   ```sh
-
   git -C repository show origin/main:manifests/board.yaml
-
-  ```'
+  ```
 hints.2.text: |-
-  Stellen Sie die Registrierung pull Secret von private-release.json wieder her, legen Sie reader.hcl auf schreibgeschützten Bereich dispatch fest, führen Sie sync-secret.sh aus und überprüfen Sie das laufende Image digest und HTTP-Antwort.
-
   Prüfen Sie die reparierte Phase und vergleichen Sie das beobachtete Ergebnis.
 
   Phase 1/2: Der Controller meldet `Synced` bei der erwarteten Revision; in der letzten Phase meldet er auch `Healthy` und der Workload ist bereit.
@@ -88,24 +64,54 @@ hints.2.text: |-
   source platform.env
   cat release-commit
   git -C repository ls-remote origin refs/heads/main
+  (
+  set -euo pipefail
+  cd ~/quest
+  source platform.env
+  image=$(jq -er .image /run/dq/facts/0/private-release.json)
+  revision=$(cat release-commit)
+  test "$(git -C repository ls-remote origin refs/heads/main | cut -f1)" = "$revision"
+  verify_worker() {
+    jq -e --arg image "$image" '
+      .kind=="Deployment" and .metadata.name=="board" and
+      any(.spec.template.spec.containers[]; .name=="worker" and .image==$image and
+        any(.env[]?; .name=="ROUTE_SECRET" and (has("value")|not) and
+          (.valueFrom | keys)==["secretKeyRef"] and
+          .valueFrom.secretKeyRef.name=="route-secret" and .valueFrom.secretKeyRef.key=="value"))'
+  }
+  git -C repository show "$revision:manifests/board.yaml" |
+    python3 -I -c 'import json,sys,yaml; json.dump(yaml.safe_load(sys.stdin),sys.stdout)' |
+    verify_worker
+  deployment=$(kubectl get deployment board -o json)
+  verify_worker <<<"$deployment"
+  digest=${image##*@}
+  deployment_uid=$(jq -er .metadata.uid <<<"$deployment")
+  sets=$(kubectl get rs -o json | jq -c --arg owner "$deployment_uid" '
+    [.items[] | select(any(.metadata.ownerReferences[]?; .kind=="Deployment" and .controller==true and .uid==$owner)) | .metadata.uid]')
+  kubectl get pods -o json | jq -e --argjson sets "$sets" --arg image "$image" --arg digest "$digest" '
+    [.items[] | select(.metadata.deletionTimestamp==null and .status.phase!="Failed" and .status.phase!="Succeeded" and
+      any(.metadata.ownerReferences[]?; .kind=="ReplicaSet" and .controller==true and (.uid as $uid | $sets | index($uid)!=null)))]
+    | length>0 and all(.[]; .status.phase=="Running" and ([.spec.imagePullSecrets[]?.name] | unique) == ["registry-pull"] and
+      any(.spec.containers[]; .name=="worker" and .image==$image) and
+      any(.status.containerStatuses[]?; .name=="worker" and .ready==true and (.state.running|type)=="object" and
+        ((.imageID | split("@") | last | split("/") | last) == $digest)))'
+  )
   ```
 
-  Phase 2: Secret und erlaubter Vault-Eintrag enthalten `north-secret`, HTTP liefert `north-100` und der andere Vault-Pfad HTTP `403`.
+  Phase 2. Beide Wertprüfungen enden mit Exit-Code 0 ohne Wertausgabe. Der Dienst liefert `north-100`, und der andere Vault-Pfad liefert HTTP `403`.
 
   ```sh
   source platform.env
-  kubectl get secret route-secret -o jsonpath='{.data.value}' | base64 -d
-  printf '\n'
+  kubectl get secret route-secret -o jsonpath='{.data.value}' | base64 -d | grep -Fxq 'north-secret'
   kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
   printf '\n'
-  curl -fsS --max-time 3 -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
+  curl -fsS --max-time 3 -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null
   curl -sS --max-time 3 -o /dev/null -w '%{http_code}\n' -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/other"
   ```
 
   Erwartete Beobachtungen für die gesamte Phase:
   - Phase 1/2: Angezeigter Abgleich, Workload-Konfiguration und Beobachtungen des laufenden Images erfüllen die Anforderungen dieser Phase.
   - Phase 2: Der entfernte Hash entspricht `release-commit`; das Git-Manifest enthält das mitgelieferte eingefrorene Image und die Referenz auf Secret `route-secret`.
-
 phrases.0: Ich habe Fehler an jeder Liefergrenze isoliert.
 phrases.1: Ich habe die Abstimmung zwischen immutable-Bild identity und Git beibehalten.
 phrases.2: Ich habe den geheimen Zugriff mit den geringsten Privilegien und einen echten End-to-End-Service überprüft.

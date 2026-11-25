@@ -22,57 +22,33 @@ stages.0.brief: Conserva la revisión original al recuperar la reconciliación.
 stages.1.brief: La versión publicada debe coincidir entre los límites de entrega y runtime.
 hints.0.text: Un origen reconciliado y un runtime sano son resultados distintos. Compara el límite de entrega con
   el del consumidor.
-hints.1.text: 'Etapa 1: inspect application.yaml — Argo CD apunta a una ruta retired Git en lugar de source.path=manifests
-  en la revisión main con self-heal y prune automatizados.
+hints.1.text: |-
+  Inspecciona los objetos de la etapa actual y sus definiciones suministradas.
 
-
-  Etapa 2: un Synced Application aún no está en buen estado porque falta el registry pull Secret privado y reader.hcl
-  apunta al Vault incorrecto Ruta KV.
-
-
-  Inspecciona las definiciones suministradas, descripciones de recursos y eventos de la etapa correspondiente.
-
+  En la etapa de entrega privada, compara la referencia de imagen, los nombres de Secrets de descarga y la ruta de la política de Vault. Revisa la entrada del sincronizador y el estado en ejecución mediante metadatos y respuestas de estado.
 
   ```sh
-
   git -C repository log --all --oneline
-
   cat reader.hcl
-
   kubectl describe application board
-
   kubectl describe deployment board
-
   kubectl describe pod -l app=board
-
   ```
-
 
   Etapa 1/2: Inspecciona estas definiciones de recursos para esta etapa.
 
-
   ```sh
-
   kubectl get application board -o yaml
-
   kubectl get deployment board -o yaml
-
   kubectl get pods -l app=board -o yaml
-
   ```
-
 
   Etapa 2: Inspecciona estas definiciones de recursos para esta etapa.
 
-
   ```sh
-
   git -C repository show origin/main:manifests/board.yaml
-
-  ```'
+  ```
 hints.2.text: |-
-  Restaure el registro pull Secret desde private-release.json, alcance reader.hcl a dispatch de solo lectura, ejecute sync-secret.sh y verifique la imagen en ejecución digest y Respuesta HTTP.
-
   Verifica la etapa reparada y compara el resultado observado.
 
   Etapa 1/2: El controlador informa `Synced` en la revisión esperada; en la etapa final también informa `Healthy` y la carga está lista.
@@ -88,24 +64,54 @@ hints.2.text: |-
   source platform.env
   cat release-commit
   git -C repository ls-remote origin refs/heads/main
+  (
+  set -euo pipefail
+  cd ~/quest
+  source platform.env
+  image=$(jq -er .image /run/dq/facts/0/private-release.json)
+  revision=$(cat release-commit)
+  test "$(git -C repository ls-remote origin refs/heads/main | cut -f1)" = "$revision"
+  verify_worker() {
+    jq -e --arg image "$image" '
+      .kind=="Deployment" and .metadata.name=="board" and
+      any(.spec.template.spec.containers[]; .name=="worker" and .image==$image and
+        any(.env[]?; .name=="ROUTE_SECRET" and (has("value")|not) and
+          (.valueFrom | keys)==["secretKeyRef"] and
+          .valueFrom.secretKeyRef.name=="route-secret" and .valueFrom.secretKeyRef.key=="value"))'
+  }
+  git -C repository show "$revision:manifests/board.yaml" |
+    python3 -I -c 'import json,sys,yaml; json.dump(yaml.safe_load(sys.stdin),sys.stdout)' |
+    verify_worker
+  deployment=$(kubectl get deployment board -o json)
+  verify_worker <<<"$deployment"
+  digest=${image##*@}
+  deployment_uid=$(jq -er .metadata.uid <<<"$deployment")
+  sets=$(kubectl get rs -o json | jq -c --arg owner "$deployment_uid" '
+    [.items[] | select(any(.metadata.ownerReferences[]?; .kind=="Deployment" and .controller==true and .uid==$owner)) | .metadata.uid]')
+  kubectl get pods -o json | jq -e --argjson sets "$sets" --arg image "$image" --arg digest "$digest" '
+    [.items[] | select(.metadata.deletionTimestamp==null and .status.phase!="Failed" and .status.phase!="Succeeded" and
+      any(.metadata.ownerReferences[]?; .kind=="ReplicaSet" and .controller==true and (.uid as $uid | $sets | index($uid)!=null)))]
+    | length>0 and all(.[]; .status.phase=="Running" and ([.spec.imagePullSecrets[]?.name] | unique) == ["registry-pull"] and
+      any(.spec.containers[]; .name=="worker" and .image==$image) and
+      any(.status.containerStatuses[]?; .name=="worker" and .ready==true and (.state.running|type)=="object" and
+        ((.imageID | split("@") | last | split("/") | last) == $digest)))'
+  )
   ```
 
-  Etapa 2: El Secret y el registro Vault permitido contienen `north-secret`, HTTP devuelve `north-100` y la otra ruta Vault devuelve HTTP `403`.
+  Etapa 2. Ambas comprobaciones devuelven el código 0 sin mostrar el valor. El servicio devuelve `north-100` y la otra ruta de Vault devuelve HTTP `403`.
 
   ```sh
   source platform.env
-  kubectl get secret route-secret -o jsonpath='{.data.value}' | base64 -d
-  printf '\n'
+  kubectl get secret route-secret -o jsonpath='{.data.value}' | base64 -d | grep -Fxq 'north-secret'
   kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
   printf '\n'
-  curl -fsS --max-time 3 -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
+  curl -fsS --max-time 3 -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null
   curl -sS --max-time 3 -o /dev/null -w '%{http_code}\n' -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/other"
   ```
 
   Observaciones esperadas para la etapa completa:
   - Etapa 1/2: La reconciliación, configuración de carga y observaciones de la imagen en ejecución mostradas cumplen los requisitos de esta etapa.
   - Etapa 2: El hash remoto coincide con `release-commit`; el manifiesto Git contiene la imagen congelada suministrada y la referencia al Secret `route-secret`.
-
 phrases.0: Aislé fallas en cada límite de entrega.
 phrases.1: Conservé la imagen immutable, la reconciliación identity y Git.
 phrases.2: Verifiqué el acceso secreto con privilegios mínimos y un servicio real de extremo a extremo.
