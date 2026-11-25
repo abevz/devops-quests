@@ -42,6 +42,29 @@ hints.2.text: |-
     unset token
   done
   ```
+
+  ```sh
+  api=$(cat api-endpoint)
+  jq -c '.consumers[], (.control + {key:"route"})' authority-contract.json |
+  while IFS= read -r entry; do
+    actor=$(jq -r .deployment <<<"$entry")
+    name=$(jq -r .configMap <<<"$entry")
+    key=$(jq -r .key <<<"$entry")
+    expected=$(jq -r .response <<<"$entry")
+    token=$(kubectl exec "deployment/$actor" -c worker -- cat /credential/token)
+    if printf 'header = "Authorization: Bearer %s"\n' "$token" |
+      curl --config - --cacert api-ca.pem -fsS "$api/api/v1/namespaces/$DQ_NAMESPACE/configmaps/$name" |
+      jq -e --arg key "$key" --arg expected "$expected" '.data[$key] == $expected' >/dev/null;
+    then
+      printf '%s %s: match\n' "$actor" "$name"
+    else
+      printf '%s %s: mismatch\n' "$actor" "$name"
+    fi
+    unset token
+  done
+  ```
+
+  The named reads allowed by the contract return HTTP 200. Each denied request returns HTTP 403.
 phrases.0: I scoped read access to one named object.
 phrases.1: I removed the unintended RoleBinding subject.
 phrases.2: I verified denied operations using the actual identities.
