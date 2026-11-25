@@ -37,60 +37,89 @@ debrief: Идентичности исходных источников и по�
 stages.0.brief: Опубликованный релиз не дошёл до работающего приложения через существующий приёмник событий. Восстановите
   цепочку доставки, сохранив идентичность приложения, нагрузки и публикации, а также исходную программу.
 hints.0.text: Принятое событие, согласованные ресурсы и принятые приложением данные — отдельные границы.
-hints.1.text: 'Сопоставьте существующий hook, адрес приёмника, публикацию Git, статус контроллера и программу запуска
-  приложения. Смотрите метаданные без вывода общих секретов.
+hints.1.text: |-
+  Сопоставьте существующий hook, адрес приёмника, публикацию Git, статус контроллера и программу запуска приложения. Смотрите метаданные без вывода общих секретов.
 
+  Проверьте признак активности hook, фильтр веток и URL получателя. Сопоставьте запись о доставке с опубликованной ревизией Git и наблюдаемой ревизией Application.
 
   ```bash
-
   source platform.env
-
   api="${GIT_URL%/rail/station.git}/api/v1/repos/rail/station"
-
-  curl -fsS --max-time 3 --config <(printf ''user = "%s:%s"\n'' "$GIT_USER" "$GIT_PASSWORD") "$api/hooks/$(cat hook-id)"
-  | jq ''{active,branch_filter,url:.config.url}''
-
+  curl -fsS --max-time 3 --config <(printf 'user = "%s:%s"\n' "$GIT_USER" "$GIT_PASSWORD") "$api/hooks/$(cat hook-id)" | jq '{active,branch_filter,url:.config.url}'
   cat webhook-target.json
-
-  kubectl get application board -o json | jq ''{sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision}''
-
+  kubectl get application board -o json | jq '{sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision}'
   cat repository/manifests/publication.yaml repository/manifests/board.yaml
-
-  name=$(jq -er ''.approved.metadata.name'' webhook-publication.json)
-
+  name=$(jq -er '.approved.metadata.name' webhook-publication.json)
   kubectl get configmap "$name" -o yaml
+  ```
+hints.2.text: |-
+  Проверьте из `~/quest` на workstation:
 
-  ```'
-hints.2.text: "Исправьте сохранённый hook ID через PATCH на выданный receiver, вызовите POST /tests и наблюдайте\
-  \ новый revision. Используйте существующий Gogs hook, JSON и общий игровой secret; изучайте URL без печати secret.\n\
-  \nПроверьте из `~/quest` на workstation:\n\n- `source platform.env`\n- `git -C repository ls-remote origin refs/heads/main`\n\
-  - `cat release-commit`\n\nХеш удалённой `main` совпадает с `release-commit`.\n\n- `kubectl get application board\
-  \ -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`\n\
-  - `jq '{repo,branch,authenticated}' /run/dq/observations/webhook.json`\n\n`Synced`, `Healthy` и ревизия из `release-commit`.\
-  \ Наблюдение указывает предоставленный репозиторий, `branch: \"main\"` и `authenticated: true`. Источник — предоставленный\
-  \ приватный репозиторий, `manifests`, `main`.\n\n- `kubectl rollout status deployment/board --timeout=3s`\n- `kubectl\
-  \ exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`\n\nRollout завершён; `north-75`.\n\nИсправив\
-  \ исходный hook и подтвердив аутентифицированную доставку, обновите принятую приложением публикацию. Программа\
-  \ запуска копирует проецируемый источник в обслуживаемый каталог; изменение ConfigMap не переписывает эту кешированную\
-  \ копию. Один допустимый способ — rolling restart исходного Deployment с сохранением контроллера, программы и\
-  \ источника только для чтения.\n\n```bash\nset -euo pipefail\ncd ~/quest\nsource platform.env\npython3 -I - <<'VERIFY_RELEASE'\n\
-  \nimport json,subprocess,yaml\nfrom pathlib import Path\nfrom dq_check import current_pods,pod_worker,ready_image,workload_worker\n\
-  def k(*args):\n return json.loads(subprocess.check_output(['kubectl',*args,'-o','json'],timeout=2))\ncontract=json.loads(Path('/run/dq/facts/0/webhook-publication.json').read_text())\n\
-  old=contract['deployment']\ndeployment=k('get','deployment','board')\nassert deployment['metadata']['uid']==old['metadata']['uid']\n\
-  assert deployment['spec']['selector']==old['spec']['selector']\nassert deployment['spec']['replicas']==old['spec']['replicas']==1\n\
-  assert deployment['spec']['template']['spec']==old['spec']['template']['spec']\napp=k('get','application','board')\n\
-  assert app['metadata']['uid']==contract['application']['metadata']['uid']\nassert app['spec']==contract['application']['spec']\n\
-  revision=app['status']['sync']['revision']\nsubprocess.run(['git','-C','repository','merge-base','--is-ancestor',contract['release_commit'],revision],check=True,timeout=2)\n\
-  desired=yaml.safe_load(subprocess.check_output(['git','-C','repository','show',revision+':'+contract['source_file']],text=True,timeout=2))\n\
-  assert desired['kind']=='ConfigMap' and desired['metadata']['name']==contract['approved']['metadata']['name']\n\
-  assert desired['data']==contract['approved']['data']\nconfig=k('get','configmap',desired['metadata']['name'])\n\
-  assert config['metadata']['uid']==contract['publication_uid']\nassert config['data']==desired['data']\nworker=workload_worker(deployment)\n\
-  pods=current_pods(deployment,k('get','replicasets'),k('get','pods'))\nassert len(pods)==1\nfor pod in pods:\n\
-  \ assert ready_image(pod,worker['image'])\n current=pod_worker(pod)\n for key in ('command','args'):\n  assert\
-  \ current.get(key)==worker.get(key)\n for mount in worker.get('volumeMounts',[]):\n  assert mount.get('readOnly')\
-  \ is True and mount in current.get('volumeMounts',[])\n value=subprocess.check_output(['kubectl','exec',pod['metadata']['name'],'-c','worker','--','wget','-qO-','-T','2','http://127.0.0.1:8080'],timeout=3)\n\
-  \ assert value.decode().rstrip('\\n')==desired['data']['notice'].rstrip('\\n')\n\nprint('OK')\nVERIFY_RELEASE\n\
-  ```\n\nОжидается OK. Учётные данные не выводятся."
+  - `source platform.env`
+  - `git -C repository ls-remote origin refs/heads/main`
+  - `cat release-commit`
+
+  Хеш удалённой `main` совпадает с `release-commit`.
+
+  - `kubectl get application board -o json | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision,repo:.spec.source.repoURL,path:.spec.source.path,branch:.spec.source.targetRevision}'`
+  - `jq '{repo,branch,authenticated}' /run/dq/observations/webhook.json`
+
+  `Synced`, `Healthy` и ревизия из `release-commit`. Наблюдение указывает предоставленный репозиторий, `branch: "main"` и `authenticated: true`. Источник — предоставленный приватный репозиторий, `manifests`, `main`.
+
+  - `kubectl rollout status deployment/board --timeout=3s`
+  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080`
+
+  Rollout завершён; `north-75`.
+
+  Исправив исходный hook и подтвердив аутентифицированную доставку, обновите принятую приложением публикацию. Программа запуска копирует проецируемый источник в обслуживаемый каталог; изменение ConfigMap не переписывает эту кешированную копию. Один допустимый способ — rolling restart исходного Deployment с сохранением контроллера, программы и источника только для чтения.
+
+  ```bash
+  set -euo pipefail
+  cd ~/quest
+  source platform.env
+  python3 -I - <<'VERIFY_RELEASE'
+
+  import json,subprocess,yaml
+  from pathlib import Path
+  from dq_check import current_pods,pod_worker,ready_image,workload_worker
+  def k(*args):
+   return json.loads(subprocess.check_output(['kubectl',*args,'-o','json'],timeout=2))
+  contract=json.loads(Path('/run/dq/facts/0/webhook-publication.json').read_text())
+  old=contract['deployment']
+  deployment=k('get','deployment','board')
+  assert deployment['metadata']['uid']==old['metadata']['uid']
+  assert deployment['spec']['selector']==old['spec']['selector']
+  assert deployment['spec']['replicas']==old['spec']['replicas']==1
+  assert deployment['spec']['template']['spec']==old['spec']['template']['spec']
+  app=k('get','application','board')
+  assert app['metadata']['uid']==contract['application']['metadata']['uid']
+  assert app['spec']==contract['application']['spec']
+  revision=app['status']['sync']['revision']
+  subprocess.run(['git','-C','repository','merge-base','--is-ancestor',contract['release_commit'],revision],check=True,timeout=2)
+  desired=yaml.safe_load(subprocess.check_output(['git','-C','repository','show',revision+':'+contract['source_file']],text=True,timeout=2))
+  assert desired['kind']=='ConfigMap' and desired['metadata']['name']==contract['approved']['metadata']['name']
+  assert desired['data']==contract['approved']['data']
+  config=k('get','configmap',desired['metadata']['name'])
+  assert config['metadata']['uid']==contract['publication_uid']
+  assert config['data']==desired['data']
+  worker=workload_worker(deployment)
+  pods=current_pods(deployment,k('get','replicasets'),k('get','pods'))
+  assert len(pods)==1
+  for pod in pods:
+   assert ready_image(pod,worker['image'])
+   current=pod_worker(pod)
+   for key in ('command','args'):
+    assert current.get(key)==worker.get(key)
+   for mount in worker.get('volumeMounts',[]):
+    assert mount.get('readOnly') is True and mount in current.get('volumeMounts',[])
+   value=subprocess.check_output(['kubectl','exec',pod['metadata']['name'],'-c','worker','--','wget','-qO-','-T','2','http://127.0.0.1:8080'],timeout=3)
+   assert value.decode().rstrip('\n')==desired['data']['notice'].rstrip('\n')
+
+  print('OK')
+  VERIFY_RELEASE
+  ```
+
+  Ожидается OK. Учётные данные не выводятся.
 phrases.0: Я разделил доставку webhook и периодическую сверку.
 phrases.1: Я проверил URL receiver и совместимость протокола общего secret.
 phrases.2: После повторной доставки я проверил новый commit и реальный HTTP-ответ.

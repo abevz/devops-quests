@@ -32,115 +32,64 @@ stages.0.brief: Recover the application’s access to its intended KV publicatio
   and `application`; each contains only the four exported audit fields. Keep the original four-field `incident.json`
   for the baseline request.
 hints.0.text: Server availability, authorization and a consumer’s adopted publication are different observations.
-hints.1.text: 'Compare the live service response, source profiles, application logs and original contract. Trace
-  the first failing boundary before changing another component.
+hints.1.text: |-
+  Compare the live service response, source profiles, application logs and original contract. Trace the first failing boundary before changing another component.
 
+  Find the selected source profile and the consumer’s current cached status. Compare the status response and the rejection trace with the source path and expected inputs.
 
   ```bash
-
   cat consumer/source.json consumer/application.log consumer-contract.json
-
   curl -fsS --max-time 2 http://127.0.0.1:18081/status
-
   ```
 
-
   ```bash
-
   cat consumer/initial-observation.json
-
-  jq ''map({request_id,path,operation,reason})'' consumer-audit.json
-
+  jq 'map({request_id,path,operation,reason})' consumer-audit.json
   cat reader.hcl
-
-  ```'
-hints.2.text: 'Record only the four exported fields and repair the KV v2 read path without widening access. After
-  editing `reader.hcl`, update the live game policy with the manager identity. File auditing uses `log_raw=false`;
-  only allowlisted denial metadata is exported to `audit-events.json` and frozen facts. Raw audit records, authentication
-  fields and secret values stay outside the workstation. Correlate request_id, path and operation without copying
-  authentication data.
-
-
+  ```
+hints.2.text: |-
   Verify from `~/quest` on the workstation:
 
-
-  - `jq -e ''keys == ["operation","path","reason","request_id"]'' incident.json >/dev/null`
-
+  - `jq -e 'keys == ["operation","path","reason","request_id"]' incident.json >/dev/null`
 
   Exit `0`; the incident has exactly the four required fields.
 
-
   - `source platform.env`
-
-  - `curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
-  | jq -e ''.data.data.value == "north-secret"'' >/dev/null`
-
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
 
   Exit `0`; no credential or secret value is printed.
 
-
   - `source platform.env`
-
-  - `curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") -H ''Content-Type: application/json''
-  --request POST --data ''{"paths":["secret/data/dispatch","secret/data/other","sys/audit"]}'' "$VAULT_ADDR/v1/sys/capabilities-self"
-  | jq ''{dispatch:."secret/data/dispatch",other:."secret/data/other",audit:."sys/audit"}''`
-
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") -H 'Content-Type: application/json' --request POST --data '{"paths":["secret/data/dispatch","secret/data/other","sys/audit"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '{dispatch:."secret/data/dispatch",other:."secret/data/other",audit:."sys/audit"}'`
 
   `dispatch: ["read"]`; `other` and `audit`: `["deny"]`.
 
-
-  Match the profile to the approved API source and supplied reader credential. Keep the credential private and send
-  SIGHUP to the existing application PID; the manager is a different identity. Recheck the HTTP publication, not
-  only the source. Expected: OK.
-
+  Match the profile to the approved API source and supplied reader credential. Keep the credential private and send SIGHUP to the existing application PID; the manager is a different identity. Recheck the HTTP publication, not only the source. Expected: OK.
 
   ```bash
-
   set -euo pipefail
-
   cd ~/quest
-
   curl -fsS --max-time 2 http://127.0.0.1:18081/ > observed-publication.json
-
-  python3 -I - <<''VERIFY_PUBLICATION''
-
+  python3 -I - <<'VERIFY_PUBLICATION'
   import json
-
   from pathlib import Path
-
-  contract=json.loads(Path(''consumer-contract.json'').read_text())
-
-  observed=json.loads(Path(''observed-publication.json'').read_text())
-
-  assert observed[''ready''] is True
-
-  assert observed[''source'']==contract[''vault_url'']
-
-  assert observed[''path'']==contract[''path'']
-
-  assert observed[''value_sha256'']==contract[''value_sha256'']
-
-  assert observed[''version'']==contract[''version'']
-
-  print(''OK'')
-
+  contract=json.loads(Path('consumer-contract.json').read_text())
+  observed=json.loads(Path('observed-publication.json').read_text())
+  assert observed['ready'] is True
+  assert observed['source']==contract['vault_url']
+  assert observed['path']==contract['path']
+  assert observed['value_sha256']==contract['value_sha256']
+  assert observed['version']==contract['version']
+  print('OK')
   VERIFY_PUBLICATION
-
   ```
 
-
-  Both denied requests are correlated using exported metadata only; the original incident still identifies the baseline
-  request.
-
+  Both denied requests are correlated using exported metadata only; the original incident still identifies the baseline request.
 
   ```bash
-
-  jq -e --slurpfile events consumer-audit.json ''keys==["application","baseline"] and .baseline==($events[0][]|select(.path=="secret/data/dispatch"))
-  and .application==($events[0][]|select(.path=="secret/dispatch"))'' consumer-incident.json
-
+  jq -e --slurpfile events consumer-audit.json 'keys==["application","baseline"] and .baseline==($events[0][]|select(.path=="secret/data/dispatch")) and .application==($events[0][]|select(.path=="secret/dispatch"))' consumer-incident.json
   ```
-
-  Expected: true.'
+  Expected: true.
 phrases.0: I correlated a denied request by its audit request ID.
 phrases.1: I kept authentication data and secret values out of the incident report.
 phrases.2: I verified the corrected read and negative authorization checks.
