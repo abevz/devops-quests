@@ -14,6 +14,7 @@ import {
 } from "./play.mjs";
 import { keySequence } from "./controls.mjs";
 import { checkFeedback, conditionKeys, showProbeReason } from "./diagnostics.mjs";
+import { filterInterview, interviewTopics } from "./interview.mjs";
 import { scoreBreakdown } from "./score-preview.mjs";
 import { loadI18n, languageControls } from "./vendor/locale.js";
 const $ = (id) => document.getElementById(id),
@@ -301,6 +302,9 @@ $("logout").onclick = () =>
     renderSidebar();
     preferencesUser = null;
     interviewData = interviewSignature = usersData = preview = guidesData = guideData = labData = selectedLab = null;
+    for (const id of ["interview-search", "interview-topic", "interview-status"]) $(id).value = "";
+    $("interview-catalog").replaceChildren();
+    $("interview-count").textContent = "";
     readingTranslation = false;
     $("user-list").replaceChildren();
     for (const id of ["password-form", "user-form", "reset-password-form"]) $(id).reset();
@@ -690,10 +694,13 @@ $("check").onclick = () =>
   });
 $("reset").onclick = () => action(() => api("reset", {}));
 $("hint").onclick = () => action(() => api("hint", {}));
-function renderQuestions(questions, parent) {
+function renderQuestions(questions, parent, completed) {
   for (const question of questions) {
     const card = el("section", undefined, "interview-question");
     block(question.prompt, card);
+    if (completed !== undefined) {
+      card.append(el("small", t(completed ? "interview.completed" : "interview.incomplete"), "muted"));
+    }
     const points = el("ul");
     for (const point of question.points ?? []) {
       const li = el("li");
@@ -717,23 +724,61 @@ function renderQuestions(questions, parent) {
   }
 }
 function renderInterview() {
-  for (const [name, key] of [
-    ["completed", "interview-completed"],
-    ["theory", "interview-theory"],
-  ]) {
-    const host = $(key);
-    host.replaceChildren();
-    const groups = interviewData?.[name] ?? [];
-    if (!groups.length && name === "completed") host.append(el("p", t("interview.empty")));
-    for (const group of groups) {
-      const card = el("article", undefined, "card interview-topic");
-      block(group.title, card);
-      card.append(el("small", t("interview.source", group.book), "muted"));
-      renderQuestions(group.questions, card);
-      host.append(card);
-    }
+  const select = $("interview-topic"), selected = select.value;
+  const language = contentLanguage();
+  const read = (value) => i18n.content(value, language).text;
+  const options = interviewTopics(interviewData);
+  select.replaceChildren(new Option(t("map.all"), ""));
+  for (const { id, track, title } of options) {
+    select.add(new Option(track ? t("track." + track) : read(title), id));
   }
+  if (options.some(({ id }) => id === selected)) select.value = selected;
+  renderInterviewResults();
 }
+function renderInterviewResults() {
+  if (!interviewData) return;
+  const language = contentLanguage();
+  const read = (value) => i18n.content(value, language).text;
+  const results = filterInterview(interviewData, {
+    query: $("interview-search").value,
+    topic: $("interview-topic").value,
+    status: $("interview-status").value,
+  }, read, language);
+  const host = document.createDocumentFragment();
+  const countLabel = (label, count) => t("interview.group_count", { label, count });
+  function renderGroup(group, parent) {
+    const card = el("article", undefined, "card interview-topic");
+    const { text, language: titleLanguage } = i18n.content(group.title, language);
+    const label = group.level ? t("interview.level", { level: group.level, title: text }) : text;
+    const title = el(group.level ? "h4" : "h3", countLabel(label, group.questions.length));
+    title.lang = titleLanguage;
+    card.append(title);
+    if (group.book) card.append(el("small", t("interview.source", group.book), "muted"));
+    renderQuestions(group.questions, card, group.completed);
+    parent.append(card);
+  }
+  for (const band of results.bands) {
+    const section = el("section");
+    section.append(el("h2", countLabel(t("difficulty." + band.difficulty), band.count)));
+    for (const topic of band.topics) {
+      section.append(el("h3", countLabel(t("track." + topic.track), topic.count)));
+      for (const quest of topic.quests) renderGroup(quest, section);
+    }
+    host.append(section);
+  }
+  if (results.theoryCount) {
+    const section = el("section");
+    section.append(el("h2", countLabel(t("interview.theory"), results.theoryCount)));
+    for (const group of results.theory) renderGroup(group, section);
+    host.append(section);
+  }
+  $("interview-count").textContent = t("interview.count", { count: results.count });
+  if (!results.count) host.append(el("p", t("interview.empty")));
+  $("interview-catalog").replaceChildren(host);
+}
+$("interview-search").addEventListener("input", renderInterviewResults);
+$("interview-topic").addEventListener("change", renderInterviewResults);
+$("interview-status").addEventListener("change", renderInterviewResults);
 async function loadInterview() {
   const signature = state.user.name + ":" + state.progress.map((p) => p.level).join(",");
   if (signature !== interviewSignature) {

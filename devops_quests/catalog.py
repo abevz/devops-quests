@@ -297,24 +297,22 @@ class Catalog:
         }
 
     def interview(self, completed):
-        groups = []
+        quests = []
         for number in self.released:
             quest = self.quests[number]
-            if (
-                number not in completed
-                or not quest.get("book")
-                or not quest.get("questions")
-            ):
+            if not quest.get("questions"):
                 continue
-            groups.append(
+            book = quest.get("book")
+            level = self.by_id[number]
+            quests.append(
                 {
                     "level": number,
+                    "difficulty": level["difficulty"],
+                    "topic": level["track"],
+                    "completed": number in completed,
                     "title": self.text(number, quest["title"]),
-                    "book": {
-                        **quest["book"],
-                        "section": quest["book"].get("section")
-                        or quest["book"].get("topic", ""),
-                    },
+                    "book": dict(book, section=book.get("section") or book.get("topic", ""))
+                    if book else None,
                     "questions": [
                         self.question(
                             self.messages[number], value, f"level.{number}.{index}"
@@ -337,7 +335,7 @@ class Catalog:
             }
             for topic in self.interview_topics
         ]
-        return {"completed": groups, "theory": theory}
+        return {"quests": quests, "theory": theory}
 
     def script(self, number, stage, name):
         if name not in {"setup", "check", "event"}:
