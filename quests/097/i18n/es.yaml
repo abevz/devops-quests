@@ -26,17 +26,158 @@ stages.0.brief: Conserva el archivo y recupera el mismo release en el registro y
 hints.0.text: La disponibilidad del artefacto y la activación del consumidor son fronteras distintas.
   Restaurar un tag no demuestra por sí solo que consumidores con responsables independientes ejecuten
   los bytes previstos.
-hints.1.text: Compara `tar tf recovery-image.tar`, `cat release-image` y `docker image ls` con las respuestas
-  del registro. Inspecciona `kubectl get applications,deployments,cronjobs,jobs,pods -o yaml`, eventos
-  de descarga de los Pods y las definiciones Git/batch. Identifica quién administra cada imagen declarada;
-  la referencia congelada distingue el intento anterior de una ejecución nueva.
-hints.2.text: Verifica la suma del archivo antes de cargarlo en el daemon privado. Restaura la referencia
-  original y compara bytes reales de manifiesto/config/capas, incluido el artefacto protegido. Publica
-  la imagen inmutable recuperada en Git, repara la plantilla batch independiente e inicia una ejecución
-  nueva manteniendo el horario suspendido. Revisa `git -C repository log -1`, `kubectl get applications,jobs,pods
-  -o wide` y `kubectl logs <completed-pod> -c worker`. Se esperan la revisión publicada, el digest original
-  en ambas plantillas y contenedores reales, las respuestas HTTP/batch suministradas y un Job nuevo realmente
-  completado. Conserva ese Job y su Pod hasta verificar.
+hints.1.text: |-
+  Compara `tar tf recovery-image.tar`, `cat release-image` y `docker image ls` con las respuestas del registro. Inspecciona `kubectl get applications,deployments,cronjobs,jobs,pods -o yaml`, eventos de descarga de los Pods y las definiciones Git/batch. Identifica quién administra cada imagen declarada; la referencia congelada distingue el intento anterior de una ejecución nueva.
+
+  Compara por separado las referencias del archivo, registro y Git. En los recursos de lote, localiza la programación suspendida, la plantilla de imagen futura y el Job inicial registrado.
+hints.2.text: |-
+  Revisa `git -C repository log -1`, `kubectl get applications,jobs,pods -o wide` y `kubectl logs <completed-pod> -c worker`. Se esperan la revisión publicada, el digest original en ambas plantillas y contenedores reales, las respuestas HTTP/batch suministradas y un Job nuevo realmente completado. Conserva ese Job y su Pod hasta verificar.
+
+  Archivo y registro. Verifica los bytes inmutables de la versión restaurada y del artefacto protegido.
+
+  ```bash
+  (
+    set -euo pipefail
+    cd ~/quest
+    set -a
+    source platform.env
+    set +a
+    printf '%s  recovery-image.tar\n' "$(cat /run/dq/facts/0/archive.sha256)" | sha256sum -c -
+    python3 -I - <<'VERIFY_REGISTRY'
+  import base64
+  import hashlib
+  import http.client
+  import json
+  import os
+  import ssl
+  from pathlib import Path
+
+  facts = Path("/run/dq/facts/0")
+  registry = os.environ["REGISTRY"]
+  credentials = (os.environ["REGISTRY_USER"] + ":" + os.environ["REGISTRY_PASSWORD"]).encode()
+  authorization = "Basic " + base64.b64encode(credentials).decode()
+  context = ssl.create_default_context(cafile=str(facts / "registry-ca.crt"))
+  headers = {"Authorization": authorization, "Accept": (
+      "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json")}
+
+  def manifest(repository, reference):
+      with_response = http.client.HTTPSConnection(registry, timeout=4, context=context)
+      try:
+          with_response.request("GET", f"/v2/{repository}/manifests/{reference}", headers=headers)
+          response = with_response.getresponse()
+          assert response.status == 200
+          return response.read()
+      finally:
+          with_response.close()
+
+  def verify_blobs(repository, manifest_bytes):
+      document = json.loads(manifest_bytes)
+      for blob in [document["config"], *document["layers"]]:
+          wanted = blob["digest"]
+          digest = hashlib.sha256()
+          size = 0
+          connection = http.client.HTTPSConnection(registry, timeout=4, context=context)
+          try:
+              connection.request("GET", f"/v2/{repository}/blobs/{wanted}", headers={"Authorization": authorization})
+              response = connection.getresponse()
+              assert response.status == 200
+              while chunk := response.read(65536):
+                  digest.update(chunk)
+                  size += len(chunk)
+          finally:
+              connection.close()
+          assert "sha256:" + digest.hexdigest() == wanted and size == blob["size"]
+
+  release_digest = (facts / "release-image").read_text().strip().rsplit("@", 1)[1]
+  release = manifest("parcel", release_digest)
+  assert "sha256:" + hashlib.sha256(release).hexdigest() == release_digest
+  assert manifest("parcel", "1") == release
+  verify_blobs("parcel", release)
+  baseline = json.loads((facts / "recovery-baseline.json").read_text())
+  protected_digest = baseline["protected_image"].rsplit("@", 1)[1]
+  protected = manifest("protected", baseline["protected_tag"])
+  assert "sha256:" + hashlib.sha256(protected).hexdigest() == protected_digest
+  verify_blobs("protected", protected)
+  print("Restored and protected registry bytes match")
+  VERIFY_REGISTRY
+  )
+  ```
+
+  Git y consumidores activos. Verifica el despliegue web actual y el Job completado aparte.
+
+  ```bash
+  (
+    set -euo pipefail
+    cd ~/quest
+    source platform.env
+    baseline=/run/dq/facts/0/recovery-baseline.json
+    image=$(cat /run/dq/facts/0/release-image)
+    digest=${image##*@}
+    repository=${image%@*}
+    git -C repository fetch -q origin main
+    head=$(git -C repository rev-parse origin/main)
+    kubectl get deployment,service,cronjob,application -o json |
+      jq -e --slurpfile baseline "$baseline" '
+        .items as $current | all($baseline[0].identities | to_entries[]; . as $original |
+          any($current[]; (.kind+"/"+.metadata.name)==$original.key and .metadata.uid==$original.value))'
+    declared_web_image=$(git -C repository show "$head:manifests/web.yaml" |
+      python3 -I -c 'import sys,yaml
+  docs = yaml.safe_load_all(sys.stdin)
+  web = next(doc for doc in docs if isinstance(doc, dict) and doc.get("kind") == "Deployment"
+             and doc["metadata"]["name"] == "archive-web")
+  print(next(container["image"] for container in web["spec"]["template"]["spec"]["containers"]
+             if container["name"] == "worker"))')
+    kubectl get application release -o json |
+      jq -e --arg head "$head" --slurpfile baseline "$baseline" '
+        .spec.source == $baseline[0].source and
+        .spec.project == "station" and .spec.destination == {server:"https://kubernetes.default.svc",namespace:.metadata.namespace} and
+        .spec.syncPolicy.automated.enabled != false and .spec.syncPolicy.automated.prune == true and
+        .spec.syncPolicy.automated.selfHeal == true and
+        .status.sync.status == "Synced" and .status.sync.revision == $head'
+    pin_matches() {
+      [[ "$1" == "$repository@$digest" || "$1" == "$repository:"*"@$digest" ]]
+    }
+    web=$(kubectl get deployment archive-web -o json)
+    web_uid=$(jq -er .metadata.uid <<<"$web")
+    web_image=$(jq -er '.spec.template.spec.containers[] | select(.name=="worker") | .image' <<<"$web")
+    pin_matches "$web_image"
+    test "$declared_web_image" = "$web_image"
+    replicas=$(jq -er 'select(.spec.replicas>0 and .status.readyReplicas==.spec.replicas and
+      .status.observedGeneration==.metadata.generation) | .spec.replicas' <<<"$web")
+    web_sets=$(kubectl get rs -o json | jq -c --arg uid "$web_uid" '
+      [.items[] | select(any(.metadata.ownerReferences[]?; .kind=="Deployment" and .controller==true and .uid==$uid)) | .metadata.uid]')
+    kubectl get pods -o json | jq -e --argjson owners "$web_sets" --argjson replicas "$replicas" --arg image "$web_image" --arg digest "$digest" '
+      [.items[] | select(.metadata.deletionTimestamp==null and .status.phase!="Failed" and .status.phase!="Succeeded" and
+        any(.metadata.ownerReferences[]?; .kind=="ReplicaSet" and .controller==true and (.uid as $uid | $owners | index($uid)!=null)))]
+      | length==$replicas and all(.[]; .status.phase=="Running" and
+        any(.spec.containers[]; .name=="worker" and .image==$image) and
+        any(.status.containerStatuses[]?; .name=="worker" and .ready==true and (.state.running|type)=="object" and
+          ((.imageID | split("@") | last | split("/") | last) == $digest)))'
+    test "$(kubectl exec deployment/archive-web -c worker -- wget -qO- -T 3 http://archive-web:8080)" = "$(jq -er .http_response "$baseline")"
+    template=$(kubectl get cronjob archive-scan -o json |
+      jq -cer 'select(.spec.suspend == true) | .spec.jobTemplate.spec.template.spec')
+    declared=$(jq -er '.containers[] | select(.name=="worker") | .image' <<<"$template")
+    pin_matches "$declared"
+    job_uid=$(kubectl get jobs -o json | jq -er --argjson template "$template" --slurpfile baseline "$baseline" '
+      [$baseline[0].previous_jobs as $old | .items[] | .metadata.uid as $uid |
+        select(($old | index($uid)) == null and
+               any(.status.conditions[]?; .type=="Complete" and .status=="True"))]
+      | select(length == 1) | .[0] | select(.spec.template.spec == $template) | .metadata.uid')
+    pod=$(kubectl get pods -o json | jq -er --arg owner "$job_uid" --arg image "$declared" --arg digest "$digest" '
+      [.items[] | select(.status.phase=="Succeeded" and
+        any(.metadata.ownerReferences[]?; .kind=="Job" and .controller==true and .uid==$owner))]
+      | select(length>0 and all(.[];
+        any(.spec.containers[]; .name=="worker" and .image==$image) and
+        any(.status.containerStatuses[]?; .name=="worker" and .state.terminated.exitCode==0 and
+          ((.imageID | split("@") | last | split("/") | last) == $digest))))
+      | .[0].metadata.name')
+    test -n "$pod"
+    test "$(kubectl logs "$pod" -c worker)" = "$(jq -er .batch_response "$baseline")"
+    test "$(kubectl auth can-i patch pods --subresource=status)" = no
+    test "$(kubectl auth can-i patch jobs --subresource=status)" = no
+    printf '%s\n' 'Current Git, suspended template and completed Job observed.'
+  )
+  ```
 phrases.0: Separé la disponibilidad del servicio de la pérdida de artifact.
 phrases.1: Recuperé la versión inmutable original de un archivo verificado.
 phrases.2: Verifiqué manifest y config a través de TLS autenticado.

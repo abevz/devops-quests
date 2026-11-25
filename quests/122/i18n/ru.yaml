@@ -26,6 +26,8 @@ hints.0.text: |-
 hints.1.text: |-
   Сопоставьте источник дочернего Application в Git, живые Application и манифесты публикации. Когда сервис ответит, сравните отдаваемую ревизию с выданной записью.
 
+  Проследите связь зафиксированного ConfigMap с томом Deployment. Найдите проецируемый файл и сравните его содержимое с утверждённой публикацией и HTTP-ответом.
+
   ```bash
   git -C repository show HEAD:apps/child.yaml
   kubectl get applications parent board -o yaml
@@ -33,7 +35,7 @@ hints.1.text: |-
   cat approved-publication
   ```
 hints.2.text: |-
-  Опубликуйте оба исправления через Git. Сопоставьте отслеживаемую дочерним Application ConfigMap, источник тома Deployment и ревизию в HTTP-ответе. Исходный ответ сервиса на корневом URL должен сохраниться.
+  Сопоставьте отслеживаемую дочерним Application ConfigMap, источник тома Deployment и ревизию в HTTP-ответе. Исходный ответ сервиса на корневом URL должен сохраниться.
 
   ```bash
   git -C repository ls-remote origin refs/heads/main
@@ -45,6 +47,34 @@ hints.2.text: |-
   kubectl get configmaps -o json | jq '.items[] | select(.metadata.annotations["argocd.argoproj.io/tracking-id"] != null) | {name:.metadata.name,revision:.data.revision}'
   cat approved-publication
   ```
+
+  ```bash
+  (
+    set -euo pipefail
+    cd ~/quest
+    source platform.env
+    approved=$(cat /run/dq/facts/0/approved-publication)
+    uses_publication() {
+      jq -e '.spec.template.spec as $pod |
+        any($pod.volumes[]?; .configMap.name=="board-publication" and
+          (.name as $volume | any($pod.containers[]?; .name=="worker" and
+            any(.volumeMounts[]?; .name==$volume and .readOnly==true))))'
+    }
+    head=$(git -C repository ls-remote origin refs/heads/main | cut -f1)
+    git -C repository show "$head:manifests/board.yaml" |
+      python3 -I -c 'import json,sys,yaml; json.dump(yaml.safe_load(sys.stdin),sys.stdout)' |
+      uses_publication
+    kubectl get deployment board -o json | uses_publication
+    kubectl get configmap board-publication -o json |
+      jq -e --arg namespace "$DQ_NAMESPACE" --arg approved "$approved" '
+        .data.revision==$approved and
+        .metadata.annotations["argocd.argoproj.io/tracking-id"]==($namespace+"_board:/ConfigMap:"+$namespace+"/board-publication")'
+    test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-122
+    test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/publication/revision)" = "$approved"
+  )
+  ```
+
+  Корень Service возвращает north-122. Ответ на пути публикации совпадает с approved-publication.
 phrases.0: Я проследил цепочку согласования от родителя к дочернему приложению.
 phrases.1: Я исправил требуемое состояние в Git, а не созданное дочернее приложение.
 phrases.2: Я проверил обе ревизии и фактический ответ нагрузки.

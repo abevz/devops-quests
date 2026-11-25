@@ -25,6 +25,8 @@ hints.0.text: |-
 hints.1.text: |-
   Vergleichen Sie Vorlage, erzeugte Applications und Referenzen des Git-Servers. Die Release-Dateien halten beide erwarteten Revisionen fest.
 
+  Suche den erzeugten Quellpfad und die Zielrevision jeder erzeugten Application. Vergleiche die Vorlagenersetzungen und erzeugten Werte mit den exakten Referenzen aus den bereitgestellten Release-Dateien.
+
   ```bash
   ns=$(jq -r .namespace appset-target.json)
   cat applicationset.yaml release-ref release-commit maintenance-commit
@@ -32,7 +34,7 @@ hints.1.text: |-
   kubectl -n "$ns" get applications north south -o yaml
   ```
 hints.2.text: |-
-  Nutzen Sie `stations/{{.station}}` als Pfadvorlage und wählen Sie die bereitgestellte Release-Referenz. Vergleiche die laufenden Quellen mit den Git-Referenzen und prüfen Sie beide Dienstantworten.
+  Vergleiche die laufenden Quellen mit den Git-Referenzen und prüfen Sie beide Dienstantworten.
 
   ```bash
   ns=$(jq -r .namespace appset-target.json)
@@ -43,6 +45,41 @@ hints.2.text: |-
     kubectl exec deployment/"$station" -- wget -qO- -T 3 "http://$station:8080"
   done
   ```
+
+  ```bash
+  (
+    set -euo pipefail
+    cd ~/quest
+    source platform.env
+    facts=/run/dq/facts/0
+    ns=$(jq -er .namespace "$facts/appset-target.json")
+    repo=$(jq -er .repoURL "$facts/appset-target.json")
+    release=$(cat "$facts/release-commit")
+    ref=$(cat "$facts/release-ref")
+    main=$(cat "$facts/maintenance-commit")
+    refs=$(git -C repository ls-remote "$repo" refs/heads/main "refs/heads/$ref")
+    grep -Fqx "$(printf '%s\trefs/heads/main' "$main")" <<<"$refs"
+    grep -Fqx "$(printf '%s\trefs/heads/%s' "$release" "$ref")" <<<"$refs"
+    appset=$(kubectl -n "$ns" get applicationset station -o json)
+    uid=$(jq -er --arg ref "$ref" '
+      select(.spec.goTemplate==true and .spec.template.spec.source.path=="stations/{{.station}}" and
+        (.spec.generators[0].list.elements | map(.station))==["north","south"] and
+        .spec.template.spec.source.targetRevision==$ref) | .metadata.uid' <<<"$appset")
+    kubectl -n "$ns" get applications north south -o json |
+      jq -e --arg uid "$uid" --arg release "$release" --arg repo "$repo" --arg bay "$DQ_NAMESPACE" --arg ref "$ref" '
+        ([.items[].metadata.name] | sort)==["north","south"] and
+        all(.items[]; .metadata.name as $station |
+          .spec.source.repoURL==$repo and .spec.project=="station" and .spec.destination.namespace==$bay and
+          .spec.source.path==("stations/"+$station) and .spec.source.targetRevision==$ref and
+          .status.sync.revision==$release and .status.sync.status=="Synced" and .status.health.status=="Healthy" and
+          any(.metadata.ownerReferences[]?; .kind=="ApplicationSet" and .uid==$uid))'
+    for station in north south; do
+      test "$(kubectl exec deployment/"$station" -- wget -qO- -T 3 "http://$station:8080")" = "$station-123"
+    done
+  )
+  ```
+
+  Beide Applications melden Synced und Healthy auf release-commit. Der Remote-Branch main behält maintenance-commit. Die Services liefern north-123 und south-123.
 phrases.0: Ich habe die Application-Generierung von der Workload-Abstimmung getrennt.
 phrases.1: Ich habe die Generatorwerte und die Vorlagenerweiterung überprüft.
 phrases.2: Ich habe die Controller-Berechtigungen und Ziele begrenzt gehalten.
