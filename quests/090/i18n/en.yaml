@@ -22,6 +22,8 @@ hints.0.text: |-
 hints.1.text: |-
   Inspect lineage and resource identities in both state files. Follow the recorded identity through the fleet artifact and the Kubernetes publication.
 
+  Compare existing bindings with the verified checkpoint and locate the newer handover record. Follow the original ID from state into the fleet artifact and the running `worker`’s ConfigMap projection.
+
   ```sh
   (cd recovery && sha256sum -c checkpoint.sha256)
   jq '{lineage,serial,resources:[.resources[] | {type,name,ids:[.instances[].attributes.id]}]}' terraform.tfstate recovery/checkpoint.tfstate
@@ -41,33 +43,80 @@ hints.1.text: |-
   kubectl get configmap -o yaml
   ```
 hints.2.text: |-
-  Work from a copy of the verified checkpoint. Restore the missing bindings while retaining the newer handover record. Verify the files, HTTP responses, and the original ConfigMap’s projection through the running worker.
+  Verify the files, HTTP responses, and the original ConfigMap’s projection through the running worker.
+
+  Stage 1. Check the trusted archive, restored release binding and retained handover binding.
 
   ```sh
+  (
+  set -euo pipefail
+  cd ~/quest
+  printf '%s  recovery/checkpoint.tfstate\n' "$(jq -er .sha256 /run/dq/facts/0/recovery-contract.json)" | sha256sum -c -
+  tofu state pull | jq -e --slurpfile expected /run/dq/facts/0/recovery-contract.json '
+    def has_binding($name; $id): any(.resources[]?; .mode=="managed" and .type=="terraform_data" and
+      (.module // "")=="" and .name==$name and (.instances | length)==1 and .instances[0].attributes.id==$id);
+    $expected[0] as $contract | .lineage==$contract.lineage and
+      has_binding("release_record"; $contract.release_id) and has_binding("handover"; $contract.handover_id)'
   (cd recovery && sha256sum -c checkpoint.sha256)
   tofu state list
   tofu output -raw recovery_id
   printf '\n'
   cat release.txt
   tofu plan -input=false -detailed-exitcode -no-color
+  )
   ```
 
+  Stage 2. Check files and HTTP on all three fleet hosts.
+
   ```sh
-  jq -r .recovery_id recovered-release.json
+  (
+  set -euo pipefail
+  cd ~/quest
+  source platform.env
+  expected=$(jq -er .recovery_id /run/dq/facts/1/recovered-release.json)
+  with_newline=$(printf '%s\n' release-90 | sha256sum | cut -d' ' -f1)
+  without_newline=$(printf '%s' release-90 | sha256sum | cut -d' ' -f1)
   for n in 1 2 3; do
     host="app${n}-${DQ_NAMESPACE#dq-}"
-    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'cat /srv/site/message; stat -c %a /srv/site/message; cat /srv/site/recovery-id'
-    curl -fsS --max-time 3 "http://$host:8080/"
-    printf '\n'
+    observed=$(ssh -n -o BatchMode=yes -o ConnectTimeout=2 -p 2222 "root@$host"     'set -e; stat -c %a /srv/site/message; sha256sum /srv/site/message; cat /srv/site/recovery-id')
+    mapfile -t files <<<"$observed"
+    test "${files[0]}" = 644
+    digest=${files[1]%% *}
+    [[ "$digest" == "$with_newline" || "$digest" == "$without_newline" ]]
+    test "${files[2]}" = "$expected"
+    test "$(curl -fsS --max-time 3 "http://$host:8080/")" = release-90
+    printf '%s: release files and HTTP match\n' "$host"
   done
+  )
   ```
 
+  Stage 3. Check the original ConfigMap and the projected value served by the current worker.
+
   ```sh
-  kubectl get configmap relay-recovery -o yaml
+  (
+  set -euo pipefail
+  cd ~/quest
+  source platform.env
+  expected=$(cat /run/dq/facts/2/relay-handover-id)
+  original_uid=$(cat /run/dq/facts/2/relay-publication-uid)
+  kubectl get configmap relay-recovery -o json |
+    jq -e --arg uid "$original_uid" --arg id "$expected" '.metadata.uid==$uid and .data["recovery-id"]==$id'
+  kubectl get deployment relay -o json | jq -e '
+    .spec.template.spec as $pod | any($pod.volumes[]?; .configMap.name=="relay-recovery" and
+      (.name as $volume | any($pod.containers[]?; .name=="worker" and
+        any(.volumeMounts[]?; .name==$volume and .mountPath=="/run/recovery" and .readOnly==true))))'
   kubectl rollout status deployment/relay --timeout=3s
-  kubectl exec deployment/relay -c worker -- printenv RELEASE
-  kubectl exec deployment/relay -c worker -- wget -qO- -T 3 http://127.0.0.1:8080/recovery-id
-  cat relay-handover-id
+  test "$(kubectl exec deployment/relay -c worker -- printenv RELEASE)" = release-90
+  observed=$(kubectl exec deployment/relay -c worker -- sh -ec '
+    test "$(cat /proc/1/comm)" = httpd
+    test "$(readlink /proc/1/cwd)" = /tmp/www
+    test /tmp/www/recovery-id -ef /run/recovery/recovery-id
+    projected=$(cat /run/recovery/recovery-id)
+    response=$(wget -qO- -T 2 http://127.0.0.1:8080/recovery-id)
+    printf "%s\n%s\n" "$projected" "$response"
+  ')
+  test "$observed" = "$(printf '%s\n%s' "$expected" "$expected")"
+  )
   ```
 debrief: |-
   Selective restoration keeps the newer binding and recovers the release identity from the checkpoint. Host files and live HTTP prove different parts of distribution. The relay projection carries the recovered identity to the final consumer.

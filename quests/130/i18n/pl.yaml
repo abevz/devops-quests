@@ -27,71 +27,67 @@ stages.0.brief: Board musi spełniać dostarczony budżet skalowania przy obserw
 stages.1.brief: Zachowaj skalowanie w budżecie podczas przywracania izolowanego prywatnego wejścia.
 hints.0.text: Presja zasobów, decyzja skalowania i gotowe repliki to różne obserwacje. Kontroler potrzebuje pomiarów,
   które potrafi interpretować.
-hints.1.text: 'Etap 2: sprawdź route.yaml i ingress-policy.yaml — HTTPRoute wskazuje na nieprawidłowy port backend
-  port zamiast Service port 8080, a NetworkPolicy używa przestarzałej etykiety źródła.
+hints.1.text: |-
+  Sprawdź obiekty bieżącego etapu i ich dostarczone definicje.
 
-
-  Sprawdź dostarczone definicje, opisy zasobów i zdarzenia odpowiedniego etapu.
-
+  Na etapie skalowania porównaj żądanie i limit CPU kontenera `worker` z celem HPA i bieżącymi metrykami. Na etapie routingu sprawdź port backendu HTTPRoute i selektory polityki ingress względem Service i Podów Gateway.
 
   ```sh
-
   kubectl describe deployment board
-
   kubectl describe hpa board
-
   kubectl describe gateway station
-
   kubectl describe httproute board
-
   ```
-
 
   Etap 1/2: Sprawdź te definicje zasobów dla tego etapu.
 
-
   ```sh
-
   kubectl get deployment board -o yaml
-
   kubectl get hpa board -o yaml
-
   ```
-
 
   Etap 2: Sprawdź te definicje zasobów dla tego etapu.
 
-
   ```sh
-
   cat gateway-target.json
-
   kubectl get gateway station -o yaml
-
   kubectl get httproute board -o yaml
-
   kubectl get networkpolicy board-ingress -o yaml
-
-  ```'
+  ```
 hints.2.text: |-
-  Etap 1: Procentowe wykorzystanie HPA wymaga niezerowego CPU request na kontenerze; sprawdź board.yaml i ustaw CPU request 100m i limit 200m bez zmiany specyfikacji HPA.
-
-  Ustaw port zaplecza HTTPRoute na 8080, zezwól ingress na board:8080 tylko z podSelector app: gateway w kontrolerze namespace i sprawdź zarówno dozwolony ruch Gateway, jak i zablokowany bezpośredni dostęp.
-
   Sprawdź naprawiony etap i porównaj obserwowany wynik.
 
   Etap 1/2: Deployment pokazuje `2` gotowe repliki; HPA zgłasza `2` repliki i bieżące wykorzystanie zasobu powyżej skonfigurowanego celu.
 
   ```sh
-  kubectl get deployment board
-  kubectl get hpa board
+  cd ~/quest
+  source platform.env
+  kubectl get deployment board -o json |
+    jq '{ready:.status.readyReplicas,worker:(.spec.template.spec.containers[] | select(.name=="worker") |
+         {cpuRequest:.resources.requests.cpu,cpuLimit:.resources.limits.cpu})}'
+  kubectl get hpa board -o json |
+    jq '{target:.spec.scaleTargetRef,min:.spec.minReplicas,max:.spec.maxReplicas,metrics:.spec.metrics,
+         current:.status.currentReplicas,desired:.status.desiredReplicas,observed:.status.currentMetrics}'
   ```
 
   Etap 2: Właściwy Host Gateway zwraca `north-130`; żądania bezpośrednie i z obcym Host kończą się niepowodzeniem.
 
   ```sh
-  url=$(jq -r .url gateway-target.json)
-  kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header='Host: north.station.internal' "$url"
+  (
+  set -euo pipefail
+  cd ~/quest
+  source platform.env
+  target=/run/dq/facts/0/gateway-target.json
+  jq '{class,namespace,url}' "$target"
+  kubectl get gateway station -o json |
+    jq '{class:.spec.gatewayClassName,conditions:.status.conditions}'
+  kubectl get httproute board -o json |
+    jq '{parents:.spec.parentRefs,backends:[.spec.rules[].backendRefs[]],conditions:.status.parents}'
+  kubectl get service board -o json | jq '{name:.metadata.name,ports:.spec.ports}'
+  kubectl get networkpolicy board-ingress -o json |
+    jq '{pods:.spec.podSelector,types:.spec.policyTypes,ingress:.spec.ingress}'
+  url=$(jq -er .url "$target")
+  test "$(kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header='Host: north.station.internal' "$url")" = north-130
   for target in direct unrelated; do
     if [ "$target" = direct ]; then
       if kubectl exec deployment/client -c worker -- wget -qO- -T 2 http://board:8080 >/dev/null 2>&1; then exit 1; fi
@@ -100,12 +96,14 @@ hints.2.text: |-
     fi
     printf '%s rejected\n' "$target"
   done
+  )
   ```
 
   Oczekiwane obserwacje dla całego etapu:
   - Etap 1/2: Budżet CPU, gotowe repliki, zakres HPA, cel i obserwowane wykorzystanie spełniają wymagania.
   - Etap 2: Dostarczona klasa, zaakceptowany Gateway, rozwiązana trasa i ograniczona polityka ingress spełniają wymagania.
 
+  Na obu etapach zakres HPA wynosi 1–2, a cel wykorzystania CPU to 50%. Bieżąca i żądana liczba replik wynosi 2, a obserwowane wykorzystanie przekracza 50%. Board ma 2 gotowe repliki, a dodatnie żądanie CPU kontenera worker mieści się w limicie do 200m.
 phrases.0: Wyizolowałem metryki, routing i awarie policy.
 phrases.1: Sprawdziłem realne skalowanie w ramach ograniczonego budżetu.
 phrases.2: Udowodniłem zamierzoną ścieżkę i odmówiłem ścieżek obejściowych.

@@ -27,71 +27,67 @@ stages.0.brief: The board must meet the supplied scaling budget under observed l
 stages.1.brief: Keep scaling within budget while restoring isolated private entry.
 hints.0.text: Resource pressure, a scaling decision and ready replicas are different observations. A controller
   needs measurements it can interpret.
-hints.1.text: 'Stage 2: inspect route.yaml and ingress-policy.yaml — HTTPRoute points to the wrong backend port
-  instead of Service port 8080, and NetworkPolicy uses an obsolete source pod label.
+hints.1.text: |-
+  Inspect the current stage’s objects and their supplied definitions.
 
-
-  Inspect the supplied definitions, resource descriptions and events for the relevant stage.
-
+  In the autoscaling stage, compare the `worker`’s CPU request and limit with the HPA target and live metrics. In the routing stage, inspect the HTTPRoute backend port and the ingress policy’s peer selectors against the Service and Gateway Pods.
 
   ```sh
-
   kubectl describe deployment board
-
   kubectl describe hpa board
-
   kubectl describe gateway station
-
   kubectl describe httproute board
-
   ```
-
 
   Stage 1/2: Inspect these resource definitions for this stage.
 
-
   ```sh
-
   kubectl get deployment board -o yaml
-
   kubectl get hpa board -o yaml
-
   ```
-
 
   Stage 2: Inspect these resource definitions for this stage.
 
-
   ```sh
-
   cat gateway-target.json
-
   kubectl get gateway station -o yaml
-
   kubectl get httproute board -o yaml
-
   kubectl get networkpolicy board-ingress -o yaml
-
-  ```'
+  ```
 hints.2.text: |-
-  Stage 1: HPA percentage utilization requires a non-zero CPU request on the container; inspect board.yaml and set CPU request 100m and limit 200m without changing the HPA spec.
-
-  Set the HTTPRoute backend port to 8080, allow ingress to board:8080 only from podSelector app: gateway in the controller namespace, and verify both allowed Gateway traffic and blocked direct access.
-
   Verify the repaired stage and compare the observed result.
 
   Stage 1/2: The Deployment shows `2` ready replicas; the HPA reports `2` replicas and current resource utilization above its configured target.
 
   ```sh
-  kubectl get deployment board
-  kubectl get hpa board
+  cd ~/quest
+  source platform.env
+  kubectl get deployment board -o json |
+    jq '{ready:.status.readyReplicas,worker:(.spec.template.spec.containers[] | select(.name=="worker") |
+         {cpuRequest:.resources.requests.cpu,cpuLimit:.resources.limits.cpu})}'
+  kubectl get hpa board -o json |
+    jq '{target:.spec.scaleTargetRef,min:.spec.minReplicas,max:.spec.maxReplicas,metrics:.spec.metrics,
+         current:.status.currentReplicas,desired:.status.desiredReplicas,observed:.status.currentMetrics}'
   ```
 
   Stage 2: The intended Gateway Host returns `north-130`; direct and unrelated-Host requests fail.
 
   ```sh
-  url=$(jq -r .url gateway-target.json)
-  kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header='Host: north.station.internal' "$url"
+  (
+  set -euo pipefail
+  cd ~/quest
+  source platform.env
+  target=/run/dq/facts/0/gateway-target.json
+  jq '{class,namespace,url}' "$target"
+  kubectl get gateway station -o json |
+    jq '{class:.spec.gatewayClassName,conditions:.status.conditions}'
+  kubectl get httproute board -o json |
+    jq '{parents:.spec.parentRefs,backends:[.spec.rules[].backendRefs[]],conditions:.status.parents}'
+  kubectl get service board -o json | jq '{name:.metadata.name,ports:.spec.ports}'
+  kubectl get networkpolicy board-ingress -o json |
+    jq '{pods:.spec.podSelector,types:.spec.policyTypes,ingress:.spec.ingress}'
+  url=$(jq -er .url "$target")
+  test "$(kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header='Host: north.station.internal' "$url")" = north-130
   for target in direct unrelated; do
     if [ "$target" = direct ]; then
       if kubectl exec deployment/client -c worker -- wget -qO- -T 2 http://board:8080 >/dev/null 2>&1; then exit 1; fi
@@ -100,12 +96,14 @@ hints.2.text: |-
     fi
     printf '%s rejected\n' "$target"
   done
+  )
   ```
 
   Expected observations for the complete stage:
   - Stage 1/2: The CPU budget, ready replicas, HPA range, target and observed utilization match Requirements.
   - Stage 2: The supplied class, accepted Gateway, resolved route and bounded ingress policy match Requirements.
 
+  In both stages the HPA has bounds 1–2 and a CPU utilization target of 50%. Current and desired replicas are 2, with observed utilization above 50%. The board has 2 ready replicas and a positive worker CPU request no larger than its limit of at most 200m.
 phrases.0: I isolated metrics, routing and policy failures.
 phrases.1: I verified real scale-up within a bounded budget.
 phrases.2: I proved the intended path and denied bypass paths.

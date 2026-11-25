@@ -27,71 +27,67 @@ stages.0.brief: Board должен выполнять заданный бюдж�
 stages.1.brief: Сохраните масштабирование в пределах бюджета при восстановлении изолированного приватного входа.
 hints.0.text: Давление на ресурс, решение масштабирования и готовые реплики — разные наблюдения. Контроллеру нужны
   измерения, которые он может интерпретировать.
-hints.1.text: 'Этап 2: проверьте route.yaml и ingress-policy.yaml — HTTPRoute указывает на неверный backend port
-  вместо порта Service 8080, а NetworkPolicy использует устаревшую source-метку Pod.
+hints.1.text: |-
+  Изучите объекты текущего этапа и их выданные определения.
 
-
-  Изучите поставленные определения, описания ресурсов и события соответствующего этапа.
-
+  На этапе масштабирования сравните запрос и лимит CPU у `worker` с целью HPA и живыми метриками. На этапе маршрутизации проверьте порт бэкенда HTTPRoute и селекторы ingress-политики по Service и Pod Gateway.
 
   ```sh
-
   kubectl describe deployment board
-
   kubectl describe hpa board
-
   kubectl describe gateway station
-
   kubectl describe httproute board
-
   ```
-
 
   Этап 1/2: Изучите определения этих ресурсов для данного этапа.
 
-
   ```sh
-
   kubectl get deployment board -o yaml
-
   kubectl get hpa board -o yaml
-
   ```
-
 
   Этап 2: Изучите определения этих ресурсов для данного этапа.
 
-
   ```sh
-
   cat gateway-target.json
-
   kubectl get gateway station -o yaml
-
   kubectl get httproute board -o yaml
-
   kubectl get networkpolicy board-ingress -o yaml
-
-  ```'
+  ```
 hints.2.text: |-
-  Этап 1: расчёт процентов HPA требует ненулевого CPU request у контейнера; проверьте board.yaml и задайте CPU request 100m и limit 200m, не меняя сам HPA.
-
-  Укажите порт 8080 в HTTPRoute, разрешите ingress к board:8080 только от podSelector app: gateway из namespace контроллера и проверьте как прохождение запроса через Gateway, так и блокировку прямого доступа.
-
   Проверьте исправленный этап и сравните наблюдаемый результат.
 
   Этап 1/2: Deployment показывает `2` готовые реплики; HPA сообщает `2` реплики и текущую утилизацию ресурса выше настроенной цели.
 
   ```sh
-  kubectl get deployment board
-  kubectl get hpa board
+  cd ~/quest
+  source platform.env
+  kubectl get deployment board -o json |
+    jq '{ready:.status.readyReplicas,worker:(.spec.template.spec.containers[] | select(.name=="worker") |
+         {cpuRequest:.resources.requests.cpu,cpuLimit:.resources.limits.cpu})}'
+  kubectl get hpa board -o json |
+    jq '{target:.spec.scaleTargetRef,min:.spec.minReplicas,max:.spec.maxReplicas,metrics:.spec.metrics,
+         current:.status.currentReplicas,desired:.status.desiredReplicas,observed:.status.currentMetrics}'
   ```
 
   Этап 2: Целевой Host Gateway возвращает `north-130`; прямые запросы и запросы постороннего Host завершаются неуспешно.
 
   ```sh
-  url=$(jq -r .url gateway-target.json)
-  kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header='Host: north.station.internal' "$url"
+  (
+  set -euo pipefail
+  cd ~/quest
+  source platform.env
+  target=/run/dq/facts/0/gateway-target.json
+  jq '{class,namespace,url}' "$target"
+  kubectl get gateway station -o json |
+    jq '{class:.spec.gatewayClassName,conditions:.status.conditions}'
+  kubectl get httproute board -o json |
+    jq '{parents:.spec.parentRefs,backends:[.spec.rules[].backendRefs[]],conditions:.status.parents}'
+  kubectl get service board -o json | jq '{name:.metadata.name,ports:.spec.ports}'
+  kubectl get networkpolicy board-ingress -o json |
+    jq '{pods:.spec.podSelector,types:.spec.policyTypes,ingress:.spec.ingress}'
+  url=$(jq -er .url "$target")
+  test "$(kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header='Host: north.station.internal' "$url")" = north-130
   for target in direct unrelated; do
     if [ "$target" = direct ]; then
       if kubectl exec deployment/client -c worker -- wget -qO- -T 2 http://board:8080 >/dev/null 2>&1; then exit 1; fi
@@ -100,12 +96,14 @@ hints.2.text: |-
     fi
     printf '%s rejected\n' "$target"
   done
+  )
   ```
 
   Ожидаемые наблюдения для этапа целиком:
   - Этап 1/2: CPU-бюджет, готовые реплики, диапазон HPA, цель и наблюдаемая утилизация соответствуют требованиям.
   - Этап 2: Поставленный класс, принятый Gateway, разрешённый маршрут и ограниченная ingress-политика соответствуют требованиям.
 
+  На обоих этапах диапазон HPA равен 1–2, а цель по CPU составляет 50%. Текущее и желаемое число реплик равно 2, измеренная утилизация выше 50%. У board две готовые реплики, а положительный CPU request у worker не превышает его лимит до 200m.
 phrases.0: Я разделил сбои метрик, маршрутизации и policy.
 phrases.1: Я проверил настоящее масштабирование в ограниченном бюджете.
 phrases.2: Я подтвердил нужный путь и запрет обходных путей.

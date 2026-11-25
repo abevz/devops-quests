@@ -27,71 +27,67 @@ stages.0.brief: Das Board muss unter beobachteter Last das vorgegebene Skalierun
 stages.1.brief: Halten Sie die Skalierung im Budget und stellen Sie den isolierten privaten Zugang wieder her.
 hints.0.text: Ressourcendruck, Skalierungsentscheidung und bereite Replikate sind verschiedene Beobachtungen. Ein
   Controller braucht interpretierbare Messwerte.
-hints.1.text: 'Stufe 2: inspect route.yaml und ingress-policy.yaml – HTTPRoute zeigt auf den falschen backend-Port
-  statt auf Service-Port 8080 und NetworkPolicy verwendet ein veraltetes Quell-Pod-Label.
+hints.1.text: |-
+  Prüfe die Objekte der aktuellen Phase und ihre bereitgestellten Definitionen.
 
-
-  Prüfen Sie mitgelieferte Definitionen, Ressourcenbeschreibungen und Ereignisse der jeweiligen Phase.
-
+  Vergleiche in der Skalierungsphase CPU-Anforderung und Limit des Containers `worker` mit HPA-Ziel und aktuellen Metriken. Prüfe in der Routing-Phase Backend-Port der HTTPRoute und Peer-Selektoren der Ingress-Policy anhand von Service und Gateway-Pods.
 
   ```sh
-
   kubectl describe deployment board
-
   kubectl describe hpa board
-
   kubectl describe gateway station
-
   kubectl describe httproute board
-
   ```
-
 
   Phase 1/2: Prüfen Sie diese Ressourcendefinitionen für diese Phase.
 
-
   ```sh
-
   kubectl get deployment board -o yaml
-
   kubectl get hpa board -o yaml
-
   ```
-
 
   Phase 2: Prüfen Sie diese Ressourcendefinitionen für diese Phase.
 
-
   ```sh
-
   cat gateway-target.json
-
   kubectl get gateway station -o yaml
-
   kubectl get httproute board -o yaml
-
   kubectl get networkpolicy board-ingress -o yaml
-
-  ```'
+  ```
 hints.2.text: |-
-  Stufe 1: Die prozentuale Auslastung von HPA erfordert eine CPU-Anfrage ungleich Null für den Container. inspect board.yaml und setzen Sie CPU, fordern Sie 100m und limit 200m an, ohne die HPA-Spezifikation zu ändern.
-
-  Stellen Sie den HTTPRoute-Backend-Port auf 8080 ein und lassen Sie ingress bis board:8080 nur von podSelector app: gateway im Controller zu namespace und überprüfen Sie sowohl den zulässigen Gateway-Verkehr als auch den blockierten direkten Zugriff.
-
   Prüfen Sie die reparierte Phase und vergleichen Sie das beobachtete Ergebnis.
 
   Phase 1/2: Das Deployment zeigt `2` bereite Replikate; der HPA meldet `2` Replikate und aktuelle Ressourcenauslastung über seinem konfigurierten Ziel.
 
   ```sh
-  kubectl get deployment board
-  kubectl get hpa board
+  cd ~/quest
+  source platform.env
+  kubectl get deployment board -o json |
+    jq '{ready:.status.readyReplicas,worker:(.spec.template.spec.containers[] | select(.name=="worker") |
+         {cpuRequest:.resources.requests.cpu,cpuLimit:.resources.limits.cpu})}'
+  kubectl get hpa board -o json |
+    jq '{target:.spec.scaleTargetRef,min:.spec.minReplicas,max:.spec.maxReplicas,metrics:.spec.metrics,
+         current:.status.currentReplicas,desired:.status.desiredReplicas,observed:.status.currentMetrics}'
   ```
 
   Phase 2: Der vorgesehene Gateway-Host liefert `north-130`; direkte und fremde Host-Anfragen schlagen fehl.
 
   ```sh
-  url=$(jq -r .url gateway-target.json)
-  kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header='Host: north.station.internal' "$url"
+  (
+  set -euo pipefail
+  cd ~/quest
+  source platform.env
+  target=/run/dq/facts/0/gateway-target.json
+  jq '{class,namespace,url}' "$target"
+  kubectl get gateway station -o json |
+    jq '{class:.spec.gatewayClassName,conditions:.status.conditions}'
+  kubectl get httproute board -o json |
+    jq '{parents:.spec.parentRefs,backends:[.spec.rules[].backendRefs[]],conditions:.status.parents}'
+  kubectl get service board -o json | jq '{name:.metadata.name,ports:.spec.ports}'
+  kubectl get networkpolicy board-ingress -o json |
+    jq '{pods:.spec.podSelector,types:.spec.policyTypes,ingress:.spec.ingress}'
+  url=$(jq -er .url "$target")
+  test "$(kubectl exec deployment/client -c worker -- wget -qO- -T 3 --header='Host: north.station.internal' "$url")" = north-130
   for target in direct unrelated; do
     if [ "$target" = direct ]; then
       if kubectl exec deployment/client -c worker -- wget -qO- -T 2 http://board:8080 >/dev/null 2>&1; then exit 1; fi
@@ -100,12 +96,14 @@ hints.2.text: |-
     fi
     printf '%s rejected\n' "$target"
   done
+  )
   ```
 
   Erwartete Beobachtungen für die gesamte Phase:
   - Phase 1/2: CPU-Budget, bereite Replikate, HPA-Bereich, Ziel und beobachtete Auslastung erfüllen die Anforderungen.
   - Phase 2: Mitgelieferte Klasse, akzeptiertes Gateway, aufgelöste Route und begrenzte Ingress-Richtlinie erfüllen die Anforderungen.
 
+  In beiden Phasen reicht der HPA-Bereich von 1 bis 2 und das CPU-Auslastungsziel beträgt 50%. Aktuelle und gewünschte Replikazahl sind 2, die beobachtete Auslastung liegt über 50%. Board hat 2 bereite Replikate und der positive CPU-Request des Containers worker liegt innerhalb seines Limits von höchstens 200m.
 phrases.0: Ich habe Metriken, Routing und policy-Fehler isoliert.
 phrases.1: Ich habe eine echte Skalierung innerhalb eines begrenzten Budgets überprüft.
 phrases.2: Ich habe den beabsichtigten Pfad bewiesen und Umgehungspfade abgelehnt.
