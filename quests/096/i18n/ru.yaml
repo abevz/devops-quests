@@ -28,15 +28,39 @@ stages.0.objectives.3.text: HTTP на порту `8080` возвращает `no
   `app3`).
 hints.0.text: У доверенного снимка и работающего экземпляра разный жизненный цикл. Сопоставьте область извлечения
   с текущей привязкой экземпляра и уже используемыми данными.
-hints.1.text: Сравните `tar -tf recovery.tar`, `application-contract.json`, `provided-application.py` и исходные
-  записи работающего экземпляра. Перед извлечением изучите текущие входы приложений и HTTP-ответ на управляемых
-  узлах. Проследите, какие члены архива перезапишут состояние работающего экземпляра.
-hints.2.text: Постройте сертифицируемую проверку контрольной суммы до извлечения и выбирайте конфигурационные члены
-  через include/exclude модуля unarchive. После извлечения уведомляйте поддерживаемый handler `dq-service reload`.
-  Учитывайте каталог, владельца и группу из контракта вызывающей стороны. Выполните `ansible-playbook rollout.yml`;
-  подтвердите совпадение `sha256sum recovery.tar` с замороженной квитанцией, сохранение исходных владельцев и прав
-  и `north-96` по HTTP на `8080` и `8081`. Приложение должно сохранить исходный экземпляр и данные арендатора; повторный
-  запуск для вызывающей стороны также должен обновить её сервис.
+hints.1.text: |-
+  Сравните `tar -tf recovery.tar`, `application-contract.json`, `provided-application.py` и исходные записи работающего экземпляра. Перед извлечением изучите текущие входы приложений и HTTP-ответ на управляемых узлах. Проследите, какие члены архива перезапишут состояние работающего экземпляра.
+
+  Найдите контрольную сумму и конфигурационные элементы в описи архива. Сопоставьте их пути с файлами идентичности живого экземпляра, затем проверьте путь восстановления, владельца и группу из контракта вызова.
+hints.2.text: |-
+  Выполните `ansible-playbook rollout.yml`; подтвердите совпадение `sha256sum recovery.tar` с замороженной квитанцией, сохранение исходных владельцев и прав и `north-96` по HTTP на `8080` и `8081`. Приложение должно сохранить исходный экземпляр и данные арендатора; повторный запуск для вызывающей стороны также должен обновить её сервис.
+
+  ```sh
+  (
+    set -euo pipefail
+    printf '%s  recovery.tar\n' "$(cat artifact.sha256)" | sha256sum -c -
+    for number in 1 2 3; do
+      inventory_name="app$number"
+      host="$inventory_name-${DQ_NAMESPACE#dq-}"
+      test "$(curl -fsS --max-time 3 "http://$host:8080/")" = north-96
+      curl -fsS --max-time 3 "http://$host:8081/" |
+        jq -e --arg host "$inventory_name" --slurpfile live original-live-data.json '
+          $live[0][$host] as $before | .message == "north-96" and
+          .instance == $before["consumer-binding.json"].json.instance and
+          .account == $before["tenant.json"].json.account and
+          .balance == $before["tenant.json"].json.balance' >/dev/null
+      test "$(ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host" "stat -c '%u:%g %a' /srv/site/message")" = "0:0 644"
+      expected=$(jq -er --arg host "$inventory_name" '
+        .[$host] | [.["consumer-binding.json"], .["tenant.json"]][] | [.uid, .gid, .mode] | @tsv
+      ' original-live-data.json | while read -r uid gid mode; do
+        printf '%s %s %o\n' "$uid" "$gid" "$mode"
+      done)
+      observed=$(ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host"       "stat -c '%u %g %a' /srv/site/consumer-binding.json /srv/site/tenant.json")
+      test "$observed" = "$expected"
+      printf '%s: HTTP, restored message and protected-file metadata match\n' "$inventory_name"
+    done
+  )
+  ```
 phrases.0: Я проверил artifact восстановления до распространения.
 phrases.1: Я восстановил явные владельца и права.
 phrases.2: Я проверил каждую цель и работающий сервис после reload.

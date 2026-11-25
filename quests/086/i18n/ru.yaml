@@ -20,14 +20,96 @@ stages.0.objectives.2.text: HTTP на порту `8080` возвращает `st
   исходные идентичности.
 hints.0.text: Восстановление источника публикации и принятие данных потребителями — отдельные наблюдаемые шаги.
   Исправный источник может соседствовать с устаревшими кешами потребителей.
-hints.1.text: Сопоставьте `previous.txt`, `candidate.txt`, `application-contract.json` и `provided-application.py`.
-  На управляемых узлах изучите `/var/log/propagation-consumer.log`, входные файлы приложений, HTTP-ответы и учётные
-  записи процессов. Проследите зависимость публикации по топологии.
-hints.2.text: Проверьте доверие к входу восстановления, проверяйте попытку публикации через реальный сервис и передавайте
-  восстановленный источник потребителям после его готовности. Используйте предоставленный SIGHUP-интерфейс от учётной
-  записи приложения, сохраняя процесс. Выполните `ansible-playbook rollout.yml`; сравните HTTP на `8080` и JSON
-  на `8081` всех трёх узлов. Ожидаются утверждённые выпуск, поколение и SHA-256 из контракта, правильные источники
-  и неизменные записи процессов.
+hints.1.text: |-
+  Сопоставьте `previous.txt`, `candidate.txt`, `application-contract.json` и `provided-application.py`. На управляемых узлах изучите `/var/log/propagation-consumer.log`, входные файлы приложений, HTTP-ответы и учётные записи процессов. Проследите зависимость публикации по топологии.
+
+  Найдите в playbook вход восстановления и его валидацию. Проверьте идентичность процессов и роль каждого хоста как источника или потребителя, затем сравните текущий релиз и метаданные.
+hints.2.text: |-
+  Выполните `ansible-playbook rollout.yml`; сравните HTTP на `8080` и JSON на `8081` всех трёх узлов. Ожидаются утверждённые выпуск, поколение и SHA-256 из контракта, правильные источники и неизменные записи процессов.
+
+  ```sh
+  for number in 1 2 3; do
+    host="app${number}-${DQ_NAMESPACE#dq-}"
+    printf '%s\n' "$host"
+    curl -fsS --max-time 3 "http://$host:8080/"
+    curl -fsS --max-time 3 "http://$host:8081/"
+    printf '\n'
+  done
+  python3 -I - <<'VERIFY_PUBLICATION'
+  import hashlib
+  import http.client
+  import json
+  import os
+  import shlex
+  import socket
+  import subprocess
+  from pathlib import Path
+  from urllib.parse import urlsplit
+
+  contract = json.loads(Path("application-contract.json").read_text())
+  wanted = contract["publication"]
+  assert hashlib.sha256(Path(contract["controllerArtifact"]).read_bytes()).hexdigest() == wanted["sha256"]
+  headers = {}
+  if contract["authentication"]:
+      import yaml
+      token = yaml.safe_load(Path("credentials.yml").read_text())["reader_token"]
+      assert isinstance(token, str) and token and all(33 <= ord(char) < 127 for char in token)
+      headers = {"Authorization": "Bearer " + token}
+
+  suffix = os.environ["DQ_NAMESPACE"].removeprefix("dq-")
+  source = contract["sourceHost"] + "-" + suffix
+  port = contract["port"]
+  def addresses(host):
+      return {item[4][0] for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)}
+
+  identity_probe = '''
+  import hashlib,json,sys
+  from pathlib import Path
+  process=json.loads(sys.argv[1])
+  pid=Path(process["pidFile"]).read_text().strip()
+  root=Path("/proc")/pid
+  status=dict(line.split(":",1) for line in (root/"status").read_text().splitlines() if ":" in line)
+  print(json.dumps({
+      "pid":pid,"starttime":(root/"stat").read_text().rsplit(") ",1)[1].split()[19],
+      "uid":status["Uid"].split(),"gid":status["Gid"].split(),"groups":status["Groups"].split(),
+      "caps":{key:status[key].strip() for key in ("CapInh","CapPrm","CapEff","CapBnd","CapAmb")},
+      "code":hashlib.sha256(Path(process["programPath"]).read_bytes()).hexdigest(),
+      "command_sha256":hashlib.sha256((root/"cmdline").read_bytes()).hexdigest(),
+  }))
+  '''
+  original = json.loads(Path("original-application-identities.json").read_text())
+  process = contract["process"]
+  remote = "/usr/bin/python3 -I -c " + shlex.quote(identity_probe) + " " + shlex.quote(json.dumps(process))
+  for host, role in contract["roles"].items():
+      address = host + "-" + suffix
+      identity = json.loads(subprocess.check_output(
+          ["ssh", "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-p", "2222", "root@" + address, remote],
+          timeout=5))
+      baseline = original[host][process["name"]]
+      fields = ("pid", "starttime", "uid", "gid", "groups", "caps", "code")
+      assert all(identity[key] == baseline[key] for key in fields)
+      command_bytes = chr(0).join(baseline["command"]).encode()
+      assert identity["command_sha256"] == hashlib.sha256(command_bytes).hexdigest()
+      connection = http.client.HTTPConnection(address, port, timeout=3)
+      try:
+          connection.request("GET", "/", headers=headers)
+          response = connection.getresponse()
+          assert response.status == 200
+          observed = json.loads(response.read(65536))
+      finally:
+          connection.close()
+      assert observed["ready"] is True and observed["role"] == role
+      data = observed["data"]
+      assert all(data.get(key) == value for key, value in wanted.items())
+      if host == contract["sourceHost"]:
+          assert data["origin"] == "local"
+      else:
+          origin = urlsplit(data["origin"])
+          assert origin.scheme == "http" and origin.port == port and origin.hostname
+          assert addresses(origin.hostname) & addresses(source)
+      print(host + ": publication matches")
+  VERIFY_PUBLICATION
+  ```
 debrief: Вы восстановили реальный источник публикации и передали утверждённый результат существующим потребителям,
   сохранив их идентичности.
 phrases.0: Я проверил фактическое состояние до изменения.

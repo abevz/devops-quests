@@ -29,15 +29,39 @@ stages.0.objectives.2.text: Auf jedem verwalteten Host (`app1`, `app2`, `app3`) 
 stages.0.objectives.3.text: HTTP auf Port `8080` liefert auf jedem verwalteten Host (`app1`, `app2`, `app3`) `north-96`.
 hints.0.text: Ein vertrauenswürdiger Snapshot und eine laufende Instanz haben unterschiedliche Lebenszyklen. Plane
   den Extraktionsumfang anhand der aktuellen Instanzbindung und bereits verwendeten Daten.
-hints.1.text: Vergleiche `tar -tf recovery.tar`, `application-contract.json`, `provided-application.py` und die
-  ursprünglichen Live-Belege. Prüfe vor der Extraktion aktuelle Anwendungseingaben und HTTP-Antworten auf den verwalteten
-  Hosts. Verfolge, welche Archiveinträge den Zustand der laufenden Instanz überschreiben würden.
-hints.2.text: Erstelle die zertifizierte Prüfsummenprüfung vor der Extraktion und wähle Konfigurationseinträge mit
-  include/exclude von unarchive. Benachrichtige nach der Extraktion den unterstützten Handler `dq-service reload`.
-  Beachte Ziel, Eigentümer und Gruppe aus dem Aufrufervertrag. Führe `ansible-playbook rollout.yml` aus; bestätige
-  `sha256sum recovery.tar` gegen den eingefrorenen Beleg, ursprüngliche Eigentümer und Modi sowie `north-96` über
-  HTTP an `8080` und `8081`. Die Anwendung muss ursprüngliche Instanz- und Mandantenwerte behalten; auch der Aufruferlauf
-  muss seinen Dienst aktualisieren.
+hints.1.text: |-
+  Vergleiche `tar -tf recovery.tar`, `application-contract.json`, `provided-application.py` und die ursprünglichen Live-Belege. Prüfe vor der Extraktion aktuelle Anwendungseingaben und HTTP-Antworten auf den verwalteten Hosts. Verfolge, welche Archiveinträge den Zustand der laufenden Instanz überschreiben würden.
+
+  Suche in der Archivübersicht nach Prüfsumme und Konfigurationseinträgen. Vergleiche ihre Pfade mit den Identitätsdateien der laufenden Instanz und prüfe Wiederherstellungspfad, Eigentümer und Gruppe des Aufrufers.
+hints.2.text: |-
+  Führe `ansible-playbook rollout.yml` aus; bestätige `sha256sum recovery.tar` gegen den eingefrorenen Beleg, ursprüngliche Eigentümer und Modi sowie `north-96` über HTTP an `8080` und `8081`. Die Anwendung muss ursprüngliche Instanz- und Mandantenwerte behalten; auch der Aufruferlauf muss seinen Dienst aktualisieren.
+
+  ```sh
+  (
+    set -euo pipefail
+    printf '%s  recovery.tar\n' "$(cat artifact.sha256)" | sha256sum -c -
+    for number in 1 2 3; do
+      inventory_name="app$number"
+      host="$inventory_name-${DQ_NAMESPACE#dq-}"
+      test "$(curl -fsS --max-time 3 "http://$host:8080/")" = north-96
+      curl -fsS --max-time 3 "http://$host:8081/" |
+        jq -e --arg host "$inventory_name" --slurpfile live original-live-data.json '
+          $live[0][$host] as $before | .message == "north-96" and
+          .instance == $before["consumer-binding.json"].json.instance and
+          .account == $before["tenant.json"].json.account and
+          .balance == $before["tenant.json"].json.balance' >/dev/null
+      test "$(ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host" "stat -c '%u:%g %a' /srv/site/message")" = "0:0 644"
+      expected=$(jq -er --arg host "$inventory_name" '
+        .[$host] | [.["consumer-binding.json"], .["tenant.json"]][] | [.uid, .gid, .mode] | @tsv
+      ' original-live-data.json | while read -r uid gid mode; do
+        printf '%s %s %o\n' "$uid" "$gid" "$mode"
+      done)
+      observed=$(ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host"       "stat -c '%u %g %a' /srv/site/consumer-binding.json /srv/site/tenant.json")
+      test "$observed" = "$expected"
+      printf '%s: HTTP, restored message and protected-file metadata match\n' "$inventory_name"
+    done
+  )
+  ```
 phrases.0: Ich habe die Wiederherstellung artifact überprüft, bevor ich sie verteilt habe.
 phrases.1: Ich habe den expliziten Besitz und die Berechtigungen wiederhergestellt.
 phrases.2: Ich habe jedes Ziel und den Live-Dienst nach reload überprüft.
