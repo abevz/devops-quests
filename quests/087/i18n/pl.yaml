@@ -22,15 +22,47 @@ brief: |-
 stages.0.brief: Przywróć spójny stan i normalną własność, zachowując obie ukończone tożsamości.
 hints.0.text: Własność blokady i zasobu może się rozejść. Migawka odzyskiwania może być wewnętrznie poprawna i nadal
   pomijać późniejszą ukończoną operację.
-hints.1.text: Porównaj `cat incident.txt failed-apply.log`, `tofu state pull`, `cat errored.tfstate`, `docker ps
-  -a` i bieżące obserwacje usługi. Osobno porównaj lineage, serial, ID zasobów i właściciela blokady; wcześniejszy
-  błąd nie opisuje bieżącego właściciela.
-hints.2.text: 'Uzgodnij normalne zakończenie zarejestrowanego obecnego właściciela przez udokumentowany kontrakt.
-  Zachowaj kopię bieżącego backendu, następnie uzgodnij brakujące pierwotne powiązanie w lokalnych kopiach roboczych
-  zamiast zastępować nowszą pracę całą starszą migawką. `tofu state mv -state=... -state-out=...` przenosi natywne
-  powiązanie między lokalnymi kopiami; wyślij tylko uzgodnioną migawkę ze zwykłymi zabezpieczeniami backendu. Sprawdź
-  oba pierwotne ID, niezmienione dowody, `completed: true` i kod `0` z `tofu plan -input=false -detailed-exitcode
-  -no-color`.'
+hints.1.text: |-
+  Porównaj `cat incident.txt failed-apply.log`, `tofu state pull`, `cat errored.tfstate`, `docker ps -a` i bieżące obserwacje usługi. Osobno porównaj lineage, serial, ID zasobów i właściciela blokady; wcześniejszy błąd nie opisuje bieżącego właściciela.
+
+  Odszukaj zarejestrowanego właściciela w kontrakcie backendu i porównaj jego stan ze starym błędem apply. W osobnych migawkach odszukaj brakujące pierwotne powiązanie i nowszy zasób już zapisany w stanie.
+
+  ```sh
+  curl -fsS http://127.0.0.1:18787/diagnostic | jq .lock
+  curl -fsS http://127.0.0.1:18787/owner | jq '{registered,handle,running,eof_requested,completed}'
+  sha256sum errored.tfstate
+  ```
+hints.2.text: |-
+  Sprawdź oba pierwotne ID, niezmienione dowody, `completed: true` i kod `0` z `tofu plan -input=false -detailed-exitcode -no-color`.
+
+  Porównaj lineage, serial i ID ukończonych operacji w kopii z początkową migawką backendu. Sprawdź odzyskane ID i lineage z pierwotnymi zapisami. Suma stanu z błędem musi odpowiadać początkowej. Plik musi zawierać `north-ready`, a endpoint właściciela zwrócić `true`.
+
+  ```sh
+  (
+    set -euo pipefail
+    ref=/run/dq/locking-identities.json
+    curl -fsS http://127.0.0.1:18787/owner | jq -e '.completed == true and .running == false'
+    test "$(sha256sum errored.tfstate | cut -d ' ' -f1)" = "$(jq -er .checkpoint_sha256 "$ref")"
+    python3 -I - <<'VERIFY_BACKUP'
+  import hashlib, json
+  from pathlib import Path
+  reference = json.loads(Path('/run/dq/locking-identities.json').read_text())
+  backup = json.loads(Path('before-recovery.tfstate').read_text())
+  canonical = json.dumps(backup, sort_keys=True, separators=(',', ':')).encode()
+  assert hashlib.sha256(canonical).hexdigest() == reference['backup_sha256']
+  VERIFY_BACKUP
+    tofu state pull | jq -e --slurpfile ref "$ref" '
+      def ids($type): [.resources[] | select(.mode=="managed" and .type==$type) | .instances[].attributes.id];
+      $ref[0] as $want | .lineage==$want.lineage and .serial >= $want.serial
+      and (ids("docker_container") | index($want.container_id) != null)
+      and (ids("terraform_data") | index($want.progress_id) != null)'
+    container=$(jq -er .container_id "$ref")
+    docker inspect "$container" | jq -e --arg id "$container" '
+      .[0] | .Id==$id and .State.Running==true and .State.Health.Status=="healthy"'
+    cat notice.txt
+    tofu plan -input=false -detailed-exitcode -no-color
+  )
+  ```
 debrief: Przekazanie blokady spowodowało rozbieżność dwóch klientów. Odzyskiwanie zachowało nowszy ukończony stan
   i pierwotny zasób fizyczny, a rzeczywisty bieżący właściciel zwolnił własną blokadę.
 phrases.0: Przed dokonaniem zmiany sprawdziłem stan działania.

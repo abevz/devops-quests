@@ -20,17 +20,74 @@ stages.0.brief: Recupera los límites de módulos y estados conservando objetos 
   reciente.
 hints.0.text: El paquete de un módulo, un vínculo de recurso y un límite de estado son aspectos distintos de recuperación.
   Un backup antiguo válido puede omitir trabajo de un estado independiente más reciente.
-hints.1.text: Compara `cat main.tf infra/main.tf infra/module-contract.json`, `find modules infra -type f`, `tofu
-  state list`, `tofu -chdir=infra state pull` y `jq . safe-state.json`. Inspecciona los objetos Docker actuales
-  y el contenido del volumen. Separa lineage, vínculos actuales e ID completados de cada raíz del backup antiguo;
-  usa `tofu providers schema -json` y la ayuda nativa para las interfaces del proveedor y módulo.
-hints.2.text: Reconstruye la interfaz declarada del módulo y guarda ambas instantáneas actuales antes de cambiar
-  vínculos. Trabaja sobre copias del backup antiguo y del estado de destino actual; `tofu state mv -state=... -state-out=...`
-  transfiere solo los vínculos de módulo ausentes sin sobrescribir trabajo nuevo del destino. Publica el estado
-  reconciliado con las protecciones normales de lineage/serial y corrige la dirección configurada de la raíz principal.
-  Guarda y exporta un plan por raíz; inspecciona los ID originales y solo acciones gestionadas `no-op` antes de
-  aplicar cambios únicamente de salidas. Después verifica código `0` en ambos planes detallados nuevos y que los
-  bytes del volumen no cambiaron.
+hints.1.text: |-
+  Compara `cat main.tf infra/main.tf infra/module-contract.json`, `find modules infra -type f`, `tofu state list`, `tofu -chdir=infra state pull` y `jq . safe-state.json`. Inspecciona los objetos Docker actuales y el contenido del volumen. Separa lineage, vínculos actuales e ID completados de cada raíz del backup antiguo; usa `tofu providers schema -json` y la ayuda nativa para las interfaces del proveedor y módulo.
+
+  Sigue la interfaz de invocación prevista en infra y compara las direcciones de los módulos vinculados con la copia anterior. En cada raíz, revisa los ID de proveedor originales, lineage y serial del estado actual.
+hints.2.text: |-
+  Tras reconciliar los vínculos y antes de aplicar los cambios de salidas, exporta ambos planes si aún faltan sus comprobantes JSON. Los comandos conservan los comprobantes existentes y guardan planes sin cambios en recursos gestionados.
+
+  ```sh
+  for root in . infra; do
+    (
+      set -euo pipefail
+      expected=1
+      if test "$root" = infra; then expected=4; fi
+      cd "$root"
+      test -s recovery-plan.json && exit 0
+      tmp=$(mktemp -d)
+      trap 'rm -rf -- "$tmp"' EXIT
+      tofu plan -input=false -no-color -out="$tmp/recovery.plan"
+      tofu show -json "$tmp/recovery.plan" > "$tmp/recovery.json"
+      jq -e --argjson expected "$expected" '
+        ([.resource_changes[] | select(.mode=="managed")] | length)==$expected
+        and all(.resource_changes[];
+        if .mode=="managed" then .change.actions==["no-op"]
+        else .mode=="data" and (.change.actions==["read"] or .change.actions==["no-op"]) end)' \
+        "$tmp/recovery.json" >/dev/null
+      set -o noclobber
+      cat "$tmp/recovery.json" > recovery-plan.json
+    )
+  done
+  ```
+
+  Guarda y exporta un plan por raíz; inspecciona los ID originales y solo acciones gestionadas `no-op` antes de aplicar cambios únicamente de salidas. Después verifica código `0` en ambos planes detallados nuevos y que los bytes del volumen no cambiaron.
+
+  Compara cada instantánea con el estado inicial de su propia raíz. El plan principal debe contener una entrada ledger gestionada `no-op`, y el de infraestructura cuatro entradas gestionadas conservadas `no-op`, con lecturas de datos permitidas. Contrasta los ID de runtime y la suma del archivo del volumen con las observaciones originales.
+
+  ```sh
+  (
+    set -euo pipefail
+    ref=/run/dq/facts/0/recovery-identities.json
+    test "$(sha256sum safe-state.json | cut -d ' ' -f1)" = "$(cat /run/dq/facts/0/safe-state.sha256)"
+    python3 -I - <<'VERIFY_BACKUPS'
+  import hashlib, json
+  from pathlib import Path
+  reference = json.loads(Path('/run/dq/facts/0/recovery-identities.json').read_text())
+  for key, name in (('root', 'before-recovery.tfstate'), ('infra', 'infra/before-recovery.tfstate')):
+      backup = json.loads(Path(name).read_text())
+      canonical = json.dumps(backup, sort_keys=True, separators=(',', ':')).encode()
+      assert hashlib.sha256(canonical).hexdigest() == reference[key + '_backup_sha256']
+  VERIFY_BACKUPS
+    jq -c '{file:input_filename,changes:[.resource_changes[] | {address,mode,actions:.change.actions,before_id:.change.before.id,after_id:.change.after.id}]}' \
+      recovery-plan.json infra/recovery-plan.json
+    test "$(tofu output -raw ledger_id)" = "$(cat /run/dq/facts/0/original-id)"
+    cat ledger.txt
+    tofu -chdir=infra output -json runtime | jq -e --slurpfile ref "$ref" '
+      . == ($ref[0] | {container_id,network_id,volume_name})'
+    container=$(jq -er .container_id "$ref")
+    volume=$(jq -er .volume_name "$ref")
+    docker inspect "$container" | jq -e --slurpfile ref "$ref" '
+      $ref[0] as $want | .[0] | .Id==$want.container_id and .State.Running==true
+      and any(.NetworkSettings.Networks[]; .NetworkID==$want.network_id)
+      and any(.Mounts[]; .Type=="volume" and .Name==$want.volume_name and .Destination=="/data")'
+    docker volume inspect "$volume" | jq -e --slurpfile ref "$ref" '.[0].CreatedAt==$ref[0].volume_created_at'
+    digest=$(docker exec "$container" cat /data/ledger | sha256sum | cut -d ' ' -f1)
+    test "$digest" = "$(jq -er .data_sha256 "$ref")"
+    tofu plan -input=false -detailed-exitcode -no-color
+    tofu -chdir=infra plan -input=false -detailed-exitcode -no-color
+  )
+  ```
 phrases.0: Verifiqué un backup antes de usarlo como evidencia de recuperación.
 phrases.1: Concilié las direcciones de los módulos sin reemplazar el recurso.
 phrases.2: Verifiqué identity, outputs y un plan final vacío.

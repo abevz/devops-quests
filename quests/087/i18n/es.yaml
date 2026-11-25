@@ -22,15 +22,47 @@ brief: |-
 stages.0.brief: Recupera un estado coherente y la propiedad normal conservando ambas identidades completadas.
 hints.0.text: La propiedad del bloqueo y del recurso puede divergir. Una instantánea de recuperación puede ser válida
   internamente y omitir una operación completada después.
-hints.1.text: Compara `cat incident.txt failed-apply.log`, `tofu state pull`, `cat errored.tfstate`, `docker ps
-  -a` y las observaciones actuales del servicio. Compara por separado lineage, serial, ID de recursos y propietario
-  del bloqueo; un error anterior no describe al propietario actual.
-hints.2.text: 'Coordina la terminación normal del propietario actual registrado mediante el contrato documentado.
-  Guarda una copia del backend actual y reconcilia el vínculo original ausente en copias de trabajo locales, en
-  vez de reemplazar trabajo nuevo con una instantánea antigua completa. `tofu state mv -state=... -state-out=...`
-  mueve un vínculo nativo entre copias locales; envía solo la instantánea reconciliada con las protecciones normales
-  del backend. Verifica ambos ID originales, evidencias sin cambios, `completed: true` y código `0` de `tofu plan
-  -input=false -detailed-exitcode -no-color`.'
+hints.1.text: |-
+  Compara `cat incident.txt failed-apply.log`, `tofu state pull`, `cat errored.tfstate`, `docker ps -a` y las observaciones actuales del servicio. Compara por separado lineage, serial, ID de recursos y propietario del bloqueo; un error anterior no describe al propietario actual.
+
+  Localiza al propietario registrado en el contrato del backend y contrasta su estado con el error anterior de apply. En las instantáneas separadas, identifica el vínculo original que falta y el recurso más reciente ya registrado.
+
+  ```sh
+  curl -fsS http://127.0.0.1:18787/diagnostic | jq .lock
+  curl -fsS http://127.0.0.1:18787/owner | jq '{registered,handle,running,eof_requested,completed}'
+  sha256sum errored.tfstate
+  ```
+hints.2.text: |-
+  Verifica ambos ID originales, evidencias sin cambios, `completed: true` y código `0` de `tofu plan -input=false -detailed-exitcode -no-color`.
+
+  Compara lineage, serial e ID de operaciones completadas de la copia con la instantánea inicial del backend. Contrasta los ID y lineage recuperados con los registros originales. La suma del estado erróneo debe coincidir con la inicial. El archivo debe contener `north-ready` y el endpoint del propietario debe mostrar `true`.
+
+  ```sh
+  (
+    set -euo pipefail
+    ref=/run/dq/locking-identities.json
+    curl -fsS http://127.0.0.1:18787/owner | jq -e '.completed == true and .running == false'
+    test "$(sha256sum errored.tfstate | cut -d ' ' -f1)" = "$(jq -er .checkpoint_sha256 "$ref")"
+    python3 -I - <<'VERIFY_BACKUP'
+  import hashlib, json
+  from pathlib import Path
+  reference = json.loads(Path('/run/dq/locking-identities.json').read_text())
+  backup = json.loads(Path('before-recovery.tfstate').read_text())
+  canonical = json.dumps(backup, sort_keys=True, separators=(',', ':')).encode()
+  assert hashlib.sha256(canonical).hexdigest() == reference['backup_sha256']
+  VERIFY_BACKUP
+    tofu state pull | jq -e --slurpfile ref "$ref" '
+      def ids($type): [.resources[] | select(.mode=="managed" and .type==$type) | .instances[].attributes.id];
+      $ref[0] as $want | .lineage==$want.lineage and .serial >= $want.serial
+      and (ids("docker_container") | index($want.container_id) != null)
+      and (ids("terraform_data") | index($want.progress_id) != null)'
+    container=$(jq -er .container_id "$ref")
+    docker inspect "$container" | jq -e --arg id "$container" '
+      .[0] | .Id==$id and .State.Running==true and .State.Health.Status=="healthy"'
+    cat notice.txt
+    tofu plan -input=false -detailed-exitcode -no-color
+  )
+  ```
 debrief: Una transferencia del bloqueo hizo divergir dos clientes. La recuperación conservó el estado completado
   más reciente y el recurso físico original; el propietario actual real liberó su propio bloqueo.
 phrases.0: Verifiqué el estado de ejecución antes de realizar un cambio.

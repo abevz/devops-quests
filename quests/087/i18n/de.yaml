@@ -23,15 +23,47 @@ stages.0.brief: Stelle konsistenten State und reguläre Eigentümerschaft wieder
   Identitäten.
 hints.0.text: Sperr- und Ressourceneigentümerschaft können auseinanderlaufen. Ein Wiederherstellungs-Snapshot kann
   intern gültig sein und dennoch eine später abgeschlossene Operation auslassen.
-hints.1.text: Vergleiche `cat incident.txt failed-apply.log`, `tofu state pull`, `cat errored.tfstate`, `docker
-  ps -a` und die aktuellen Dienstbeobachtungen. Vergleiche Lineage, Serial, Ressourcen-IDs und Sperreigentümer getrennt;
-  ein früherer Fehler beschreibt nicht den aktuellen Eigentümer.
-hints.2.text: 'Koordiniere das reguläre Ende des registrierten aktuellen Eigentümers über den dokumentierten Vertrag.
-  Sichere das aktuelle Backend und gleiche dann die fehlende ursprüngliche Bindung in lokalen Arbeitskopien ab,
-  statt neuere Arbeit durch einen ganzen älteren Snapshot zu ersetzen. `tofu state mv -state=... -state-out=...`
-  verschiebt native Bindungen zwischen lokalen Kopien; übertrage nur den abgeglichenen Snapshot mit den üblichen
-  Backend-Schutzmaßnahmen. Prüfe beide ursprünglichen IDs, unveränderte Wiederherstellungsdaten, `completed: true`
-  und Exit `0` von `tofu plan -input=false -detailed-exitcode -no-color`.'
+hints.1.text: |-
+  Vergleiche `cat incident.txt failed-apply.log`, `tofu state pull`, `cat errored.tfstate`, `docker ps -a` und die aktuellen Dienstbeobachtungen. Vergleiche Lineage, Serial, Ressourcen-IDs und Sperreigentümer getrennt; ein früherer Fehler beschreibt nicht den aktuellen Eigentümer.
+
+  Suche den registrierten Besitzer im Backend-Vertrag und vergleiche seinen Status mit dem alten Apply-Fehler. Ermittle in getrennten Snapshots die fehlende ursprüngliche Bindung und die bereits erfasste neuere Ressource.
+
+  ```sh
+  curl -fsS http://127.0.0.1:18787/diagnostic | jq .lock
+  curl -fsS http://127.0.0.1:18787/owner | jq '{registered,handle,running,eof_requested,completed}'
+  sha256sum errored.tfstate
+  ```
+hints.2.text: |-
+  Prüfe beide ursprünglichen IDs, unveränderte Wiederherstellungsdaten, `completed: true` und Exit `0` von `tofu plan -input=false -detailed-exitcode -no-color`.
+
+  Vergleiche Lineage, Serial und abgeschlossene IDs der Sicherung mit dem anfänglichen Backend-Snapshot. Vergleiche wiederhergestellte IDs und Lineage mit den Originalaufzeichnungen. Die Prüfsumme des Fehlerzustands muss mit der Anfangsbeobachtung übereinstimmen. Die Datei muss `north-ready` enthalten und der Besitzer-Endpunkt `true` melden.
+
+  ```sh
+  (
+    set -euo pipefail
+    ref=/run/dq/locking-identities.json
+    curl -fsS http://127.0.0.1:18787/owner | jq -e '.completed == true and .running == false'
+    test "$(sha256sum errored.tfstate | cut -d ' ' -f1)" = "$(jq -er .checkpoint_sha256 "$ref")"
+    python3 -I - <<'VERIFY_BACKUP'
+  import hashlib, json
+  from pathlib import Path
+  reference = json.loads(Path('/run/dq/locking-identities.json').read_text())
+  backup = json.loads(Path('before-recovery.tfstate').read_text())
+  canonical = json.dumps(backup, sort_keys=True, separators=(',', ':')).encode()
+  assert hashlib.sha256(canonical).hexdigest() == reference['backup_sha256']
+  VERIFY_BACKUP
+    tofu state pull | jq -e --slurpfile ref "$ref" '
+      def ids($type): [.resources[] | select(.mode=="managed" and .type==$type) | .instances[].attributes.id];
+      $ref[0] as $want | .lineage==$want.lineage and .serial >= $want.serial
+      and (ids("docker_container") | index($want.container_id) != null)
+      and (ids("terraform_data") | index($want.progress_id) != null)'
+    container=$(jq -er .container_id "$ref")
+    docker inspect "$container" | jq -e --arg id "$container" '
+      .[0] | .Id==$id and .State.Running==true and .State.Health.Status=="healthy"'
+    cat notice.txt
+    tofu plan -input=false -detailed-exitcode -no-color
+  )
+  ```
 debrief: Eine Sperrübergabe ließ zwei Clients auseinanderlaufen. Die Wiederherstellung erhielt den neueren abgeschlossenen
   State und die ursprüngliche physische Ressource; der echte aktuelle Eigentümer gab seine eigene Sperre frei.
 phrases.0: Ich habe den Betriebsstatus überprüft, bevor ich eine Änderung vorgenommen habe.
