@@ -28,115 +28,64 @@ stages.0.brief: Stellen Sie den KV-Zugriff der Anwendung ohne zusätzliche Reade
   Ablehnung und Anwendungsablehnung in `consumer-incident.json` unter `baseline` und `application` zu, jeweils mit
   genau den vier exportierten Audit-Feldern. Die ursprüngliche `incident.json` behält den ersten Vorgang.
 hints.0.text: Serververfügbarkeit, Berechtigung und übernommene Verbraucherpublikation sind getrennte Beobachtungen.
-hints.1.text: 'Vergleichen Sie Live-Antwort, Quellenprofile, Anwendungsprotokolle und ursprünglichen Vertrag. Verfolgen
-  Sie zuerst die fehlerhafte Grenze.
+hints.1.text: |-
+  Vergleichen Sie Live-Antwort, Quellenprofile, Anwendungsprotokolle und ursprünglichen Vertrag. Verfolgen Sie zuerst die fehlerhafte Grenze.
 
+  Suche das ausgewählte Quellprofil und den aktuellen Cache-Status des Verbrauchers. Vergleiche Statusantwort und Ablehnungsprotokoll mit dem Quellpfad und den erwarteten Eingaben.
 
   ```bash
-
   cat consumer/source.json consumer/application.log consumer-contract.json
-
   curl -fsS --max-time 2 http://127.0.0.1:18081/status
-
   ```
 
-
   ```bash
-
   cat consumer/initial-observation.json
-
-  jq ''map({request_id,path,operation,reason})'' consumer-audit.json
-
+  jq 'map({request_id,path,operation,reason})' consumer-audit.json
   cat reader.hcl
-
-  ```'
-hints.2.text: 'Zeichnen Sie nur die vier exportierten Felder auf und reparieren Sie den Lesepfad KV v2, ohne den
-  Zugriff zu erweitern. Aktualisieren Sie nach der Bearbeitung von `reader.hcl` die laufende Trainingsrichtlinie
-  mit der Manager-Identität. Das Datei-Audit nutzt `log_raw=false`; nur freigegebene Ablehnungsmetadaten werden
-  nach `audit-events.json` und in eingefrorene Fakten exportiert. Rohe Audit-Einträge, Authentifizierungsfelder
-  und geheime Werte bleiben außerhalb der Workstation. Korrelieren Sie request_id, Pfad und operation, ohne Authentifizierungsdaten
-  zu kopieren.
-
-
+  ```
+hints.2.text: |-
   Prüfen Sie in `~/quest` auf der Workstation:
 
-
-  - `jq -e ''keys == ["operation","path","reason","request_id"]'' incident.json >/dev/null`
-
+  - `jq -e 'keys == ["operation","path","reason","request_id"]' incident.json >/dev/null`
 
   Exit `0`; der Vorfall enthält genau die vier geforderten Felder.
 
-
   - `source platform.env`
-
-  - `curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
-  | jq -e ''.data.data.value == "north-secret"'' >/dev/null`
-
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
 
   Exit `0`; keine Zugangsdaten oder geheimen Werte werden ausgegeben.
 
-
   - `source platform.env`
-
-  - `curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") -H ''Content-Type: application/json''
-  --request POST --data ''{"paths":["secret/data/dispatch","secret/data/other","sys/audit"]}'' "$VAULT_ADDR/v1/sys/capabilities-self"
-  | jq ''{dispatch:."secret/data/dispatch",other:."secret/data/other",audit:."sys/audit"}''`
-
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") -H 'Content-Type: application/json' --request POST --data '{"paths":["secret/data/dispatch","secret/data/other","sys/audit"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '{dispatch:."secret/data/dispatch",other:."secret/data/other",audit:."sys/audit"}'`
 
   `dispatch: ["read"]`; `other` und `audit`: `["deny"]`.
 
-
-  Profil auf freigegebene API-Quelle und Reader-Zugangsdaten einstellen. Private Datei bewahren und SIGHUP an die
-  bestehende PID senden; Manager ist eine andere Identität. HTTP-Publikation prüfen. Erwartet: OK.
-
+  Profil auf freigegebene API-Quelle und Reader-Zugangsdaten einstellen. Private Datei bewahren und SIGHUP an die bestehende PID senden; Manager ist eine andere Identität. HTTP-Publikation prüfen. Erwartet: OK.
 
   ```bash
-
   set -euo pipefail
-
   cd ~/quest
-
   curl -fsS --max-time 2 http://127.0.0.1:18081/ > observed-publication.json
-
-  python3 -I - <<''VERIFY_PUBLICATION''
-
+  python3 -I - <<'VERIFY_PUBLICATION'
   import json
-
   from pathlib import Path
-
-  contract=json.loads(Path(''consumer-contract.json'').read_text())
-
-  observed=json.loads(Path(''observed-publication.json'').read_text())
-
-  assert observed[''ready''] is True
-
-  assert observed[''source'']==contract[''vault_url'']
-
-  assert observed[''path'']==contract[''path'']
-
-  assert observed[''value_sha256'']==contract[''value_sha256'']
-
-  assert observed[''version'']==contract[''version'']
-
-  print(''OK'')
-
+  contract=json.loads(Path('consumer-contract.json').read_text())
+  observed=json.loads(Path('observed-publication.json').read_text())
+  assert observed['ready'] is True
+  assert observed['source']==contract['vault_url']
+  assert observed['path']==contract['path']
+  assert observed['value_sha256']==contract['value_sha256']
+  assert observed['version']==contract['version']
+  print('OK')
   VERIFY_PUBLICATION
-
   ```
 
-
-  Beide Ablehnungen sind ausschließlich anhand exportierter Metadaten zugeordnet; incident beschreibt weiterhin
-  die ursprüngliche Anfrage.
-
+  Beide Ablehnungen sind ausschließlich anhand exportierter Metadaten zugeordnet; incident beschreibt weiterhin die ursprüngliche Anfrage.
 
   ```bash
-
-  jq -e --slurpfile events consumer-audit.json ''keys==["application","baseline"] and .baseline==($events[0][]|select(.path=="secret/data/dispatch"))
-  and .application==($events[0][]|select(.path=="secret/dispatch"))'' consumer-incident.json
-
+  jq -e --slurpfile events consumer-audit.json 'keys==["application","baseline"] and .baseline==($events[0][]|select(.path=="secret/data/dispatch")) and .application==($events[0][]|select(.path=="secret/dispatch"))' consumer-incident.json
   ```
-
-  Erwartet: true.'
+  Erwartet: true.
 phrases.0: Ich habe eine abgelehnte Anfrage mit ihrer Prüfanforderung ID korreliert.
 phrases.1: Ich habe Authentifizierungsdaten und geheime Werte aus dem Vorfallbericht herausgehalten.
 phrases.2: Ich habe die korrigierten Lese- und negativen Autorisierungsprüfungen überprüft.

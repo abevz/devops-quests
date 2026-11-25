@@ -26,113 +26,64 @@ stages.0.brief: Przywróć dostęp aplikacji do jej publikacji KV bez rozszerzan
   powiąż pierwotną odmowę oraz odmowę aplikacji pod kluczami `baseline` i `application`, każda zawiera tylko cztery
   eksportowane pola audytu. Pierwotny `incident.json` nadal opisuje pierwsze żądanie.
 hints.0.text: Dostępność serwera, autoryzacja i publikacja przyjęta przez konsumenta są odrębnymi obserwacjami.
-hints.1.text: 'Porównaj odpowiedź usługi, profile źródeł, dzienniki aplikacji i pierwotny kontrakt. Najpierw prześledź
-  pierwszą uszkodzoną granicę.
+hints.1.text: |-
+  Porównaj odpowiedź usługi, profile źródeł, dzienniki aplikacji i pierwotny kontrakt. Najpierw prześledź pierwszą uszkodzoną granicę.
 
+  Znajdź wybrany profil źródła i bieżący stan pamięci podręcznej konsumenta. Porównaj odpowiedź statusową i ślad odrzucenia ze ścieżką źródła i oczekiwanymi danymi.
 
   ```bash
-
   cat consumer/source.json consumer/application.log consumer-contract.json
-
   curl -fsS --max-time 2 http://127.0.0.1:18081/status
-
   ```
 
-
   ```bash
-
   cat consumer/initial-observation.json
-
-  jq ''map({request_id,path,operation,reason})'' consumer-audit.json
-
+  jq 'map({request_id,path,operation,reason})' consumer-audit.json
   cat reader.hcl
-
-  ```'
-hints.2.text: 'Zapisz tylko cztery wyeksportowane pola i napraw ścieżkę odczytu KV v2 bez poszerzania dostępu. Po
-  edycji `reader.hcl` zaktualizuj działającą politykę ćwiczebną tożsamością manager. Audyt plikowy używa `log_raw=false`;
-  do `audit-events.json` i zamrożonych faktów trafiają tylko dozwolone metadane odmowy. Surowe rekordy audytu, pola
-  uwierzytelniania i tajne wartości pozostają poza workstation. Skoreluj request_id, path i operation bez kopiowania
-  danych uwierzytelniających.
-
-
+  ```
+hints.2.text: |-
   Sprawdź z `~/quest` na workstation:
 
-
-  - `jq -e ''keys == ["operation","path","reason","request_id"]'' incident.json >/dev/null`
-
+  - `jq -e 'keys == ["operation","path","reason","request_id"]' incident.json >/dev/null`
 
   Kod `0`; incydent ma dokładnie cztery wymagane pola.
 
-
   - `source platform.env`
-
-  - `curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
-  | jq -e ''.data.data.value == "north-secret"'' >/dev/null`
-
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
 
   Kod `0`; dane uwierzytelniające i tajne wartości nie są wyświetlane.
 
-
   - `source platform.env`
-
-  - `curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") -H ''Content-Type: application/json''
-  --request POST --data ''{"paths":["secret/data/dispatch","secret/data/other","sys/audit"]}'' "$VAULT_ADDR/v1/sys/capabilities-self"
-  | jq ''{dispatch:."secret/data/dispatch",other:."secret/data/other",audit:."sys/audit"}''`
-
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") -H 'Content-Type: application/json' --request POST --data '{"paths":["secret/data/dispatch","secret/data/other","sys/audit"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq '{dispatch:."secret/data/dispatch",other:."secret/data/other",audit:."sys/audit"}'`
 
   `dispatch: ["read"]`; `other` i `audit`: `["deny"]`.
 
-
-  Dopasuj profil do zatwierdzonego API i danych reader. Zachowaj prywatność pliku i wyślij SIGHUP do istniejącego
-  PID; manager to inna tożsamość. Sprawdź publikację HTTP. Oczekiwane: OK.
-
+  Dopasuj profil do zatwierdzonego API i danych reader. Zachowaj prywatność pliku i wyślij SIGHUP do istniejącego PID; manager to inna tożsamość. Sprawdź publikację HTTP. Oczekiwane: OK.
 
   ```bash
-
   set -euo pipefail
-
   cd ~/quest
-
   curl -fsS --max-time 2 http://127.0.0.1:18081/ > observed-publication.json
-
-  python3 -I - <<''VERIFY_PUBLICATION''
-
+  python3 -I - <<'VERIFY_PUBLICATION'
   import json
-
   from pathlib import Path
-
-  contract=json.loads(Path(''consumer-contract.json'').read_text())
-
-  observed=json.loads(Path(''observed-publication.json'').read_text())
-
-  assert observed[''ready''] is True
-
-  assert observed[''source'']==contract[''vault_url'']
-
-  assert observed[''path'']==contract[''path'']
-
-  assert observed[''value_sha256'']==contract[''value_sha256'']
-
-  assert observed[''version'']==contract[''version'']
-
-  print(''OK'')
-
+  contract=json.loads(Path('consumer-contract.json').read_text())
+  observed=json.loads(Path('observed-publication.json').read_text())
+  assert observed['ready'] is True
+  assert observed['source']==contract['vault_url']
+  assert observed['path']==contract['path']
+  assert observed['value_sha256']==contract['value_sha256']
+  assert observed['version']==contract['version']
+  print('OK')
   VERIFY_PUBLICATION
-
   ```
-
 
   Obie odmowy powiązano wyłącznie przez eksportowane metadane; pierwotny incident nadal opisuje pierwsze żądanie.
 
-
   ```bash
-
-  jq -e --slurpfile events consumer-audit.json ''keys==["application","baseline"] and .baseline==($events[0][]|select(.path=="secret/data/dispatch"))
-  and .application==($events[0][]|select(.path=="secret/dispatch"))'' consumer-incident.json
-
+  jq -e --slurpfile events consumer-audit.json 'keys==["application","baseline"] and .baseline==($events[0][]|select(.path=="secret/data/dispatch")) and .application==($events[0][]|select(.path=="secret/dispatch"))' consumer-incident.json
   ```
-
-  Oczekiwane: true.'
+  Oczekiwane: true.
 phrases.0: Skorelowałem odrzucone żądanie poprzez audyt request ID.
 phrases.1: Nie umieściłem danych uwierzytelniających ani tajnych wartości w raporcie o incydencie.
 phrases.2: Zweryfikowałem poprawione read i negatywne kontrole autoryzacyjne.

@@ -34,57 +34,101 @@ stages.0.brief: Przywróć uwierzytelniony dostęp do istniejącego prywatnego r
 stages.1.brief: Prywatna usługa obrazów i obciążenie są niedostępne. Odzyskaj pierwotny registry, potem prywatne
   pobieranie, zachowując artefakt, kontroler, program i tożsamość obiektu uwierzytelniania.
 hints.0.text: Dostępność usługi, zaufanie TLS i uwierzytelnianie kubelet to odrębne granice.
-hints.1.text: 'Sprawdź potwierdzenie sterowania, kontrakt źródła, Deployment i metadane pull Secret. Po próbie pobrania
-  zdarzenia rozróżniają błędy transportu i autoryzacji.
+hints.1.text: |-
+  Sprawdź potwierdzenie sterowania, kontrakt źródła, Deployment i metadane pull Secret. Po próbie pobrania zdarzenia rozróżniają błędy transportu i autoryzacji.
 
+  Porównaj źródło obrazu i oczekiwany digest z Deploymentem i obserwacją gotowego Poda. Sprawdź zapis certyfikatu i nazwy Secretów, aby rozróżnić zaufanie i uwierzytelnienie.
 
   ```bash
-
-  cat registry-agent-status.json registry-source.json
-
+  cat registry-agent-status.json
+  jq '{endpoint,ca_sha256}' registry-source.json
   kubectl describe deployment board
-
   kubectl get secret -o custom-columns=NAME:.metadata.name,TYPE:.type
-
   kubectl get events --sort-by=.lastTimestamp
+  ```
+hints.2.text: |-
+  Sprawdź z `~/quest` na workstation:
 
-  ```'
-hints.2.text: "Najpierw sprawdź TLS i uwierzytelnienie, następnie przywróć jedną replikę board i zweryfikuj jej\
-  \ digest i HTTP. Zapisz dokładnie `{\"action\":\"start\"}` w `registry-repair.json`. Następne sprawdzenie celów\
-  \ uruchamia wyłącznie niezmieniony rejestr tej instalacji; inne akcje i dodatkowe pola są odrzucane. Dostarczony\
-  \ Secret pobierania to `registry-pull`. Zapisz tylko udokumentowaną akcję start; agent celuje w jeden stały kontener\
-  \ z grą.\n\nSprawdź z `~/quest` na workstation:\n\n- `source platform.env`\n- `curl -fsS --cacert registry-ca.crt\
-  \ --config <(printf 'user = \"%s:%s\"\\n' \"$REGISTRY_USER\" \"$REGISTRY_PASSWORD\") \"https://$(jq -r .endpoint\
-  \ /run/dq/facts/0/registry-target.json)/v2/\"`\n\nEtap 1: Uwierzytelniona odpowiedź TLS: `{}`.\n\n- `kubectl get\
-  \ deployment board -o json | jq '{replicas:.spec.replicas, ready:.status.readyReplicas,worker:(.spec.template.spec.containers[]|select(.name==\"\
-  worker\")|{image,imagePullPolicy})}'`\n\nEtap 2: `replicas: 1`, `ready: 1`. Obraz odpowiada zamrożonemu wydaniu,\
-  \ a polityka pobierania to `Always`.\n\n- `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080`\n\
-  \nEtap 2: `north-78`.\n\nUwierzytelniony odczyt workstation nie aktualizuje Secret kubelet. Zbuduj aktualizację\
-  \ istniejącego pull Secret pierwotnymi danymi, zachowaj UID, a następnie uruchom jedyny zatwierdzony worker. Zachowaj\
-  \ skrót i Always; nie obchodź autoryzacji ani nie zastępuj kontrolera.\n\n```bash\nset -euo pipefail\ncd ~/quest\n\
-  source platform.env\npython3 -I - <<'VERIFY_RELEASE'\n\nimport base64,hashlib,json,os,ssl,urllib.request\nfrom\
-  \ pathlib import Path\nsource=json.loads(Path('/run/dq/facts/0/registry-source.json').read_text())\nassert os.environ['REGISTRY']==source['endpoint']\n\
-  assert os.environ['REGISTRY_USER']==source['username']\nassert hashlib.sha256(os.environ['REGISTRY_PASSWORD'].encode()).hexdigest()==source['password_sha256']\n\
-  assert hashlib.sha256(Path('registry-ca.crt').read_bytes()).hexdigest()==source['ca_sha256']\nclass NoRedirect(urllib.request.HTTPRedirectHandler):\n\
-  \ def redirect_request(self,*args,**kwargs):\n  return None\nopener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect(),\n\
-  urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile='registry-ca.crt')))\nheaders={'Authorization':'Basic\
-  \ '+base64.b64encode((source['username']+':'+os.environ['REGISTRY_PASSWORD']).encode()).decode(),\n'Accept':'application/vnd.docker.distribution.manifest.v2+json,\
-  \ application/vnd.oci.image.manifest.v1+json'}\ndef manifest(reference):\n request=urllib.request.Request('https://'+source['endpoint']+'/v2/parcel/manifests/'+reference,headers=headers)\n\
-  \ with opener.open(request,timeout=2) as response:\n  body=response.read(2097153)\n  assert len(body)<=2097152\n\
-  \  digest='sha256:'+hashlib.sha256(body).hexdigest()\n  assert response.headers.get('Docker-Content-Digest')==digest\n\
-  \  return digest\n\nfrom dq_check import registry_credentials\nimport subprocess\ncontract=json.loads(Path('/run/dq/facts/0/registry-consumer.json').read_text())\n\
-  target=json.loads(Path('/run/dq/facts/0/registry-target.json').read_text())\nassert manifest(target['image'].split('@',1)[1])==target['image'].split('@',1)[1]\n\
-  secret=json.loads(subprocess.check_output(['kubectl','get','secret',contract['secret_name'],'-o','json'],timeout=2))\n\
-  assert secret['metadata']['uid']==contract['secret_uid']\nassert registry_credentials(secret,source['endpoint'],source['username'],os.environ['REGISTRY_PASSWORD'])\n\
-  \n\nimport json,subprocess\nfrom pathlib import Path\nfrom dq_check import current_pods,pod_worker,ready_image,workload_worker,pull_secret_names\n\
-  def k(*args):\n return json.loads(subprocess.check_output(['kubectl',*args,'-o','json'],timeout=2))\ncontract=json.loads(Path('/run/dq/facts/0/registry-consumer.json').read_text())\n\
-  old=contract['deployment']\ndeployment=k('get','deployment','board')\nassert deployment['metadata']['uid']==old['metadata']['uid']\n\
-  assert deployment['spec']['selector']==old['spec']['selector']\nassert deployment['spec']['template']['spec']==old['spec']['template']['spec']\n\
-  worker=workload_worker(deployment)\nactive=current_pods(deployment,k('get','replicasets'),k('get','pods'))\nassert\
-  \ len(active)==1\nfor pod in active:\n assert ready_image(pod,worker['image'])\n assert pod_worker(pod).get('imagePullPolicy')=='Always'\n\
-  \ assert pull_secret_names(pod)=={contract['secret_name']}\n assert pod_worker(pod).get('command')==worker.get('command')\n\
-  \ assert pod_worker(pod).get('args')==worker.get('args')\n\nprint('OK')\nVERIFY_RELEASE\n```\n\nOczekiwane: OK.\
-  \ Dane uwierzytelniające nie są wypisywane."
+  - `source platform.env`
+  - `curl -fsS --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") "https://$(jq -r .endpoint /run/dq/facts/0/registry-target.json)/v2/"`
+
+  Etap 1: Uwierzytelniona odpowiedź TLS: `{}`.
+
+  - `kubectl get deployment board -o json | jq '{replicas:.spec.replicas, ready:.status.readyReplicas,worker:(.spec.template.spec.containers[]|select(.name=="worker")|{image,imagePullPolicy})}'`
+
+  Etap 2: `replicas: 1`, `ready: 1`. Obraz odpowiada zamrożonemu wydaniu, a polityka pobierania to `Always`.
+
+  - `kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://127.0.0.1:8080`
+
+  Etap 2: `north-78`.
+
+  Uwierzytelniony odczyt workstation nie aktualizuje Secret kubelet. Zbuduj aktualizację istniejącego pull Secret pierwotnymi danymi, zachowaj UID, a następnie uruchom jedyny zatwierdzony worker. Zachowaj skrót i Always; nie obchodź autoryzacji ani nie zastępuj kontrolera.
+
+  ```bash
+  set -euo pipefail
+  cd ~/quest
+  source platform.env
+  python3 -I - <<'VERIFY_RELEASE'
+
+  import base64,hashlib,json,os,ssl,urllib.request
+  from pathlib import Path
+  source=json.loads(Path('/run/dq/facts/0/registry-source.json').read_text())
+  assert os.environ['REGISTRY']==source['endpoint']
+  assert os.environ['REGISTRY_USER']==source['username']
+  assert hashlib.sha256(os.environ['REGISTRY_PASSWORD'].encode()).hexdigest()==source['password_sha256']
+  assert hashlib.sha256(Path('registry-ca.crt').read_bytes()).hexdigest()==source['ca_sha256']
+  class NoRedirect(urllib.request.HTTPRedirectHandler):
+   def redirect_request(self,*args,**kwargs):
+    return None
+  opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect(),
+  urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile='registry-ca.crt')))
+  headers={'Authorization':'Basic '+base64.b64encode((source['username']+':'+os.environ['REGISTRY_PASSWORD']).encode()).decode(),
+  'Accept':'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json'}
+  def manifest(reference):
+   request=urllib.request.Request('https://'+source['endpoint']+'/v2/parcel/manifests/'+reference,headers=headers)
+   with opener.open(request,timeout=2) as response:
+    body=response.read(2097153)
+    assert len(body)<=2097152
+    digest='sha256:'+hashlib.sha256(body).hexdigest()
+    assert response.headers.get('Docker-Content-Digest')==digest
+    return digest
+
+  from dq_check import registry_credentials
+  import subprocess
+  contract=json.loads(Path('/run/dq/facts/0/registry-consumer.json').read_text())
+  target=json.loads(Path('/run/dq/facts/0/registry-target.json').read_text())
+  assert manifest(target['image'].split('@',1)[1])==target['image'].split('@',1)[1]
+  secret=json.loads(subprocess.check_output(['kubectl','get','secret',contract['secret_name'],'-o','json'],timeout=2))
+  assert secret['metadata']['uid']==contract['secret_uid']
+  assert registry_credentials(secret,source['endpoint'],source['username'],os.environ['REGISTRY_PASSWORD'])
+
+
+  import json,subprocess
+  from pathlib import Path
+  from dq_check import current_pods,pod_worker,ready_image,workload_worker,pull_secret_names
+  def k(*args):
+   return json.loads(subprocess.check_output(['kubectl',*args,'-o','json'],timeout=2))
+  contract=json.loads(Path('/run/dq/facts/0/registry-consumer.json').read_text())
+  old=contract['deployment']
+  deployment=k('get','deployment','board')
+  assert deployment['metadata']['uid']==old['metadata']['uid']
+  assert deployment['spec']['selector']==old['spec']['selector']
+  assert deployment['spec']['template']['spec']==old['spec']['template']['spec']
+  worker=workload_worker(deployment)
+  active=current_pods(deployment,k('get','replicasets'),k('get','pods'))
+  assert len(active)==1
+  for pod in active:
+   assert ready_image(pod,worker['image'])
+   assert pod_worker(pod).get('imagePullPolicy')=='Always'
+   assert pull_secret_names(pod)=={contract['secret_name']}
+   assert pod_worker(pod).get('command')==worker.get('command')
+   assert pod_worker(pod).get('args')==worker.get('args')
+
+  print('OK')
+  VERIFY_RELEASE
+  ```
+
+  Oczekiwane: OK. Dane uwierzytelniające nie są wypisywane.
 phrases.0: Przywróciłem usługę obrazów przed ponownym uruchomieniem consumers.
 phrases.1: Użyłem odzyskiwania o wąskim zakresie control bez dostępu do hosta.
 phrases.2: Sprawdzałem osobno rejestr TLS, obraz identity i aplikację HTTP.
