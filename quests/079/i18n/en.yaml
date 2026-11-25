@@ -25,13 +25,30 @@ stages.0.objectives.5.text: On every managed host (`app1`, `app2`, `app3`), `/sr
 stages.0.objectives.6.text: HTTP on port `8080` returns `north-79` on every managed host (`app1`, `app2`, `app3`).
 hints.0.text: Existing files and running service caches have separate states. Recovery must reach the desired live
   result while preserving healthy data.
-hints.1.text: Compare `rollout.yml` with `caller-contract.json` and `caller-cache.py`. On the managed hosts, compare
-  the delivered files, their modes, route data and actual HTTP responses. Observe which tasks would report a change
-  before a notification can run.
-hints.2.text: 'Construct directory and file delivery using the supplied inputs, then observe the actual consumer
-  and refresh stale state. Run `ansible-playbook rollout.yml > repair.log` and repeat into `second.log`: every host
-  must report `changed=0`, `unreachable=0`, `failed=0` on the second run. Verify `/srv/site/message`, `/srv/site/config/route`,
-  their modes and HTTP on `8080`. The caller check also compares actual outputs before and after its second application.'
+hints.1.text: |-
+  Compare `rollout.yml` with `caller-contract.json` and `caller-cache.py`. On the managed hosts, compare the delivered files, their modes, route data and actual HTTP responses. Observe which tasks would report a change before a notification can run.
+
+  Find the tasks for the directory, message, and route. Compare their change results with the live consumer response, including a host whose message file already matches but whose cache is stale.
+
+  ```sh
+  cat rollout.yml
+  cat caller-contract.json
+  cat caller-cache.py
+  ```
+hints.2.text: |-
+  Run `ansible-playbook rollout.yml > repair.log` and repeat into `second.log`: every host must report `changed=0`, `unreachable=0`, `failed=0` on the second run. Verify `/srv/site/message`, `/srv/site/config/route`, their modes and HTTP on `8080`. The caller check also compares actual outputs before and after its second application.
+
+  The configuration directory must show mode `755`; both files must show `644`. Expect message and HTTP `north-79`, and route `route=north` on each host. Check these observations again after the converged run.
+
+  ```sh
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    printf "%s\n" "$host"
+    ssh -n -o BatchMode=yes -p 2222 "root@$host" 'stat -c "%a %n" /srv/site/config /srv/site/message /srv/site/config/route; cat /srv/site/message /srv/site/config/route'
+    curl -fsS --max-time 3 "http://$host:8080/"
+    printf '\n'
+  done
+  ```
 phrases.0: I recovered hosts with different partial configurations.
 phrases.1: I verified handler-driven service reloads.
 phrases.2: I proved idempotence with a second run and actual managed state.
