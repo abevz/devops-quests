@@ -27,42 +27,77 @@ stages.0.brief: Zbuduj dostarczanie istniejącej publikacji Vault do pierwotnego
   odmowy reader dla innych danych i audytu opisane w consumer/README.md. Szkielet synchronizacji nie zawiera gotowej
   implementacji.
 hints.0.text: Dostępność serwera, autoryzacja i publikacja przyjęta przez konsumenta są odrębnymi obserwacjami.
-hints.1.text: 'Porównaj odpowiedź usługi, profile źródeł, dzienniki aplikacji i pierwotny kontrakt. Najpierw prześledź
-  pierwszą uszkodzoną granicę.
+hints.1.text: |-
+  Porównaj odpowiedź usługi, profile źródeł, dzienniki aplikacji i pierwotny kontrakt. Najpierw prześledź pierwszą uszkodzoną granicę.
+
+  Sprawdź aktywny profil API i potwierdzenie przeładowania konsumenta, a następnie porównaj odwołanie do Secretu w bieżącym Podzie z metadanymi celu synchronizatora.
+
+  ```bash
+  cat consumer/source.json
+  cat consumer/application.log consumer-contract.json
+  curl -fsS --max-time 2 http://127.0.0.1:18081/status
+  ```
+hints.2.text: |-
+  ```bash
+  set -euo pipefail
+  cd ~/quest
+  curl -fsS --max-time 2 http://127.0.0.1:18081/ > observed-publication.json
+  python3 -I - <<'VERIFY_PUBLICATION'
+  import json
+  from pathlib import Path
+  contract=json.loads(Path('/run/dq/facts/0/consumer-contract.json').read_text())
+  observed=json.loads(Path('observed-publication.json').read_text())
+  assert observed['ready'] is True
+  assert observed['source']==contract['vault_url']
+  assert observed['path']==contract['path']
+  assert observed['value_sha256']==contract['value_sha256']
+  assert observed['version']==contract['version']
+  print('OK')
+  VERIFY_PUBLICATION
+  ```
 
 
   ```bash
+  set -euo pipefail
+  cd ~/quest
+  source platform.env
+  kubectl rollout status deployment/relay --timeout=30s
+  python3 -I - <<'VERIFY_OWNED_PODS'
+  import hashlib,json,subprocess
+  from pathlib import Path
+  def k(*args):
+   return subprocess.check_output(['kubectl',*args],timeout=3)
+  old=json.loads(Path('/run/dq/facts/0/original-relay.json').read_text())
+  current=json.loads(k('get','deployment','relay','-o','json'))
+  assert current['metadata']['uid']==old['metadata']['uid']
+  assert current['spec']['template']['spec']==old['spec']['template']['spec']
+  assert current['spec']['selector']==old['spec']['selector']
+  assert current['spec'].get('replicas', 1)==old['spec'].get('replicas', 1)==1
+  sets=json.loads(k('get','replicasets','-o','json'))['items']
+  owners={x['metadata']['uid'] for x in sets if any(o.get('controller') is True and o['uid']==old['metadata']['uid'] for o in x['metadata'].get('ownerReferences',[]))}
+  pods=json.loads(k('get','pods','-o','json'))['items']
+  active=[p for p in pods if not p['metadata'].get('deletionTimestamp') and p['status'].get('phase') not in ('Succeeded','Failed') and any(o.get('controller') is True and o['uid'] in owners for o in p['metadata'].get('ownerReferences',[]))]
+  assert len(active)==1
+  contract=json.loads(Path('/run/dq/facts/0/consumer-contract.json').read_text())
+  for p in active:
+   assert any(c['type']=='Ready' and c['status']=='True' for c in p['status'].get('conditions',[]))
+   assert p['spec']['containers'][0]['image']==old['spec']['template']['spec']['containers'][0]['image']
+   value=k('exec',p['metadata']['name'],'-c','worker','--','printenv','ROUTE_SECRET').rstrip(b'\n')
+   assert hashlib.sha256(value).hexdigest()==contract['value_sha256']
+  print('OK')
+  VERIFY_OWNED_PODS
+  ```
 
-  cat consumer/source.json consumer/application.log consumer-contract.json
+  Oczekiwane: zakończony rollout i OK.
 
-  curl -fsS --max-time 2 http://127.0.0.1:18081/status
 
-  ```'
-hints.2.text: "Zbuduj prywatny odczyt i dostarczanie do Secret Kubernetes. Zachowaj Deployment i odwołanie, odśwież\
-  \ konsumentów środowiska i wprowadź reader w profilu workstation. Kontrakt pierwotny zawiera ścieżkę API i publikację.\
-  \ Najpierw zaimplementuj szkielet synchronizacji.\n\nDopasuj profil do zatwierdzonego API i danych reader. Zachowaj\
-  \ prywatność pliku i wyślij SIGHUP do istniejącego PID; manager to inna tożsamość. Sprawdź publikację HTTP. Oczekiwane:\
-  \ OK.\n\n```bash\nset -euo pipefail\ncd ~/quest\ncurl -fsS --max-time 2 http://127.0.0.1:18081/ > observed-publication.json\n\
-  python3 -I - <<'VERIFY_PUBLICATION'\nimport json\nfrom pathlib import Path\ncontract=json.loads(Path('consumer-contract.json').read_text())\n\
-  observed=json.loads(Path('observed-publication.json').read_text())\nassert observed['ready'] is True\nassert observed['source']==contract['vault_url']\n\
-  assert observed['path']==contract['path']\nassert observed['value_sha256']==contract['value_sha256']\nassert observed['version']==contract['version']\n\
-  print('OK')\nVERIFY_PUBLICATION\n```\n\n\n```bash\nset -euo pipefail\ncd ~/quest\nkubectl rollout status deployment/relay\
-  \ --timeout=30s\npython3 -I - <<'VERIFY_OWNED_PODS'\nimport hashlib,json,subprocess\nfrom pathlib import Path\n\
-  def k(*args):\n return subprocess.check_output(['kubectl',*args],timeout=3)\nold=json.loads(Path('original-relay.json').read_text())\n\
-  current=json.loads(k('get','deployment','relay','-o','json'))\nassert current['metadata']['uid']==old['metadata']['uid']\n\
-  assert current['spec']['template']['spec']==old['spec']['template']['spec']\nsets=json.loads(k('get','replicasets','-o','json'))['items']\n\
-  owners={x['metadata']['uid'] for x in sets if any(o.get('controller') is True and o['uid']==old['metadata']['uid']\
-  \ for o in x['metadata'].get('ownerReferences',[]))}\npods=json.loads(k('get','pods','-o','json'))['items']\n\
-  active=[p for p in pods if not p['metadata'].get('deletionTimestamp') and p['status'].get('phase') not in ('Succeeded','Failed')\
-  \ and any(o.get('controller') is True and o['uid'] in owners for o in p['metadata'].get('ownerReferences',[]))]\n\
-  assert len(active)==1\ncontract=json.loads(Path('consumer-contract.json').read_text())\nfor p in active:\n assert\
-  \ any(c['type']=='Ready' and c['status']=='True' for c in p['status'].get('conditions',[]))\n assert p['spec']['containers'][0]['image']==old['spec']['template']['spec']['containers'][0]['image']\n\
-  \ value=k('exec',p['metadata']['name'],'-c','worker','--','printenv','ROUTE_SECRET').rstrip(b'\\n')\n assert hashlib.sha256(value).hexdigest()==contract['value_sha256']\n\
-  print('OK')\nVERIFY_OWNED_PODS\n```\n\nOczekiwane: zakończony rollout i OK.\n\n\n```bash\nset -euo pipefail\n\
-  source platform.env\ncurl -fsS --max-time 3 -H @<(printf 'X-Vault-Token: %s\\n' \"$VAULT_READER_TOKEN\") -H 'Content-Type:\
-  \ application/json' -X POST --data '{\"paths\":[\"secret/data/dispatch\",\"secret/data/other\",\"sys/audit\"]}'\
-  \ \"$VAULT_ADDR/v1/sys/capabilities-self\" | jq -e '.\"secret/data/dispatch\"==[\"read\"] and .\"secret/data/other\"\
-  ==[\"deny\"] and .\"sys/audit\"==[\"deny\"]'\n```\n\nOczekiwane: true; sekret nie jest wypisywany."
+  ```bash
+  set -euo pipefail
+  source platform.env
+  curl -fsS --max-time 3 -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") -H 'Content-Type: application/json' -X POST --data '{"paths":["secret/data/dispatch","secret/data/other","sys/audit"]}' "$VAULT_ADDR/v1/sys/capabilities-self" | jq -e '."secret/data/dispatch"==["read"] and ."secret/data/other"==["deny"] and ."sys/audit"==["deny"]'
+  ```
+
+  Oczekiwane: true; sekret nie jest wypisywany.
 debrief: Zachowano tożsamości źródła i konsumentów; aplikacje przyjęły zatwierdzoną publikację.
 phrases.0: Przed dokonaniem zmiany sprawdziłem stan działania.
 phrases.1: Znalazłem przyczynę i zmieniałem jedną rzecz na raz.

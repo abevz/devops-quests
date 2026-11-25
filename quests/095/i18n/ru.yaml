@@ -49,24 +49,154 @@ debrief: Вы восстановили здоровую конфигурацию
 stages.0.brief: Сохраните faulty-коммит в опубликованной истории.
 hints.0.text: Здоровый исторический релиз производителя и текущие обязательства потребителей могут иметь разные
   сроки жизни. Восстановление одного не обновляет независимо закреплённых потребителей автоматически.
-hints.1.text: Сопоставьте `rollback-contract.json`, `current-publication.json`, зафиксированные коммиты, манифесты
-  потребителей, источники Application и наблюдаемые ревизии. Проследите публикацию через фактические принадлежащие
-  им Pod и ответы Service.
-hints.2.text: "Восстановите здоровую конфигурацию производителя, сохранив актуальную одобренную публикацию потребителей.\
-  \ Сделайте commit и push, не отбрасывая инцидент и исходную ревизию потребителей. Обновите неизменяемую привязку\
-  \ каждого существующего потребителя до опубликованного коммита, запросите обновление Application и дождитесь реального\
-  \ применения проекции. Проверьте исходные UID и программы, наблюдаемые ревизии, готовность и HTTP каждого принадлежащего\
-  \ потребителю Pod и Service.\n\nПроверьте каждый Pod, принадлежащий существующей цепочке Deployment/ReplicaSet,\
-  \ затем каждый Service:\n\n```sh\nset -euo pipefail\nkubectl get applications board reader-a reader-b\nfor name\
-  \ in reader-a reader-b; do\n  deployment_uid=$(kubectl get deployment \"$name\" -o jsonpath='{.metadata.uid}')\n\
-  \  replica_uids=$(kubectl get replicasets -o json | jq -c --arg uid \"$deployment_uid\" '[.items[] | select(any(.metadata.ownerReferences[]?;\
-  \ .kind==\"Deployment\" and .controller==true and .uid==$uid)) | .metadata.uid]')\n  kubectl get pods -o json\
-  \ | jq -r --argjson owners \"$replica_uids\" '.items[] | select(.metadata.deletionTimestamp==null and .status.phase!=\"\
-  Failed\" and .status.phase!=\"Succeeded\") | select(any(.metadata.ownerReferences[]?; .kind==\"ReplicaSet\" and\
-  \ .controller==true and (.uid as $uid | $owners | index($uid)!=null))) | .metadata.name' |\n    while IFS= read\
-  \ -r pod; do\n      kubectl exec \"$pod\" -c worker -- wget -qO- -T 3 http://127.0.0.1:8080\n    done\n  kubectl\
-  \ exec \"deployment/$name\" -c worker -- wget -qO- -T 3 \"http://$name:8080\"\ndone\n```\n\nОжидаются Synced/Healthy\
-  \ у всех Application и ответы обоих потребителей, соответствующие текущей одобренной публикации."
+hints.1.text: |-
+  Сопоставьте `rollback-contract.json`, `current-publication.json`, зафиксированные коммиты, манифесты потребителей, источники Application и наблюдаемые ревизии. Проследите публикацию через фактические принадлежащие им Pod и ответы Service.
+
+  Сравните записанные рабочие базовые версии производителя и потребителя с опубликованной ревизией. Для каждого сохранённого потребителя изучите закреплённую ревизию источника, смонтированную публикацию и цепочку владельцев приложения.
+hints.2.text: |-
+  Проверьте исходные UID и программы, наблюдаемые ревизии, готовность и HTTP каждого принадлежащего потребителю Pod и Service.
+
+  Проверьте каждый Pod, принадлежащий существующей цепочке Deployment/ReplicaSet, затем каждый Service:
+
+  ```sh
+  (
+    set -euo pipefail
+    cd ~/quest
+    source platform.env
+    receipt=/run/dq/facts/0/rollback-contract.json
+    revision=$(git -C repository ls-remote origin refs/heads/main | cut -f1)
+    test -n "$revision"
+    kubectl get applications board reader-a reader-b -o json |
+      jq -e --arg revision "$revision" --slurpfile expected "$receipt" '
+        def relative_parts: select(type=="string" and (startswith("/")|not)) | split("/") | map(select(.!="" and .!="."));
+        ([.items[].metadata.name] | sort)==["board","reader-a","reader-b"] and
+        all(.items[]; .metadata.name as $name |
+          .metadata.uid==$expected[0].originalIdentities["application/"+$name] and
+          .spec.source.repoURL==$expected[0].repoURL and
+          .status.sync.revision==$revision and .status.sync.status=="Synced" and .status.health.status=="Healthy" and
+          (if $name=="board" then true else
+             ($expected[0].consumers[] | select(.name==$name)) as $supplied |
+             (.spec.source.targetRevision | ascii_downcase)==$revision and
+             (.spec.source.path | relative_parts)==($supplied.path | relative_parts) and
+             .spec.project==$supplied.project and .spec.destination==$supplied.destination
+           end))'
+    verify_projection() {
+      python3 -I - "$revision" "$receipt" "$1" "$2" <<'VERIFY_PROJECTION'
+  import json
+  import posixpath
+  import subprocess
+  import sys
+  from pathlib import Path
+
+  import yaml
+
+  revision, receipt_path, name, pod = sys.argv[1:]
+  receipt = json.loads(Path(receipt_path).read_text())
+  profile = next(item for item in receipt["consumers"] if item["name"] == name)
+  target = posixpath.join(profile["documentRoot"], "index.html")
+  git = ["git", "-C", "repository"]
+  paths = subprocess.check_output([*git, "ls-tree", "-r", "--name-only", revision, "--", profile["path"]], text=True).splitlines()
+
+  def manifests(document):
+      if isinstance(document, dict):
+          if document.get("kind") == "List":
+              for item in document.get("items", []):
+                  yield from manifests(item)
+          elif document.get("kind") in ("Deployment", "ConfigMap"):
+              yield document
+
+  published = {}
+  for path in paths:
+      if Path(path).suffix not in (".yaml", ".yml", ".json"):
+          continue
+      for root in yaml.safe_load_all(subprocess.check_output([*git, "show", revision + ":" + path])):
+          for document in manifests(root):
+              identity = document["kind"], document["metadata"]["name"]
+              assert identity not in published
+              published[identity] = document
+
+  def get(kind, resource):
+      return json.loads(subprocess.check_output(["kubectl", "get", kind, resource, "-o", "json"]))
+
+  def binding(spec, data_for):
+      worker = next(item for item in spec["containers"] if item["name"] == "worker")
+      volumes = {volume["name"]: volume for volume in spec.get("volumes", [])}
+      matches = []
+      for mount in worker.get("volumeMounts", []):
+          base = mount["mountPath"]
+          subpath = mount.get("subPath")
+          if subpath is not None and base != target:
+              continue
+          if subpath is None and not target.startswith(base.rstrip("/") + "/"):
+              continue
+          volume = volumes[mount["name"]]
+          sources = [volume["configMap"]] if "configMap" in volume else [
+              item["configMap"] for item in volume.get("projected", {}).get("sources", []) if "configMap" in item]
+          for source in sources:
+              data = data_for(source["name"])
+              items = source.get("items", [{"key": key, "path": key} for key in data])
+              for item in items:
+                  path = base if subpath == item["path"] else None
+                  if subpath is None:
+                      path = posixpath.normpath(posixpath.join(base, item["path"]))
+                  if path == target:
+                      matches.append((source["name"], item["key"]))
+      assert len(matches) == 1
+      return matches[0]
+
+  declared = published["Deployment", name]["spec"]["template"]["spec"]
+  worker = next(container for container in declared["containers"] if container["name"] == "worker")
+  assert {field: worker.get(field) for field in ("image", "command", "args")} == profile["program"]
+  live = get("deployment", name)["spec"]["template"]["spec"]
+  observed_pod = get("pod", pod)["spec"]
+  published_map = lambda configmap: published["ConfigMap", configmap]["data"]
+  live_map = lambda configmap: get("configmap", configmap)["data"]
+  configmap, key = binding(declared, published_map)
+  assert binding(live, live_map) == binding(observed_pod, live_map) == (configmap, key)
+  published_data = published_map(configmap)
+  assert live_map(configmap) == published_data
+  mounted = subprocess.check_output(["kubectl", "exec", pod, "-c", "worker", "--", "cat", target], text=True)
+  assert mounted == published_data[key]
+  assert all(json.loads(mounted).get(key) == value for key, value in receipt["publication"].items())
+  print(name + "/" + pod + ": Git, ConfigMap and mounted publication match")
+  VERIFY_PROJECTION
+    }
+    for name in reader-a reader-b; do
+      deployment=$(kubectl get deployment "$name" -o json)
+      deployment_uid=$(jq -er .metadata.uid <<<"$deployment")
+      program=$(jq -cer --arg name "$name" '.consumers[] | select(.name==$name) | .program' "$receipt")
+      digest=$(jq -er '.image | split("@") | last | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$program")
+      jq -e --argjson program "$program" '
+        any(.spec.template.spec.containers[]; .name=="worker" and ({image,command,args}==$program))
+      ' <<<"$deployment" >/dev/null
+      replicas=$(jq -er 'select(.spec.replicas>0 and .status.observedGeneration>=.metadata.generation and
+        .status.readyReplicas==.spec.replicas) | .spec.replicas' <<<"$deployment")
+      test "$deployment_uid" = "$(jq -er --arg name "$name" '.originalIdentities["deployment/"+$name]' "$receipt")"
+      replica_uids=$(kubectl get replicasets -o json | jq -c --arg uid "$deployment_uid" '
+        [.items[] | select(any(.metadata.ownerReferences[]?; .kind=="Deployment" and .controller==true and .uid==$uid)) | .metadata.uid]')
+      pods=$(kubectl get pods -o json | jq -er --argjson owners "$replica_uids" --argjson replicas "$replicas" --argjson program "$program" --arg digest "$digest" '
+        [.items[] | select(.metadata.deletionTimestamp==null and .status.phase!="Failed" and .status.phase!="Succeeded" and
+          any(.metadata.ownerReferences[]?; .kind=="ReplicaSet" and .controller==true and (.uid as $uid | $owners | index($uid)!=null)))]
+        | select(length==$replicas and all(.[]; .status.phase=="Running" and
+            any(.status.conditions[]?; .type=="Ready" and .status=="True") and
+            any(.spec.containers[]?; .name=="worker" and ({image,command,args}==$program)) and
+            any(.status.containerStatuses[]?; .name=="worker" and .ready==true and (.state.running | type)=="object" and
+              ((.imageID | split("@") | last | split("/") | last) == $digest))))
+        | .[].metadata.name')
+      matches_publication() {
+        jq -e --slurpfile expected "$receipt" '
+          . as $observed | all($expected[0].publication | to_entries[]; $observed[.key]==.value)'
+      }
+      while IFS= read -r pod; do
+        verify_projection "$name" "$pod"
+        kubectl exec "$pod" -c worker -- wget -qO- -T 3 http://127.0.0.1:8080 | matches_publication
+      done <<<"$pods"
+      kubectl exec "${pods%%$'\n'*}" -c worker -- wget -qO- -T 3 "http://$name:8080" | matches_publication
+    done
+  )
+  ```
+
+  Ожидаются Synced/Healthy у всех Application и ответы обоих потребителей, соответствующие текущей одобренной публикации.
 phrases.0: Я восстановил desired state через Git revert.
 phrases.1: Я сохранил reconciliation при восстановлении.
 phrases.2: Я проверил наблюдаемую ревизию и здоровье приложения.

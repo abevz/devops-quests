@@ -35,123 +35,110 @@ stages.1.brief: Recover the unavailable original Vault and restore publication t
   source. The second application must serve the approved publication from the original first application; restore
   both consumers without replacing their processes. The service control interface is documented in `control/README.md`.
 hints.0.text: Server availability, authorization and a consumer’s adopted publication are different observations.
-hints.1.text: 'Compare the live service response, source profiles, application logs and original contract. Trace
-  the first failing boundary before changing another component.
+hints.1.text: |-
+  Compare the live service response, source profiles, application logs and original contract. Trace the first failing boundary before changing another component.
 
+  Locate the existing cluster identity and process status in the source contract and repair-agent observation. Check whether the current process is reachable and whether it reports initialization or seal status.
 
   ```bash
-
   cat consumer/source.json consumer/application.log consumer-contract.json
-
   curl -fsS --max-time 2 http://127.0.0.1:18081/status
-
   ```
 
-
   ```bash
-
   cat downstream/source.json downstream/application.log
-
   curl -fsS --max-time 2 http://127.0.0.1:18082/status
-
-  ```'
-hints.2.text: 'Verify the original cluster ID and existing reader data after unseal. Write exactly `{"action":"start"}`
-  to `vault-repair.json`; the bounded agent starts the existing Vault on the next poll. Submit the two distinct
-  supplied shares to `/v1/sys/unseal`; do not initialize again or replace storage. Start the existing process before
-  using the two shares.
-
-
+  ```
+hints.2.text: |-
   Verify from `~/quest` on the workstation:
 
-
   - `source platform.env`
-
-  - `curl -fsS "$VAULT_ADDR/v1/sys/init" | jq -e ''.initialized == true''`
-
+  - `curl -fsS "$VAULT_ADDR/v1/sys/init" | jq -e '.initialized == true'`
 
   Stage 1: `true`.
 
-
   - `source platform.env`
-
-  - `curl -fsS "$VAULT_ADDR/v1/sys/seal-status" | jq ''{initialized,sealed,t,n,cluster_id}''`
-
+  - `curl -fsS "$VAULT_ADDR/v1/sys/seal-status" | jq '{initialized,sealed,t,n,cluster_id}'`
 
   Stage 2: `initialized: true`, `sealed: false`, `t: 2`, `n: 3`; `cluster_id` equals the frozen original.
 
-
   - `source platform.env`
-
-  - `curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
-  | jq -e ''.data.data.value == "north-secret"'' >/dev/null`
-
-  - `curl -sS -o /dev/null -w ''%{http_code}\n'' -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_MANAGER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"`
-
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+  - `curl -sS -o /dev/null -w '%{http_code}\n' -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"`
   - `stat -c %a unseal-shares.json`
 
+  Stage 2: Exit `0`; no credential or secret value is printed. The manager reports `403`; the share file reports `600`.
 
-  Stage 2: Exit `0`; no credential or secret value is printed. The manager reports `403`; the share file reports
-  `600`.
-
-
-  Match the profile to the approved API source and supplied reader credential. Keep the credential private and send
-  SIGHUP to the existing application PID; the manager is a different identity. Recheck the HTTP publication, not
-  only the source. Expected: OK.
-
+  Stage 2. Compare the existing application profiles and both original process receipts before checking the live HTTP responses. Expect OK for the reader publication.
 
   ```bash
-
   set -euo pipefail
-
   cd ~/quest
-
   curl -fsS --max-time 2 http://127.0.0.1:18081/ > observed-publication.json
-
-  python3 -I - <<''VERIFY_PUBLICATION''
-
+  python3 -I - <<'VERIFY_PUBLICATION'
   import json
-
   from pathlib import Path
-
-  contract=json.loads(Path(''consumer-contract.json'').read_text())
-
-  observed=json.loads(Path(''observed-publication.json'').read_text())
-
-  assert observed[''ready''] is True
-
-  assert observed[''source'']==contract[''vault_url'']
-
-  assert observed[''path'']==contract[''path'']
-
-  assert observed[''value_sha256'']==contract[''value_sha256'']
-
-  assert observed[''version'']==contract[''version'']
-
-  print(''OK'')
-
+  contract=json.loads(Path('consumer-contract.json').read_text())
+  observed=json.loads(Path('observed-publication.json').read_text())
+  assert observed['ready'] is True
+  assert observed['source']==contract['vault_url']
+  assert observed['path']==contract['path']
+  assert observed['value_sha256']==contract['value_sha256']
+  assert observed['version']==contract['version']
+  print('OK')
   VERIFY_PUBLICATION
-
   ```
-
 
   Both original applications serve the approved publication through the documented source chain.
 
-
   ```bash
-
   set -euo pipefail
-
   curl -fsS --max-time 2 http://127.0.0.1:18081/ > primary.json
-
   curl -fsS --max-time 2 http://127.0.0.1:18082/ > secondary.json
-
-  jq -e --slurpfile first primary.json '' .ready==true and .source=="http://127.0.0.1:18081" and .version==$first[0].version
-  and .value_sha256==$first[0].value_sha256'' secondary.json
-
+  jq -e --slurpfile first primary.json ' .ready==true and .source=="http://127.0.0.1:18081" and .version==$first[0].version and .value_sha256==$first[0].value_sha256' secondary.json
   ```
+  Expected: true.
 
-  Expected: true. Correct the downstream source and send SIGHUP to its original PID after the primary publication
-  is ready.'
+  ```sh
+  (
+    set -euo pipefail
+    cd ~/quest
+    python3 -I - <<'VERIFY_ORIGINAL_CONSUMERS'
+  import hashlib
+  import json
+  import stat
+  from pathlib import Path
+
+  facts = json.loads(Path("/run/dq/facts/0/consumer-contract.json").read_text())
+
+  def read_regular(name, limit=8192):
+      path = Path(name)
+      info = path.lstat()
+      assert stat.S_ISREG(info.st_mode) and info.st_size <= limit
+      return path.read_bytes()
+
+  for role in ("consumer", "downstream"):
+      original = facts[role]
+      assert read_regular(role + "/application.pid").decode().strip() == str(original["pid"])
+      process = Path("/proc") / str(original["pid"])
+      fields = (process / "stat").read_text().rsplit(") ", 1)[1].split()
+      assert fields[0] not in ("Z", "X") and fields[19] == original["start"]
+      assert (process / "cmdline").read_bytes().hex() == original["command"]
+      observed = dict(line.split(":", 1) for line in (process / "status").read_text().splitlines() if ":" in line)
+      assert all(observed[key].strip() == value for key, value in original["status"].items())
+
+  assert hashlib.sha256(read_regular("provided-vault-consumer.py", 65536)).hexdigest() == facts["program_sha256"]
+  reader = json.loads(read_regular("consumer/source.json", 4096))
+  assert set(reader) == {"url", "path", "token_file"}
+  assert reader["url"] == facts["vault_url"] and reader["path"] == facts["path"]
+  credential = Path(reader["token_file"]).lstat()
+  assert credential.st_uid == 1000 and stat.S_IMODE(credential.st_mode) == 0o600
+  assert hashlib.sha256(read_regular(reader["token_file"], 4096).strip()).hexdigest() == facts["reader_sha256"]
+  assert json.loads(read_regular("downstream/source.json", 4096)) == {"upstream": "http://127.0.0.1:18081"}
+  print("Original process identities, program and private profiles match")
+  VERIFY_ORIGINAL_CONSUMERS
+  )
+  ```
 phrases.0: I distinguished process availability from seal state.
 phrases.1: I checked the initialized and unsealed status without printing shares.
 phrases.2: I compared the cluster ID and checked reader and manager access.
