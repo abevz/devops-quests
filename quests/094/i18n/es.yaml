@@ -27,13 +27,44 @@ stages.0.objectives.5.text: La muestra reciente de la estación cumple el umbral
 stages.0.objectives.6.text: HTTP desde Deployment `board` a `http://board:8080` devuelve `north-94`.
 hints.0.text: La cuota puede agotarse por trabajo dentro del servidor o por demanda entrante real. Un servidor tranquilo
   obtenido deteniendo un consumidor requerido no demuestra el contrato completo.
-hints.1.text: Compara `performance-contract.json`, comandos y recursos activos, política y entradas efectivas, `/sys/fs/cgroup/cpu.stat`
-  del worker servidor, eventos, logs y registros de progreso. Separa el coste de medir, las peticiones útiles y
-  otro trabajo.
-hints.2.text: Construye el archivo de medición desde el contador cgroup e intervalo declarados, recupera el servicio
-  útil y propaga las entradas actuales a ambos consumidores activos. Verifica `bash measure.sh`, el resultado independiente
-  del servidor, rollout y cada interfaz de progreso. Espera como máximo `5` nuevos períodos throttled, `north-94`,
-  identidades y presupuesto conservados y registros crecientes con la cadencia actual.
+hints.1.text: |-
+  Compara `performance-contract.json`, comandos y recursos activos, política y entradas efectivas, `/sys/fs/cgroup/cpu.stat` del worker servidor, eventos, logs y registros de progreso. Separa el coste de medir, las peticiones útiles y otro trabajo.
+
+  Localiza el contador cgroup requerido y el intervalo en el contrato de rendimiento. Contrasta la gestión de solicitudes del `worker` con la referencia de política y el progreso de cada consumidor.
+hints.2.text: |-
+  Verifica `bash measure.sh`, el resultado independiente del servidor, rollout y cada interfaz de progreso. Espera como máximo `5` nuevos períodos throttled, `north-94`, identidades y presupuesto conservados y registros crecientes con la cadencia actual.
+
+  Ejecuta la hoja y mide de forma independiente la misma cgroup de servicio, sin consultar progreso durante los dos segundos del muestreo. Espera un incremento de `0` a `5` y `north-94` del productor. En ambos consumidores, contrasta la política activa y verifica que el segundo `sequence` sea mayor.
+
+  ```sh
+  bash measure.sh
+  kubectl exec deployment/board -c worker -- sh -ec '
+    read_counter() {
+      while read -r key value rest; do
+        if test "$key" = nr_throttled; then printf "%s\n" "$value"; return; fi
+      done < /sys/fs/cgroup/cpu.stat
+      return 1
+    }
+    before=$(read_counter)
+    sleep 2
+    after=$(read_counter)
+    test "$after" -ge "$before"
+    printf "%s\n" "$((after-before))"
+  '
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl get configmap poll-policy -o json | jq .data
+  for name in scan-a scan-b; do
+    kubectl rollout status "deployment/$name" --timeout=10s
+    kubectl exec "deployment/$name" -c worker -- printenv POLL_DELAY POLICY_ID
+  done
+  progress() {
+    for name in scan-a scan-b; do
+      kubectl exec "deployment/$name" -c worker -- wget -qO- -T 3 "http://$name:8080/progress.json" |
+        jq --arg name "$name" '{consumer:$name,sequence,route,delay,policy_id}'
+    done
+  }
+  progress; sleep 2.2; progress
+  ```
 phrases.0: Medí CPU throttling antes de cambiar la capacidad.
 phrases.1: Eliminé el trabajo innecesario en lugar de escalar el síntoma.
 phrases.2: Conservé el recurso limits y verifiqué el comportamiento útil de HTTP.

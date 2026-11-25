@@ -19,13 +19,56 @@ stages.0.objectives.1.text: All roles complete startup and publish the current a
   initializer completes successfully.
 hints.0.text: Memory allocation, process startup, initializer completion and readiness are different boundaries.
   A container restart and the lifetime of a memory-backed Pod volume need not coincide.
-hints.1.text: Compare `startup-contract.json`, workload and source definitions, Pod resource limits, `kubectl describe
-  pod <pod>` and `kubectl logs <pod> -c <container> --previous`. Inspect both init and main termination details
-  and the current dataset inputs.
-hints.2.text: Construct bounded startup against the current dataset and assign sufficient phase budgets within the
-  supplied ceiling. Verify rollout, successful init termination, `stat -f -c %T /cache`, payload size, allocated
-  blocks, checksum and every declared HTTP metadata interface. Expect the original source and resource identities,
-  an allocated tmpfs payload matching the contract, and current publication metadata.
+hints.1.text: |-
+  Compare `startup-contract.json`, workload and source definitions, Pod resource limits, `kubectl describe pod <pod>` and `kubectl logs <pod> -c <container> --previous`. Inspect both init and main termination details and the current dataset inputs.
+
+  Inspect which dataset each startup phase reads and which memory limit applies to that phase. Compare its termination reason with the workload’s events and the supplied ceiling.
+hints.2.text: |-
+  Verify rollout, successful init termination, `stat -f -c %T /cache`, payload size, allocated blocks, checksum and every declared HTTP metadata interface. Expect the original source and resource identities, an allocated tmpfs payload matching the contract, and current publication metadata.
+
+  For each ready owned Pod, the filesystem must be `tmpfs`, payload bytes and SHA-256 must match the receipt, and the allocated block count multiplied by `512` must cover the file size. The `stager` initializer must exit `0`. Compare all served records with the supplied publication.
+
+  ```sh
+  (
+  set -euo pipefail
+  expected_size=$(jq -er .publication.bytes startup-identities.json)
+  expected_hash=$(jq -er .publication.sha256 startup-identities.json)
+  jq '{identities,image,publication}' startup-identities.json
+  kubectl get deployments,replicasets,pods,services -o yaml
+  for name in relay stager reader; do
+    kubectl rollout status "deployment/$name" --timeout=10s
+    pods=$(kubectl get deployments,replicasets,pods -o json | jq -r --arg name "$name" '
+      def owned($kind; $uids): any(.metadata.ownerReferences[]?;
+        .controller == true and .kind == $kind and (.uid as $uid | $uids | index($uid) != null));
+      .items as $items | ($items[] | select(.kind == "Deployment" and .metadata.name == $name)) as $dep
+      | [$items[] | select(.kind == "ReplicaSet" and owned("Deployment"; [$dep.metadata.uid])) | .metadata.uid] as $rs
+      | $items[] | select(.kind == "Pod" and owned("ReplicaSet"; $rs) and .metadata.deletionTimestamp == null
+        and any(.status.conditions[]?; .type == "Ready" and .status == "True")) | .metadata.name')
+    if [ -z "$pods" ]; then
+      printf '%s: no ready owned Pod\n' "$name" >&2
+      exit 1
+    fi
+    while IFS= read -r pod; do
+      if [ "$name" = stager ]; then
+        kubectl get pod "$pod" -o json |
+          jq -e 'any(.status.initContainerStatuses[]?; .name=="warmer" and .state.terminated.exitCode==0)' >/dev/null
+      fi
+      test "$(kubectl exec "$pod" -c worker -- stat -f -c %T /cache)" = tmpfs
+      file_stats=$(kubectl exec "$pod" -c worker -- stat -c '%s %b' /cache/payload)
+      read -r size blocks <<< "$file_stats"
+      test "$size" -eq "$expected_size"
+      test "$((blocks * 512))" -ge "$size"
+      payload=$(kubectl exec "$pod" -c worker -- sha256sum /cache/payload)
+      test "${payload%% *}" = "$expected_hash"
+      kubectl exec "$pod" -c worker -- wget -qO- -T 3 "http://$name:8080/record.json" |
+        jq -e --slurpfile expected startup-identities.json '
+          $expected[0].publication as $wanted |
+          .cache_id==$wanted.cache_id and .bytes==$wanted.bytes and .sha256==$wanted.sha256' >/dev/null
+      printf '%s/%s: allocated payload and publication match\n' "$name" "$pod"
+    done <<< "$pods"
+  done
+  )
+  ```
 debrief: 'Distinct memory failures needed distinct corrections: unbounded work, initializer capacity and a resident
   input that could not fit. The current dataset now reaches all startup phases within budget, with the original
   resources retained.'

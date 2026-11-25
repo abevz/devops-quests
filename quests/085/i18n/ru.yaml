@@ -25,12 +25,27 @@ hints.0.text: Бюджет доступности, его владелец и ф
 hints.1.text: Сопоставьте `kubectl get pdb -o yaml`, `kubectl get applications -o yaml`, опубликованную
   политику Git и метки из `kubectl get pods --show-labels`. Изучите полный отказ Eviction API и conditions
   приложения; сравните оба селектора с обоими пулами и отличайте локальные изменения от источника контроллера.
-hints.2.text: Проверьте совпадение опубликованной и действующей политики при сохранённом автоматическом
-  самовосстановлении. Перед каждым запросом смотрите `kubectl get pdb` и выбирайте исходные имя/UID из
-  неизменяемого baseline. После реального eviction дождитесь готовности замены; проверьте `cat evictions.json`,
-  `cat /run/dq/observations/evictions.json` и `kubectl get pods -o wide`. Ожидаются по одному подтверждённому
-  исходному UID и сохранённому исходному соседу в каждом пуле, две готовые реплики и восстановленный запас
-  прерываний. Проверьте HTTP обоих сервисов из Pod приложения.
+hints.2.text: |-
+  Проверьте совпадение опубликованной и действующей политики при сохранённом автоматическом самовосстановлении. Перед каждым запросом смотрите `kubectl get pdb` и выбирайте исходные имя/UID из неизменяемого baseline. После реального eviction дождитесь готовности замены; проверьте `cat evictions.json`, `cat /run/dq/observations/evictions.json` и `kubectl get pods -o wide`. Ожидаются по одному подтверждённому исходному UID и сохранённому исходному соседу в каждом пуле, две готовые реплики и восстановленный запас прерываний. Проверьте HTTP обоих сервисов из Pod приложения.
+
+  ```sh
+  (
+    set -euo pipefail
+    head=$(git -C repository ls-remote origin refs/heads/main | cut -f1)
+    kubectl get application maintenance -o json |
+      jq -e --arg head "$head" '.status.sync.revision==$head and .status.sync.status=="Synced" and .spec.syncPolicy.automated.selfHeal==true'
+    jq -er '.[].deleteOptions.preconditions.uid' evictions.json
+    jq -er '.[]' /run/dq/observations/evictions.json
+    for pool in relay companion; do
+      jq --arg pool "$pool" '.pools[$pool]' maintenance-baseline.json
+      kubectl get pods -l "app=$pool" -o json |
+        jq '.items[] | {name:.metadata.name,uid:.metadata.uid,ready:any(.status.conditions[]?; .type=="Ready" and .status=="True")}'
+      kubectl get pdb "$pool" -o json |
+        jq -e '.status.observedGeneration==.metadata.generation and .status.currentHealthy>=2 and .status.disruptionsAllowed>=1'
+      test "$(kubectl exec deployment/relay -- wget -qO- -T 3 "http://$pool:8080")" = "$pool-85"
+    done
+  )
+  ```
 debrief: Минимум под управлением Git и независимо управляемый селектор требовали разных исправлений. Положительный
   запас прерываний не отменял перекрытия политик. Сохранённые идентификаторы, наблюдаемые сервером eviction
   и восстановленные сервисы подтверждают результат обслуживания.

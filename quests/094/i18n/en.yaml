@@ -27,13 +27,44 @@ stages.0.objectives.5.text: The fresh workstation sample meets the threshold; bo
 stages.0.objectives.6.text: HTTP from Deployment `board` to `http://board:8080` returns `north-94`.
 hints.0.text: A quota can be exhausted by work inside a server or by real incoming demand. A quiet server obtained
   by stopping a required consumer does not demonstrate the complete serving contract.
-hints.1.text: Compare `performance-contract.json`, live commands/resources, policy and effective consumer inputs,
-  `/sys/fs/cgroup/cpu.stat` in the serving worker, events/logs and consumer progress records. Separate sampling
-  overhead, useful requests and other work.
-hints.2.text: Build the worksheet from the declared cgroup counter and sampling interval, recover useful serving
-  work, and propagate the intended current inputs to both active consumers. Verify `bash measure.sh`, the independent
-  server result, rollout and each declared progress interface. Expect at most `5` newly throttled periods, `north-94`,
-  retained identities/budget and advancing consumer records at the current policy cadence.
+hints.1.text: |-
+  Compare `performance-contract.json`, live commands/resources, policy and effective consumer inputs, `/sys/fs/cgroup/cpu.stat` in the serving worker, events/logs and consumer progress records. Separate sampling overhead, useful requests and other work.
+
+  Locate the required cgroup counter and interval in the performance contract. Compare the live `worker`’s request handling with the policy reference and progress reported by each consumer.
+hints.2.text: |-
+  Verify `bash measure.sh`, the independent server result, rollout and each declared progress interface. Expect at most `5` newly throttled periods, `north-94`, retained identities/budget and advancing consumer records at the current policy cadence.
+
+  Run the worksheet and sample the same serving cgroup independently, with no progress probes during the two-second sample. Expect a delta from `0` to `5` and `north-94` from the producer. For both consumers, match the live policy references and verify that the second progress `sequence` is larger.
+
+  ```sh
+  bash measure.sh
+  kubectl exec deployment/board -c worker -- sh -ec '
+    read_counter() {
+      while read -r key value rest; do
+        if test "$key" = nr_throttled; then printf "%s\n" "$value"; return; fi
+      done < /sys/fs/cgroup/cpu.stat
+      return 1
+    }
+    before=$(read_counter)
+    sleep 2
+    after=$(read_counter)
+    test "$after" -ge "$before"
+    printf "%s\n" "$((after-before))"
+  '
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl get configmap poll-policy -o json | jq .data
+  for name in scan-a scan-b; do
+    kubectl rollout status "deployment/$name" --timeout=10s
+    kubectl exec "deployment/$name" -c worker -- printenv POLL_DELAY POLICY_ID
+  done
+  progress() {
+    for name in scan-a scan-b; do
+      kubectl exec "deployment/$name" -c worker -- wget -qO- -T 3 "http://$name:8080/progress.json" |
+        jq --arg name "$name" '{consumer:$name,sequence,route,delay,policy_id}'
+    done
+  }
+  progress; sleep 2.2; progress
+  ```
 phrases.0: I measured CPU throttling before changing capacity.
 phrases.1: I removed unnecessary work instead of scaling the symptom.
 phrases.2: I retained resource limits and verified useful HTTP behavior.
