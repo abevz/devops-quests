@@ -33,20 +33,52 @@ hints.1.text: |-
   kubectl exec deployment/summary -- cat /data/summary.json
   ```
 hints.2.text: |-
-  Prüfe Archiveinträge und Transaktionskonsistenz, danach wiederhergestellte Dateien, aktuelle PVC-Identitäten und beide Anwendungsantworten. Bei der Wiederherstellung bleibt die Datenaufnahme pausiert:
+  Phase 1. Bestätige die Ledger-Prüfsumme und dieselbe Transaktion in beiden Checkpoint-Dateien. Beide Dateien müssen den Marker aus der Vorgabe und dieselbe positive Generation enthalten. Prüfe die genaue Menge der Routen und vergleiche die Summe von units aus orders.tsv mit total in summary.json.
 
   ```sh
+  (
+  set -euo pipefail
+  archive_member() {
+    local archive=$1 expected=$2 stored
+    stored=$(tar tf "$archive" | awk -v expected="$expected" '
+      { name=$0; while (sub(/^\.\//, "", name)) {} if (name==expected) print $0 }')
+    test -n "$stored" || return 1
+    tar xOf "$archive" -- "$stored"
+  }
+  jq '{marker, routes}' checkpoint-contract.json
   tar tf ledger.tar
-  tar xOf ledger.tar ledger.txt | sha256sum
+  archive_member ledger.tar ledger.txt | sha256sum
   cat original-ledger.sha256
   tar tf checkpoint.tar
-  tar xOf checkpoint.tar orders.tsv
-  tar xOf checkpoint.tar summary.json
+  archive_member checkpoint.tar orders.tsv
+  archive_member checkpoint.tar summary.json
+  )
+  ```
+
+  Phase 2. Prüfe bei pausierter Aufnahme Claim-Identitäten, Datei-Prüfsummen und HTTP-Bytes der wiederhergestellten Leser. Vergleiche die Prüfsumme jeder Datei und jeder HTTP-Antwort mit dem zugehörigen Archiveintrag. Der writer hat null Replikate und keine Pods.
+
+  ```sh
+  (
+  set -euo pipefail
+  archive_member() {
+    local archive=$1 expected=$2 stored
+    stored=$(tar tf "$archive" | awk -v expected="$expected" '
+      { name=$0; while (sub(/^\.\//, "", name)) {} if (name==expected) print $0 }')
+    test -n "$stored" || return 1
+    tar xOf "$archive" -- "$stored"
+  }
+  jq '.claims' checkpoint-identities.json
+  kubectl get deployment journal-writer -o jsonpath='{.spec.replicas}{"\n"}'
+  kubectl get pods -l app=journal-writer -o name
+  archive_member checkpoint.tar orders.tsv | sha256sum
+  archive_member checkpoint.tar summary.json | sha256sum
   kubectl get deployment,pvc,pods -o yaml
   kubectl exec deployment/ledger -- sha256sum /data/ledger.txt /data/orders.tsv
   kubectl exec deployment/summary -- sha256sum /data/summary.json
-  kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/orders.tsv
-  kubectl exec deployment/client -- wget -qO- -T 3 http://summary:8080/summary.json
+  kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/orders.tsv | sha256sum
+  kubectl exec deployment/client -- wget -qO- -T 3 http://summary:8080/summary.json | sha256sum
+  kubectl exec deployment/client -- wget -qO- -T 3 http://ledger:8080/ledger.txt | sha256sum
+  )
   ```
 phrases.0: Ich verglich die Archiv-Prüfsumme.
 phrases.1: Ich prüfte die laufende Datei und PVC-UID.
