@@ -35,12 +35,26 @@ debrief: You recovered two independent Git authentication contexts, preserved bi
 stages.0.brief: The published release must be available within the permitted credential scope.
 hints.0.text: The workstation and delivery controller authenticate independently. Repairing one context does not
   establish access for the other.
-hints.1.text: Compare `delivery-access.json`, the workstation's effective Git configuration locations, the existing
-  Secret metadata and Application fetch errors. Inspect names and permissions without printing authentication values.
-hints.2.text: Restore the repository binding and current credentials in both authentication contexts, keep credential-bearing
-  configuration private, and request a hard refresh. Verify `git -C repository ls-remote $GIT_URL refs/heads/main`,
-  the original publication revision, Application health and actual HTTP. Recheck the narrow authorization answers
-  and original object UIDs.
+hints.1.text: |-
+  Compare `delivery-access.json`, the workstation's effective Git configuration locations, the existing Secret metadata and Application fetch errors. Inspect names and permissions without printing authentication values.
+
+  Locate the repository identity in the Application source and compare it with the workspace Git configuration and the named Secret metadata. Inspect which resource names and verbs the bound Role permits.
+hints.2.text: |-
+  Verify `git -C repository ls-remote $GIT_URL refs/heads/main`, the original publication revision, Application health and actual HTTP. Recheck the narrow authorization answers and original object UIDs.
+
+  The named Secret must be patchable, while listing Secrets and patching the unrelated Secret must return `no`. Compare the original UIDs and revision with the live Application and Secret metadata. The application response must be `north-61`.
+
+  ```bash
+  source platform.env
+  git -C repository ls-remote "$GIT_URL" refs/heads/main
+  jq '{credentialName,credentialNamespace,credentialUID,applicationUID,revision}' delivery-access.json
+  kubectl auth can-i patch secret/station-repository -n "$ARGO_NAMESPACE"
+  kubectl auth can-i list secrets -n "$ARGO_NAMESPACE" || test "$?" -eq 1
+  kubectl auth can-i patch secret/unrelated -n "$ARGO_NAMESPACE" || test "$?" -eq 1
+  kubectl get secret station-repository -n "$ARGO_NAMESPACE" -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+  kubectl get application board -o json | jq '{uid:.metadata.uid,sync:.status.sync,health:.status.health}'
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  ```
 phrases.0: I diagnosed repository authentication before changing the application.
 phrases.1: I limited credential repair to one named Secret.
 phrases.2: I verified the Git revision and actual endpoint after reconciliation.

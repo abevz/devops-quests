@@ -21,9 +21,25 @@ def test_vault_quests_link_an_authored_localized_recovery_guide():
     for number in (65, 73, 83, 93):
         hints = catalog.quests[number]["hints"]
         assert hints[0].get("guide") == "vault-recovery"
-        urls = [catalog.public(number, hints=3)["hints"][i]["url"] for i in range(3)]
-        assert len(set(urls)) == 3
-        assert all(url.startswith("https://") for url in urls[1:])
+        published = catalog.public(number, hints=3)["hints"]
+        for hint, rendered in zip(hints, published, strict=True):
+            if "guide" in hint:
+                expected = f"guide/{hint['guide']}"
+                if "section" in hint:
+                    authored_guide = catalog.guide(hint["guide"])
+                    expected = f"guides#guide={authored_guide['id']}&section={hint['section']}"
+                assert rendered["url"] == expected
+            elif "url" in hint:
+                assert rendered["url"] == hint["url"] and rendered["url"].startswith("https://")
+            else:
+                assert "url" not in rendered
+                assert all(
+                    any(3 <= sum(bool(line.strip()) for line in block.splitlines()[1:-1]) <= 5
+                        for block in fenced_blocks(text))
+                    for text in rendered["text"].values()
+                )
+        urls = [hint["url"] for hint in published if "url" in hint]
+        assert len(set(urls)) == len(urls)
     russian = (ROOT / "docs/Vault-Recovery.md").read_text()
     assert russian == catalog.guide_messages["vault-recovery"]["ru"]["text"]
     english = catalog.guide_messages["vault-recovery"]["en"]["text"]

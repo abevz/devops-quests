@@ -35,13 +35,26 @@ debrief: Recuperaste dos contextos independientes de autenticación Git, conserv
 stages.0.brief: La versión publicada debe estar disponible dentro del ámbito de credenciales permitido.
 hints.0.text: La estación y el controlador de entrega se autentican de forma independiente. Reparar un cliente no
   demuestra el acceso del otro.
-hints.1.text: Compara `delivery-access.json`, las ubicaciones de la configuración Git efectiva de la estación, los
-  metadatos del Secret existente y los errores de descarga de la Application. Inspecciona nombres y permisos sin
-  imprimir valores de autenticación.
-hints.2.text: Restaura la vinculación al repositorio y las credenciales actuales en ambos contextos, protege la
-  configuración que las contiene y solicita hard refresh. Verifica `git -C repository ls-remote $GIT_URL refs/heads/main`,
-  la revisión publicada original, la salud de la Application y HTTP real. Revisa de nuevo los permisos restringidos
-  y los UID originales.
+hints.1.text: |-
+  Compara `delivery-access.json`, las ubicaciones de la configuración Git efectiva de la estación, los metadatos del Secret existente y los errores de descarga de la Application. Inspecciona nombres y permisos sin imprimir valores de autenticación.
+
+  Localiza la identidad del repositorio en el origen de Application y compárala con la configuración local de Git y los metadatos del Secret indicado. Revisa qué nombres de recurso y acciones permite la Role vinculada.
+hints.2.text: |-
+  Verifica `git -C repository ls-remote $GIT_URL refs/heads/main`, la revisión publicada original, la salud de la Application y HTTP real. Revisa de nuevo los permisos restringidos y los UID originales.
+
+  Debe permitirse modificar el Secret indicado, mientras que listar Secrets y modificar el Secret ajeno deben devolver `no`. Compara los UID y la revisión originales con la Application y los metadatos actuales del Secret. La aplicación debe devolver `north-61`.
+
+  ```bash
+  source platform.env
+  git -C repository ls-remote "$GIT_URL" refs/heads/main
+  jq '{credentialName,credentialNamespace,credentialUID,applicationUID,revision}' delivery-access.json
+  kubectl auth can-i patch secret/station-repository -n "$ARGO_NAMESPACE"
+  kubectl auth can-i list secrets -n "$ARGO_NAMESPACE" || test "$?" -eq 1
+  kubectl auth can-i patch secret/unrelated -n "$ARGO_NAMESPACE" || test "$?" -eq 1
+  kubectl get secret station-repository -n "$ARGO_NAMESPACE" -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+  kubectl get application board -o json | jq '{uid:.metadata.uid,sync:.status.sync,health:.status.health}'
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  ```
 phrases.0: Diagnostiqué la autenticación del repositorio antes de cambiar la aplicación.
 phrases.1: Limité la reparación de credential a una llamada Secret.
 phrases.2: Verifiqué el Git revision y el endpoint real después de la conciliación.

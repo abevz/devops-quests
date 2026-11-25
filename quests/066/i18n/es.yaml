@@ -26,37 +26,65 @@ debrief: Se conservaron identidades originales de fuentes y consumidores; la ver
 stages.0.brief: La solicitud de retención y las etiquetas conservadas no describen un inventario coherente. Recupera
   una retención segura sin sustituir el registry ni su autoridad.
 hints.0.text: Una etiqueta mutable, un manifiesto inmutable y los bytes almacenados son objetos distintos.
-hints.1.text: 'Antes de cambiar datos, compara plan de retención, catálogo aprobado y enlaces reales de etiquetas.
+hints.1.text: |-
+  Antes de cambiar datos, compara plan de retención, catálogo aprobado y enlaces reales de etiquetas.
 
+  Compara el digest de cada etiqueta activa con las entradas de retención aprobadas. Comprueba qué etiquetas comparten un digest.
 
   ```bash
-
-  cat retention.json release-catalog.json registry-source.json
-
+  cat retention.json release-catalog.json
+  jq '{endpoint,ca_sha256}' registry-source.json
   source platform.env
+  curl -fsS --max-time 3 --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") "https://$REGISTRY/v2/parcel/tags/list" | jq '{tags}'
+  ```
+hints.2.text: |-
+  ```bash
+  set -euo pipefail
+  cd ~/quest
+  source platform.env
+  python3 -I - <<'VERIFY_RELEASE'
+  import urllib.error
 
-  curl -fsS --max-time 3 --cacert registry-ca.crt --config <(printf ''user = "%s:%s"\n'' "$REGISTRY_USER" "$REGISTRY_PASSWORD")
-  "https://$REGISTRY/v2/parcel/tags/list" | jq ''{tags}''
+  import base64,hashlib,json,os,ssl,urllib.request
+  from pathlib import Path
+  source=json.loads(Path('/run/dq/facts/0/registry-source.json').read_text())
+  assert os.environ['REGISTRY']==source['endpoint']
+  assert os.environ['REGISTRY_USER']==source['username']
+  assert hashlib.sha256(os.environ['REGISTRY_PASSWORD'].encode()).hexdigest()==source['password_sha256']
+  assert hashlib.sha256(Path('registry-ca.crt').read_bytes()).hexdigest()==source['ca_sha256']
+  class NoRedirect(urllib.request.HTTPRedirectHandler):
+   def redirect_request(self,*args,**kwargs):
+    return None
+  opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect(),
+  urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile='registry-ca.crt')))
+  headers={'Authorization':'Basic '+base64.b64encode((source['username']+':'+os.environ['REGISTRY_PASSWORD']).encode()).decode(),
+  'Accept':'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json'}
+  def manifest(reference):
+   request=urllib.request.Request('https://'+source['endpoint']+'/v2/parcel/manifests/'+reference,headers=headers)
+   with opener.open(request,timeout=2) as response:
+    body=response.read(2097153)
+    assert len(body)<=2097152
+    digest='sha256:'+hashlib.sha256(body).hexdigest()
+    assert response.headers.get('Docker-Content-Digest')==digest
+    return digest
 
-  ```'
-hints.2.text: "\n\nSelecciona solo el digest obsoleto aprobado. Construye DELETE validados contra el registry original,\
-  \ conservando identidad privada y CA; restaura la etiqueta actual publicando el manifiesto aprobado. Conserva\
-  \ la etiqueta de reversión. Una etiqueta local no actualiza el registry.\n\n```bash\nset -euo pipefail\ncd ~/quest\n\
-  source platform.env\npython3 -I - <<'VERIFY_RELEASE'\nimport urllib.error\n\nimport base64,hashlib,json,os,ssl,urllib.request\n\
-  from pathlib import Path\nsource=json.loads(Path('/run/dq/facts/0/registry-source.json').read_text())\nassert\
-  \ os.environ['REGISTRY']==source['endpoint']\nassert os.environ['REGISTRY_USER']==source['username']\nassert hashlib.sha256(os.environ['REGISTRY_PASSWORD'].encode()).hexdigest()==source['password_sha256']\n\
-  assert hashlib.sha256(Path('registry-ca.crt').read_bytes()).hexdigest()==source['ca_sha256']\nclass NoRedirect(urllib.request.HTTPRedirectHandler):\n\
-  \ def redirect_request(self,*args,**kwargs):\n  return None\nopener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect(),\n\
-  urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile='registry-ca.crt')))\nheaders={'Authorization':'Basic\
-  \ '+base64.b64encode((source['username']+':'+os.environ['REGISTRY_PASSWORD']).encode()).decode(),\n'Accept':'application/vnd.docker.distribution.manifest.v2+json,\
-  \ application/vnd.oci.image.manifest.v1+json'}\ndef manifest(reference):\n request=urllib.request.Request('https://'+source['endpoint']+'/v2/parcel/manifests/'+reference,headers=headers)\n\
-  \ with opener.open(request,timeout=2) as response:\n  body=response.read(2097153)\n  assert len(body)<=2097152\n\
-  \  digest='sha256:'+hashlib.sha256(body).hexdigest()\n  assert response.headers.get('Docker-Content-Digest')==digest\n\
-  \  return digest\n\ncatalog=json.loads(Path('/run/dq/facts/0/release-catalog.json').read_text())\nassert manifest('current')==catalog['current']\n\
-  assert manifest('1')==catalog['rollback']\n\nfor role in ('current','rollback','obsolete'):\n digest=catalog[role]\n\
-  \ try:\n  observed=manifest(digest)\n  assert role!='obsolete' and observed==digest\n except urllib.error.HTTPError\
-  \ as error:\n  assert role=='obsolete' and error.code==404\n\nprint('OK')\nVERIFY_RELEASE\n```\n\nEsperado: OK.\
-  \ No se muestran credenciales."
+  catalog=json.loads(Path('/run/dq/facts/0/release-catalog.json').read_text())
+  assert manifest('current')==catalog['current']
+  assert manifest('1')==catalog['rollback']
+
+  for role in ('current','rollback','obsolete'):
+   digest=catalog[role]
+   try:
+    observed=manifest(digest)
+    assert role!='obsolete' and observed==digest
+   except urllib.error.HTTPError as error:
+    assert role=='obsolete' and error.code==404
+
+  print('OK')
+  VERIFY_RELEASE
+  ```
+
+  Esperado: OK. No se muestran credenciales.
 phrases.0: Protegí los resúmenes de reversión antes de eliminar el obsoleto manifests.
 phrases.1: Verifiqué TLS en lugar de omitir las verificaciones de certificados.
 phrases.2: Distinguí la eliminación de manifest del almacenamiento garbage collection.

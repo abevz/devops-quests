@@ -28,75 +28,73 @@ debrief: The original source and consumer identities were preserved, and the run
 stages.0.brief: Recover the existing initialized Vault and its application without replacing storage or changing
   the recovery quorum. Preserve its recorded cluster identity and supplied private, distinct recovery shares.
 hints.0.text: Server availability, authorization and a consumer’s adopted publication are different observations.
-hints.1.text: 'Compare the live service response, source profiles, application logs and original contract. Trace
-  the first failing boundary before changing another component.
+hints.1.text: |-
+  Compare the live service response, source profiles, application logs and original contract. Trace the first failing boundary before changing another component.
 
+  Locate the seal status and its progress fields. Compare the consumer’s source path, the response status and the supplied contract to see which boundary is failing.
 
   ```bash
-
-  cat consumer/source.json consumer/application.log consumer-contract.json
-
+  cat consumer/source.json
+  cat consumer/application.log consumer-contract.json
   curl -fsS --max-time 2 http://127.0.0.1:18081/status
-
-  ```'
-hints.2.text: 'Unseal progress needs distinct supplied shares; submitting the same share twice adds no progress.
-
-
-  Submit two distinct supplied shares to /v1/sys/unseal and read the existing KV value with the original access
-  token. Never print shares or tokens, reinitialize storage, or create a replacement secret.
-
-
-  Verify the observed result:
-
-
-  - `ls -l unseal-shares.json; jq -e ''type=="array" and length==2 and all(.[];type=="string") and .[0]!=.[1]''
-  unseal-shares.json` — Mode `-rw-------` and `true`, without displaying shares.
-
-  - `source platform.env; curl -fsS "$VAULT_ADDR/v1/sys/seal-status" | jq ''{initialized,sealed,t,n}''` — Reports
-  initialized `true`, sealed `false`, `t=2`, `n=3`.
-
-  - `source platform.env; curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
-  | jq -e ''.data.data.value=="north-secret"''` — Prints `true`, without displaying the secret response.
-
-
-  Match the profile to the approved API source and supplied reader credential. Keep the credential private and send
-  SIGHUP to the existing application PID; the manager is a different identity. Recheck the HTTP publication, not
-  only the source. Expected: OK.
-
+  ```
+hints.2.text: |-
+  Expect `OK` when the initialized, unsealed Vault has the original cluster ID and quorum, both private shares have the required shape, and the original consumer serves the approved publication through its private reader file. The test reports status without displaying the shares, reader credential or returned Vault value.
 
   ```bash
-
   set -euo pipefail
-
   cd ~/quest
-
-  curl -fsS --max-time 2 http://127.0.0.1:18081/ > observed-publication.json
-
-  python3 -I - <<''VERIFY_PUBLICATION''
-
-  import json
-
+  source platform.env
+  test "$(stat -c %a unseal-shares.json)" = 600
+  jq -e 'type=="array" and length==2 and all(.[];type=="string") and .[0]!=.[1]' unseal-shares.json >/dev/null
+  python3 -I - <<'VERIFY_PUBLICATION'
+  import hashlib, json, os, stat, urllib.request
   from pathlib import Path
 
-  contract=json.loads(Path(''consumer-contract.json'').read_text())
+  contract = json.loads(Path('consumer-contract.json').read_text())
+  address = os.environ['VAULT_ADDR'].rstrip('/')
+  opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-  observed=json.loads(Path(''observed-publication.json'').read_text())
+  def get(url, headers=None):
+      request = urllib.request.Request(url, headers=headers or {})
+      with opener.open(request, timeout=3) as response:
+          return json.load(response)
 
-  assert observed[''ready''] is True
+  status = get(address + '/v1/sys/seal-status')
+  assert status['initialized'] is True and status['sealed'] is False
+  assert (status['t'], status['n']) == (2, 3)
+  assert status['cluster_id'] == Path('original-cluster-id').read_text().strip()
+  reader = get(address + '/v1/' + contract['path'], {'X-Vault-Token': os.environ['VAULT_READER_TOKEN']})
+  assert hashlib.sha256(reader['data']['data']['value'].encode()).hexdigest() == contract['value_sha256']
 
-  assert observed[''source'']==contract[''vault_url'']
+  old = contract['consumer']
+  pid = Path('consumer/application.pid').read_text().strip()
+  assert pid == str(old['pid'])
+  proc = Path('/proc') / pid
+  fields = (proc / 'stat').read_text().rsplit(') ', 1)[1].split()
+  assert fields[0] not in ('Z', 'X') and fields[19] == old['start']
+  assert (proc / 'cmdline').read_bytes().hex() == old['command']
+  live = dict(line.split(':', 1) for line in (proc / 'status').read_text().splitlines() if ':' in line)
+  assert all(live[key].strip() == value for key, value in old['status'].items())
+  assert hashlib.sha256(Path('provided-vault-consumer.py').read_bytes()).hexdigest() == contract['program_sha256']
 
-  assert observed[''path'']==contract[''path'']
+  profile = json.loads(Path('consumer/source.json').read_text())
+  assert set(profile) == {'url', 'path', 'token_file'}
+  assert (profile['url'], profile['path']) == (contract['vault_url'], contract['path'])
+  credential = Path(profile['token_file'])
+  metadata = credential.lstat()
+  assert stat.S_ISREG(metadata.st_mode) and stat.S_IMODE(metadata.st_mode) == 0o600
+  assert metadata.st_uid == 1000 and metadata.st_size <= 4096
+  assert hashlib.sha256(credential.read_bytes().strip()).hexdigest() == contract['reader_sha256']
 
-  assert observed[''value_sha256'']==contract[''value_sha256'']
-
-  assert observed[''version'']==contract[''version'']
-
-  print(''OK'')
-
+  published = get('http://127.0.0.1:18081/')
+  assert published['ready'] is True and published['kind'] == 'vault'
+  assert published['source'] == contract['vault_url'] and published['path'] == contract['path']
+  assert published['value_sha256'] == contract['value_sha256']
+  assert type(published['version']) is int and published['version'] == contract['version']
+  print('OK')
   VERIFY_PUBLICATION
-
-  ```'
+  ```
 phrases.0: I distinguished sealed storage from an uninitialized server.
 phrases.1: I used the required threshold of game-only shares.
 phrases.2: I verified existing data rather than creating a replacement.
