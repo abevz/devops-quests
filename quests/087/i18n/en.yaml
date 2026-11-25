@@ -22,14 +22,47 @@ brief: |-
 stages.0.brief: Recover consistent state and normal ownership while retaining both completed identities.
 hints.0.text: Lock ownership and resource ownership can diverge. A recovery snapshot may be internally valid and
   still omit a later completed operation.
-hints.1.text: Compare `cat incident.txt failed-apply.log`, `tofu state pull`, `cat errored.tfstate`, `docker ps
-  -a` and the current service observations. Compare lineage, serial, resource IDs and lock ownership separately;
-  an earlier error is not a current-owner observation.
-hints.2.text: 'Coordinate normal completion of the registered current owner through the documented contract. Preserve
-  a current backend backup, then reconcile the missing original binding in offline working copies rather than replacing
-  newer work with an older whole snapshot. `tofu state mv -state=... -state-out=...` can move a native binding between
-  local copies; push only the reconciled snapshot with normal backend safeguards. Verify both original IDs, unchanged
-  recovery evidence, `completed: true`, and `tofu plan -input=false -detailed-exitcode -no-color` exiting `0`.'
+hints.1.text: |-
+  Compare `cat incident.txt failed-apply.log`, `tofu state pull`, `cat errored.tfstate`, `docker ps -a` and the current service observations. Compare lineage, serial, resource IDs and lock ownership separately; an earlier error is not a current-owner observation.
+
+  Locate the registered owner in the backend contract and compare its status with the old apply error. In separate snapshots, identify the missing original binding and which newer resource is already recorded.
+
+  ```sh
+  curl -fsS http://127.0.0.1:18787/diagnostic | jq .lock
+  curl -fsS http://127.0.0.1:18787/owner | jq '{registered,handle,running,eof_requested,completed}'
+  sha256sum errored.tfstate
+  ```
+hints.2.text: |-
+  Verify both original IDs, unchanged recovery evidence, `completed: true`, and `tofu plan -input=false -detailed-exitcode -no-color` exiting `0`.
+
+  Compare the backup lineage, serial and completed IDs with the initial backend snapshot. Compare the recovered live IDs and lineage with the original records. The errored-state checksum must match its initial observation. The file must contain `north-ready`, and the owner endpoint must report `true`.
+
+  ```sh
+  (
+    set -euo pipefail
+    ref=/run/dq/locking-identities.json
+    curl -fsS http://127.0.0.1:18787/owner | jq -e '.completed == true and .running == false'
+    test "$(sha256sum errored.tfstate | cut -d ' ' -f1)" = "$(jq -er .checkpoint_sha256 "$ref")"
+    python3 -I - <<'VERIFY_BACKUP'
+  import hashlib, json
+  from pathlib import Path
+  reference = json.loads(Path('/run/dq/locking-identities.json').read_text())
+  backup = json.loads(Path('before-recovery.tfstate').read_text())
+  canonical = json.dumps(backup, sort_keys=True, separators=(',', ':')).encode()
+  assert hashlib.sha256(canonical).hexdigest() == reference['backup_sha256']
+  VERIFY_BACKUP
+    tofu state pull | jq -e --slurpfile ref "$ref" '
+      def ids($type): [.resources[] | select(.mode=="managed" and .type==$type) | .instances[].attributes.id];
+      $ref[0] as $want | .lineage==$want.lineage and .serial >= $want.serial
+      and (ids("docker_container") | index($want.container_id) != null)
+      and (ids("terraform_data") | index($want.progress_id) != null)'
+    container=$(jq -er .container_id "$ref")
+    docker inspect "$container" | jq -e --arg id "$container" '
+      .[0] | .Id==$id and .State.Running==true and .State.Health.Status=="healthy"'
+    cat notice.txt
+    tofu plan -input=false -detailed-exitcode -no-color
+  )
+  ```
 debrief: A lock handover allowed two clients to diverge. Recovery preserved newer completed state and the original
   physical resource, and the genuine current owner released its own lock.
 phrases.0: I checked the running state before making a change.

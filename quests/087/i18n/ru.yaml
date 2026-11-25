@@ -22,14 +22,47 @@ brief: |-
 stages.0.brief: Восстановите согласованный state и штатное владение, сохранив обе завершённые идентичности.
 hints.0.text: Владение блокировкой и ресурсом может разойтись. Снимок восстановления может быть внутренне корректным,
   но не содержать более позднюю завершённую операцию.
-hints.1.text: Сопоставьте `cat incident.txt failed-apply.log`, `tofu state pull`, `cat errored.tfstate`, `docker
-  ps -a` и текущие наблюдения сервиса. Отдельно сравните lineage, serial, ID ресурсов и владельца блокировки; старая
-  ошибка не описывает текущего владельца.
-hints.2.text: 'Согласуйте штатное завершение зарегистрированного текущего владельца по документированному контракту.
-  Сохраните текущий backend, затем согласуйте недостающую исходную привязку в автономных рабочих копиях вместо замены
-  новой работы целым старым снимком. `tofu state mv -state=... -state-out=...` переносит native привязку между локальными
-  копиями; отправляйте только согласованный снимок с обычными защитами backend. Проверьте оба исходных ID, неизменность
-  аварийного снимка, `completed: true` и код `0` у `tofu plan -input=false -detailed-exitcode -no-color`.'
+hints.1.text: |-
+  Сопоставьте `cat incident.txt failed-apply.log`, `tofu state pull`, `cat errored.tfstate`, `docker ps -a` и текущие наблюдения сервиса. Отдельно сравните lineage, serial, ID ресурсов и владельца блокировки; старая ошибка не описывает текущего владельца.
+
+  Найдите зарегистрированного владельца в контракте backend и сравните его состояние с прежней ошибкой apply. В отдельных снимках найдите недостающую исходную привязку и более новый ресурс, который уже записан.
+
+  ```sh
+  curl -fsS http://127.0.0.1:18787/diagnostic | jq .lock
+  curl -fsS http://127.0.0.1:18787/owner | jq '{registered,handle,running,eof_requested,completed}'
+  sha256sum errored.tfstate
+  ```
+hints.2.text: |-
+  Проверьте оба исходных ID, неизменность аварийного снимка, `completed: true` и код `0` у `tofu plan -input=false -detailed-exitcode -no-color`.
+
+  Сверьте lineage, serial и ID завершённых операций в копии с исходным снимком backend. Сравните ID и lineage восстановленного состояния с исходными записями. Контрольная сумма ошибочного состояния должна совпасть с исходной. Файл должен содержать `north-ready`, а ответ владельца — `true`.
+
+  ```sh
+  (
+    set -euo pipefail
+    ref=/run/dq/locking-identities.json
+    curl -fsS http://127.0.0.1:18787/owner | jq -e '.completed == true and .running == false'
+    test "$(sha256sum errored.tfstate | cut -d ' ' -f1)" = "$(jq -er .checkpoint_sha256 "$ref")"
+    python3 -I - <<'VERIFY_BACKUP'
+  import hashlib, json
+  from pathlib import Path
+  reference = json.loads(Path('/run/dq/locking-identities.json').read_text())
+  backup = json.loads(Path('before-recovery.tfstate').read_text())
+  canonical = json.dumps(backup, sort_keys=True, separators=(',', ':')).encode()
+  assert hashlib.sha256(canonical).hexdigest() == reference['backup_sha256']
+  VERIFY_BACKUP
+    tofu state pull | jq -e --slurpfile ref "$ref" '
+      def ids($type): [.resources[] | select(.mode=="managed" and .type==$type) | .instances[].attributes.id];
+      $ref[0] as $want | .lineage==$want.lineage and .serial >= $want.serial
+      and (ids("docker_container") | index($want.container_id) != null)
+      and (ids("terraform_data") | index($want.progress_id) != null)'
+    container=$(jq -er .container_id "$ref")
+    docker inspect "$container" | jq -e --arg id "$container" '
+      .[0] | .Id==$id and .State.Running==true and .State.Health.Status=="healthy"'
+    cat notice.txt
+    tofu plan -input=false -detailed-exitcode -no-color
+  )
+  ```
 debrief: Передача блокировки позволила двум клиентам разойтись. Восстановление сохранило более новый завершённый
   state и исходный физический ресурс, а настоящий текущий владелец сам освободил блокировку.
 phrases.0: Я проверил фактическое состояние до изменения.

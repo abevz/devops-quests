@@ -20,16 +20,74 @@ stages.0.brief: Восстановите границы модулей и обо
   работу.
 hints.0.text: Пакет модуля, привязка ресурса и граница state — разные задачи восстановления. Корректный старый backup
   может не содержать работу, завершённую в более новом независимом state.
-hints.1.text: Сопоставьте `cat main.tf infra/main.tf infra/module-contract.json`, `find modules infra -type f`,
-  `tofu state list`, `tofu -chdir=infra state pull` и `jq . safe-state.json`. Изучите текущие Docker-объекты и содержимое
-  тома. Отделите lineage, текущие привязки и завершённые ID каждого корня от старого backup; используйте `tofu providers
-  schema -json` и native help для интерфейсов провайдера и модуля.
-hints.2.text: Восстановите объявленный интерфейс модуля и сохраните оба текущих снимка до изменения привязок. Работайте
-  с копиями старого backup и текущего целевого state; `tofu state mv -state=... -state-out=...` переносит только
-  недостающие привязки модуля без перезаписи новой работы назначения. Отправьте согласованный state с обычными защитами
-  lineage/serial и исправьте настроенный адрес основного корня. Сохраните и экспортируйте план в каждом корне, проверьте
-  исходные ID и только `no-op` для управляемых ресурсов до применения изменений одних outputs; затем убедитесь,
-  что оба свежих подробных плана дают код `0`, а байты сохранённого тома не изменились.
+hints.1.text: |-
+  Сопоставьте `cat main.tf infra/main.tf infra/module-contract.json`, `find modules infra -type f`, `tofu state list`, `tofu -chdir=infra state pull` и `jq . safe-state.json`. Изучите текущие Docker-объекты и содержимое тома. Отделите lineage, текущие привязки и завершённые ID каждого корня от старого backup; используйте `tofu providers schema -json` и native help для интерфейсов провайдера и модуля.
+
+  Проследите ожидаемый интерфейс вызова в infra и сравните адреса привязанных модулей со старой копией. Для каждого корня изучите исходные ID провайдера, lineage и serial в текущем состоянии.
+hints.2.text: |-
+  После согласования привязок и до применения изменений выходов выгрузите оба плана, если JSON-квитанции ещё не сохранены. Команды сохраняют существующие квитанции и выгружают только планы без изменений управляемых ресурсов.
+
+  ```sh
+  for root in . infra; do
+    (
+      set -euo pipefail
+      expected=1
+      if test "$root" = infra; then expected=4; fi
+      cd "$root"
+      test -s recovery-plan.json && exit 0
+      tmp=$(mktemp -d)
+      trap 'rm -rf -- "$tmp"' EXIT
+      tofu plan -input=false -no-color -out="$tmp/recovery.plan"
+      tofu show -json "$tmp/recovery.plan" > "$tmp/recovery.json"
+      jq -e --argjson expected "$expected" '
+        ([.resource_changes[] | select(.mode=="managed")] | length)==$expected
+        and all(.resource_changes[];
+        if .mode=="managed" then .change.actions==["no-op"]
+        else .mode=="data" and (.change.actions==["read"] or .change.actions==["no-op"]) end)' \
+        "$tmp/recovery.json" >/dev/null
+      set -o noclobber
+      cat "$tmp/recovery.json" > recovery-plan.json
+    )
+  done
+  ```
+
+  Сохраните и экспортируйте план в каждом корне, проверьте исходные ID и только `no-op` для управляемых ресурсов до применения изменений одних outputs; затем убедитесь, что оба свежих подробных плана дают код `0`, а байты сохранённого тома не изменились.
+
+  Сверьте каждый сохранённый снимок с исходным состоянием в его корне. В основном плане нужна одна управляемая запись ledger с `no-op`; в плане инфраструктуры — четыре сохранённые управляемые записи с `no-op`, записи чтения данных допустимы. Сверьте ID runtime и контрольную сумму файла тома с исходными наблюдениями.
+
+  ```sh
+  (
+    set -euo pipefail
+    ref=/run/dq/facts/0/recovery-identities.json
+    test "$(sha256sum safe-state.json | cut -d ' ' -f1)" = "$(cat /run/dq/facts/0/safe-state.sha256)"
+    python3 -I - <<'VERIFY_BACKUPS'
+  import hashlib, json
+  from pathlib import Path
+  reference = json.loads(Path('/run/dq/facts/0/recovery-identities.json').read_text())
+  for key, name in (('root', 'before-recovery.tfstate'), ('infra', 'infra/before-recovery.tfstate')):
+      backup = json.loads(Path(name).read_text())
+      canonical = json.dumps(backup, sort_keys=True, separators=(',', ':')).encode()
+      assert hashlib.sha256(canonical).hexdigest() == reference[key + '_backup_sha256']
+  VERIFY_BACKUPS
+    jq -c '{file:input_filename,changes:[.resource_changes[] | {address,mode,actions:.change.actions,before_id:.change.before.id,after_id:.change.after.id}]}' \
+      recovery-plan.json infra/recovery-plan.json
+    test "$(tofu output -raw ledger_id)" = "$(cat /run/dq/facts/0/original-id)"
+    cat ledger.txt
+    tofu -chdir=infra output -json runtime | jq -e --slurpfile ref "$ref" '
+      . == ($ref[0] | {container_id,network_id,volume_name})'
+    container=$(jq -er .container_id "$ref")
+    volume=$(jq -er .volume_name "$ref")
+    docker inspect "$container" | jq -e --slurpfile ref "$ref" '
+      $ref[0] as $want | .[0] | .Id==$want.container_id and .State.Running==true
+      and any(.NetworkSettings.Networks[]; .NetworkID==$want.network_id)
+      and any(.Mounts[]; .Type=="volume" and .Name==$want.volume_name and .Destination=="/data")'
+    docker volume inspect "$volume" | jq -e --slurpfile ref "$ref" '.[0].CreatedAt==$ref[0].volume_created_at'
+    digest=$(docker exec "$container" cat /data/ledger | sha256sum | cut -d ' ' -f1)
+    test "$digest" = "$(jq -er .data_sha256 "$ref")"
+    tofu plan -input=false -detailed-exitcode -no-color
+    tofu -chdir=infra plan -input=false -detailed-exitcode -no-color
+  )
+  ```
 phrases.0: Я проверил backup до использования при восстановлении.
 phrases.1: Я согласовал адреса модулей без замены ресурса.
 phrases.2: Я проверил identity, outputs и пустой итоговый plan.
