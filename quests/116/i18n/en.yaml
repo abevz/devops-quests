@@ -16,13 +16,25 @@ stages.0.brief: The original consumer is rolled out and receives the current pro
   HTTP interfaces.
 hints.0.text: A controller can acknowledge desired state while a downstream process still consumes an older representation.
   Ownership, reconciliation and actual delivery are separate observations.
-hints.1.text: Compare `station.yaml` and `reconciliation-contract.json` with the live custom resource/status, generated
-  route data, consumer Pod volume mounts and `kubectl get pods,endpointslices -o yaml`. Compare the two actual HTTP
-  responses.
-hints.2.text: Recover desired state through the custom resource and check its observed generation and generated
-  data. Refresh consumer delivery according to its mount lifetime; a retained file bind needs a new Pod mount. Wait
-  for retiring Pods, then verify `kubectl rollout status deployment/client` and both declared HTTP interfaces. Expect
-  current readiness, `north-116`, retained identities and controller ownership.
+hints.1.text: |-
+  Compare `station.yaml` and `reconciliation-contract.json` with the live custom resource/status, generated route data, consumer Pod volume mounts and `kubectl get pods,endpointslices -o yaml`. Compare the two actual HTTP responses.
+
+  Look for the desired route and observed generation in the custom resource. In the consumer template and current Pod, inspect whether the file comes from a single-file mount and compare the live file with the generated ConfigMap.
+hints.2.text: |-
+  Wait for retiring Pods, then verify `kubectl rollout status deployment/client` and both declared HTTP interfaces. Expect current readiness, `north-116`, retained identities and controller ownership.
+
+  Compare the retained UIDs and images with the starting record. On the StationBoard, the observed generation must equal the desired generation, and the StationBoard UID must match the controller owner reference on the generated objects. `board-route` and both HTTP responses should show `north-116\n` as an escaped string, including the newline.
+
+  ```sh
+  jq '{identities,image}' reconciliation-identities.json
+  kubectl get stationboard station -o json | jq '{uid:.metadata.uid, generation:.metadata.generation, route:.spec.route, status}'
+  kubectl get configmap board-route -o json | jq '.data["index.html"]'
+  kubectl get deployments,replicasets,pods,configmaps,services -o yaml
+  kubectl rollout status deployment/client --timeout=10s
+  for service in board client-view; do
+    kubectl exec deployment/client -c worker -- wget -qO- -T 3 "http://$service:8080/" | jq -Rs .
+  done
+  ```
 phrases.0: I changed desired state on the custom resource.
 phrases.1: I checked the controller observed generation.
 phrases.2: I verified the reconciled application response.
