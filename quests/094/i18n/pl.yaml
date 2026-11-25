@@ -27,13 +27,44 @@ stages.0.objectives.5.text: Świeża próbka stacji spełnia próg; obaj pierwot
 stages.0.objectives.6.text: HTTP z Deployment `board` do `http://board:8080` zwraca `north-94`.
 hints.0.text: Kwotę może wyczerpać praca wewnątrz serwera lub rzeczywisty napływ żądań. Cichy serwer po zatrzymaniu
   wymaganego odbiorcy nie dowodzi całego kontraktu obsługi.
-hints.1.text: Porównaj `performance-contract.json`, aktywne polecenia i zasoby, politykę i skuteczne wejścia odbiorców,
-  `/sys/fs/cgroup/cpu.stat` kontenera worker serwera, zdarzenia, logi i rekordy postępu. Oddziel narzut pomiaru,
-  użyteczne żądania i inną pracę.
-hints.2.text: Zbuduj plik pomiarowy z zadeklarowanego licznika cgroup i interwału, przywróć użyteczną obsługę i
-  przekaż aktualne wejścia obu aktywnym odbiorcom. Sprawdź `bash measure.sh`, niezależny wynik serwera, rollout
-  i każdy interfejs postępu. Oczekuj najwyżej `5` nowych okresów throttlingu, `north-94`, zachowanych tożsamości
-  i budżetu oraz rosnących rekordów przy bieżącym rytmie polityki.
+hints.1.text: |-
+  Porównaj `performance-contract.json`, aktywne polecenia i zasoby, politykę i skuteczne wejścia odbiorców, `/sys/fs/cgroup/cpu.stat` kontenera worker serwera, zdarzenia, logi i rekordy postępu. Oddziel narzut pomiaru, użyteczne żądania i inną pracę.
+
+  Odszukaj wymagany licznik cgroup i interwał w kontrakcie wydajności. Porównaj obsługę żądań przez działający `worker` z odwołaniem do polityki i postępem każdego konsumenta.
+hints.2.text: |-
+  Sprawdź `bash measure.sh`, niezależny wynik serwera, rollout i każdy interfejs postępu. Oczekuj najwyżej `5` nowych okresów throttlingu, `north-94`, zachowanych tożsamości i budżetu oraz rosnących rekordów przy bieżącym rytmie polityki.
+
+  Uruchom arkusz i niezależnie zmierz tę samą cgroup obsługującą ruch, bez sond postępu podczas dwusekundowego pomiaru. Oczekuj wzrostu od `0` do `5` i odpowiedzi producenta `north-94`. Dla obu konsumentów dopasuj bieżącą politykę i sprawdź, że drugi `sequence` jest większy.
+
+  ```sh
+  bash measure.sh
+  kubectl exec deployment/board -c worker -- sh -ec '
+    read_counter() {
+      while read -r key value rest; do
+        if test "$key" = nr_throttled; then printf "%s\n" "$value"; return; fi
+      done < /sys/fs/cgroup/cpu.stat
+      return 1
+    }
+    before=$(read_counter)
+    sleep 2
+    after=$(read_counter)
+    test "$after" -ge "$before"
+    printf "%s\n" "$((after-before))"
+  '
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl get configmap poll-policy -o json | jq .data
+  for name in scan-a scan-b; do
+    kubectl rollout status "deployment/$name" --timeout=10s
+    kubectl exec "deployment/$name" -c worker -- printenv POLL_DELAY POLICY_ID
+  done
+  progress() {
+    for name in scan-a scan-b; do
+      kubectl exec "deployment/$name" -c worker -- wget -qO- -T 3 "http://$name:8080/progress.json" |
+        jq --arg name "$name" '{consumer:$name,sequence,route,delay,policy_id}'
+    done
+  }
+  progress; sleep 2.2; progress
+  ```
 phrases.0: Zmierzyłem CPU throttling przed zmianą wydajności.
 phrases.1: Zamiast skalować objaw, usunąłem niepotrzebną pracę.
 phrases.2: Zachowałem zasób limits i zweryfikowałem przydatne zachowanie HTTP.

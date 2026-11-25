@@ -27,13 +27,44 @@ stages.0.objectives.5.text: Свежее измерение на станции 
 stages.0.objectives.6.text: HTTP-запрос из Deployment `board` к `http://board:8080` возвращает `north-94`.
 hints.0.text: Квоту может исчерпать работа внутри сервера или реальный входящий спрос. Тихий сервер после остановки
   обязательного потребителя не доказывает весь контракт обслуживания.
-hints.1.text: Сопоставьте `performance-contract.json`, живые команды и ресурсы, политику и действующие параметры
-  потребителей, `/sys/fs/cgroup/cpu.stat` обслуживающего worker, события, логи и записи прогресса. Отделите издержки
-  измерения, полезные запросы и другую работу.
-hints.2.text: Постройте файл измерения по заданному счётчику cgroup и интервалу, восстановите полезное обслуживание
-  и передайте текущие параметры обоим активным потребителям. Проверьте `bash measure.sh`, независимый результат
-  сервера, rollout и все заданные интерфейсы прогресса. Ожидаются не более `5` новых throttled periods, `north-94`,
-  исходные UID и бюджет и растущие записи потребителей с текущим интервалом политики.
+hints.1.text: |-
+  Сопоставьте `performance-contract.json`, живые команды и ресурсы, политику и действующие параметры потребителей, `/sys/fs/cgroup/cpu.stat` обслуживающего worker, события, логи и записи прогресса. Отделите издержки измерения, полезные запросы и другую работу.
+
+  Найдите требуемый счётчик cgroup и интервал в контракте производительности. Сверьте обработку запросов живым `worker` со ссылкой на политику и прогрессом каждого потребителя.
+hints.2.text: |-
+  Проверьте `bash measure.sh`, независимый результат сервера, rollout и все заданные интерфейсы прогресса. Ожидаются не более `5` новых throttled periods, `north-94`, исходные UID и бюджет и растущие записи потребителей с текущим интервалом политики.
+
+  Запустите расчёт и отдельно измерьте ту же рабочую cgroup. Не опрашивайте прогресс во время двухсекундного измерения. Ожидается прирост от `0` до `5` и ответ производителя `north-94`. У обоих потребителей сверяйте текущую политику и проверяйте, что второе значение `sequence` больше первого.
+
+  ```sh
+  bash measure.sh
+  kubectl exec deployment/board -c worker -- sh -ec '
+    read_counter() {
+      while read -r key value rest; do
+        if test "$key" = nr_throttled; then printf "%s\n" "$value"; return; fi
+      done < /sys/fs/cgroup/cpu.stat
+      return 1
+    }
+    before=$(read_counter)
+    sleep 2
+    after=$(read_counter)
+    test "$after" -ge "$before"
+    printf "%s\n" "$((after-before))"
+  '
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl get configmap poll-policy -o json | jq .data
+  for name in scan-a scan-b; do
+    kubectl rollout status "deployment/$name" --timeout=10s
+    kubectl exec "deployment/$name" -c worker -- printenv POLL_DELAY POLICY_ID
+  done
+  progress() {
+    for name in scan-a scan-b; do
+      kubectl exec "deployment/$name" -c worker -- wget -qO- -T 3 "http://$name:8080/progress.json" |
+        jq --arg name "$name" '{consumer:$name,sequence,route,delay,policy_id}'
+    done
+  }
+  progress; sleep 2.2; progress
+  ```
 phrases.0: Я измерил CPU throttling до изменения мощности.
 phrases.1: Я убрал лишнюю работу вместо масштабирования симптома.
 phrases.2: Я сохранил limits и проверил полезное поведение HTTP.

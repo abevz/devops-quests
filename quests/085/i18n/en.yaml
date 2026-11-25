@@ -24,12 +24,27 @@ hints.1.text: Compare `kubectl get pdb -o yaml`, `kubectl get applications -o ya
   policy and Pod labels from `kubectl get pods --show-labels`. Inspect the complete Eviction API error
   and application conditions; compare both policy selectors with both pools, and distinguish local edits
   from the controller’s source.
-hints.2.text: Verify the published source and live policy agree, with automated self-healing retained.
-  Before each request, check `kubectl get pdb` and select an original name/UID from the frozen baseline.
-  After each real eviction, wait for replacement readiness; check `cat evictions.json`, `cat /run/dq/observations/evictions.json`
-  and `kubectl get pods -o wide`. Expect one observed original UID per pool, one original sibling retained
-  in each pool, two ready replicas and renewed disruption capacity. Probe both service HTTP responses
-  from a workload Pod.
+hints.2.text: |-
+  Verify the published source and live policy agree, with automated self-healing retained. Before each request, check `kubectl get pdb` and select an original name/UID from the frozen baseline. After each real eviction, wait for replacement readiness; check `cat evictions.json`, `cat /run/dq/observations/evictions.json` and `kubectl get pods -o wide`. Expect one observed original UID per pool, one original sibling retained in each pool, two ready replicas and renewed disruption capacity. Probe both service HTTP responses from a workload Pod.
+
+  ```sh
+  (
+    set -euo pipefail
+    head=$(git -C repository ls-remote origin refs/heads/main | cut -f1)
+    kubectl get application maintenance -o json |
+      jq -e --arg head "$head" '.status.sync.revision==$head and .status.sync.status=="Synced" and .spec.syncPolicy.automated.selfHeal==true'
+    jq -er '.[].deleteOptions.preconditions.uid' evictions.json
+    jq -er '.[]' /run/dq/observations/evictions.json
+    for pool in relay companion; do
+      jq --arg pool "$pool" '.pools[$pool]' maintenance-baseline.json
+      kubectl get pods -l "app=$pool" -o json |
+        jq '.items[] | {name:.metadata.name,uid:.metadata.uid,ready:any(.status.conditions[]?; .type=="Ready" and .status=="True")}'
+      kubectl get pdb "$pool" -o json |
+        jq -e '.status.observedGeneration==.metadata.generation and .status.currentHealthy>=2 and .status.disruptionsAllowed>=1'
+      test "$(kubectl exec deployment/relay -- wget -qO- -T 3 "http://$pool:8080")" = "$pool-85"
+    done
+  )
+  ```
 debrief: The Git-owned minimum and independently managed selector required different repairs. An apparently
   positive disruption allowance did not override overlapping policies. Preserved identities, server-observed
   evictions and restored services demonstrate the maintenance outcome.

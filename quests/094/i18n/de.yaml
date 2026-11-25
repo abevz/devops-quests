@@ -27,13 +27,44 @@ stages.0.objectives.5.text: Die frische Workstation-Messung hält den Grenzwert 
 stages.0.objectives.6.text: HTTP von Deployment `board` an `http://board:8080` liefert `north-94`.
 hints.0.text: Eine Quota kann durch Arbeit im Server oder durch echte eingehende Nachfrage erschöpft werden. Ein
   ruhiger Server nach dem Stoppen eines erforderlichen Verbrauchers belegt nicht den vollständigen Bedienungsvertrag.
-hints.1.text: Vergleiche `performance-contract.json`, laufende Befehle und Ressourcen, Richtlinie und wirksame Verbrauchereingaben,
-  `/sys/fs/cgroup/cpu.stat` des bedienenden Containers worker, Ereignisse, Logs und Fortschrittsdatensätze. Trenne
-  Messaufwand, nützliche Anfragen und andere Arbeit.
-hints.2.text: Erstelle die Messdatei aus dem vorgegebenen cgroup-Zähler und Intervall, stelle nützliche Bedienung
-  wieder her und übertrage die aktuellen Eingaben an beide aktiven Verbraucher. Prüfe `bash measure.sh`, das unabhängige
-  Serverergebnis, Rollout und jede Fortschrittsschnittstelle. Erwartet werden höchstens `5` neue gedrosselte Perioden,
-  `north-94`, erhaltene Identitäten und Budget sowie wachsende Datensätze bei aktueller Richtlinientaktung.
+hints.1.text: |-
+  Vergleiche `performance-contract.json`, laufende Befehle und Ressourcen, Richtlinie und wirksame Verbrauchereingaben, `/sys/fs/cgroup/cpu.stat` des bedienenden Containers worker, Ereignisse, Logs und Fortschrittsdatensätze. Trenne Messaufwand, nützliche Anfragen und andere Arbeit.
+
+  Suche den vorgeschriebenen cgroup-Zähler und das Intervall im Leistungsvertrag. Vergleiche die Anfragenbearbeitung des laufenden Containers `worker` mit der Policy-Referenz und dem Fortschritt jedes Verbrauchers.
+hints.2.text: |-
+  Prüfe `bash measure.sh`, das unabhängige Serverergebnis, Rollout und jede Fortschrittsschnittstelle. Erwartet werden höchstens `5` neue gedrosselte Perioden, `north-94`, erhaltene Identitäten und Budget sowie wachsende Datensätze bei aktueller Richtlinientaktung.
+
+  Führe das Messskript aus und erfasse dieselbe bedienende cgroup unabhängig. Die zweisekündige Messung läuft ohne Fortschrittsabfragen. Erwarte ein Delta von `0` bis `5` und `north-94` vom Produzenten. Vergleiche bei beiden Verbrauchern die aktive Policy und prüfe, ob der zweite Wert `sequence` größer ist.
+
+  ```sh
+  bash measure.sh
+  kubectl exec deployment/board -c worker -- sh -ec '
+    read_counter() {
+      while read -r key value rest; do
+        if test "$key" = nr_throttled; then printf "%s\n" "$value"; return; fi
+      done < /sys/fs/cgroup/cpu.stat
+      return 1
+    }
+    before=$(read_counter)
+    sleep 2
+    after=$(read_counter)
+    test "$after" -ge "$before"
+    printf "%s\n" "$((after-before))"
+  '
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  kubectl get configmap poll-policy -o json | jq .data
+  for name in scan-a scan-b; do
+    kubectl rollout status "deployment/$name" --timeout=10s
+    kubectl exec "deployment/$name" -c worker -- printenv POLL_DELAY POLICY_ID
+  done
+  progress() {
+    for name in scan-a scan-b; do
+      kubectl exec "deployment/$name" -c worker -- wget -qO- -T 3 "http://$name:8080/progress.json" |
+        jq --arg name "$name" '{consumer:$name,sequence,route,delay,policy_id}'
+    done
+  }
+  progress; sleep 2.2; progress
+  ```
 phrases.0: Ich habe CPU throttling gemessen, bevor ich die Kapazität geändert habe.
 phrases.1: Ich habe unnötige Arbeit entfernt, anstatt das Symptom zu vergrößern.
 phrases.2: Ich habe die Ressource limits beibehalten und ein nützliches Verhalten von HTTP überprüft.

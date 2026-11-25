@@ -19,13 +19,56 @@ stages.0.objectives.1.text: Все роли завершают запуск и �
   init-контейнер завершается успешно.
 hints.0.text: Выделение памяти, запуск процесса, завершение init-контейнера и readiness — разные границы. Рестарт
   контейнера и срок жизни тома Pod в памяти могут не совпадать.
-hints.1.text: Сопоставьте `startup-contract.json`, определения workload и источника, лимиты Pod, `kubectl describe
-  pod <pod>` и `kubectl logs <pod> -c <container> --previous`. Изучите завершение init- и основных контейнеров и
-  текущие входные данные.
-hints.2.text: Постройте ограниченный запуск для текущего набора данных и задайте достаточные бюджеты фаз, не превышая
-  общий потолок. Проверьте rollout, успешное завершение init, `stat -f -c %T /cache`, размер, выделенные блоки,
-  контрольную сумму и все HTTP-интерфейсы метаданных. Ожидаются исходные идентичности источника и ресурсов, реально
-  выделенные данные tmpfs по контракту и актуальные метаданные публикации.
+hints.1.text: |-
+  Сопоставьте `startup-contract.json`, определения workload и источника, лимиты Pod, `kubectl describe pod <pod>` и `kubectl logs <pod> -c <container> --previous`. Изучите завершение init- и основных контейнеров и текущие входные данные.
+
+  Проверьте, какой набор данных читает каждый этап запуска и какой лимит памяти к нему относится. Сверьте причину завершения с событиями приложения и выданным пределом.
+hints.2.text: |-
+  Проверьте rollout, успешное завершение init, `stat -f -c %T /cache`, размер, выделенные блоки, контрольную сумму и все HTTP-интерфейсы метаданных. Ожидаются исходные идентичности источника и ресурсов, реально выделенные данные tmpfs по контракту и актуальные метаданные публикации.
+
+  У каждого готового Pod этого Deployment ожидается `tmpfs`. Размер и SHA-256 файла должны совпадать с квитанцией, а число выделенных блоков, умноженное на `512`, должно покрывать размер файла. Инициализатор `stager` должен завершиться с кодом `0`. Сверьте все HTTP-записи с выданной публикацией.
+
+  ```sh
+  (
+  set -euo pipefail
+  expected_size=$(jq -er .publication.bytes startup-identities.json)
+  expected_hash=$(jq -er .publication.sha256 startup-identities.json)
+  jq '{identities,image,publication}' startup-identities.json
+  kubectl get deployments,replicasets,pods,services -o yaml
+  for name in relay stager reader; do
+    kubectl rollout status "deployment/$name" --timeout=10s
+    pods=$(kubectl get deployments,replicasets,pods -o json | jq -r --arg name "$name" '
+      def owned($kind; $uids): any(.metadata.ownerReferences[]?;
+        .controller == true and .kind == $kind and (.uid as $uid | $uids | index($uid) != null));
+      .items as $items | ($items[] | select(.kind == "Deployment" and .metadata.name == $name)) as $dep
+      | [$items[] | select(.kind == "ReplicaSet" and owned("Deployment"; [$dep.metadata.uid])) | .metadata.uid] as $rs
+      | $items[] | select(.kind == "Pod" and owned("ReplicaSet"; $rs) and .metadata.deletionTimestamp == null
+        and any(.status.conditions[]?; .type == "Ready" and .status == "True")) | .metadata.name')
+    if [ -z "$pods" ]; then
+      printf '%s: no ready owned Pod\n' "$name" >&2
+      exit 1
+    fi
+    while IFS= read -r pod; do
+      if [ "$name" = stager ]; then
+        kubectl get pod "$pod" -o json |
+          jq -e 'any(.status.initContainerStatuses[]?; .name=="warmer" and .state.terminated.exitCode==0)' >/dev/null
+      fi
+      test "$(kubectl exec "$pod" -c worker -- stat -f -c %T /cache)" = tmpfs
+      file_stats=$(kubectl exec "$pod" -c worker -- stat -c '%s %b' /cache/payload)
+      read -r size blocks <<< "$file_stats"
+      test "$size" -eq "$expected_size"
+      test "$((blocks * 512))" -ge "$size"
+      payload=$(kubectl exec "$pod" -c worker -- sha256sum /cache/payload)
+      test "${payload%% *}" = "$expected_hash"
+      kubectl exec "$pod" -c worker -- wget -qO- -T 3 "http://$name:8080/record.json" |
+        jq -e --slurpfile expected startup-identities.json '
+          $expected[0].publication as $wanted |
+          .cache_id==$wanted.cache_id and .bytes==$wanted.bytes and .sha256==$wanted.sha256' >/dev/null
+      printf '%s/%s: allocated payload and publication match\n' "$name" "$pod"
+    done <<< "$pods"
+  done
+  )
+  ```
 debrief: 'Разные отказы памяти потребовали разных исправлений: бесконтрольная работа, ёмкость init-фазы и входной
   объём, не помещавшийся в бюджет. Текущие данные теперь проходят все фазы запуска с сохранением исходных ресурсов.'
 phrases.0: Я проверил фактическое состояние до изменения.
