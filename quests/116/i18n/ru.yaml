@@ -16,14 +16,25 @@ stages.0.brief: Исходный потребитель завершил rollout
   HTTP-интерфейса.
 hints.0.text: Контроллер может подтвердить желаемое состояние, пока downstream-процесс использует старое представление.
   Владение, reconciliation и фактическая доставка — разные наблюдения.
-hints.1.text: Сопоставьте `station.yaml` и `reconciliation-contract.json` с текущими пользовательским ресурсом и
-  статусом, сгенерированными данными маршрута, монтированиями в Pod потребителя и `kubectl get pods,endpointslices
-  -o yaml`. Сравните оба фактических HTTP-ответа.
-hints.2.text: 'Восстановите желаемое состояние через пользовательский ресурс, проверьте observed generation и сгенерированные
-  данные. Обновите доставку потребителю с учётом времени жизни монтирования: сохранённая привязка файла требует
-  нового монтирования Pod. Дождитесь завершения старых Pod, затем проверьте `kubectl rollout status deployment/client`
-  и оба объявленных HTTP-интерфейса. Ожидаются текущая готовность, `north-116`, сохранённые идентичности и владение
-  контроллера.'
+hints.1.text: |-
+  Сопоставьте `station.yaml` и `reconciliation-contract.json` с текущими пользовательским ресурсом и статусом, сгенерированными данными маршрута, монтированиями в Pod потребителя и `kubectl get pods,endpointslices -o yaml`. Сравните оба фактических HTTP-ответа.
+
+  Найдите желаемый маршрут и наблюдаемое поколение в пользовательском ресурсе. В шаблоне и действующем Pod потребителя проверьте, используется ли монтирование отдельного файла, и сравните этот файл с созданным ConfigMap.
+hints.2.text: |-
+  Дождитесь завершения старых Pod, затем проверьте `kubectl rollout status deployment/client` и оба объявленных HTTP-интерфейса. Ожидаются текущая готовность, `north-116`, сохранённые идентичности и владение контроллера.
+
+  Сверьте сохранённые UID и образы с исходной записью. У StationBoard наблюдаемое поколение должно совпасть с текущим поколением, а UID StationBoard — с UID управляющего владельца в созданных объектах. `board-route` и оба HTTP-ответа должны показывать `north-116\n` как строку с экранированным переводом строки.
+
+  ```sh
+  jq '{identities,image}' reconciliation-identities.json
+  kubectl get stationboard station -o json | jq '{uid:.metadata.uid, generation:.metadata.generation, route:.spec.route, status}'
+  kubectl get configmap board-route -o json | jq '.data["index.html"]'
+  kubectl get deployments,replicasets,pods,configmaps,services -o yaml
+  kubectl rollout status deployment/client --timeout=10s
+  for service in board client-view; do
+    kubectl exec deployment/client -c worker -- wget -qO- -T 3 "http://$service:8080/" | jq -Rs .
+  done
+  ```
 phrases.0: Я изменил desired state custom resource.
 phrases.1: Я проверил observed generation контроллера.
 phrases.2: Я проверил ответ согласованного приложения.
