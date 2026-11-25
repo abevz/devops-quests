@@ -26,7 +26,7 @@ Helm topics are part of the Kubernetes track; GitOps topics are part of Platform
 
 - **29 Guides** combine short runnable examples with complete references. [Guide example](docs/screenshots/guide.png).
 - **Five persistent Lab profiles:** Kubernetes (three-node cluster), Ansible, OpenTofu, Helm and GitOps. Workspaces retain files across Stop/Continue.
-- **Interview drill** offers questions and self-check points from completed quests, plus nine theory topics. It does not require a cloud account.
+- **Interview drill** offers all quest and theory questions with self-check points. Browse by difficulty, topic and quest, or search and filter by topic and quest completion.
 - **Reference solutions** are included in [`solutions/`](solutions/) and drive the opt-in real-sandbox test matrix.
 
 ## How it works
