@@ -36,19 +36,40 @@ hints.0.text: Wyjście oparte na zasobie niesie wartość i zależność. Komple
 hints.1.text: |-
   Porównaj błędy walidacji, bieżące deklaracje główne, wyjścia dostarczania i przypadki tras. Prześledź wymagany kierunek używanych wyjść przed edytowaniem odwołań.
 
+  Odszukaj w wywołaniach głównych odwołania do wyjść powiązanych z zasobami. Użyj scenariuszy tras, aby porównać oczekiwane zależności wejściowe trasy łączonej z istniejącą krawędzią wsteczną.
+
   ```sh
   tofu validate -no-color
   cat main.tf delivery.tf
   cat route-cases.json
   ```
 hints.2.text: |-
-  Zbuduj brakujące wywołania modułów i połącz odbiorcę zbierającego z obiema gałęziami, usuwając zależność wsteczną na wejściu. Nie zmieniaj implementacji modułu. Sprawdź cztery instancje, prawdziwe ścieżki grafu, obie mapy i wszystkie przypadki caller bez stosowania próby; końcowy plan domyślny ma być pusty.
+  Sprawdź cztery instancje, prawdziwe ścieżki grafu, obie mapy i wszystkie przypadki caller bez stosowania próby; końcowy plan domyślny ma być pusty.
 
   ```sh
   tofu graph
   tofu output -json routes
   tofu output -json delivery_routes
   tofu plan -input=false -detailed-exitcode -no-color
+  ```
+
+  Dla każdego przypadku porównaj zarządzane pliki i obie mapy wyjść z `route-cases.json`. Tymczasowe plany służą do inspekcji i pozostają niezastosowane.
+
+  ```sh
+  (
+    set -euo pipefail
+    probe=$(mktemp -d)
+    trap 'rm -rf -- "$probe"' EXIT
+    variable=$(jq -er .variable route-cases.json)
+    jq -er '.cases[].input' route-cases.json | while IFS= read -r value; do
+      tofu plan -input=false -refresh=false -no-color -var="$variable=$value" -out="$probe/case.plan"
+      tofu show -json "$probe/case.plan" | jq --arg value "$value" '
+        .planned_values | {input:$value,
+          files:[.root_module | recurse(.child_modules[]?) | .resources[]?
+            | select(.mode=="managed" and .type=="local_file") | {address,path:.values.filename,content:.values.content}],
+          routes:.outputs.routes.value, delivery_routes:.outputs.delivery_routes.value}'
+    done
+  )
   ```
 phrases.0: Prześledziłem cykl poprzez moduł outputs oparty na zasobach.
 phrases.1: Naprawiłem kierunek zależności zamiast ukrywać go za pomocą stałych.

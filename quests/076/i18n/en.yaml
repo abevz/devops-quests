@@ -36,19 +36,40 @@ hints.0.text: A resource-backed output carries both a value and a dependency. Co
 hints.1.text: |-
   Compare validation errors, current root declarations, delivery outputs and the supplied route cases. Trace the required direction of each consumed output before editing references.
 
+  Find each reference to a resource-backed output in the root calls. Use the route cases to compare the expected incoming edges for the joined route with the existing backward edge.
+
   ```sh
   tofu validate -no-color
   cat main.tf delivery.tf
   cat route-cases.json
   ```
 hints.2.text: |-
-  Construct the missing module calls and connect the joined consumer to both branches while breaking the backward dependency at its input. Keep the module implementation unchanged. Verify four module instances, real graph paths, both output maps and every caller case without applying the probe; the default plan must finish empty.
+  Verify four module instances, real graph paths, both output maps and every caller case without applying the probe; the default plan must finish empty.
 
   ```sh
   tofu graph
   tofu output -json routes
   tofu output -json delivery_routes
   tofu plan -input=false -detailed-exitcode -no-color
+  ```
+
+  Compare the managed files and both output maps for each case with `route-cases.json`. The temporary plans are for inspection and remain unapplied.
+
+  ```sh
+  (
+    set -euo pipefail
+    probe=$(mktemp -d)
+    trap 'rm -rf -- "$probe"' EXIT
+    variable=$(jq -er .variable route-cases.json)
+    jq -er '.cases[].input' route-cases.json | while IFS= read -r value; do
+      tofu plan -input=false -refresh=false -no-color -var="$variable=$value" -out="$probe/case.plan"
+      tofu show -json "$probe/case.plan" | jq --arg value "$value" '
+        .planned_values | {input:$value,
+          files:[.root_module | recurse(.child_modules[]?) | .resources[]?
+            | select(.mode=="managed" and .type=="local_file") | {address,path:.values.filename,content:.values.content}],
+          routes:.outputs.routes.value, delivery_routes:.outputs.delivery_routes.value}'
+    done
+  )
   ```
 phrases.0: I traced the cycle through resource-backed module outputs.
 phrases.1: I fixed dependency direction instead of hiding it with constants.

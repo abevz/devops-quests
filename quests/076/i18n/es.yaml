@@ -37,19 +37,40 @@ hints.0.text: Un output respaldado por un recurso transmite valor y dependencia.
 hints.1.text: |-
   Compara errores de validación, declaraciones raíz, salidas de entrega y casos de rutas. Traza la dirección requerida de cada output consumido antes de editar referencias.
 
+  Localiza en las llamadas raíz las referencias a salidas respaldadas por recursos. Usa los casos de ruta para comparar las dependencias entrantes esperadas de la ruta combinada con la dependencia inversa existente.
+
   ```sh
   tofu validate -no-color
   cat main.tf delivery.tf
   cat route-cases.json
   ```
 hints.2.text: |-
-  Construye las llamadas de módulos ausentes y conecta el consumidor combinado con ambas ramas, eliminando la dependencia inversa en su entrada. Mantén la implementación del módulo. Verifica cuatro instancias, caminos reales, ambos mapas y cada caso caller sin aplicar la prueba; el plan predeterminado final debe estar vacío.
+  Verifica cuatro instancias, caminos reales, ambos mapas y cada caso caller sin aplicar la prueba; el plan predeterminado final debe estar vacío.
 
   ```sh
   tofu graph
   tofu output -json routes
   tofu output -json delivery_routes
   tofu plan -input=false -detailed-exitcode -no-color
+  ```
+
+  En cada caso, compara los archivos gestionados y ambos mapas de salida con `route-cases.json`. Los planes temporales se usan para inspección y quedan sin aplicar.
+
+  ```sh
+  (
+    set -euo pipefail
+    probe=$(mktemp -d)
+    trap 'rm -rf -- "$probe"' EXIT
+    variable=$(jq -er .variable route-cases.json)
+    jq -er '.cases[].input' route-cases.json | while IFS= read -r value; do
+      tofu plan -input=false -refresh=false -no-color -var="$variable=$value" -out="$probe/case.plan"
+      tofu show -json "$probe/case.plan" | jq --arg value "$value" '
+        .planned_values | {input:$value,
+          files:[.root_module | recurse(.child_modules[]?) | .resources[]?
+            | select(.mode=="managed" and .type=="local_file") | {address,path:.values.filename,content:.values.content}],
+          routes:.outputs.routes.value, delivery_routes:.outputs.delivery_routes.value}'
+    done
+  )
   ```
 phrases.0: Seguí el ciclo a través del módulo respaldado por recursos outputs.
 phrases.1: Arreglé la dirección de dependencia en lugar de ocultarla con constantes.

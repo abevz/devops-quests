@@ -38,19 +38,40 @@ hints.0.text: Eine ressourcengestützte Ausgabe trägt Wert und Abhängigkeit. E
 hints.1.text: |-
   Vergleiche Validierungsfehler, aktuelle Root-Deklarationen, Auslieferungsausgaben und Routenfälle. Verfolge die benötigte Richtung jeder verwendeten Ausgabe vor dem Ändern von Referenzen.
 
+  Suche in den Root-Aufrufen die Verweise auf ressourcengebundene Ausgaben. Vergleiche anhand der Routenfälle die erwarteten eingehenden Abhängigkeiten der verbundenen Route mit der vorhandenen Rückkante.
+
   ```sh
   tofu validate -no-color
   cat main.tf delivery.tf
   cat route-cases.json
   ```
 hints.2.text: |-
-  Konstruiere fehlende Modulaufrufe und verbinde den zusammenführenden Verbraucher mit beiden Zweigen; löse die Rückabhängigkeit am Eingang. Erhalte die Modulimplementierung. Prüfe vier Instanzen, echte Graphpfade, beide Ausgabemaps und alle Caller-Fälle ohne den Testplan anzuwenden; der Standardplan muss abschließend leer sein.
+  Prüfe vier Instanzen, echte Graphpfade, beide Ausgabemaps und alle Caller-Fälle ohne den Testplan anzuwenden; der Standardplan muss abschließend leer sein.
 
   ```sh
   tofu graph
   tofu output -json routes
   tofu output -json delivery_routes
   tofu plan -input=false -detailed-exitcode -no-color
+  ```
+
+  Vergleiche pro Fall die verwalteten Dateien und beide Ausgabemaps mit `route-cases.json`. Die temporären Pläne dienen der Prüfung und bleiben unangewendet.
+
+  ```sh
+  (
+    set -euo pipefail
+    probe=$(mktemp -d)
+    trap 'rm -rf -- "$probe"' EXIT
+    variable=$(jq -er .variable route-cases.json)
+    jq -er '.cases[].input' route-cases.json | while IFS= read -r value; do
+      tofu plan -input=false -refresh=false -no-color -var="$variable=$value" -out="$probe/case.plan"
+      tofu show -json "$probe/case.plan" | jq --arg value "$value" '
+        .planned_values | {input:$value,
+          files:[.root_module | recurse(.child_modules[]?) | .resources[]?
+            | select(.mode=="managed" and .type=="local_file") | {address,path:.values.filename,content:.values.content}],
+          routes:.outputs.routes.value, delivery_routes:.outputs.delivery_routes.value}'
+    done
+  )
   ```
 phrases.0: Ich habe den Zyklus durch das ressourcengestützte Modul outputs verfolgt.
 phrases.1: Ich habe die Abhängigkeitsrichtung festgelegt, anstatt sie mit Konstanten zu verbergen.

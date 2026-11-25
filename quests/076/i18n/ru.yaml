@@ -38,19 +38,40 @@ hints.0.text: Выход управляемого ресурса передаё�
 hints.1.text: |-
   Сопоставьте ошибки validate, текущие корневые объявления, выходы доставки и заданные маршрутные случаи. До изменения ссылок определите нужное направление каждого потребляемого выхода.
 
+  Найдите в корневых вызовах ссылки на выходы, связанные с ресурсами. По сценариям маршрутов сравните ожидаемые входящие зависимости объединённого маршрута с существующей обратной связью.
+
   ```sh
   tofu validate -no-color
   cat main.tf delivery.tf
   cat route-cases.json
   ```
 hints.2.text: |-
-  Постройте недостающие вызовы модулей и свяжите объединяющего потребителя с обеими ветвями, разорвав обратную зависимость у её входа. Не меняйте реализацию модуля. Проверьте четыре экземпляра, реальные пути графа, обе карты выходов и все случаи caller без применения пробного плана; итоговый план по умолчанию должен быть пустым.
+  Проверьте четыре экземпляра, реальные пути графа, обе карты выходов и все случаи caller без применения пробного плана; итоговый план по умолчанию должен быть пустым.
 
   ```sh
   tofu graph
   tofu output -json routes
   tofu output -json delivery_routes
   tofu plan -input=false -detailed-exitcode -no-color
+  ```
+
+  Сверьте управляемые файлы и обе карты выходов каждого сценария с `route-cases.json`. Временные планы служат для проверки и остаются неприменёнными.
+
+  ```sh
+  (
+    set -euo pipefail
+    probe=$(mktemp -d)
+    trap 'rm -rf -- "$probe"' EXIT
+    variable=$(jq -er .variable route-cases.json)
+    jq -er '.cases[].input' route-cases.json | while IFS= read -r value; do
+      tofu plan -input=false -refresh=false -no-color -var="$variable=$value" -out="$probe/case.plan"
+      tofu show -json "$probe/case.plan" | jq --arg value "$value" '
+        .planned_values | {input:$value,
+          files:[.root_module | recurse(.child_modules[]?) | .resources[]?
+            | select(.mode=="managed" and .type=="local_file") | {address,path:.values.filename,content:.values.content}],
+          routes:.outputs.routes.value, delivery_routes:.outputs.delivery_routes.value}'
+    done
+  )
   ```
 phrases.0: Я проследил цикл через outputs модулей, связанные с ресурсами.
 phrases.1: Я исправил направление зависимости вместо сокрытия константами.
