@@ -25,75 +25,73 @@ debrief: Zachowano tożsamości źródła i konsumentów; aplikacje przyjęły z
 stages.0.brief: Odzyskaj istniejący zainicjalizowany Vault i jego aplikację, zachowując magazyn, kworum, zapisaną
   tożsamość klastra i różne prywatne udziały klucza.
 hints.0.text: Dostępność serwera, autoryzacja i publikacja przyjęta przez konsumenta są odrębnymi obserwacjami.
-hints.1.text: 'Porównaj odpowiedź usługi, profile źródeł, dzienniki aplikacji i pierwotny kontrakt. Najpierw prześledź
-  pierwszą uszkodzoną granicę.
+hints.1.text: |-
+  Porównaj odpowiedź usługi, profile źródeł, dzienniki aplikacji i pierwotny kontrakt. Najpierw prześledź pierwszą uszkodzoną granicę.
 
+  Znajdź stan zapieczętowania i pola postępu. Porównaj ścieżkę źródła konsumenta, status HTTP i dostarczony kontrakt, aby ustalić, na którym etapie jest błąd.
 
   ```bash
-
-  cat consumer/source.json consumer/application.log consumer-contract.json
-
+  cat consumer/source.json
+  cat consumer/application.log consumer-contract.json
   curl -fsS --max-time 2 http://127.0.0.1:18081/status
-
-  ```'
-hints.2.text: 'Postęp unseal wymaga różnych dostarczonych udziałów; ponowne wysłanie tego samego udziału nie dodaje
-  postępu.
-
-
-  Wyślij dwa różne dostarczone udziały do /v1/sys/unseal i odczytaj istniejącą wartość KV pierwotnym tokenem dostępu.
-  Nigdy nie wyświetlaj udziałów ani tokenów, nie inicjalizuj ponownie magazynu i nie twórz zastępczego sekretu.
-
-
-  Sprawdź obserwowany wynik:
-
-
-  - `ls -l unseal-shares.json; jq -e ''type=="array" and length==2 and all(.[];type=="string") and .[0]!=.[1]''
-  unseal-shares.json` — Tryb `-rw-------` i `true`, bez wyświetlania udziałów.
-
-  - `source platform.env; curl -fsS "$VAULT_ADDR/v1/sys/seal-status" | jq ''{initialized,sealed,t,n}''` — Zgłasza
-  initialized `true`, sealed `false`, `t=2`, `n=3`.
-
-  - `source platform.env; curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
-  | jq -e ''.data.data.value=="north-secret"''` — Wypisuje `true`, bez wyświetlania odpowiedzi z sekretem.
-
-
-  Dopasuj profil do zatwierdzonego API i danych reader. Zachowaj prywatność pliku i wyślij SIGHUP do istniejącego
-  PID; manager to inna tożsamość. Sprawdź publikację HTTP. Oczekiwane: OK.
-
+  ```
+hints.2.text: |-
+  Oczekuj `OK`, gdy zainicjalizowany, odpieczętowany Vault zachowuje pierwotny ID klastra i kworum, obie prywatne części mają właściwy format, a oryginalny konsument udostępnia zatwierdzoną publikację przy użyciu prywatnego pliku reader. Sprawdzenie podaje status bez wypisywania części, poświadczenia reader ani wartości Vault.
 
   ```bash
-
   set -euo pipefail
-
   cd ~/quest
-
-  curl -fsS --max-time 2 http://127.0.0.1:18081/ > observed-publication.json
-
-  python3 -I - <<''VERIFY_PUBLICATION''
-
-  import json
-
+  source platform.env
+  test "$(stat -c %a unseal-shares.json)" = 600
+  jq -e 'type=="array" and length==2 and all(.[];type=="string") and .[0]!=.[1]' unseal-shares.json >/dev/null
+  python3 -I - <<'VERIFY_PUBLICATION'
+  import hashlib, json, os, stat, urllib.request
   from pathlib import Path
 
-  contract=json.loads(Path(''consumer-contract.json'').read_text())
+  contract = json.loads(Path('consumer-contract.json').read_text())
+  address = os.environ['VAULT_ADDR'].rstrip('/')
+  opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-  observed=json.loads(Path(''observed-publication.json'').read_text())
+  def get(url, headers=None):
+      request = urllib.request.Request(url, headers=headers or {})
+      with opener.open(request, timeout=3) as response:
+          return json.load(response)
 
-  assert observed[''ready''] is True
+  status = get(address + '/v1/sys/seal-status')
+  assert status['initialized'] is True and status['sealed'] is False
+  assert (status['t'], status['n']) == (2, 3)
+  assert status['cluster_id'] == Path('original-cluster-id').read_text().strip()
+  reader = get(address + '/v1/' + contract['path'], {'X-Vault-Token': os.environ['VAULT_READER_TOKEN']})
+  assert hashlib.sha256(reader['data']['data']['value'].encode()).hexdigest() == contract['value_sha256']
 
-  assert observed[''source'']==contract[''vault_url'']
+  old = contract['consumer']
+  pid = Path('consumer/application.pid').read_text().strip()
+  assert pid == str(old['pid'])
+  proc = Path('/proc') / pid
+  fields = (proc / 'stat').read_text().rsplit(') ', 1)[1].split()
+  assert fields[0] not in ('Z', 'X') and fields[19] == old['start']
+  assert (proc / 'cmdline').read_bytes().hex() == old['command']
+  live = dict(line.split(':', 1) for line in (proc / 'status').read_text().splitlines() if ':' in line)
+  assert all(live[key].strip() == value for key, value in old['status'].items())
+  assert hashlib.sha256(Path('provided-vault-consumer.py').read_bytes()).hexdigest() == contract['program_sha256']
 
-  assert observed[''path'']==contract[''path'']
+  profile = json.loads(Path('consumer/source.json').read_text())
+  assert set(profile) == {'url', 'path', 'token_file'}
+  assert (profile['url'], profile['path']) == (contract['vault_url'], contract['path'])
+  credential = Path(profile['token_file'])
+  metadata = credential.lstat()
+  assert stat.S_ISREG(metadata.st_mode) and stat.S_IMODE(metadata.st_mode) == 0o600
+  assert metadata.st_uid == 1000 and metadata.st_size <= 4096
+  assert hashlib.sha256(credential.read_bytes().strip()).hexdigest() == contract['reader_sha256']
 
-  assert observed[''value_sha256'']==contract[''value_sha256'']
-
-  assert observed[''version'']==contract[''version'']
-
-  print(''OK'')
-
+  published = get('http://127.0.0.1:18081/')
+  assert published['ready'] is True and published['kind'] == 'vault'
+  assert published['source'] == contract['vault_url'] and published['path'] == contract['path']
+  assert published['value_sha256'] == contract['value_sha256']
+  assert type(published['version']) is int and published['version'] == contract['version']
+  print('OK')
   VERIFY_PUBLICATION
-
-  ```'
+  ```
 phrases.0: Odróżniłem zapieczętowany magazyn od niezainicjowanego serwera.
 phrases.1: Użyłem wymaganej liczby udziałów przeznaczonych wyłącznie do gry.
 phrases.2: Sprawdziłem istniejące dane zamiast tworzyć zamiennik.

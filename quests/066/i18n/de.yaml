@@ -26,39 +26,65 @@ debrief: Ursprüngliche Quellen- und Verbraucheridentitäten blieben erhalten; d
 stages.0.brief: Aufbewahrungsanfrage und verbleibende Release-Tags beschreiben keinen konsistenten Bestand. Stellen
   Sie sichere Aufbewahrung ohne Ersatz der Registry oder ihrer Identität her.
 hints.0.text: Veränderlicher Tag, unveränderliches Manifest und gespeicherte Bytes sind unterschiedliche Objekte.
-hints.1.text: 'Vor Registry-Änderungen Aufbewahrungsplan, freigegebenen Digest-Katalog und aktive Tag-Bindungen
-  vergleichen.
+hints.1.text: |-
+  Vor Registry-Änderungen Aufbewahrungsplan, freigegebenen Digest-Katalog und aktive Tag-Bindungen vergleichen.
 
+  Vergleiche den Digest jedes vorhandenen Tags mit den genehmigten Aufbewahrungseinträgen. Prüfe, welche Tags auf denselben Digest zeigen.
 
   ```bash
-
-  cat retention.json release-catalog.json registry-source.json
-
+  cat retention.json release-catalog.json
+  jq '{endpoint,ca_sha256}' registry-source.json
   source platform.env
+  curl -fsS --max-time 3 --cacert registry-ca.crt --config <(printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_PASSWORD") "https://$REGISTRY/v2/parcel/tags/list" | jq '{tags}'
+  ```
+hints.2.text: |-
+  ```bash
+  set -euo pipefail
+  cd ~/quest
+  source platform.env
+  python3 -I - <<'VERIFY_RELEASE'
+  import urllib.error
 
-  curl -fsS --max-time 3 --cacert registry-ca.crt --config <(printf ''user = "%s:%s"\n'' "$REGISTRY_USER" "$REGISTRY_PASSWORD")
-  "https://$REGISTRY/v2/parcel/tags/list" | jq ''{tags}''
+  import base64,hashlib,json,os,ssl,urllib.request
+  from pathlib import Path
+  source=json.loads(Path('/run/dq/facts/0/registry-source.json').read_text())
+  assert os.environ['REGISTRY']==source['endpoint']
+  assert os.environ['REGISTRY_USER']==source['username']
+  assert hashlib.sha256(os.environ['REGISTRY_PASSWORD'].encode()).hexdigest()==source['password_sha256']
+  assert hashlib.sha256(Path('registry-ca.crt').read_bytes()).hexdigest()==source['ca_sha256']
+  class NoRedirect(urllib.request.HTTPRedirectHandler):
+   def redirect_request(self,*args,**kwargs):
+    return None
+  opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect(),
+  urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile='registry-ca.crt')))
+  headers={'Authorization':'Basic '+base64.b64encode((source['username']+':'+os.environ['REGISTRY_PASSWORD']).encode()).decode(),
+  'Accept':'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json'}
+  def manifest(reference):
+   request=urllib.request.Request('https://'+source['endpoint']+'/v2/parcel/manifests/'+reference,headers=headers)
+   with opener.open(request,timeout=2) as response:
+    body=response.read(2097153)
+    assert len(body)<=2097152
+    digest='sha256:'+hashlib.sha256(body).hexdigest()
+    assert response.headers.get('Docker-Content-Digest')==digest
+    return digest
 
-  ```'
-hints.2.text: "\n\nNur den freigegebenen veralteten Digest auswählen. Validierte DELETE-Anfragen an die ursprüngliche\
-  \ Registry konstruieren, private Identität und CA bewahren; aktuellen Release-Tag durch Veröffentlichung des freigegebenen\
-  \ Manifests wiederherstellen. Rollback-Tag bewahren. Ein lokaler Image-Tag aktualisiert keine Registry.\n\n```bash\n\
-  set -euo pipefail\ncd ~/quest\nsource platform.env\npython3 -I - <<'VERIFY_RELEASE'\nimport urllib.error\n\nimport\
-  \ base64,hashlib,json,os,ssl,urllib.request\nfrom pathlib import Path\nsource=json.loads(Path('/run/dq/facts/0/registry-source.json').read_text())\n\
-  assert os.environ['REGISTRY']==source['endpoint']\nassert os.environ['REGISTRY_USER']==source['username']\nassert\
-  \ hashlib.sha256(os.environ['REGISTRY_PASSWORD'].encode()).hexdigest()==source['password_sha256']\nassert hashlib.sha256(Path('registry-ca.crt').read_bytes()).hexdigest()==source['ca_sha256']\n\
-  class NoRedirect(urllib.request.HTTPRedirectHandler):\n def redirect_request(self,*args,**kwargs):\n  return None\n\
-  opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect(),\nurllib.request.HTTPSHandler(context=ssl.create_default_context(cafile='registry-ca.crt')))\n\
-  headers={'Authorization':'Basic '+base64.b64encode((source['username']+':'+os.environ['REGISTRY_PASSWORD']).encode()).decode(),\n\
-  'Accept':'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json'}\n\
-  def manifest(reference):\n request=urllib.request.Request('https://'+source['endpoint']+'/v2/parcel/manifests/'+reference,headers=headers)\n\
-  \ with opener.open(request,timeout=2) as response:\n  body=response.read(2097153)\n  assert len(body)<=2097152\n\
-  \  digest='sha256:'+hashlib.sha256(body).hexdigest()\n  assert response.headers.get('Docker-Content-Digest')==digest\n\
-  \  return digest\n\ncatalog=json.loads(Path('/run/dq/facts/0/release-catalog.json').read_text())\nassert manifest('current')==catalog['current']\n\
-  assert manifest('1')==catalog['rollback']\n\nfor role in ('current','rollback','obsolete'):\n digest=catalog[role]\n\
-  \ try:\n  observed=manifest(digest)\n  assert role!='obsolete' and observed==digest\n except urllib.error.HTTPError\
-  \ as error:\n  assert role=='obsolete' and error.code==404\n\nprint('OK')\nVERIFY_RELEASE\n```\n\nErwartet: OK.\
-  \ Keine Zugangsdaten werden ausgegeben."
+  catalog=json.loads(Path('/run/dq/facts/0/release-catalog.json').read_text())
+  assert manifest('current')==catalog['current']
+  assert manifest('1')==catalog['rollback']
+
+  for role in ('current','rollback','obsolete'):
+   digest=catalog[role]
+   try:
+    observed=manifest(digest)
+    assert role!='obsolete' and observed==digest
+   except urllib.error.HTTPError as error:
+    assert role=='obsolete' and error.code==404
+
+  print('OK')
+  VERIFY_RELEASE
+  ```
+
+  Erwartet: OK. Keine Zugangsdaten werden ausgegeben.
 phrases.0: Ich habe Rollback-Digests geschützt, bevor ich veraltete manifests gelöscht habe.
 phrases.1: Ich habe TLS verifiziert, anstatt die Zertifikatsprüfungen zu umgehen.
 phrases.2: Ich habe die Entfernung von manifest aus dem Speicher garbage collection unterschieden.

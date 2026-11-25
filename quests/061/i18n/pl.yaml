@@ -35,13 +35,26 @@ debrief: Przywrócono dwa niezależne konteksty uwierzytelniania Git, zachowano 
 stages.0.brief: Opublikowane wydanie musi być dostępne w dozwolonym zakresie danych dostępowych.
 hints.0.text: Stacja i kontroler dostarczania uwierzytelniają się niezależnie. Naprawa jednego klienta nie dowodzi
   dostępu drugiego.
-hints.1.text: Porównaj `delivery-access.json`, lokalizacje skutecznej konfiguracji Git stacji, metadane istniejącego
-  Secret i błędy pobierania repozytorium przez Application. Sprawdzaj nazwy i uprawnienia bez wypisywania danych
-  uwierzytelniających.
-hints.2.text: Przywróć powiązanie z repozytorium i bieżące poświadczenia w obu kontekstach, ogranicz dostęp do zawierającej
-  je konfiguracji i zażądaj hard refresh. Sprawdź `git -C repository ls-remote $GIT_URL refs/heads/main`, pierwotną
-  opublikowaną rewizję, zdrowie Application i rzeczywisty HTTP. Ponownie sprawdź wąskie uprawnienia i pierwotne
-  UID obiektów.
+hints.1.text: |-
+  Porównaj `delivery-access.json`, lokalizacje skutecznej konfiguracji Git stacji, metadane istniejącego Secret i błędy pobierania repozytorium przez Application. Sprawdzaj nazwy i uprawnienia bez wypisywania danych uwierzytelniających.
+
+  Znajdź tożsamość repozytorium w źródle Application i porównaj ją z konfiguracją Git oraz metadanymi wskazanego Secretu. Sprawdź, jakie nazwy zasobów i operacje dopuszcza powiązana Role.
+hints.2.text: |-
+  Sprawdź `git -C repository ls-remote $GIT_URL refs/heads/main`, pierwotną opublikowaną rewizję, zdrowie Application i rzeczywisty HTTP. Ponownie sprawdź wąskie uprawnienia i pierwotne UID obiektów.
+
+  Modyfikowanie wskazanego Secretu musi być dozwolone, a listowanie Secretów i modyfikowanie innego Secretu powinno zwrócić `no`. Porównaj pierwotne UID i rewizję z bieżącą Application i metadanymi Secretu. Odpowiedź aplikacji musi wynosić `north-61`.
+
+  ```bash
+  source platform.env
+  git -C repository ls-remote "$GIT_URL" refs/heads/main
+  jq '{credentialName,credentialNamespace,credentialUID,applicationUID,revision}' delivery-access.json
+  kubectl auth can-i patch secret/station-repository -n "$ARGO_NAMESPACE"
+  kubectl auth can-i list secrets -n "$ARGO_NAMESPACE" || test "$?" -eq 1
+  kubectl auth can-i patch secret/unrelated -n "$ARGO_NAMESPACE" || test "$?" -eq 1
+  kubectl get secret station-repository -n "$ARGO_NAMESPACE" -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+  kubectl get application board -o json | jq '{uid:.metadata.uid,sync:.status.sync,health:.status.health}'
+  kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
+  ```
 phrases.0: Przed zmianą aplikacji zdiagnozowałem uwierzytelnianie repozytorium.
 phrases.1: Ograniczyłem naprawę credential do takiej o nazwie Secret.
 phrases.2: Po uzgodnieniu zweryfikowałem Git revision i aktualne endpoint.

@@ -25,76 +25,73 @@ debrief: Идентичность источника и потребителей
 stages.0.brief: Восстановите существующий инициализированный Vault и его приложение, сохранив хранилище и кворум
   распечатывания. Сохраните записанную идентичность кластера и выданные приватные, различающиеся доли ключа.
 hints.0.text: Доступность сервера, авторизация и принятая потребителем публикация — разные наблюдения.
-hints.1.text: 'Сопоставьте живой ответ сервиса, профили источников, журналы приложений и исходный контракт. Проследите
-  первую неисправную границу, прежде чем менять следующий компонент.
+hints.1.text: |-
+  Сопоставьте живой ответ сервиса, профили источников, журналы приложений и исходный контракт. Проследите первую неисправную границу, прежде чем менять следующий компонент.
 
+  Найдите состояние запечатывания и поля прогресса. Сравните путь источника потребителя, статус HTTP и выданный контракт, чтобы определить, на каком этапе возникает сбой.
 
   ```bash
-
-  cat consumer/source.json consumer/application.log consumer-contract.json
-
+  cat consumer/source.json
+  cat consumer/application.log consumer-contract.json
   curl -fsS --max-time 2 http://127.0.0.1:18081/status
-
-  ```'
-hints.2.text: 'Для прогресса unseal нужны разные предоставленные доли; повторная отправка той же доли не добавляет
-  прогресса.
-
-
-  Отправьте две разные предоставленные доли в /v1/sys/unseal и прочитайте существующее KV-значение с исходным токеном
-  доступа. Не выводите доли или токены, не инициализируйте хранилище заново и не создавайте секрет-замену.
-
-
-  Проверьте наблюдаемый результат:
-
-
-  - `ls -l unseal-shares.json; jq -e ''type=="array" and length==2 and all(.[];type=="string") and .[0]!=.[1]''
-  unseal-shares.json` — Режим `-rw-------` и `true`, без вывода долей.
-
-  - `source platform.env; curl -fsS "$VAULT_ADDR/v1/sys/seal-status" | jq ''{initialized,sealed,t,n}''` — Сообщает
-  initialized `true`, sealed `false`, `t=2`, `n=3`.
-
-  - `source platform.env; curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
-  | jq -e ''.data.data.value=="north-secret"''` — Печатает `true`, не выводя ответ с секретом.
-
-
-  Приведите профиль к утверждённому API-источнику и выданным учётным данным reader. Сохраните приватность файла
-  и отправьте SIGHUP существующему PID; manager — другая идентичность. Проверьте HTTP-публикацию, а не только источник.
-  Ожидается OK.
-
+  ```
+hints.2.text: |-
+  Ожидается `OK`, если у инициализированного и распечатанного Vault исходный ID кластера и кворум, у двух закрытых долей нужный формат, а исходный потребитель отдаёт утверждённую публикацию с закрытым файлом reader. Проверка сообщает результат без вывода долей, учётных данных reader или значения Vault.
 
   ```bash
-
   set -euo pipefail
-
   cd ~/quest
-
-  curl -fsS --max-time 2 http://127.0.0.1:18081/ > observed-publication.json
-
-  python3 -I - <<''VERIFY_PUBLICATION''
-
-  import json
-
+  source platform.env
+  test "$(stat -c %a unseal-shares.json)" = 600
+  jq -e 'type=="array" and length==2 and all(.[];type=="string") and .[0]!=.[1]' unseal-shares.json >/dev/null
+  python3 -I - <<'VERIFY_PUBLICATION'
+  import hashlib, json, os, stat, urllib.request
   from pathlib import Path
 
-  contract=json.loads(Path(''consumer-contract.json'').read_text())
+  contract = json.loads(Path('consumer-contract.json').read_text())
+  address = os.environ['VAULT_ADDR'].rstrip('/')
+  opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-  observed=json.loads(Path(''observed-publication.json'').read_text())
+  def get(url, headers=None):
+      request = urllib.request.Request(url, headers=headers or {})
+      with opener.open(request, timeout=3) as response:
+          return json.load(response)
 
-  assert observed[''ready''] is True
+  status = get(address + '/v1/sys/seal-status')
+  assert status['initialized'] is True and status['sealed'] is False
+  assert (status['t'], status['n']) == (2, 3)
+  assert status['cluster_id'] == Path('original-cluster-id').read_text().strip()
+  reader = get(address + '/v1/' + contract['path'], {'X-Vault-Token': os.environ['VAULT_READER_TOKEN']})
+  assert hashlib.sha256(reader['data']['data']['value'].encode()).hexdigest() == contract['value_sha256']
 
-  assert observed[''source'']==contract[''vault_url'']
+  old = contract['consumer']
+  pid = Path('consumer/application.pid').read_text().strip()
+  assert pid == str(old['pid'])
+  proc = Path('/proc') / pid
+  fields = (proc / 'stat').read_text().rsplit(') ', 1)[1].split()
+  assert fields[0] not in ('Z', 'X') and fields[19] == old['start']
+  assert (proc / 'cmdline').read_bytes().hex() == old['command']
+  live = dict(line.split(':', 1) for line in (proc / 'status').read_text().splitlines() if ':' in line)
+  assert all(live[key].strip() == value for key, value in old['status'].items())
+  assert hashlib.sha256(Path('provided-vault-consumer.py').read_bytes()).hexdigest() == contract['program_sha256']
 
-  assert observed[''path'']==contract[''path'']
+  profile = json.loads(Path('consumer/source.json').read_text())
+  assert set(profile) == {'url', 'path', 'token_file'}
+  assert (profile['url'], profile['path']) == (contract['vault_url'], contract['path'])
+  credential = Path(profile['token_file'])
+  metadata = credential.lstat()
+  assert stat.S_ISREG(metadata.st_mode) and stat.S_IMODE(metadata.st_mode) == 0o600
+  assert metadata.st_uid == 1000 and metadata.st_size <= 4096
+  assert hashlib.sha256(credential.read_bytes().strip()).hexdigest() == contract['reader_sha256']
 
-  assert observed[''value_sha256'']==contract[''value_sha256'']
-
-  assert observed[''version'']==contract[''version'']
-
-  print(''OK'')
-
+  published = get('http://127.0.0.1:18081/')
+  assert published['ready'] is True and published['kind'] == 'vault'
+  assert published['source'] == contract['vault_url'] and published['path'] == contract['path']
+  assert published['value_sha256'] == contract['value_sha256']
+  assert type(published['version']) is int and published['version'] == contract['version']
+  print('OK')
   VERIFY_PUBLICATION
-
-  ```'
+  ```
 phrases.0: Я отличил запечатанное хранилище от неинициализированного сервера.
 phrases.1: Я использовал требуемое количество игровых долей.
 phrases.2: Я проверил существующие данные вместо создания замены.
