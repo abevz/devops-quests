@@ -22,14 +22,35 @@ stages.0.objectives.2.text: На каждом управляемом хосте 
   имеет режим `0600`.
 hints.0.text: Приватная доставка должна обеспечивать реальный доступ получателя и изоляцию от других учётных записей.
   Изменение метаданных ограничено фактическими полномочиями оператора.
-hints.1.text: Сопоставьте `rollout.yml`, `consumer-contract.json`, `consumer-identities.json` и `provided-consumer.py`.
-  Изучите владельцев и права входов на управляемых узлах, список полномочий оператора и статус HTTP-аутентификации.
-  Не выводите секреты в диагностику.
-hints.2.text: 'Скрывайте вывод чувствительного копирования через `no_log`. При этих полномочиях подготовьте содержимое
-  и ограниченные права до передачи владельца; отдельная смена владельца не запрашивает недоступное изменение прав
-  после передачи. Проверьте каждое приложение исходным секретом без его вывода: ожидаются HTTP 200 и `credential-ready`.
-  Подтвердите, что другой потребитель и посторонний пользователь не могут открыть чужие входы на чтение и запись;
-  сохраните прежний режим `0600` и непустой приватный `deployment.log`.'
+hints.1.text: |-
+  Сопоставьте `rollout.yml`, `consumer-contract.json`, `consumer-identities.json` и `provided-consumer.py`. Изучите владельцев и права входов на управляемых узлах, список полномочий оператора и статус HTTP-аутентификации. Не выводите секреты в диагностику.
+
+  Проверьте no_log у задач, которые работают с учётными данными, и сравните возможности оператора с текущим владельцем и режимом каждого файла назначения. Для учётных данных просматривайте метаданные.
+hints.2.text: |-
+  Проверьте каждое приложение исходным секретом без его вывода: ожидаются HTTP 200 и `credential-ready`. Подтвердите, что другой потребитель и посторонний пользователь не могут открыть чужие входы на чтение и запись; сохраните прежний режим `0600` и непустой приватный `deployment.log`.
+
+  Ожидаемый результат `log_ok: True` означает, что лог непустой и в нём отсутствует точное значение учётных данных. Для каждой пары хоста и приложения ожидается `response_ok: True`.
+
+  ```sh
+  python3 - <<'PY'
+  import json, os, urllib.request
+  from pathlib import Path
+  import yaml
+  contract = json.loads(Path('consumer-contract.json').read_text())
+  token = yaml.safe_load(Path('credentials.yml').read_text())['station_token']
+  log = Path('deployment.log').read_bytes()
+  print('log_ok:', bool(log) and token.encode() not in log)
+  opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+  for station in ('app1', 'app2', 'app3'):
+      host = station + '-' + os.environ['DQ_NAMESPACE'].removeprefix('dq-')
+      for item in contract['consumers']:
+          url = 'http://' + host + ':' + str(item['port']) + '/'
+          request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + token})
+          with opener.open(request, timeout=3) as response:
+              ok = response.status == 200 and response.read(65536).decode().strip() == contract['response']
+              print(station, item['name'], 'response_ok:', ok)
+  PY
+  ```
 phrases.0: Я защитил права файла цели и вывод задачи.
 phrases.1: Я проверил секрет без его печати.
 phrases.2: Я не считал no_log шифрованием данных на диске.

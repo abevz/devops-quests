@@ -23,14 +23,35 @@ stages.0.objectives.2.text: En cada host administrado (`app1`, `app2`, `app3`), 
   el modo `0600`.
 hints.0.text: La entrega privada debe permitir el acceso real del destinatario y aislar otros usuarios. Los cambios
   de metadatos dependen de la autoridad real del operador.
-hints.1.text: Compara `rollout.yml`, `consumer-contract.json`, `consumer-identities.json` y `provided-consumer.py`.
-  Inspecciona propietarios y permisos en los hosts administrados, las capacidades del operador y el estado de autenticación
-  HTTP. No imprimas credenciales en los diagnósticos.
-hints.2.text: 'Oculta la salida de copias sensibles con `no_log`. Con estas capacidades, prepara contenido y permisos
-  restrictivos antes de transferir la propiedad; separar el cambio de propietario evita solicitar después un cambio
-  de permisos no autorizado. Verifica cada aplicación con la credencial original sin imprimirla: espera HTTP 200
-  y `credential-ready`. Confirma que otros consumidores y el usuario externo no puedan abrir entradas ajenas para
-  leer o escribir; conserva el modo anterior `0600` y el `deployment.log` privado no vacío.'
+hints.1.text: |-
+  Compara `rollout.yml`, `consumer-contract.json`, `consumer-identities.json` y `provided-consumer.py`. Inspecciona propietarios y permisos en los hosts administrados, las capacidades del operador y el estado de autenticación HTTP. No imprimas credenciales en los diagnósticos.
+
+  Inspecciona no_log en las tareas que usan credenciales y compara las capacidades del operador con el propietario y los permisos actuales de cada destino. Usa los metadatos al inspeccionar credenciales.
+hints.2.text: |-
+  Verifica cada aplicación con la credencial original sin imprimirla: espera HTTP 200 y `credential-ready`. Confirma que otros consumidores y el usuario externo no puedan abrir entradas ajenas para leer o escribir; conserva el modo anterior `0600` y el `deployment.log` privado no vacío.
+
+  El resultado `log_ok: True` indica que el registro contiene datos y que no aparece el valor exacto de la credencial. Espera `response_ok: True` para cada host y consumidor.
+
+  ```sh
+  python3 - <<'PY'
+  import json, os, urllib.request
+  from pathlib import Path
+  import yaml
+  contract = json.loads(Path('consumer-contract.json').read_text())
+  token = yaml.safe_load(Path('credentials.yml').read_text())['station_token']
+  log = Path('deployment.log').read_bytes()
+  print('log_ok:', bool(log) and token.encode() not in log)
+  opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+  for station in ('app1', 'app2', 'app3'):
+      host = station + '-' + os.environ['DQ_NAMESPACE'].removeprefix('dq-')
+      for item in contract['consumers']:
+          url = 'http://' + host + ':' + str(item['port']) + '/'
+          request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + token})
+          with opener.open(request, timeout=3) as response:
+              ok = response.status == 200 and response.read(65536).decode().strip() == contract['response']
+              print(station, item['name'], 'response_ok:', ok)
+  PY
+  ```
 phrases.0: Protegí tanto los permisos del archivo de destino como la salida de la tarea.
 phrases.1: Verifiqué el secreto sin imprimirlo.
 phrases.2: No traté a no_log como cifrado en reposo.

@@ -29,14 +29,35 @@ stages.0.objectives.2.text: HTTP na portach `8080` i `8081` zwraca `north-ready`
   `app2`, `app3`); oryginalne tożsamości aplikacji pozostają bez zmian.
 hints.0.text: Wspólny plik może zasilać niezależne pamięci podręczne procesów. Dostęp i uprawnienia do odświeżania
   należą do różnych kont.
-hints.1.text: Porównaj `rollout.yml`, `consumer-contract.json` i `provided-consumer.py`. Na zarządzanych hostach
-  sprawdź `/var/log/quest-banner-reader.log`, uprawnienia pliku wejściowego oraz tożsamość procesu z `consumer-identities.json`.
-  Porównaj obie odpowiedzi HTTP.
-hints.2.text: 'Zbuduj dostarczanie i powiadomienia dla obu aplikacji. Dostarczony konsument odświeża dane po SIGHUP;
-  wyślij sygnał jako jego użytkownik przez `runuser`. Na stacji roboczej potwierdź tryb `0644` poleceniem `ansible
-  fleet -m ansible.builtin.stat -a "path=/srv/site/message"`, a następnie odpytaj `/` na portach `8080` i `8081`
-  wszystkich trzech hostów: wszystkie sześć odpowiedzi ma zawierać `north-ready`. Porównaj tożsamość procesu i bajty
-  zainstalowanego programu z `consumer-identities.json`.'
+hints.1.text: |-
+  Porównaj `rollout.yml`, `consumer-contract.json` i `provided-consumer.py`. Na zarządzanych hostach sprawdź `/var/log/quest-banner-reader.log`, uprawnienia pliku wejściowego oraz tożsamość procesu z `consumer-identities.json`. Porównaj obie odpowiedzi HTTP.
+
+  Sprawdź, które zadania w rollout.yml powiadamiają procedury obsługi i do którego użytkownika należy proces obsługujący SIGHUP w provided-consumer.py. Porównaj dostęp obu procesów do współdzielonego pliku.
+hints.2.text: |-
+  Na stacji roboczej potwierdź tryb `0644` poleceniem `ansible fleet -m ansible.builtin.stat -a "path=/srv/site/message"`, a następnie odpytaj `/` na portach `8080` i `8081` wszystkich trzech hostów: wszystkie sześć odpowiedzi ma zawierać `north-ready`. Porównaj tożsamość procesu i bajty zainstalowanego programu z `consumer-identities.json`.
+
+  Na każdym hoście porównaj dostarczony rekord `banner-reader` z obserwowanymi PID, czasem startu, UID, GID, grupami, capabilities, argumentami polecenia i sumą SHA-256 programu.
+
+  ```sh
+  ansible fleet -m ansible.builtin.stat -a "path=/srv/site/message"
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    for port in 8080 8081; do
+      printf "%s:%s " "$host" "$port"
+      curl -fsS --max-time 3 "http://$host:$port/"
+      printf '\n'
+    done
+    jq --arg station "app$n" '.[$station]["banner-reader"]' consumer-identities.json
+    ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host" '
+      set -eu
+      pid=$(cat /run/quest-banner-reader.pid)
+      printf "pid: %s\nstarttime: " "$pid"
+      sed "s/^.*) //" "/proc/$pid/stat" | cut -d " " -f20
+      grep -E "^(Uid|Gid|Groups|Cap(Inh|Prm|Eff|Bnd|Amb)):" "/proc/$pid/status"
+      tr "\000" "\n" < "/proc/$pid/cmdline"
+      sha256sum /usr/local/libexec/quest-banner-reader.py'
+  done
+  ```
 debrief: Skoordynowano dostarczanie, dostęp do pliku i odświeżanie między konsumentami o różnych kontach, zachowując
   tożsamości procesów.
 phrases.0: Przed dokonaniem zmiany sprawdziłem stan działania.

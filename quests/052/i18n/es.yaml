@@ -27,14 +27,35 @@ stages.0.objectives.2.text: HTTP en los puertos `8080` y `8081` devuelve `north-
   (`app1`, `app2`, `app3`); las identidades originales de las aplicaciones no cambian.
 hints.0.text: Un archivo compartido puede alimentar cachés de procesos independientes. El acceso y la autoridad
   para actualizar pertenecen a usuarios distintos.
-hints.1.text: Compara `rollout.yml`, `consumer-contract.json` y `provided-consumer.py`. En los hosts administrados,
-  inspecciona `/var/log/quest-banner-reader.log`, los permisos del archivo de entrada y la identidad del proceso
-  de `consumer-identities.json`. Compara ambas respuestas HTTP.
-hints.2.text: 'Construye la entrega y las notificaciones para ambas aplicaciones. El consumidor proporcionado se
-  actualiza con SIGHUP; envía la señal con su propio usuario mediante `runuser`. Desde la estación de trabajo, confirma
-  los permisos `0644` con `ansible fleet -m ansible.builtin.stat -a "path=/srv/site/message"` y solicita `/` en
-  los puertos `8080` y `8081` de los tres hosts: las seis respuestas deben ser `north-ready`. Compara la identidad
-  del proceso y los bytes del programa instalado con `consumer-identities.json`.'
+hints.1.text: |-
+  Compara `rollout.yml`, `consumer-contract.json` y `provided-consumer.py`. En los hosts administrados, inspecciona `/var/log/quest-banner-reader.log`, los permisos del archivo de entrada y la identidad del proceso de `consumer-identities.json`. Compara ambas respuestas HTTP.
+
+  Revisa qué tareas de rollout.yml notifican a los handlers y qué usuario ejecuta el proceso que recibe SIGHUP en provided-consumer.py. Compara el acceso de ambos procesos al archivo compartido.
+hints.2.text: |-
+  Desde la estación de trabajo, confirma los permisos `0644` con `ansible fleet -m ansible.builtin.stat -a "path=/srv/site/message"` y solicita `/` en los puertos `8080` y `8081` de los tres hosts: las seis respuestas deben ser `north-ready`. Compara la identidad del proceso y los bytes del programa instalado con `consumer-identities.json`.
+
+  En cada host, compara el registro suministrado de `banner-reader` con los PID, tiempo de inicio, UID, GID, grupos, capacidades, argumentos y SHA-256 del programa observados.
+
+  ```sh
+  ansible fleet -m ansible.builtin.stat -a "path=/srv/site/message"
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    for port in 8080 8081; do
+      printf "%s:%s " "$host" "$port"
+      curl -fsS --max-time 3 "http://$host:$port/"
+      printf '\n'
+    done
+    jq --arg station "app$n" '.[$station]["banner-reader"]' consumer-identities.json
+    ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host" '
+      set -eu
+      pid=$(cat /run/quest-banner-reader.pid)
+      printf "pid: %s\nstarttime: " "$pid"
+      sed "s/^.*) //" "/proc/$pid/stat" | cut -d " " -f20
+      grep -E "^(Uid|Gid|Groups|Cap(Inh|Prm|Eff|Bnd|Amb)):" "/proc/$pid/status"
+      tr "\000" "\n" < "/proc/$pid/cmdline"
+      sha256sum /usr/local/libexec/quest-banner-reader.py'
+  done
+  ```
 debrief: Coordinaste la entrega, el acceso al archivo y la actualización entre consumidores con usuarios distintos,
   conservando las identidades de sus procesos.
 phrases.0: Verifiqué el estado de ejecución antes de realizar un cambio.

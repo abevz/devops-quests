@@ -28,14 +28,35 @@ stages.0.objectives.2.text: HTTP на портах `8080` и `8081` возвра
   `app2`, `app3`); исходные идентичности приложений сохранены.
 hints.0.text: Общий файл может питать независимые кеши процессов. Доступ и полномочия обновления принадлежат разным
   учётным записям.
-hints.1.text: Сопоставьте `rollout.yml`, `consumer-contract.json` и `provided-consumer.py`. На управляемых узлах
-  изучите `/var/log/quest-banner-reader.log`, права входного файла и идентичность процесса из `consumer-identities.json`.
-  Сравните оба HTTP-ответа.
-hints.2.text: 'Постройте доставку и уведомления для обоих приложений. Предоставленный потребитель обновляется по
-  SIGHUP; отправьте сигнал от его учётной записи через `runuser`. На рабочей станции проверьте права `0644` командой
-  `ansible fleet -m ansible.builtin.stat -a "path=/srv/site/message"`, затем запросите `/` на портах `8080` и `8081`
-  всех трёх узлов: все шесть ответов должны быть `north-ready`. Сопоставьте идентичность процесса и байты установленной
-  программы с `consumer-identities.json`.'
+hints.1.text: |-
+  Сопоставьте `rollout.yml`, `consumer-contract.json` и `provided-consumer.py`. На управляемых узлах изучите `/var/log/quest-banner-reader.log`, права входного файла и идентичность процесса из `consumer-identities.json`. Сравните оба HTTP-ответа.
+
+  Проследите, какие задачи в rollout.yml уведомляют обработчики и от какого пользователя работает процесс, обрабатывающий SIGHUP в provided-consumer.py. Сравните доступ обоих процессов к общему файлу.
+hints.2.text: |-
+  На рабочей станции проверьте права `0644` командой `ansible fleet -m ansible.builtin.stat -a "path=/srv/site/message"`, затем запросите `/` на портах `8080` и `8081` всех трёх узлов: все шесть ответов должны быть `north-ready`. Сопоставьте идентичность процесса и байты установленной программы с `consumer-identities.json`.
+
+  Для каждого хоста сверяйте выданную запись `banner-reader` с наблюдаемыми PID, временем запуска, UID, GID, группами, capabilities, аргументами команды и SHA-256 программы.
+
+  ```sh
+  ansible fleet -m ansible.builtin.stat -a "path=/srv/site/message"
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    for port in 8080 8081; do
+      printf "%s:%s " "$host" "$port"
+      curl -fsS --max-time 3 "http://$host:$port/"
+      printf '\n'
+    done
+    jq --arg station "app$n" '.[$station]["banner-reader"]' consumer-identities.json
+    ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host" '
+      set -eu
+      pid=$(cat /run/quest-banner-reader.pid)
+      printf "pid: %s\nstarttime: " "$pid"
+      sed "s/^.*) //" "/proc/$pid/stat" | cut -d " " -f20
+      grep -E "^(Uid|Gid|Groups|Cap(Inh|Prm|Eff|Bnd|Amb)):" "/proc/$pid/status"
+      tr "\000" "\n" < "/proc/$pid/cmdline"
+      sha256sum /usr/local/libexec/quest-banner-reader.py'
+  done
+  ```
 debrief: Вы согласовали доставку, доступ к файлу и обновление потребителей с разными учётными записями, сохранив
   идентичности процессов.
 phrases.0: Я проверил фактическое состояние до изменения.

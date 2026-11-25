@@ -22,14 +22,35 @@ stages.0.objectives.2.text: Na każdym zarządzanym hoście (`app1`, `app2`, `ap
   ma tryb `0600`.
 hints.0.text: Prywatne dostarczanie musi zapewniać rzeczywisty dostęp odbiorcy i izolację od innych kont. Zmiany
   metadanych ograniczają faktyczne uprawnienia operatora.
-hints.1.text: Porównaj `rollout.yml`, `consumer-contract.json`, `consumer-identities.json` i `provided-consumer.py`.
-  Sprawdź właścicieli i uprawnienia wejść na zarządzanych hostach, listę uprawnień operatora oraz status uwierzytelnienia
-  HTTP. Nie wypisuj danych dostępu w diagnostyce.
-hints.2.text: 'Ukryj wrażliwe wyniki kopiowania przez `no_log`. Przy tych uprawnieniach przygotuj treść i ograniczone
-  prawa przed przekazaniem własności; osobna zmiana właściciela unika żądania niedostępnej później zmiany praw.
-  Zweryfikuj każdą aplikację oryginalnymi danymi bez ich wypisywania: oczekuj HTTP 200 i `credential-ready`. Potwierdź,
-  że inni konsumenci i użytkownik zewnętrzny nie mogą otwierać cudzych wejść do odczytu ani zapisu; zachowaj dotychczasowy
-  tryb `0600` i niepusty prywatny `deployment.log`.'
+hints.1.text: |-
+  Porównaj `rollout.yml`, `consumer-contract.json`, `consumer-identities.json` i `provided-consumer.py`. Sprawdź właścicieli i uprawnienia wejść na zarządzanych hostach, listę uprawnień operatora oraz status uwierzytelnienia HTTP. Nie wypisuj danych dostępu w diagnostyce.
+
+  Sprawdź no_log w zadaniach przetwarzających dane uwierzytelniające i porównaj uprawnienia operatora z obecnym właścicielem i trybem każdego pliku docelowego. Przy danych uwierzytelniających sprawdzaj metadane.
+hints.2.text: |-
+  Zweryfikuj każdą aplikację oryginalnymi danymi bez ich wypisywania: oczekuj HTTP 200 i `credential-ready`. Potwierdź, że inni konsumenci i użytkownik zewnętrzny nie mogą otwierać cudzych wejść do odczytu ani zapisu; zachowaj dotychczasowy tryb `0600` i niepusty prywatny `deployment.log`.
+
+  Wynik `log_ok: True` oznacza niepusty log bez dokładnej wartości poświadczenia. Dla każdej pary hosta i konsumenta oczekuj `response_ok: True`.
+
+  ```sh
+  python3 - <<'PY'
+  import json, os, urllib.request
+  from pathlib import Path
+  import yaml
+  contract = json.loads(Path('consumer-contract.json').read_text())
+  token = yaml.safe_load(Path('credentials.yml').read_text())['station_token']
+  log = Path('deployment.log').read_bytes()
+  print('log_ok:', bool(log) and token.encode() not in log)
+  opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+  for station in ('app1', 'app2', 'app3'):
+      host = station + '-' + os.environ['DQ_NAMESPACE'].removeprefix('dq-')
+      for item in contract['consumers']:
+          url = 'http://' + host + ':' + str(item['port']) + '/'
+          request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + token})
+          with opener.open(request, timeout=3) as response:
+              ok = response.status == 200 and response.read(65536).decode().strip() == contract['response']
+              print(station, item['name'], 'response_ok:', ok)
+  PY
+  ```
 phrases.0: Chroniłem zarówno uprawnienia do plików docelowych, jak i dane wyjściowe zadań.
 phrases.1: Zweryfikowałem sekret bez drukowania go.
 phrases.2: Nie traktowałem no_log jako szyfrowania w stanie spoczynku.

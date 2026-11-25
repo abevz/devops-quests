@@ -30,14 +30,35 @@ stages.0.objectives.2.text: HTTP an den Ports `8080` und `8081` liefert auf jede
   `app3`) `north-ready`; die bereitgestellten Anwendungsidentitäten bleiben unverändert.
 hints.0.text: Eine gemeinsame Datei kann unabhängige Prozess-Caches versorgen. Zugriff und Aktualisierungsrechte
   gehören verschiedenen Benutzern.
-hints.1.text: Vergleiche `rollout.yml`, `consumer-contract.json` und `provided-consumer.py`. Untersuche auf den
-  verwalteten Hosts `/var/log/quest-banner-reader.log`, die Dateirechte und die Prozessidentität aus `consumer-identities.json`.
-  Vergleiche beide HTTP-Antworten.
-hints.2.text: 'Erstelle Auslieferung und Benachrichtigungen für beide Anwendungen. Der bereitgestellte Verbraucher
-  aktualisiert sich durch SIGHUP; sende das Signal mit `runuser` unter seinem Benutzer. Prüfe auf der Workstation
-  mit `ansible fleet -m ansible.builtin.stat -a "path=/srv/site/message"` den Modus `0644` und frage `/` an den
-  Ports `8080` und `8081` aller drei Hosts ab: Alle sechs Antworten müssen `north-ready` sein. Vergleiche Prozessidentität
-  und installierte Programmbytes mit `consumer-identities.json`.'
+hints.1.text: |-
+  Vergleiche `rollout.yml`, `consumer-contract.json` und `provided-consumer.py`. Untersuche auf den verwalteten Hosts `/var/log/quest-banner-reader.log`, die Dateirechte und die Prozessidentität aus `consumer-identities.json`. Vergleiche beide HTTP-Antworten.
+
+  Prüfe, welche Aufgaben in rollout.yml Handler benachrichtigen und welchem Benutzer der Prozess gehört, der in provided-consumer.py SIGHUP verarbeitet. Vergleiche den Zugriff beider Prozesse auf die gemeinsame Datei.
+hints.2.text: |-
+  Prüfe auf der Workstation mit `ansible fleet -m ansible.builtin.stat -a "path=/srv/site/message"` den Modus `0644` und frage `/` an den Ports `8080` und `8081` aller drei Hosts ab: Alle sechs Antworten müssen `north-ready` sein. Vergleiche Prozessidentität und installierte Programmbytes mit `consumer-identities.json`.
+
+  Vergleiche auf jedem Host den bereitgestellten Datensatz für `banner-reader` mit beobachteter PID und Startzeit, UID, GID, Gruppen, Capabilities, Befehlsargumenten und SHA-256 des Programms.
+
+  ```sh
+  ansible fleet -m ansible.builtin.stat -a "path=/srv/site/message"
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    for port in 8080 8081; do
+      printf "%s:%s " "$host" "$port"
+      curl -fsS --max-time 3 "http://$host:$port/"
+      printf '\n'
+    done
+    jq --arg station "app$n" '.[$station]["banner-reader"]' consumer-identities.json
+    ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host" '
+      set -eu
+      pid=$(cat /run/quest-banner-reader.pid)
+      printf "pid: %s\nstarttime: " "$pid"
+      sed "s/^.*) //" "/proc/$pid/stat" | cut -d " " -f20
+      grep -E "^(Uid|Gid|Groups|Cap(Inh|Prm|Eff|Bnd|Amb)):" "/proc/$pid/status"
+      tr "\000" "\n" < "/proc/$pid/cmdline"
+      sha256sum /usr/local/libexec/quest-banner-reader.py'
+  done
+  ```
 debrief: Du hast Auslieferung, Dateizugriff und Aktualisierung für Verbraucher mit verschiedenen Benutzern koordiniert
   und ihre Prozessidentitäten bewahrt.
 phrases.0: Ich habe den Betriebsstatus überprüft, bevor ich eine Änderung vorgenommen habe.
