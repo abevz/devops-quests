@@ -25,6 +25,8 @@ hints.0.text: |-
 hints.1.text: |-
   Porównaj szablon, wygenerowane Application i referencje na serwerze Git. Pliki wydania wskazują obie oczekiwane rewizje.
 
+  Odszukaj wygenerowaną ścieżkę źródła i rewizję docelową każdego wygenerowanego Application. Porównaj podstawienia szablonu i wyniki z dokładnymi referencjami z dostarczonych plików wydania.
+
   ```bash
   ns=$(jq -r .namespace appset-target.json)
   cat applicationset.yaml release-ref release-commit maintenance-commit
@@ -32,7 +34,7 @@ hints.1.text: |-
   kubectl -n "$ns" get applications north south -o yaml
   ```
 hints.2.text: |-
-  Użyj `stations/{{.station}}` w szablonie ścieżki i wybierz dostarczoną referencję wydania. Porównaj źródła działających Application z referencjami Git i sprawdź odpowiedzi obu usług.
+  Porównaj źródła działających Application z referencjami Git i sprawdź odpowiedzi obu usług.
 
   ```bash
   ns=$(jq -r .namespace appset-target.json)
@@ -43,6 +45,41 @@ hints.2.text: |-
     kubectl exec deployment/"$station" -- wget -qO- -T 3 "http://$station:8080"
   done
   ```
+
+  ```bash
+  (
+    set -euo pipefail
+    cd ~/quest
+    source platform.env
+    facts=/run/dq/facts/0
+    ns=$(jq -er .namespace "$facts/appset-target.json")
+    repo=$(jq -er .repoURL "$facts/appset-target.json")
+    release=$(cat "$facts/release-commit")
+    ref=$(cat "$facts/release-ref")
+    main=$(cat "$facts/maintenance-commit")
+    refs=$(git -C repository ls-remote "$repo" refs/heads/main "refs/heads/$ref")
+    grep -Fqx "$(printf '%s\trefs/heads/main' "$main")" <<<"$refs"
+    grep -Fqx "$(printf '%s\trefs/heads/%s' "$release" "$ref")" <<<"$refs"
+    appset=$(kubectl -n "$ns" get applicationset station -o json)
+    uid=$(jq -er --arg ref "$ref" '
+      select(.spec.goTemplate==true and .spec.template.spec.source.path=="stations/{{.station}}" and
+        (.spec.generators[0].list.elements | map(.station))==["north","south"] and
+        .spec.template.spec.source.targetRevision==$ref) | .metadata.uid' <<<"$appset")
+    kubectl -n "$ns" get applications north south -o json |
+      jq -e --arg uid "$uid" --arg release "$release" --arg repo "$repo" --arg bay "$DQ_NAMESPACE" --arg ref "$ref" '
+        ([.items[].metadata.name] | sort)==["north","south"] and
+        all(.items[]; .metadata.name as $station |
+          .spec.source.repoURL==$repo and .spec.project=="station" and .spec.destination.namespace==$bay and
+          .spec.source.path==("stations/"+$station) and .spec.source.targetRevision==$ref and
+          .status.sync.revision==$release and .status.sync.status=="Synced" and .status.health.status=="Healthy" and
+          any(.metadata.ownerReferences[]?; .kind=="ApplicationSet" and .uid==$uid))'
+    for station in north south; do
+      test "$(kubectl exec deployment/"$station" -- wget -qO- -T 3 "http://$station:8080")" = "$station-123"
+    done
+  )
+  ```
+
+  Oba Application mają status Synced i Healthy na release-commit. Zdalny main nadal odpowiada maintenance-commit. Service zwracają north-123 i south-123.
 phrases.0: Oddzieliłem generowanie Application od uzgadniania obciążenia.
 phrases.1: Sprawdziłem wartości generatora i rozwinięcie szablonu.
 phrases.2: Zachowałem zakres uprawnień kontrolera i miejsc docelowych.

@@ -26,6 +26,8 @@ hints.0.text: |-
 hints.1.text: |-
   Porównaj zapisane w Git źródło aplikacji podrzędnej z działającymi Application i manifestami publikacji. Gdy usługa odpowie, sprawdź jej rewizję względem dostarczonego zapisu.
 
+  Prześledź powiązanie zapisanej ConfigMap z wolumenem Deploymentu. Znajdź rzutowany plik i porównaj jego zawartość z zatwierdzoną publikacją oraz odpowiedzią HTTP.
+
   ```bash
   git -C repository show HEAD:apps/child.yaml
   kubectl get applications parent board -o yaml
@@ -33,7 +35,7 @@ hints.1.text: |-
   cat approved-publication
   ```
 hints.2.text: |-
-  Opublikuj obie poprawki przez Git. Porównaj ConfigMap śledzoną przez aplikację podrzędną, źródło woluminu Deployment i rewizję w odpowiedzi HTTP. Pierwotna odpowiedź usługi powinna pozostać bez zmian.
+  Porównaj ConfigMap śledzoną przez aplikację podrzędną, źródło woluminu Deployment i rewizję w odpowiedzi HTTP. Pierwotna odpowiedź usługi powinna pozostać bez zmian.
 
   ```bash
   git -C repository ls-remote origin refs/heads/main
@@ -45,6 +47,34 @@ hints.2.text: |-
   kubectl get configmaps -o json | jq '.items[] | select(.metadata.annotations["argocd.argoproj.io/tracking-id"] != null) | {name:.metadata.name,revision:.data.revision}'
   cat approved-publication
   ```
+
+  ```bash
+  (
+    set -euo pipefail
+    cd ~/quest
+    source platform.env
+    approved=$(cat /run/dq/facts/0/approved-publication)
+    uses_publication() {
+      jq -e '.spec.template.spec as $pod |
+        any($pod.volumes[]?; .configMap.name=="board-publication" and
+          (.name as $volume | any($pod.containers[]?; .name=="worker" and
+            any(.volumeMounts[]?; .name==$volume and .readOnly==true))))'
+    }
+    head=$(git -C repository ls-remote origin refs/heads/main | cut -f1)
+    git -C repository show "$head:manifests/board.yaml" |
+      python3 -I -c 'import json,sys,yaml; json.dump(yaml.safe_load(sys.stdin),sys.stdout)' |
+      uses_publication
+    kubectl get deployment board -o json | uses_publication
+    kubectl get configmap board-publication -o json |
+      jq -e --arg namespace "$DQ_NAMESPACE" --arg approved "$approved" '
+        .data.revision==$approved and
+        .metadata.annotations["argocd.argoproj.io/tracking-id"]==($namespace+"_board:/ConfigMap:"+$namespace+"/board-publication")'
+    test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080)" = north-122
+    test "$(kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/publication/revision)" = "$approved"
+  )
+  ```
+
+  Główna ścieżka Service zwraca north-122. Odpowiedź publikacji jest zgodna z approved-publication.
 phrases.0: Postępowałem zgodnie z łańcuchem pojednania rodzic-dziecko.
 phrases.1: Naprawiłem żądany stan w Git, a nie w wygenerowanym dziecku.
 phrases.2: Sprawdziłem obie wersje i rzeczywistą reakcję na obciążenie.
