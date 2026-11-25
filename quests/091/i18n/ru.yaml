@@ -27,6 +27,8 @@ hints.0.text: Коммит манифеста может ссылаться на
 hints.1.text: |-
   Сравните digest работающего образа, metadata манифеста и config в registry и происхождение коммитов Git. Затем сравните запись на рабочей станции, опубликованную конфигурацию и файл, смонтированный в работающем Pod.
 
+  Найдите метку ревизии OCI в метаданных конфигурации манифеста. Отдельно сравните её с коммитом развёртывания и проверьте тип монтирования у действующего процесса.
+
   ```bash
   git -C repository log --oneline -5
   kubectl get deployment board -o yaml
@@ -34,8 +36,6 @@ hints.1.text: |-
   cat provenance.json
   ```
 hints.2.text: |-
-  Прочитайте метку OCI revision из config blob манифеста и сравните её с историей Git; не путайте исходный коммит образа с коммитом развёртывания. Опубликуйте найденную запись в выданном манифесте ConfigMap и отправьте существующий каталог приложения в Git. Дождитесь контроллера. Файл ConfigMap, смонтированный через `subPath`, не обновляется внутри существующего Pod: обновите потребителя, сохранив идентичность образа.
-
   После доставки проверьте отчёт, опубликованный коммит, revision контроллера, неизменяемый digest работающего образа и опубликованную через HTTP запись.
 
   ```sh
@@ -47,6 +47,29 @@ hints.2.text: |-
   kubectl rollout status deployment/board --timeout=3s
   kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
   kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/provenance.json
+  ```
+
+  ```sh
+  (
+    set -euo pipefail
+    cd ~/quest
+    source platform.env
+    image=$(jq -er .image provenance.json)
+    digest=${image##*@}
+    deployment_uid=$(kubectl get deployment board -o jsonpath='{.metadata.uid}')
+    sets=$(kubectl get rs -o json | jq -c --arg owner "$deployment_uid" '
+      [.items[] | select(any(.metadata.ownerReferences[]?; .kind=="Deployment" and .controller==true and .uid==$owner)) | .metadata.uid]')
+    kubectl get pods -o json | jq -e --argjson sets "$sets" --arg image "$image" --arg digest "$digest" '
+      [.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running" and
+        any(.metadata.ownerReferences[]?; .kind=="ReplicaSet" and .controller==true and (.uid as $uid | $sets | index($uid)!=null)))]
+      | any(.[]; any(.spec.containers[]; .name=="worker" and .image==$image) and
+        any(.status.containerStatuses[]?; .name=="worker" and .ready==true and
+          ((.imageID | split("@") | last | split("/") | last) == $digest)))'
+    kubectl get configmap build-record -o json |
+      jq -e --slurpfile record provenance.json '(.data["provenance.json"] | fromjson) == $record[0]'
+    kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/provenance.json |
+      jq -e --slurpfile record provenance.json '. == $record[0]'
+  )
   ```
 phrases.0: Я различил ревизию исходников и ревизию выкатки.
 phrases.1: Я проверил digest manifest и config образа в registry.

@@ -28,6 +28,8 @@ hints.0.text: Zatwierdzenie manifestu może odwoływać się do obrazu utworzone
 hints.1.text: |-
   Porównaj wdrożony digest, metadane manifestu i config w rejestrze oraz przodków Git. Następnie porównaj zapis na stacji, opublikowaną konfigurację i plik zamontowany w działającym Podzie.
 
+  Odszukaj etykietę rewizji OCI w metadanych konfiguracji manifestu. Porównaj ją osobno z commitem wdrożenia i sprawdź typ montowania działającego procesu.
+
   ```bash
   git -C repository log --oneline -5
   kubectl get deployment board -o yaml
@@ -35,8 +37,6 @@ hints.1.text: |-
   cat provenance.json
   ```
 hints.2.text: |-
-  Odczytaj etykietę OCI revision z bloba config manifestu i porównaj z historią Git; nie myl źródła obrazu z commitem wdrożenia. Opublikuj ustalony zapis w dostarczonym manifeście ConfigMap i wyślij istniejący katalog aplikacji do Git. Poczekaj na kontroler. Plik ConfigMap zamontowany przez `subPath` nie aktualizuje się w istniejącym Podzie: odśwież konsumenta bez zmiany tożsamości obrazu.
-
   Po propagacji sprawdź raport, opublikowany commit, rewizję kontrolera, niezmienny działający digest i udostępniany zapis.
 
   ```sh
@@ -48,6 +48,29 @@ hints.2.text: |-
   kubectl rollout status deployment/board --timeout=3s
   kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
   kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/provenance.json
+  ```
+
+  ```sh
+  (
+    set -euo pipefail
+    cd ~/quest
+    source platform.env
+    image=$(jq -er .image provenance.json)
+    digest=${image##*@}
+    deployment_uid=$(kubectl get deployment board -o jsonpath='{.metadata.uid}')
+    sets=$(kubectl get rs -o json | jq -c --arg owner "$deployment_uid" '
+      [.items[] | select(any(.metadata.ownerReferences[]?; .kind=="Deployment" and .controller==true and .uid==$owner)) | .metadata.uid]')
+    kubectl get pods -o json | jq -e --argjson sets "$sets" --arg image "$image" --arg digest "$digest" '
+      [.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running" and
+        any(.metadata.ownerReferences[]?; .kind=="ReplicaSet" and .controller==true and (.uid as $uid | $sets | index($uid)!=null)))]
+      | any(.[]; any(.spec.containers[]; .name=="worker" and .image==$image) and
+        any(.status.containerStatuses[]?; .name=="worker" and .ready==true and
+          ((.imageID | split("@") | last | split("/") | last) == $digest)))'
+    kubectl get configmap build-record -o json |
+      jq -e --slurpfile record provenance.json '(.data["provenance.json"] | fromjson) == $record[0]'
+    kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/provenance.json |
+      jq -e --slurpfile record provenance.json '. == $record[0]'
+  )
   ```
 phrases.0: Rozróżniłem wersję źródłową od wersji wdrożeniowej.
 phrases.1: Sprawdziłem skrót manifestu i obraz config w registry.

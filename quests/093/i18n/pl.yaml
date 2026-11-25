@@ -31,121 +31,110 @@ stages.1.brief: Odzyskaj niedostępny pierwotny Vault i publikację przez obie i
   klastra, kworum i prywatne udziały. Manager nadal nie może czytać źródła. Druga aplikacja ma udostępniać zatwierdzoną
   publikację pierwotnej pierwszej aplikacji; zachowaj oba procesy. Interfejs sterowania opisuje `control/README.md`.
 hints.0.text: Dostępność serwera, autoryzacja i publikacja przyjęta przez konsumenta są odrębnymi obserwacjami.
-hints.1.text: 'Porównaj odpowiedź usługi, profile źródeł, dzienniki aplikacji i pierwotny kontrakt. Najpierw prześledź
-  pierwszą uszkodzoną granicę.
+hints.1.text: |-
+  Porównaj odpowiedź usługi, profile źródeł, dzienniki aplikacji i pierwotny kontrakt. Najpierw prześledź pierwszą uszkodzoną granicę.
 
+  Odszukaj dotychczasową tożsamość klastra i stan procesu w kontrakcie źródła oraz obserwacji agenta naprawy. Sprawdź dostępność procesu i jego stan inicjalizacji lub zapieczętowania.
 
   ```bash
-
   cat consumer/source.json consumer/application.log consumer-contract.json
-
   curl -fsS --max-time 2 http://127.0.0.1:18081/status
-
   ```
 
-
   ```bash
-
   cat downstream/source.json downstream/application.log
-
   curl -fsS --max-time 2 http://127.0.0.1:18082/status
-
-  ```'
-hints.2.text: 'Po odpieczętowaniu sprawdź pierwotny ID klastra i istniejące dane dostępne dla reader. Zapisz dokładnie
-  `{"action":"start"}` w `vault-repair.json`; ograniczony agent uruchamia istniejący Vault przy następnym sprawdzeniu.
-  Prześlij dwa różne dostarczone udziały do `/v1/sys/unseal`; nie inicjalizuj ponownie ani nie zastępuj magazynu.
-  Uruchom istniejący proces przed użyciem dwóch udziałów.
-
-
+  ```
+hints.2.text: |-
   Sprawdź z `~/quest` na workstation:
 
-
   - `source platform.env`
-
-  - `curl -fsS "$VAULT_ADDR/v1/sys/init" | jq -e ''.initialized == true''`
-
+  - `curl -fsS "$VAULT_ADDR/v1/sys/init" | jq -e '.initialized == true'`
 
   Etap 1: `true`.
 
-
   - `source platform.env`
-
-  - `curl -fsS "$VAULT_ADDR/v1/sys/seal-status" | jq ''{initialized,sealed,t,n,cluster_id}''`
-
+  - `curl -fsS "$VAULT_ADDR/v1/sys/seal-status" | jq '{initialized,sealed,t,n,cluster_id}'`
 
   Etap 2: `initialized: true`, `sealed: false`, `t: 2`, `n: 3`; `cluster_id` odpowiada zamrożonemu oryginałowi.
 
-
   - `source platform.env`
-
-  - `curl -fsS -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"
-  | jq -e ''.data.data.value == "north-secret"'' >/dev/null`
-
-  - `curl -sS -o /dev/null -w ''%{http_code}\n'' -H @<(printf ''X-Vault-Token: %s\n'' "$VAULT_MANAGER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"`
-
+  - `curl -fsS -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_READER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch" | jq -e '.data.data.value == "north-secret"' >/dev/null`
+  - `curl -sS -o /dev/null -w '%{http_code}\n' -H @<(printf 'X-Vault-Token: %s\n' "$VAULT_MANAGER_TOKEN") "$VAULT_ADDR/v1/secret/data/dispatch"`
   - `stat -c %a unseal-shares.json`
 
+  Etap 2: Kod `0`; dane uwierzytelniające i tajne wartości nie są wyświetlane. Manager zgłasza `403`; plik udziałów zgłasza `600`.
 
-  Etap 2: Kod `0`; dane uwierzytelniające i tajne wartości nie są wyświetlane. Manager zgłasza `403`; plik udziałów
-  zgłasza `600`.
-
-
-  Dopasuj profil do zatwierdzonego API i danych reader. Zachowaj prywatność pliku i wyślij SIGHUP do istniejącego
-  PID; manager to inna tożsamość. Sprawdź publikację HTTP. Oczekiwane: OK.
-
+  Etap 2. Przed sprawdzeniem bieżących odpowiedzi HTTP porównaj profile aplikacji i pierwotne dane obu procesów. Sprawdzenie publikacji reader powinno zwrócić OK.
 
   ```bash
-
   set -euo pipefail
-
   cd ~/quest
-
   curl -fsS --max-time 2 http://127.0.0.1:18081/ > observed-publication.json
-
-  python3 -I - <<''VERIFY_PUBLICATION''
-
+  python3 -I - <<'VERIFY_PUBLICATION'
   import json
-
   from pathlib import Path
-
-  contract=json.loads(Path(''consumer-contract.json'').read_text())
-
-  observed=json.loads(Path(''observed-publication.json'').read_text())
-
-  assert observed[''ready''] is True
-
-  assert observed[''source'']==contract[''vault_url'']
-
-  assert observed[''path'']==contract[''path'']
-
-  assert observed[''value_sha256'']==contract[''value_sha256'']
-
-  assert observed[''version'']==contract[''version'']
-
-  print(''OK'')
-
+  contract=json.loads(Path('consumer-contract.json').read_text())
+  observed=json.loads(Path('observed-publication.json').read_text())
+  assert observed['ready'] is True
+  assert observed['source']==contract['vault_url']
+  assert observed['path']==contract['path']
+  assert observed['value_sha256']==contract['value_sha256']
+  assert observed['version']==contract['version']
+  print('OK')
   VERIFY_PUBLICATION
-
   ```
-
 
   Obie pierwotne aplikacje udostępniają zatwierdzoną publikację przez udokumentowany łańcuch źródeł.
 
-
   ```bash
-
   set -euo pipefail
-
   curl -fsS --max-time 2 http://127.0.0.1:18081/ > primary.json
-
   curl -fsS --max-time 2 http://127.0.0.1:18082/ > secondary.json
-
-  jq -e --slurpfile first primary.json '' .ready==true and .source=="http://127.0.0.1:18081" and .version==$first[0].version
-  and .value_sha256==$first[0].value_sha256'' secondary.json
-
+  jq -e --slurpfile first primary.json ' .ready==true and .source=="http://127.0.0.1:18081" and .version==$first[0].version and .value_sha256==$first[0].value_sha256' secondary.json
   ```
+  Oczekiwane: true.
 
-  Oczekiwane: true. Popraw źródło drugiej aplikacji i wyślij SIGHUP do jej pierwotnego PID po gotowości pierwszej.'
+  ```sh
+  (
+    set -euo pipefail
+    cd ~/quest
+    python3 -I - <<'VERIFY_ORIGINAL_CONSUMERS'
+  import hashlib
+  import json
+  import stat
+  from pathlib import Path
+
+  facts = json.loads(Path("/run/dq/facts/0/consumer-contract.json").read_text())
+
+  def read_regular(name, limit=8192):
+      path = Path(name)
+      info = path.lstat()
+      assert stat.S_ISREG(info.st_mode) and info.st_size <= limit
+      return path.read_bytes()
+
+  for role in ("consumer", "downstream"):
+      original = facts[role]
+      assert read_regular(role + "/application.pid").decode().strip() == str(original["pid"])
+      process = Path("/proc") / str(original["pid"])
+      fields = (process / "stat").read_text().rsplit(") ", 1)[1].split()
+      assert fields[0] not in ("Z", "X") and fields[19] == original["start"]
+      assert (process / "cmdline").read_bytes().hex() == original["command"]
+      observed = dict(line.split(":", 1) for line in (process / "status").read_text().splitlines() if ":" in line)
+      assert all(observed[key].strip() == value for key, value in original["status"].items())
+
+  assert hashlib.sha256(read_regular("provided-vault-consumer.py", 65536)).hexdigest() == facts["program_sha256"]
+  reader = json.loads(read_regular("consumer/source.json", 4096))
+  assert set(reader) == {"url", "path", "token_file"}
+  assert reader["url"] == facts["vault_url"] and reader["path"] == facts["path"]
+  credential = Path(reader["token_file"]).lstat()
+  assert credential.st_uid == 1000 and stat.S_IMODE(credential.st_mode) == 0o600
+  assert hashlib.sha256(read_regular(reader["token_file"], 4096).strip()).hexdigest() == facts["reader_sha256"]
+  assert json.loads(read_regular("downstream/source.json", 4096)) == {"upstream": "http://127.0.0.1:18081"}
+  print("Original process identities, program and private profiles match")
+  VERIFY_ORIGINAL_CONSUMERS
+  )
+  ```
 phrases.0: Rozróżniłem dostępność procesu od stanu pieczęci.
 phrases.1: Sprawdziłem stan inicjalizacji i odpieczętowania bez wypisywania udziałów.
 phrases.2: Porównałem ID klastra i sprawdziłem dostęp reader oraz manager.

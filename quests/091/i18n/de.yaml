@@ -29,6 +29,8 @@ hints.0.text: Ein Manifest-Commit kann auf ein Image verweisen, das aus einem fr
 hints.1.text: |-
   Vergleiche den bereitgestellten Digest, Manifest-/Config-Metadaten der Registry und die Git-Abstammung. Vergleiche danach Workstation-Nachweis, veröffentlichte Konfiguration und die im laufenden Pod eingebundene Datei.
 
+  Suche das OCI-Revisionslabel in den Konfigurationsmetadaten des Manifests. Vergleiche es separat mit dem Bereitstellungscommit und prüfe die Mount-Art des laufenden Prozesses.
+
   ```bash
   git -C repository log --oneline -5
   kubectl get deployment board -o yaml
@@ -36,8 +38,6 @@ hints.1.text: |-
   cat provenance.json
   ```
 hints.2.text: |-
-  Lies das OCI-Revisionslabel aus dem Config-Blob des Manifests und vergleiche es mit der Git-Historie; verwechsle die Image-Quelle nicht mit dem Deployment-Commit. Veröffentliche den ermittelten Nachweis im vorgegebenen ConfigMap-Manifest und pushe das bestehende Arbeitslastverzeichnis. Warte auf den Controller. Eine über `subPath` eingebundene ConfigMap-Datei wird in einem bestehenden Pod nicht aktualisiert: erneuere den Verbraucher, ohne die Image-Identität zu ändern.
-
   Prüfe nach der Übertragung Bericht, veröffentlichten Commit, Controller-Revision, unveränderlichen laufenden Digest und den per HTTP bereitgestellten Nachweis.
 
   ```sh
@@ -49,6 +49,29 @@ hints.2.text: |-
   kubectl rollout status deployment/board --timeout=3s
   kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
   kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/provenance.json
+  ```
+
+  ```sh
+  (
+    set -euo pipefail
+    cd ~/quest
+    source platform.env
+    image=$(jq -er .image provenance.json)
+    digest=${image##*@}
+    deployment_uid=$(kubectl get deployment board -o jsonpath='{.metadata.uid}')
+    sets=$(kubectl get rs -o json | jq -c --arg owner "$deployment_uid" '
+      [.items[] | select(any(.metadata.ownerReferences[]?; .kind=="Deployment" and .controller==true and .uid==$owner)) | .metadata.uid]')
+    kubectl get pods -o json | jq -e --argjson sets "$sets" --arg image "$image" --arg digest "$digest" '
+      [.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running" and
+        any(.metadata.ownerReferences[]?; .kind=="ReplicaSet" and .controller==true and (.uid as $uid | $sets | index($uid)!=null)))]
+      | any(.[]; any(.spec.containers[]; .name=="worker" and .image==$image) and
+        any(.status.containerStatuses[]?; .name=="worker" and .ready==true and
+          ((.imageID | split("@") | last | split("/") | last) == $digest)))'
+    kubectl get configmap build-record -o json |
+      jq -e --slurpfile record provenance.json '(.data["provenance.json"] | fromjson) == $record[0]'
+    kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/provenance.json |
+      jq -e --slurpfile record provenance.json '. == $record[0]'
+  )
   ```
 phrases.0: Ich habe die Quellrevision von der Bereitstellungsrevision unterschieden.
 phrases.1: Ich habe den manifest digest und das Bild config im registry überprüft.

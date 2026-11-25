@@ -27,6 +27,8 @@ hints.0.text: A manifest commit can reference an image built from an earlier com
 hints.1.text: |-
   Compare the deployed digest, registry manifest/config metadata and Git ancestry. Then compare the workstation record, published configuration and the file mounted by the running Pod.
 
+  Find the OCI revision label in the manifest’s config metadata. Compare it separately with the deployment commit and inspect the mount type used by the running process.
+
   ```bash
   git -C repository log --oneline -5
   kubectl get deployment board -o yaml
@@ -34,8 +36,6 @@ hints.1.text: |-
   cat provenance.json
   ```
 hints.2.text: |-
-  Read the OCI revision label from the manifest's config blob and compare it with Git history; do not confuse the image source with the deployment commit. Publish the discovered record in the supplied ConfigMap manifest and push the existing workload directory. Wait for the controller. A ConfigMap file mounted using `subPath` is not updated inside an existing Pod: refresh that consumer without changing the image identity.
-
   Verify the report, the published commit, controller revision, immutable running digest and served record after propagation.
 
   ```sh
@@ -47,6 +47,29 @@ hints.2.text: |-
   kubectl rollout status deployment/board --timeout=3s
   kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080
   kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/provenance.json
+  ```
+
+  ```sh
+  (
+    set -euo pipefail
+    cd ~/quest
+    source platform.env
+    image=$(jq -er .image provenance.json)
+    digest=${image##*@}
+    deployment_uid=$(kubectl get deployment board -o jsonpath='{.metadata.uid}')
+    sets=$(kubectl get rs -o json | jq -c --arg owner "$deployment_uid" '
+      [.items[] | select(any(.metadata.ownerReferences[]?; .kind=="Deployment" and .controller==true and .uid==$owner)) | .metadata.uid]')
+    kubectl get pods -o json | jq -e --argjson sets "$sets" --arg image "$image" --arg digest "$digest" '
+      [.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running" and
+        any(.metadata.ownerReferences[]?; .kind=="ReplicaSet" and .controller==true and (.uid as $uid | $sets | index($uid)!=null)))]
+      | any(.[]; any(.spec.containers[]; .name=="worker" and .image==$image) and
+        any(.status.containerStatuses[]?; .name=="worker" and .ready==true and
+          ((.imageID | split("@") | last | split("/") | last) == $digest)))'
+    kubectl get configmap build-record -o json |
+      jq -e --slurpfile record provenance.json '(.data["provenance.json"] | fromjson) == $record[0]'
+    kubectl exec deployment/board -c worker -- wget -qO- -T 3 http://board:8080/provenance.json |
+      jq -e --slurpfile record provenance.json '. == $record[0]'
+  )
   ```
 phrases.0: I distinguished source revision from deployment revision.
 phrases.1: I verified the manifest digest and image config in the registry.
