@@ -21,6 +21,8 @@ hints.0.text: Удаление конфигурационного объекта
 hints.1.text: |-
   Изучите связь с родителем, шаблоны потребителей, текущие Pod и локальные контракты. Выводите метаданные объектов и ссылки на источники без раскрытия данных Secret:
 
+  Записанное обязательство обозначено finalizer `training.devops-quests.local/cleanup`; сверяйте его связь с объектом, а не посторонний finalizer.
+
   ```sh
   cat cleanup-contract.json retirement-contract.json
   kubectl get configmap,secret -o json | jq '.items[] | {kind,name:.metadata.name,uid:.metadata.uid,parentUID:.metadata.labels["training.devops-quests.local/parent-uid"],owners:.metadata.ownerReferences,deleting:.metadata.deletionTimestamp}'
@@ -30,9 +32,11 @@ hints.1.text: |-
 hints.2.text: |-
   Подтвердите отсутствие обоих выведенных объектов, сохранение UID и хеша данных контрольного Secret, а также доставку конфигурации и отпечатка обоим текущим потребителям:
 
-  Записанное обязательство обозначено finalizer `training.devops-quests.local/cleanup`; сверяйте его связь с объектом, а не посторонний finalizer.
-
   ```sh
+  jq '{control_uid,control_hash}' cleanup-contract.json
+  jq '{retiredRecordUID,retiredParentUID,dataHash,fingerprint,consumers}' retirement-identities.json
+  kubectl get deployment dispatch reporter -o json | jq '.items[] | {name:.metadata.name,uid:.metadata.uid,volumes:.spec.template.spec.volumes,ready:.status.readyReplicas}'
+  kubectl get rs,pod -o json | jq '.items[] | select(.metadata.deletionTimestamp==null) | {kind,name:.metadata.name,uid:.metadata.uid,owners:.metadata.ownerReferences,volumes:.spec.volumes}'
   kubectl get configmap station --ignore-not-found -o name
   kubectl get secret station-record --ignore-not-found -o name
   kubectl get secret control -o json | python3 -c 'import hashlib,json,sys; x=json.load(sys.stdin); print(x["metadata"]["uid"]); print(hashlib.sha256(json.dumps(x["data"],sort_keys=True).encode()).hexdigest())'
@@ -42,6 +46,30 @@ hints.2.text: |-
   kubectl exec deployment/dispatch -c worker -- wget -qO- -T 2 http://127.0.0.1:8080
   kubectl exec deployment/reporter -c worker -- wget -qO- -T 2 http://127.0.0.1:8080
   ```
+
+  ```sh
+  (
+    set -euo pipefail
+    read -r -p 'Successor Secret from the current mount: ' successor
+    test -n "$successor"
+    kubectl get secret "$successor" -o json | python3 -I -c '
+  import hashlib,json,sys
+  from pathlib import Path
+  facts=json.loads(Path("retirement-identities.json").read_text())
+  record=json.load(sys.stdin)
+  meta=record["metadata"]
+  parent=facts["retiredParentUID"]
+  label=facts["contract"]["parentLabel"]
+  assert meta["uid"] != facts["retiredRecordUID"] and not meta.get("deletionTimestamp")
+  assert meta.get("labels",{}).get(label) != parent
+  assert all(owner.get("uid") != parent for owner in meta.get("ownerReferences",[]))
+  assert hashlib.sha256(json.dumps(record["data"],sort_keys=True).encode()).hexdigest() == facts["dataHash"]
+  print("Successor identity and data hash match")
+  '
+  )
+  ```
+
+  Каждый запрос выведенного объекта завершается успешно и без вывода. UID и хеш control совпадают с контрактом. Оба ответа совпадают с отпечатком смонтированного файла. Повторите итоговую проверку метаданных и хеша для Secret, на который ссылается текущий том только для чтения каждого worker.
 phrases.0: Я проверил отсутствие родительского объекта и записи.
 phrases.1: Я проверил UID Secret control.
 phrases.2: Я сравнил хеш данных Secret control.

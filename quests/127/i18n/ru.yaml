@@ -33,20 +33,45 @@ hints.2.text: |-
   Проверьте scrape и требуемые агрегаты рядов, затем соответствующий JSON-ответ каждого текущего потребителя, неизменность программы и растущий счётчик наблюдений:
 
   ```sh
+  (
+  set -euo pipefail
   url=$(jq -r .url prometheus-target.json)
   kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=up%7Bjob%3D%22board%22%7D"
-  kubectl get deployment,pods -o yaml
-  kubectl get configmap observer-program -o jsonpath='{.data.poll\.sh}' | sha256sum
-  for name in observer-count observer-total; do
-   kubectl exec deployment/"$name" -- sha256sum /opt/observer/poll.sh
-   kubectl exec deployment/"$name" -- wget -qO- -T 2 http://127.0.0.1:8080
-   kubectl exec deployment/"$name" -- cat /tmp/observations
+  for aggregate in count sum; do
+    expression=$(printf '%s(station_queue_depth{job="board",route="north"})' "$aggregate")
+    query=$(jq -rn --arg query "$expression" '$query | @uri')
+    kubectl exec deployment/client -- wget -qO- -T 3 "$url/api/v1/query?query=$query"
+    printf '\n'
   done
-  sleep 2
-  for name in observer-count observer-total; do
-   kubectl exec deployment/"$name" -- cat /tmp/observations
+  program=$(jq -er .programHash observer-identities.json)
+  source_hash=$(kubectl get configmap observer-program -o jsonpath='{.data.poll\.sh}' | sha256sum)
+  test "${source_hash%% *}" = "$program"
+  for role in observer-count observer-total; do
+    deploy=$(kubectl get deployment "$role" -o jsonpath='{.metadata.uid}')
+    sets=$(kubectl get rs -o json | jq -c --arg uid "$deploy" '
+      [.items[] | select(any(.metadata.ownerReferences[]?; .kind=="Deployment" and .controller==true and .uid==$uid)) | .metadata.uid]')
+    pod=$(kubectl get pods -o json | jq -er --argjson owners "$sets" '
+      [.items[] | select(.metadata.deletionTimestamp==null and .status.phase!="Failed" and .status.phase!="Succeeded" and
+        any(.metadata.ownerReferences[]?; .kind=="ReplicaSet" and .controller==true and (.uid as $uid | $owners | index($uid)!=null)))]
+      | select(length==1) | .[0]
+      | select(.status.phase=="Running" and any(.status.conditions[]?; .type=="Ready" and .status=="True"))
+      | .metadata.name')
+    wanted=$(jq -er --arg role "$role" '.consumers[] | select(.deployment==$role) | .expected' observer-contract.json)
+    observed_hash=$(kubectl exec "$pod" -c worker -- sha256sum /opt/observer/poll.sh)
+    test "${observed_hash%% *}" = "$program"
+    before=$(kubectl exec "$pod" -c worker -- cat /tmp/observations)
+    kubectl exec "$pod" -c worker -- wget -qO- -T 2 http://127.0.0.1:8080 |
+      jq -e --argjson wanted "$wanted" '.status=="success" and .data.resultType=="vector" and
+        (.data.result | length)==1 and (.data.result[0].value[1] | tonumber)==$wanted'
+    sleep 2
+    after=$(kubectl exec "$pod" -c worker -- cat /tmp/observations)
+    test "$before" -ge 0 && test "$after" -gt "$before" || exit 1
+    printf '%s/%s: %s → %s\n' "$role" "$pod" "$before" "$after"
   done
+  )
   ```
+
+  Единственный результат up равен 1. Для north число рядов равно 2, а сумма равна 7. Соответствующие потребители сообщают эти значения, а их счётчики наблюдений растут.
 phrases.0: Я проследил сбой scrape через Service.
 phrases.1: Я проверил up и labels собранных метрик.
 phrases.2: Я применил агрегацию, подходящую gauge.

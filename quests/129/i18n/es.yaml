@@ -21,6 +21,8 @@ hints.0.text: Eliminar un objeto de configuración no migra sus consumidores. Un
 hints.1.text: |-
   Inspecciona la asociación con el padre, plantillas, Pods actuales y contratos locales. Muestra metadatos y referencias de origen sin revelar datos de Secret:
 
+  La obligación registrada usa el finalizer `training.devops-quests.local/cleanup`; compara su asociación con el objeto, no otro finalizer ajeno.
+
   ```sh
   cat cleanup-contract.json retirement-contract.json
   kubectl get configmap,secret -o json | jq '.items[] | {kind,name:.metadata.name,uid:.metadata.uid,parentUID:.metadata.labels["training.devops-quests.local/parent-uid"],owners:.metadata.ownerReferences,deleting:.metadata.deletionTimestamp}'
@@ -30,9 +32,11 @@ hints.1.text: |-
 hints.2.text: |-
   Confirma la ausencia de ambos objetos retirados, la conservación del UID y hash del Secret de control, y la entrega de configuración y huella a ambos consumidores actuales:
 
-  La obligación registrada usa el finalizer `training.devops-quests.local/cleanup`; compara su asociación con el objeto, no otro finalizer ajeno.
-
   ```sh
+  jq '{control_uid,control_hash}' cleanup-contract.json
+  jq '{retiredRecordUID,retiredParentUID,dataHash,fingerprint,consumers}' retirement-identities.json
+  kubectl get deployment dispatch reporter -o json | jq '.items[] | {name:.metadata.name,uid:.metadata.uid,volumes:.spec.template.spec.volumes,ready:.status.readyReplicas}'
+  kubectl get rs,pod -o json | jq '.items[] | select(.metadata.deletionTimestamp==null) | {kind,name:.metadata.name,uid:.metadata.uid,owners:.metadata.ownerReferences,volumes:.spec.volumes}'
   kubectl get configmap station --ignore-not-found -o name
   kubectl get secret station-record --ignore-not-found -o name
   kubectl get secret control -o json | python3 -c 'import hashlib,json,sys; x=json.load(sys.stdin); print(x["metadata"]["uid"]); print(hashlib.sha256(json.dumps(x["data"],sort_keys=True).encode()).hexdigest())'
@@ -42,6 +46,30 @@ hints.2.text: |-
   kubectl exec deployment/dispatch -c worker -- wget -qO- -T 2 http://127.0.0.1:8080
   kubectl exec deployment/reporter -c worker -- wget -qO- -T 2 http://127.0.0.1:8080
   ```
+
+  ```sh
+  (
+    set -euo pipefail
+    read -r -p 'Successor Secret from the current mount: ' successor
+    test -n "$successor"
+    kubectl get secret "$successor" -o json | python3 -I -c '
+  import hashlib,json,sys
+  from pathlib import Path
+  facts=json.loads(Path("retirement-identities.json").read_text())
+  record=json.load(sys.stdin)
+  meta=record["metadata"]
+  parent=facts["retiredParentUID"]
+  label=facts["contract"]["parentLabel"]
+  assert meta["uid"] != facts["retiredRecordUID"] and not meta.get("deletionTimestamp")
+  assert meta.get("labels",{}).get(label) != parent
+  assert all(owner.get("uid") != parent for owner in meta.get("ownerReferences",[]))
+  assert hashlib.sha256(json.dumps(record["data"],sort_keys=True).encode()).hexdigest() == facts["dataHash"]
+  print("Successor identity and data hash match")
+  '
+  )
+  ```
+
+  Cada consulta a un objeto retirado tiene éxito con salida vacía. El UID y el hash de control coinciden con el contrato. Ambas respuestas coinciden con la huella del archivo montado. Repite la comprobación final de metadatos y hash para el Secret que referencia el montaje actual de solo lectura de cada worker.
 phrases.0: Observé la ausencia del objeto principal y el registro.
 phrases.1: Comprobé el UID del Secret control.
 phrases.2: Comparé el hash de datos del Secret control.
