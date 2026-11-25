@@ -23,14 +23,35 @@ stages.0.objectives.2.text: Auf jedem verwalteten Host (`app1`, `app2`, `app3`) 
   Modus `0600`.
 hints.0.text: Private Auslieferung muss tatsächlichen Empfängerzugriff und Isolation gewährleisten. Metadatenänderungen
   unterliegen den tatsächlichen Befugnissen des Operators.
-hints.1.text: Vergleiche `rollout.yml`, `consumer-contract.json`, `consumer-identities.json` und `provided-consumer.py`.
-  Prüfe Eigentümer und Eingaberechte auf den verwalteten Hosts, die Befugnisse des Operators und HTTP-Authentifizierung.
-  Gib keine Zugangswerte in Diagnosen aus.
-hints.2.text: 'Unterdrücke sensible Kopierausgabe mit `no_log`. Bereite unter diesen Befugnissen Inhalt und restriktive
-  Rechte vor der Eigentumsübertragung vor; getrennte Eigentumsänderungen vermeiden eine danach nicht erlaubte Rechteänderung.
-  Prüfe jede Anwendung mit dem ursprünglichen Wert ohne dessen Ausgabe: erwartet werden HTTP 200 und `credential-ready`.
-  Andere Verbraucher und der Außenstehende dürfen fremde Eingaben weder zum Lesen noch Schreiben öffnen; bewahre
-  den bisherigen Modus `0600` und ein nicht leeres privates `deployment.log`.'
+hints.1.text: |-
+  Vergleiche `rollout.yml`, `consumer-contract.json`, `consumer-identities.json` und `provided-consumer.py`. Prüfe Eigentümer und Eingaberechte auf den verwalteten Hosts, die Befugnisse des Operators und HTTP-Authentifizierung. Gib keine Zugangswerte in Diagnosen aus.
+
+  Prüfe no_log bei Aufgaben mit Zugangsdaten. Vergleiche die Fähigkeiten des Operators mit dem aktuellen Eigentümer und Modus jedes Ziels. Verwende bei Zugangsdaten Metadaten zur Prüfung.
+hints.2.text: |-
+  Prüfe jede Anwendung mit dem ursprünglichen Wert ohne dessen Ausgabe: erwartet werden HTTP 200 und `credential-ready`. Andere Verbraucher und der Außenstehende dürfen fremde Eingaben weder zum Lesen noch Schreiben öffnen; bewahre den bisherigen Modus `0600` und ein nicht leeres privates `deployment.log`.
+
+  `log_ok: True` bedeutet, dass das Protokoll Inhalt hat und den exakten Zugangswert nicht enthält. Erwarte für jeden Host und jeden Verbraucher `response_ok: True`.
+
+  ```sh
+  python3 - <<'PY'
+  import json, os, urllib.request
+  from pathlib import Path
+  import yaml
+  contract = json.loads(Path('consumer-contract.json').read_text())
+  token = yaml.safe_load(Path('credentials.yml').read_text())['station_token']
+  log = Path('deployment.log').read_bytes()
+  print('log_ok:', bool(log) and token.encode() not in log)
+  opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+  for station in ('app1', 'app2', 'app3'):
+      host = station + '-' + os.environ['DQ_NAMESPACE'].removeprefix('dq-')
+      for item in contract['consumers']:
+          url = 'http://' + host + ':' + str(item['port']) + '/'
+          request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + token})
+          with opener.open(request, timeout=3) as response:
+              ok = response.status == 200 and response.read(65536).decode().strip() == contract['response']
+              print(station, item['name'], 'response_ok:', ok)
+  PY
+  ```
 phrases.0: Ich habe sowohl die Zieldateiberechtigungen als auch die Aufgabenausgabe geschützt.
 phrases.1: Ich habe das Geheimnis überprüft, ohne es auszudrucken.
 phrases.2: Ich habe no_log nicht als Verschlüsselung im Ruhezustand behandelt.

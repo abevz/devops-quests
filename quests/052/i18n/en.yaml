@@ -25,13 +25,35 @@ stages.0.objectives.2.text: HTTP on ports `8080` and `8081` returns `north-ready
   `app2`, `app3`); the supplied application identities remain unchanged.
 hints.0.text: A shared file can feed independent process caches. Access and refresh authority belong to different
   principals.
-hints.1.text: Compare `rollout.yml` with `consumer-contract.json` and `provided-consumer.py`. On the managed hosts,
-  inspect `/var/log/quest-banner-reader.log`, the input permissions and the process identity listed in `consumer-identities.json`.
-  Compare both HTTP responses.
-hints.2.text: 'Construct delivery and notifications for both applications. The supplied consumer refreshes on SIGHUP;
-  send it under its own principal using `runuser`. From the workstation, use `ansible fleet -m ansible.builtin.stat
-  -a "path=/srv/site/message"` to confirm mode `0644`, then request `/` on ports `8080` and `8081` for all three
-  hosts: all six responses must be `north-ready`. Compare process identity and installed program bytes with `consumer-identities.json`.'
+hints.1.text: |-
+  Compare `rollout.yml` with `consumer-contract.json` and `provided-consumer.py`. On the managed hosts, inspect `/var/log/quest-banner-reader.log`, the input permissions and the process identity listed in `consumer-identities.json`. Compare both HTTP responses.
+
+  Trace which tasks notify handlers in rollout.yml and which principal owns the process that handles SIGHUP in provided-consumer.py. Compare both processes’ access to the shared file.
+hints.2.text: |-
+  From the workstation, use `ansible fleet -m ansible.builtin.stat -a "path=/srv/site/message"` to confirm mode `0644`, then request `/` on ports `8080` and `8081` for all three hosts: all six responses must be `north-ready`. Compare process identity and installed program bytes with `consumer-identities.json`.
+
+  For each host, compare the supplied `banner-reader` record with the observed PID and start time, UID, GID, groups, capabilities, command arguments, and program SHA-256.
+
+  ```sh
+  ansible fleet -m ansible.builtin.stat -a "path=/srv/site/message"
+  for n in 1 2 3; do
+    host="app${n}-${DQ_NAMESPACE#dq-}"
+    for port in 8080 8081; do
+      printf "%s:%s " "$host" "$port"
+      curl -fsS --max-time 3 "http://$host:$port/"
+      printf '\n'
+    done
+    jq --arg station "app$n" '.[$station]["banner-reader"]' consumer-identities.json
+    ssh -n -o BatchMode=yes -o ConnectTimeout=3 -p 2222 "root@$host" '
+      set -eu
+      pid=$(cat /run/quest-banner-reader.pid)
+      printf "pid: %s\nstarttime: " "$pid"
+      sed "s/^.*) //" "/proc/$pid/stat" | cut -d " " -f20
+      grep -E "^(Uid|Gid|Groups|Cap(Inh|Prm|Eff|Bnd|Amb)):" "/proc/$pid/status"
+      tr "\000" "\n" < "/proc/$pid/cmdline"
+      sha256sum /usr/local/libexec/quest-banner-reader.py'
+  done
+  ```
 debrief: You coordinated delivery, file access and refresh across consumers with different principals while preserving
   their process identities.
 phrases.0: I checked the running state before making a change.

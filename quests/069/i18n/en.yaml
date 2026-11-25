@@ -21,14 +21,35 @@ stages.0.objectives.1.text: On every managed host (`app1`, `app2`, `app3`), `/sr
 stages.0.objectives.2.text: On every managed host (`app1`, `app2`, `app3`), `/srv/site/station-token` has mode `0600`.
 hints.0.text: Private delivery must satisfy both the recipient’s real access and isolation from other principals.
   File metadata changes are limited by the operator’s actual authority.
-hints.1.text: Compare `rollout.yml`, `consumer-contract.json`, `consumer-identities.json` and `provided-consumer.py`.
-  Inspect input ownership and modes on the managed hosts, the operator capability list and the HTTP authentication
-  status. Do not print credential values into diagnostic output.
-hints.2.text: 'Protect sensitive copy output with `no_log`. Under these capabilities, prepare content and restrictive
-  permissions before transferring ownership; metadata-only ownership updates avoid requesting an unavailable permission
-  change after transfer. Verify each application with the original credential without printing it: expect HTTP 200
-  and `credential-ready`. Confirm other consumers and the outsider cannot open either foreign input for reading
-  or writing; retain legacy mode `0600` and the nonempty private `deployment.log`.'
+hints.1.text: |-
+  Compare `rollout.yml`, `consumer-contract.json`, `consumer-identities.json` and `provided-consumer.py`. Inspect input ownership and modes on the managed hosts, the operator capability list and the HTTP authentication status. Do not print credential values into diagnostic output.
+
+  Inspect no_log on tasks that handle credentials, and compare the operator's capabilities with the current owner and mode of each destination. Use metadata observations for credentials.
+hints.2.text: |-
+  Verify each application with the original credential without printing it: expect HTTP 200 and `credential-ready`. Confirm other consumers and the outsider cannot open either foreign input for reading or writing; retain legacy mode `0600` and the nonempty private `deployment.log`.
+
+  Expect `log_ok: True` for a nonempty log with the exact credential absent. Expect `response_ok: True` for every host and consumer.
+
+  ```sh
+  python3 - <<'PY'
+  import json, os, urllib.request
+  from pathlib import Path
+  import yaml
+  contract = json.loads(Path('consumer-contract.json').read_text())
+  token = yaml.safe_load(Path('credentials.yml').read_text())['station_token']
+  log = Path('deployment.log').read_bytes()
+  print('log_ok:', bool(log) and token.encode() not in log)
+  opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+  for station in ('app1', 'app2', 'app3'):
+      host = station + '-' + os.environ['DQ_NAMESPACE'].removeprefix('dq-')
+      for item in contract['consumers']:
+          url = 'http://' + host + ':' + str(item['port']) + '/'
+          request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + token})
+          with opener.open(request, timeout=3) as response:
+              ok = response.status == 200 and response.read(65536).decode().strip() == contract['response']
+              print(station, item['name'], 'response_ok:', ok)
+  PY
+  ```
 phrases.0: I protected both target-file permissions and task output.
 phrases.1: I verified the secret without printing it.
 phrases.2: I did not treat no_log as encryption at rest.
